@@ -117,6 +117,7 @@ class SupervisorProbe:
     executable_sha256: str | None = None
     runtime_sha256: str | None = None
     build_version: str | None = None
+    launcher_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -137,6 +138,7 @@ class SupervisorIdentity:
     executable_sha256: str
     runtime_sha256: str
     build_version: str
+    launcher_sha256: str
 
 
 def _absolute_path(path: Path) -> Path:
@@ -221,9 +223,11 @@ def _sha256_file(path: Path) -> str:
 def _supervisor_identity(
     executable: Path | None = None,
     *,
+    launcher: Path,
     expected_sha256: str | None = None,
     expected_runtime_sha256: str | None = None,
     expected_version: str | None = None,
+    expected_launcher_sha256: str | None = None,
 ) -> SupervisorIdentity:
     candidate = executable
     if candidate is None:
@@ -233,6 +237,7 @@ def _supervisor_identity(
     canonical = _validate_owned_regular_file(candidate, executable=True)
     digest = _sha256_file(canonical)
     runtime_digest = _sha256_file(Path(__file__).resolve())
+    launcher_digest = _launcher_sha256(launcher)
     if expected_sha256 and digest != expected_sha256:
         raise SupervisorError(
             "supervisor executable hash differs from the installed LaunchAgent",
@@ -248,12 +253,35 @@ def _supervisor_identity(
             "supervisor runtime hash differs from the installed LaunchAgent",
             EX_CONFIG,
         )
+    if expected_launcher_sha256 and launcher_digest != expected_launcher_sha256:
+        raise SupervisorError(
+            "Vibecrafted launcher hash differs from the installed LaunchAgent",
+            EX_CONFIG,
+        )
     return SupervisorIdentity(
         canonical,
         digest,
         runtime_digest,
         PACKAGE_VERSION,
+        launcher_digest,
     )
+
+
+def _launcher_sha256(
+    launcher: Path,
+    *,
+    expected_sha256: str | None = None,
+) -> str:
+    canonical = _validate_owned_regular_file(launcher, executable=True)
+    if canonical != launcher:
+        raise SupervisorError("launcher path must already be canonical", EX_CONFIG)
+    digest = _sha256_file(canonical)
+    if expected_sha256 and digest != expected_sha256:
+        raise SupervisorError(
+            "Vibecrafted launcher hash differs from the installed LaunchAgent",
+            EX_CONFIG,
+        )
+    return digest
 
 
 def _validate_existing_destination(path: Path) -> None:
@@ -405,6 +433,7 @@ def _write_lock_payload(
         payload["supervisor_executable_sha256"] = identity.executable_sha256
         payload["supervisor_runtime_sha256"] = identity.runtime_sha256
         payload["build_version"] = identity.build_version
+        payload["launcher_sha256"] = identity.launcher_sha256
     encoded = (json.dumps(payload, ensure_ascii=True, sort_keys=True) + "\n").encode(
         "utf-8"
     )
@@ -545,6 +574,7 @@ def probe_supervisor(paths: SupervisorPaths) -> SupervisorProbe:
             executable_sha256 = payload.get("supervisor_executable_sha256")
             runtime_sha256 = payload.get("supervisor_runtime_sha256")
             build_version = payload.get("build_version")
+            launcher_sha256 = payload.get("launcher_sha256")
             verified = (
                 payload.get("schema") == SUPERVISOR_LOCK_SCHEMA
                 and isinstance(pid, int)
@@ -563,6 +593,13 @@ def probe_supervisor(paths: SupervisorPaths) -> SupervisorProbe:
                         and len(runtime_sha256) == 64
                         and isinstance(build_version, str)
                         and bool(build_version)
+                        and (
+                            launcher_sha256 is None
+                            or (
+                                isinstance(launcher_sha256, str)
+                                and len(launcher_sha256) == 64
+                            )
+                        )
                     )
                 )
             )
@@ -576,6 +613,7 @@ def probe_supervisor(paths: SupervisorPaths) -> SupervisorProbe:
                 executable_sha256 if isinstance(executable_sha256, str) else None,
                 runtime_sha256 if isinstance(runtime_sha256, str) else None,
                 build_version if isinstance(build_version, str) else None,
+                launcher_sha256 if isinstance(launcher_sha256, str) else None,
             )
         else:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
@@ -655,7 +693,7 @@ def _receipt(
         "supervisor_pid": os.getpid(),
         "service_managed": service_managed,
         "launcher": str(config.launcher),
-        "launcher_sha256": _sha256_file(config.launcher),
+        "launcher_sha256": identity.launcher_sha256,
         "supervisor_executable": {
             "path": str(identity.executable),
             "sha256": identity.executable_sha256,
@@ -733,10 +771,13 @@ def run_supervisor(
     ):
         raise SupervisorError("supervisor timing values are invalid", EX_CONFIG)
     _ensure_owned_directory(config.paths.server_dir)
-    launcher = _validate_owned_regular_file(config.launcher, executable=True)
-    if launcher != config.launcher:
-        raise SupervisorError("launcher path must already be canonical", EX_CONFIG)
-    runtime_identity = identity or _supervisor_identity()
+    runtime_identity = identity or _supervisor_identity(
+        launcher=config.launcher,
+    )
+    _launcher_sha256(
+        config.launcher,
+        expected_sha256=runtime_identity.launcher_sha256,
+    )
 
     started_at = _utc_now()
     last_success_at: str | None = None
@@ -772,6 +813,41 @@ def run_supervisor(
         )
         try:
             while not event.is_set():
+                try:
+                    _launcher_sha256(
+                        config.launcher,
+                        expected_sha256=runtime_identity.launcher_sha256,
+                    )
+                except (OSError, SupervisorError) as exc:
+                    consecutive_failures += 1
+                    total_failures += 1
+                    last_failure_at = _utc_now()
+                    last_error = str(exc)
+                    last_exit_code = EX_CONFIG
+                    delay = min(
+                        config.maximum_backoff,
+                        config.interval * (2 ** min(consecutive_failures - 1, 6)),
+                    )
+                    managed_pair = _managed_pair_snapshot(config.paths)
+                    _atomic_json(
+                        config.paths.receipt_file,
+                        _receipt(
+                            config,
+                            identity=runtime_identity,
+                            managed_pair=managed_pair,
+                            state="backoff",
+                            started_at=started_at,
+                            service_managed=service_managed,
+                            last_success_at=last_success_at,
+                            last_failure_at=last_failure_at,
+                            consecutive_failures=consecutive_failures,
+                            total_failures=total_failures,
+                            last_error=last_error,
+                            last_exit_code=last_exit_code,
+                        ),
+                    )
+                    event.wait(delay)
+                    continue
                 return_code, detail = _run_child(
                     [
                         str(config.launcher),
@@ -832,26 +908,36 @@ def run_supervisor(
                 event.wait(delay)
         finally:
             managed_pair = _managed_pair_snapshot(config.paths)
-            _atomic_json(
-                config.paths.receipt_file,
-                _receipt(
-                    config,
-                    identity=runtime_identity,
-                    managed_pair=managed_pair,
-                    state="stopping",
-                    started_at=started_at,
-                    service_managed=service_managed,
-                    last_success_at=last_success_at,
-                    last_failure_at=last_failure_at,
-                    consecutive_failures=consecutive_failures,
-                    total_failures=total_failures,
-                    last_error=last_error,
-                    last_exit_code=last_exit_code,
-                ),
-            )
+            try:
+                _atomic_json(
+                    config.paths.receipt_file,
+                    _receipt(
+                        config,
+                        identity=runtime_identity,
+                        managed_pair=managed_pair,
+                        state="stopping",
+                        started_at=started_at,
+                        service_managed=service_managed,
+                        last_success_at=last_success_at,
+                        last_failure_at=last_failure_at,
+                        consecutive_failures=consecutive_failures,
+                        total_failures=total_failures,
+                        last_error=last_error,
+                        last_exit_code=last_exit_code,
+                    ),
+                )
+            except (OSError, SupervisorError) as exc:
+                print(
+                    f"warning: cannot write stopping supervisor receipt: {exc}",
+                    file=sys.stderr,
+                )
             stop_environment = child_environment.copy()
             stop_environment["VIBECRAFTED_SERVER_SUPERVISOR_CHILD"] = "1"
             cleanup_event = threading.Event()
+            _launcher_sha256(
+                config.launcher,
+                expected_sha256=runtime_identity.launcher_sha256,
+            )
             stop_code, stop_detail = _run_child(
                 [str(config.launcher), "server", "stop"],
                 env=stop_environment,
@@ -914,6 +1000,8 @@ def render_launch_agent_plist(
             runtime_sha256,
             "--expected-build-version",
             PACKAGE_VERSION,
+            "--expected-launcher-sha256",
+            launcher_sha256,
             "--launcher",
             str(launcher),
             "--home",
@@ -975,6 +1063,7 @@ def _installed_service_identity(paths: SupervisorPaths) -> SupervisorIdentity | 
     digest = environment.get("VIBECRAFTED_SERVER_SUPERVISOR_SHA256")
     runtime_digest = environment.get("VIBECRAFTED_SERVER_SUPERVISOR_RUNTIME_SHA256")
     version = environment.get("VIBECRAFTED_SERVER_SUPERVISOR_VERSION")
+    launcher_digest = environment.get("VIBECRAFTED_SERVER_LAUNCHER_SHA256")
     if (
         not isinstance(executable, str)
         or not executable
@@ -984,9 +1073,42 @@ def _installed_service_identity(paths: SupervisorPaths) -> SupervisorIdentity | 
         or len(runtime_digest) != 64
         or not isinstance(version, str)
         or not version
+        or not isinstance(launcher_digest, str)
+        or len(launcher_digest) != 64
     ):
         return None
-    return SupervisorIdentity(Path(executable), digest, runtime_digest, version)
+    return SupervisorIdentity(
+        Path(executable),
+        digest,
+        runtime_digest,
+        version,
+        launcher_digest,
+    )
+
+
+def _installed_service_launcher(paths: SupervisorPaths) -> Path | None:
+    encoded = _read_owned_bytes(paths.launch_agent_file)
+    if encoded is None:
+        return None
+    try:
+        payload = plistlib.loads(encoded)
+    except plistlib.InvalidFileException:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    arguments = payload.get("ProgramArguments")
+    if not isinstance(arguments, list) or not all(
+        isinstance(argument, str) for argument in arguments
+    ):
+        return None
+    try:
+        launcher_index = arguments.index("--launcher") + 1
+        launcher = arguments[launcher_index]
+    except (ValueError, IndexError):
+        return None
+    if not launcher:
+        return None
+    return Path(launcher)
 
 
 def _probe_is_supervisor(probe: SupervisorProbe) -> bool:
@@ -1007,7 +1129,21 @@ def _probe_matches_identity(
         and probe.executable_sha256 == identity.executable_sha256
         and probe.runtime_sha256 == identity.runtime_sha256
         and probe.build_version == identity.build_version
+        and probe.launcher_sha256 == identity.launcher_sha256
     )
+
+
+def _launcher_matches_identity(
+    launcher: Path,
+    identity: SupervisorIdentity | None,
+) -> bool:
+    if identity is None:
+        return False
+    try:
+        _launcher_sha256(launcher, expected_sha256=identity.launcher_sha256)
+    except (OSError, SupervisorError):
+        return False
+    return True
 
 
 def _launchctl(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
@@ -1124,9 +1260,14 @@ def service_status(config: SupervisorConfig) -> ServiceStatus:
     identity = _installed_service_identity(config.paths) if installed else None
     environment = _child_environment(config.paths)
     pair_snapshot = _managed_pair_snapshot(config.paths)
-    pair_healthy = _managed_pair_healthy(pair_snapshot) and _pair_healthy(
-        config.launcher,
-        environment,
+    launcher_current = _launcher_matches_identity(config.launcher, identity)
+    pair_healthy = (
+        launcher_current
+        and _managed_pair_healthy(pair_snapshot)
+        and _pair_healthy(
+            config.launcher,
+            environment,
+        )
     )
     return ServiceStatus(
         installed=installed,
@@ -1142,7 +1283,8 @@ def service_status(config: SupervisorConfig) -> ServiceStatus:
             probe,
             identity,
             service_managed=True,
-        ),
+        )
+        and launcher_current,
     )
 
 
@@ -1164,6 +1306,10 @@ def start_service(config: SupervisorConfig) -> None:
             "installed LaunchAgent has no verified supervisor identity; reinstall it",
             EX_CONFIG,
         )
+    _launcher_sha256(
+        config.launcher,
+        expected_sha256=identity.launcher_sha256,
+    )
     loaded = _launchctl_loaded()
     probe = probe_supervisor(config.paths)
     if loaded and probe.live and not _probe_is_supervisor(probe):
@@ -1215,6 +1361,16 @@ def start_service(config: SupervisorConfig) -> None:
 
 def stop_service(config: SupervisorConfig) -> None:
     _require_macos_service()
+    identity = _installed_service_identity(config.paths)
+    if identity is None:
+        raise SupervisorError(
+            "installed LaunchAgent has no verified supervisor identity; reinstall it",
+            EX_CONFIG,
+        )
+    _launcher_sha256(
+        config.launcher,
+        expected_sha256=identity.launcher_sha256,
+    )
     loaded = _launchctl_loaded()
     probe = probe_supervisor(config.paths)
     if not loaded and probe.live:
@@ -1237,22 +1393,39 @@ def stop_service(config: SupervisorConfig) -> None:
             "refusing to signal an unverified PID",
             EX_TEMPFAIL,
         )
-    environment = _child_environment(config.paths)
-    environment["VIBECRAFTED_SERVER_SUPERVISOR_CHILD"] = "1"
-    result = subprocess.run(
-        [str(config.launcher), "server", "stop"],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=config.command_timeout,
-        env=environment,
-    )
-    if result.returncode != 0:
-        raise SupervisorError(
-            f"service unloaded but managed pair cleanup failed: "
-            f"{result.stderr.strip() or result.stdout.strip()}",
-            result.returncode,
+    with _SupervisorLease(
+        config.paths,
+        service_managed=False,
+        role="manual-stop",
+    ):
+        if _launchctl_loaded():
+            raise SupervisorError(
+                "launchd became active while acquiring the service-stop cleanup "
+                "lease; refusing uncoordinated cleanup",
+                EX_TEMPFAIL,
+            )
+        environment = _child_environment(config.paths)
+        environment["VIBECRAFTED_SERVER_SUPERVISOR_CHILD"] = "1"
+        result = subprocess.run(
+            [str(config.launcher), "server", "stop"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=config.command_timeout,
+            env=environment,
         )
+        if result.returncode != 0:
+            raise SupervisorError(
+                f"service unloaded but managed pair cleanup failed: "
+                f"{result.stderr.strip() or result.stdout.strip()}",
+                result.returncode,
+            )
+        if _launchctl_loaded():
+            raise SupervisorError(
+                "launchd became active during service-stop cleanup; refusing to "
+                "report the server pair as stopped",
+                EX_TEMPFAIL,
+            )
 
 
 def restart_service(
@@ -1536,6 +1709,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--expected-supervisor-sha256", default="")
     run.add_argument("--expected-runtime-sha256", default="")
     run.add_argument("--expected-build-version", default="")
+    run.add_argument("--expected-launcher-sha256", default="")
 
     service = subparsers.add_parser(
         "service",
@@ -1632,10 +1806,18 @@ def _runtime_status(paths: SupervisorPaths) -> int:
     )
     probe = probe_supervisor(paths)
     identity = _installed_service_identity(paths) if installed else None
-    if loaded and _probe_matches_identity(
-        probe,
-        identity,
-        service_managed=True,
+    launcher = _installed_service_launcher(paths) if installed else None
+    launcher_current = launcher is not None and _launcher_matches_identity(
+        launcher, identity
+    )
+    if (
+        loaded
+        and _probe_matches_identity(
+            probe,
+            identity,
+            service_managed=True,
+        )
+        and launcher_current
     ):
         print(
             f"Supervision: LAUNCHD (installed=yes, loaded=yes, "
@@ -1720,9 +1902,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             identity = _supervisor_identity(
                 supervisor_binary,
+                launcher=config.launcher,
                 expected_sha256=args.expected_supervisor_sha256 or None,
                 expected_runtime_sha256=args.expected_runtime_sha256 or None,
                 expected_version=args.expected_build_version or None,
+                expected_launcher_sha256=args.expected_launcher_sha256 or None,
             )
             stop_event = threading.Event()
 
@@ -1765,6 +1949,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "supervisor_executable_sha256": probe.executable_sha256,
             "supervisor_runtime_sha256": probe.runtime_sha256,
             "build_version": probe.build_version,
+            "launcher_sha256": probe.launcher_sha256,
         }
         if args.json:
             print(json.dumps(payload, sort_keys=True))

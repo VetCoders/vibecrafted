@@ -57,6 +57,7 @@ def _managed_probe(
         identity.executable_sha256,
         identity.runtime_sha256,
         identity.build_version,
+        identity.launcher_sha256,
     )
 
 
@@ -87,6 +88,9 @@ def test_plistlib_renderer_preserves_metacharacters_without_xml_injection(
         arguments[arguments.index("--expected-build-version") + 1]
         == supervisor.PACKAGE_VERSION
     )
+    assert arguments[
+        arguments.index("--expected-launcher-sha256") + 1
+    ] == supervisor._sha256_file(launcher)
     assert arguments[
         arguments.index("--expected-runtime-sha256") + 1
     ] == supervisor._sha256_file(Path(supervisor.__file__).resolve())
@@ -323,6 +327,83 @@ def test_service_status_distinguishes_all_runtime_dimensions(
         supervisor_service_managed=True,
         build_current=True,
     )
+
+
+def test_launcher_fingerprint_is_enforced_by_run_and_service_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    config = _config(tmp_path, launcher)
+    supervisor.install_service(config, supervisor_binary=supervisor_binary)
+    identity = supervisor._installed_service_identity(config.paths)
+    assert identity is not None
+
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: True)
+    monkeypatch.setattr(
+        supervisor,
+        "probe_supervisor",
+        lambda _paths: _managed_probe(config, pid=9876),
+    )
+    monkeypatch.setattr(supervisor, "_pair_healthy", lambda _launcher, _env: True)
+    monkeypatch.setattr(
+        supervisor,
+        "_managed_pair_snapshot",
+        lambda _paths: {"server_pid": 123, "guardian_pid": 456},
+    )
+    assert supervisor.service_status(config).build_current
+    assert supervisor._runtime_status(config.paths) == 0
+    assert "Supervision: LAUNCHD" in capsys.readouterr().out
+
+    launcher.write_text("#!/bin/sh\n# changed launcher\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+
+    status = supervisor.service_status(config)
+    assert not status.build_current
+    assert not status.pair_healthy
+    assert supervisor._runtime_status(config.paths) == 1
+    assert "Supervision: BROKEN" in capsys.readouterr().out
+    with pytest.raises(supervisor.SupervisorError, match="launcher hash differs"):
+        supervisor._supervisor_identity(
+            supervisor_binary,
+            launcher=launcher,
+            expected_sha256=identity.executable_sha256,
+            expected_runtime_sha256=identity.runtime_sha256,
+            expected_version=identity.build_version,
+            expected_launcher_sha256=identity.launcher_sha256,
+        )
+
+
+def test_legacy_supervisor_probe_remains_stoppable_but_not_build_current(
+    tmp_path: Path,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    config = _config(tmp_path, launcher)
+    supervisor.install_service(config, supervisor_binary=supervisor_binary)
+    identity = supervisor._installed_service_identity(config.paths)
+    assert identity is not None
+
+    with supervisor._SupervisorLease(
+        config.paths,
+        service_managed=True,
+        identity=identity,
+    ):
+        payload = json.loads(config.paths.lock_file.read_text(encoding="utf-8"))
+        payload.pop("launcher_sha256")
+        config.paths.lock_file.write_text(json.dumps(payload), encoding="utf-8")
+
+        probe = supervisor.probe_supervisor(config.paths)
+        assert supervisor._probe_is_supervisor(probe)
+        assert probe.service_managed is True
+        assert not supervisor._probe_matches_identity(
+            probe,
+            identity,
+            service_managed=True,
+        )
 
 
 def test_start_service_rejects_foreground_marked_final_probe(
@@ -646,6 +727,110 @@ printf stopped > {str(marker)!r}
     assert result == ["stopped"]
     assert marker.read_text(encoding="utf-8") == "stopped"
     assert not supervisor.probe_supervisor(config.paths).live
+
+
+def test_service_stop_holds_common_lease_during_pair_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    config = _config(tmp_path, launcher)
+    supervisor.install_service(config, supervisor_binary=supervisor_binary)
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    loaded = True
+
+    def fake_launchctl(args: list[str]) -> subprocess.CompletedProcess[str]:
+        nonlocal loaded
+        if args[0] == "bootout":
+            loaded = False
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    cleanup_roles: list[str | None] = []
+
+    def fake_run(
+        argv: list[str],
+        **_kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        probe = supervisor.probe_supervisor(config.paths)
+        cleanup_roles.append(probe.role)
+        assert probe.live and probe.verified
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: loaded)
+    monkeypatch.setattr(supervisor, "_launchctl", fake_launchctl)
+    monkeypatch.setattr(supervisor.subprocess, "run", fake_run)
+
+    supervisor.stop_service(config)
+
+    assert cleanup_roles == ["manual-stop"]
+    assert not supervisor.probe_supervisor(config.paths).live
+
+
+def test_service_stop_rejects_launchd_reactivation_during_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    config = _config(tmp_path, launcher)
+    supervisor.install_service(config, supervisor_binary=supervisor_binary)
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    loaded = True
+
+    def fake_launchctl(args: list[str]) -> subprocess.CompletedProcess[str]:
+        nonlocal loaded
+        if args[0] == "bootout":
+            loaded = False
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    def fake_run(
+        argv: list[str],
+        **_kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal loaded
+        loaded = True
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: loaded)
+    monkeypatch.setattr(supervisor, "_launchctl", fake_launchctl)
+    monkeypatch.setattr(supervisor.subprocess, "run", fake_run)
+
+    with pytest.raises(supervisor.SupervisorError, match="became active during"):
+        supervisor.stop_service(config)
+    assert not supervisor.probe_supervisor(config.paths).live
+
+
+def test_stopping_receipt_failure_does_not_skip_pair_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    config = _config(tmp_path, launcher)
+    stop_event = threading.Event()
+    stop_event.set()
+    child_calls: list[list[str]] = []
+    original_atomic_json = supervisor._atomic_json
+
+    def flaky_atomic_json(path: Path, payload: dict[str, object]) -> None:
+        if payload.get("state") == "stopping":
+            raise OSError("receipt unavailable")
+        original_atomic_json(path, payload)
+
+    def fake_run_child(
+        argv: list[str],
+        **_kwargs: object,
+    ) -> tuple[int, str]:
+        child_calls.append(argv)
+        return 0, ""
+
+    monkeypatch.setattr(supervisor, "_atomic_json", flaky_atomic_json)
+    monkeypatch.setattr(supervisor, "_run_child", fake_run_child)
+
+    assert supervisor.run_supervisor(config, stop_event=stop_event) == 0
+    assert child_calls == [[str(launcher), "server", "stop"]]
+    receipt = json.loads(config.paths.receipt_file.read_text(encoding="utf-8"))
+    assert receipt["state"] == "stopped"
 
 
 def test_invalid_held_kernel_lock_remains_fail_closed(tmp_path: Path) -> None:
