@@ -17,11 +17,12 @@ from .agent_stream import (
     resolve_default_model,
 )
 from .artifacts import ArtifactValidation, validate_artifacts
-from .control_plane import ensure_session_id, normalize_run_root
+from .control_plane import control_plane_home, ensure_session_id, normalize_run_root
 from .events import append_event
 from .lifecycle import EventKind, RunState
 from .model_overrides import _model_override_receipt
 from .report_contract import CLAIM_DIGEST_ENV
+from .run_mutation import RunMetaMutationError, mutate_run_meta
 
 STDIO_LIMIT_BYTES = 16 * 1024 * 1024
 # Well under the reconciler's 120s staleness threshold, so an ordinary talking
@@ -446,43 +447,44 @@ class AsyncSupervisor:
         # still works when the finisher has no ambient VC_FRAME pane env.
         if handle.meta_path is not None:
             try:
-                seed: dict[str, object] = {}
-                if handle.meta_path.exists():
-                    loaded = json.loads(handle.meta_path.read_text(encoding="utf-8"))
-                    if isinstance(loaded, dict):
-                        seed.update(loaded)
                 origin = _origin_fields_from_env(merged_env)
-                if (
-                    origin.get("origin_session")
-                    and not str(seed.get("origin_session") or "").strip()
-                ):
-                    seed["origin_session"] = origin["origin_session"]
-                    seed["operator_session"] = origin.get(
-                        "operator_session", origin["origin_session"]
-                    )
-                if not str(seed.get("origin_tab") or "").strip():
-                    seed["origin_tab"] = origin.get("origin_tab") or run_id
-                if (
-                    origin.get("origin_pane_id")
-                    and not str(seed.get("origin_pane_id") or "").strip()
-                ):
-                    seed["origin_pane_id"] = origin["origin_pane_id"]
-                seed.setdefault("run_id", run_id)
-                seed.setdefault("root", str(cwd))
-                seed.setdefault("agent", agent)
-                seed.setdefault("skill", skill)
-                if initial_agent_session_id:
-                    seed.setdefault("agent_session_id", initial_agent_session_id)
-                    seed.setdefault("runtime_session_id", session_id)
-                if claim_digest:
-                    seed["claim_digest"] = claim_digest
                 handle.meta_path.parent.mkdir(parents=True, exist_ok=True)
-                handle.meta_path.write_text(
-                    json.dumps(seed, indent=2, ensure_ascii=False, sort_keys=True)
-                    + "\n",
-                    encoding="utf-8",
+
+                def _seed(latest: dict[str, object]) -> dict[str, object]:
+                    if (
+                        origin.get("origin_session")
+                        and not str(latest.get("origin_session") or "").strip()
+                    ):
+                        latest["origin_session"] = origin["origin_session"]
+                        latest["operator_session"] = origin.get(
+                            "operator_session", origin["origin_session"]
+                        )
+                    if not str(latest.get("origin_tab") or "").strip():
+                        latest["origin_tab"] = origin.get("origin_tab") or run_id
+                    if (
+                        origin.get("origin_pane_id")
+                        and not str(latest.get("origin_pane_id") or "").strip()
+                    ):
+                        latest["origin_pane_id"] = origin["origin_pane_id"]
+                    latest.setdefault("run_id", run_id)
+                    latest.setdefault("root", str(cwd))
+                    latest.setdefault("agent", agent)
+                    latest.setdefault("skill", skill)
+                    if initial_agent_session_id:
+                        latest.setdefault("agent_session_id", initial_agent_session_id)
+                        latest.setdefault("runtime_session_id", session_id)
+                    if claim_digest:
+                        latest["claim_digest"] = claim_digest
+                    return latest
+
+                mutate_run_meta(
+                    control_plane_home(),
+                    meta_path=handle.meta_path,
+                    run_id=run_id,
+                    mutator=_seed,
+                    create=True,
                 )
-            except (OSError, json.JSONDecodeError, TypeError):
+            except (OSError, RunMetaMutationError, TypeError):
                 pass
         await self._transition(
             handle,
@@ -820,14 +822,6 @@ class AsyncSupervisor:
     def _write_meta_summary(self, handle: AsyncRunHandle) -> None:
         if handle.meta_path is None:
             return
-        payload: dict[str, object] = {}
-        if handle.meta_path.exists():
-            try:
-                loaded = json.loads(handle.meta_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                loaded = {}
-            if isinstance(loaded, dict):
-                payload.update(loaded)
         summary = {
             "run_id": handle.run_id,
             "agent": handle.agent,
@@ -857,20 +851,6 @@ class AsyncSupervisor:
         # pane, so ambient VC_FRAME_* is often empty at triage time. Prefer
         # values already in meta (launch path) over live env.
         origin = _origin_fields_from_env()
-        if not str(payload.get("origin_session") or "").strip() and origin.get(
-            "origin_session"
-        ):
-            summary["origin_session"] = origin["origin_session"]
-            summary["operator_session"] = origin.get(
-                "operator_session", origin["origin_session"]
-            )
-        if not str(payload.get("origin_tab") or "").strip():
-            summary["origin_tab"] = origin.get("origin_tab") or handle.run_id
-        if (
-            origin.get("origin_pane_id")
-            and not str(payload.get("origin_pane_id") or "").strip()
-        ):
-            summary["origin_pane_id"] = origin["origin_pane_id"]
         if handle.model_requested:
             summary["model_requested"] = handle.model_requested
             summary["model_override_supported"] = handle.model_override_supported
@@ -881,13 +861,33 @@ class AsyncSupervisor:
                 )
         if handle.tokens_cache_write is not None:
             summary["tokens_cache_write"] = handle.tokens_cache_write
-        else:
-            payload.pop("tokens_cache_write", None)
-        payload.update(summary)
         handle.meta_path.parent.mkdir(parents=True, exist_ok=True)
-        handle.meta_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-            encoding="utf-8",
+
+        def _merge_summary(payload: dict[str, object]) -> dict[str, object]:
+            if not str(payload.get("origin_session") or "").strip() and origin.get(
+                "origin_session"
+            ):
+                summary["origin_session"] = origin["origin_session"]
+                summary["operator_session"] = origin.get(
+                    "operator_session", origin["origin_session"]
+                )
+            if not str(payload.get("origin_tab") or "").strip():
+                summary["origin_tab"] = origin.get("origin_tab") or handle.run_id
+            if (
+                origin.get("origin_pane_id")
+                and not str(payload.get("origin_pane_id") or "").strip()
+            ):
+                summary["origin_pane_id"] = origin["origin_pane_id"]
+            if handle.tokens_cache_write is None:
+                payload.pop("tokens_cache_write", None)
+            payload.update(summary)
+            return payload
+
+        mutate_run_meta(
+            control_plane_home(),
+            meta_path=handle.meta_path,
+            run_id=handle.run_id,
+            mutator=_merge_summary,
         )
 
     async def _terminate(self, handle: AsyncRunHandle) -> None:

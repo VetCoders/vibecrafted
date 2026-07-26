@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from collections.abc import Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import pytest
+import vibecrafted_core.run_mutation as run_mutation_module
 from vibecrafted_core.report_contract import render_minimal_frontmatter
 from vibecrafted_core.run_triage import (
     BUCKET_FAILED,
@@ -38,6 +41,11 @@ from vibecrafted_core.run_triage import (
     read_kernel_axes,
     read_run_signals,
     triage_finished_run,
+)
+from vibecrafted_core.settlement import (
+    Settlement,
+    SettlementVerdict,
+    persist_settlement_to_meta,
 )
 
 MODERN_HELP = "Usage: vc-frame triage-run [OPTIONS]\n  --bucket <BUCKET>\n"
@@ -1051,6 +1059,103 @@ def test_success_links_exact_v4_transfer_proof_atomically(tmp_path: Path) -> Non
     assert payload["session_id"] == "concurrent-terminal-writer"
     assert payload["triage_transfer_receipt"] == str(proof.receipt_path)
     assert payload["triage_transfer"] == proof.projection()
+    assert payload["triage_pending"] is False
+
+
+def test_settlement_waits_at_triage_pre_replace_and_preserves_full_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cp = tmp_path / "control_plane"
+    meta = _control_plane_meta(cp)
+    current = json.loads(meta.read_text(encoding="utf-8"))
+    current["terminal_writer_marker"] = "keep-me"
+    _write_json(meta, current)
+
+    replace_window = threading.Event()
+    release_replace = threading.Event()
+    settlement_lock_attempted = threading.Event()
+    settlement_lock_acquired = threading.Event()
+    real_replace = run_mutation_module.os.replace
+    real_locks = run_mutation_module.run_mutation_locks
+
+    def blocked_proof_replace(source: str, destination: str | Path) -> None:
+        try:
+            candidate = json.loads(Path(source).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            candidate = {}
+        if "triage_transfer" in candidate and not replace_window.is_set():
+            replace_window.set()
+            assert release_replace.wait(5), "test did not release triage replace"
+        real_replace(source, destination)
+
+    @contextmanager
+    def observed_locks(*args: Any, **kwargs: Any):
+        settlement_thread = threading.current_thread().name == "settlement-writer"
+        if settlement_thread:
+            settlement_lock_attempted.set()
+        with real_locks(*args, **kwargs):
+            if settlement_thread:
+                settlement_lock_acquired.set()
+            yield
+
+    monkeypatch.setattr(run_mutation_module.os, "replace", blocked_proof_replace)
+    monkeypatch.setattr(run_mutation_module, "run_mutation_locks", observed_locks)
+
+    class ProofRunner(Runner):
+        def __call__(self, argv: Sequence[str]) -> Any:
+            if list(argv)[1:2] == ["triage-run"] and "--help" not in argv:
+                _materialize_v4_transfer(
+                    cp, json.loads(meta.read_text(encoding="utf-8"))
+                )
+            return super().__call__(argv)
+
+    outcomes: dict[str, Any] = {}
+
+    def triage_writer() -> None:
+        outcomes["triage"] = triage_finished_run(
+            meta,
+            live_env(tmp_path, VIBECRAFTED_CONTROL_PLANE=str(cp)),
+            ProofRunner(),
+        )
+
+    def settlement_writer() -> None:
+        outcomes["settlement"] = persist_settlement_to_meta(
+            meta,
+            Settlement(
+                verdict=SettlementVerdict.FINALIZED,
+                reason="delivery_sealed",
+                settled_at="2026-07-26T09:00:00+00:00",
+            ),
+            control_plane_root=cp,
+            run_id="run-proof",
+        )
+
+    triage_thread = threading.Thread(target=triage_writer, name="triage-writer")
+    triage_thread.start()
+    assert replace_window.wait(5), "triage never reached its proof replace window"
+
+    settlement_thread = threading.Thread(
+        target=settlement_writer,
+        name="settlement-writer",
+    )
+    settlement_thread.start()
+    assert settlement_lock_attempted.wait(5)
+    assert not settlement_lock_acquired.is_set()
+
+    release_replace.set()
+    triage_thread.join(timeout=5)
+    settlement_thread.join(timeout=5)
+    assert not triage_thread.is_alive()
+    assert not settlement_thread.is_alive()
+    assert outcomes["triage"].outcome == OUTCOME_FINALIZED
+    assert outcomes["settlement"] is True
+
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["terminal_writer_marker"] == "keep-me"
+    assert payload["settlement_verdict"] == VERDICT_FINALIZED
+    assert payload["settlement_tui"] == "f"
+    assert payload["triage_transfer"]["version"] == 4
+    assert payload["triage_transfer_receipt"]
     assert payload["triage_pending"] is False
 
 

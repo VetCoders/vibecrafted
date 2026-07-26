@@ -2823,7 +2823,12 @@ def _project_run_payload(
         }
         meta = run_dir / "meta.json" if run_dir.is_dir() else None
         if meta is not None and meta.is_file():
-            persist_settlement_to_meta(meta, settlement)
+            persist_settlement_to_meta(
+                meta,
+                settlement,
+                control_plane_root=control_plane_home(),
+                run_id=run_id,
+            )
     return payload
 
 
@@ -3318,6 +3323,8 @@ def _finalize_await_result(
 
     await_fields = persist_await_verdict(
         meta_path,
+        control_plane_root=control_plane_home(),
+        run_id=run_id,
         rc=exit_code,
         outcome=outcome,
         worker_alive=worker_alive,
@@ -3349,7 +3356,12 @@ def _finalize_await_result(
                         "await_outcome": outcome,
                     }
                     if meta_path is not None:
-                        persist_settlement_to_meta(meta_path, settlement)
+                        persist_settlement_to_meta(
+                            meta_path,
+                            settlement,
+                            control_plane_root=control_plane_home(),
+                            run_id=run_id,
+                        )
                 _write_run_snapshot(snapshot_path, previous_snapshot, snapshot)
                 last_run = snapshot
         except OSError:

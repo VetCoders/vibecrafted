@@ -41,11 +41,16 @@ import json
 import os
 import stat
 import subprocess
-import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, TypeGuard
+
+from .run_mutation import (
+    RunMetaMutationError,
+    mutate_run_meta,
+    read_run_meta,
+)
 
 __all__ = [
     "BUCKET_FAILED",
@@ -1396,17 +1401,24 @@ def triage_finished_run(
 
     meta = Path(meta_path)
     try:
-        payload = json.loads(meta.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict):
-            raise TypeError("meta.json is not an object")
+        payload = read_run_meta(meta)
     except Exception as exc:  # noqa: BLE001
         # No meta means no receipt to write to either; report and stop.
         return TriageOutcome(OUTCOME_SKIPPED, reason=f"no_meta: {exc}")
 
+    run_id = str(payload.get("run_id") or "").strip()
+    control_plane = _control_plane_root_for(meta, env)
+    mutation_root = control_plane or meta.parent.resolve(strict=False)
+
     plan = plan_triage(payload, env)
     if not plan.should_run:
         outcome = TriageOutcome(OUTCOME_SKIPPED, reason=plan.skip_reason)
-        _record_receipt(meta, outcome)
+        _record_receipt(
+            meta,
+            outcome,
+            control_plane_root=mutation_root,
+            run_id=run_id,
+        )
         return outcome
 
     # Resolve the binary before writing anything: a stale or absent vc-frame
@@ -1415,12 +1427,22 @@ def triage_finished_run(
     binary = _resolve_binary(env)
     if not binary:
         outcome = TriageOutcome(OUTCOME_SKIPPED, reason="no_binary")
-        _record_receipt(meta, outcome)
+        _record_receipt(
+            meta,
+            outcome,
+            control_plane_root=mutation_root,
+            run_id=run_id,
+        )
         return outcome
     probe = _probe_triage_run(binary, runner)
     if not probe.supported:
         outcome = TriageOutcome(OUTCOME_SKIPPED, reason="unsupported_binary")
-        _record_receipt(meta, outcome)
+        _record_receipt(
+            meta,
+            outcome,
+            control_plane_root=mutation_root,
+            run_id=run_id,
+        )
         return outcome
 
     # Where the run will actually land. With `--bucket` that is the classifier's
@@ -1448,11 +1470,15 @@ def triage_finished_run(
         verdict_reason=plan.verdict_reason,
         verdict_degraded=degraded,
     )
-    _record_receipt(meta, intent)
+    _record_receipt(
+        meta,
+        intent,
+        control_plane_root=mutation_root,
+        run_id=run_id,
+    )
 
     outcome = _run_triage(plan, binary, probe, runner, destination, bucket, degraded)
     proof: DurableTransferProof | None = None
-    control_plane = _control_plane_root_for(meta, env)
     if outcome.outcome != OUTCOME_ERROR and control_plane is not None:
         try:
             proof = load_vc_frame_transfer_proof(control_plane, payload)
@@ -1470,14 +1496,29 @@ def triage_finished_run(
                 verdict_degraded=degraded,
             )
 
-    written = _record_receipt(meta, outcome, proof=proof)
+    written = _record_receipt(
+        meta,
+        outcome,
+        control_plane_root=mutation_root,
+        run_id=run_id,
+        proof=proof,
+    )
     if proof is not None and control_plane is not None:
         canonical_meta = _canonical_runtime_meta(
             control_plane.resolve(strict=False),
             proof.run_id,
         )
         if canonical_meta != meta.resolve(strict=False):
-            written = _record_receipt(canonical_meta, outcome, proof=proof) and written
+            written = (
+                _record_receipt(
+                    canonical_meta,
+                    outcome,
+                    control_plane_root=mutation_root,
+                    run_id=proof.run_id,
+                    proof=proof,
+                )
+                and written
+            )
     if proof is not None and not written:
         outcome = TriageOutcome(
             OUTCOME_ERROR,
@@ -1487,7 +1528,12 @@ def triage_finished_run(
             verdict_reason=plan.verdict_reason,
             verdict_degraded=degraded,
         )
-        _record_receipt(meta, outcome)
+        _record_receipt(
+            meta,
+            outcome,
+            control_plane_root=mutation_root,
+            run_id=run_id,
+        )
     return outcome
 
 
@@ -1536,89 +1582,46 @@ def _record_receipt(
     meta: Path,
     outcome: TriageOutcome,
     *,
+    control_plane_root: Path,
+    run_id: str,
     proof: DurableTransferProof | None = None,
 ) -> bool:
-    """Atomically merge the triage receipt into the latest meta.json.
-
-    Re-read first: this runs after the terminal write, and the control-plane sync
-    or a concurrent writer may have touched the file since. Losing the receipt is
-    acceptable; clobbering a run's terminal state to save it is not.  A bounded
-    compare/retry closes the common race between that read and ``os.replace``.
-    """
+    """Merge the receipt through the shared per-run mutation transaction."""
     updates = outcome.receipt()
     if proof is not None:
         updates["triage_transfer_receipt"] = str(proof.receipt_path)
         updates["triage_transfer"] = proof.projection()
 
     transfer_keys = {"triage_transfer_receipt", "triage_transfer"}
-    for _attempt in range(4):
-        try:
-            if meta.is_symlink():
-                return False
-            before = meta.read_bytes()
-            current = json.loads(before)
-            if not isinstance(current, dict):
-                return False
-            if proof is not None and (
-                current.get("run_id") != proof.run_id
-                or type(current.get("exit_code")) is not int
-                or current.get("exit_code") != proof.exit_code
-                or current.get("origin_session") != proof.origin_session
-                or current.get("origin_tab") != proof.origin_tab
-            ):
-                return False
-        except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
-            return False
 
-        merged = dict(current)
-        merged.update(updates)
+    def _merge(current: dict[str, Any]) -> dict[str, Any] | None:
+        if proof is not None and (
+            current.get("run_id") != proof.run_id
+            or type(current.get("exit_code")) is not int
+            or current.get("exit_code") != proof.exit_code
+            or current.get("origin_session") != proof.origin_session
+            or current.get("origin_tab") != proof.origin_tab
+        ):
+            return None
+        current.update(updates)
         if proof is None and (
             outcome.pending
             or outcome.outcome == OUTCOME_ERROR
             or outcome.outcome in _BUCKET_FOR_VERDICT
         ):
             for key in transfer_keys:
-                merged.pop(key, None)
-        serialized = (json.dumps(merged, indent=2, ensure_ascii=False) + "\n").encode()
+                current.pop(key, None)
+        return current
 
-        temporary_path: str | None = None
-        try:
-            descriptor, temporary_path = tempfile.mkstemp(
-                prefix=f".{meta.name}.",
-                suffix=".tmp",
-                dir=meta.parent,
-            )
-            os.fchmod(descriptor, meta.stat(follow_symlinks=False).st_mode & 0o777)
-            with os.fdopen(descriptor, "wb") as handle:
-                handle.write(serialized)
-                handle.flush()
-                os.fsync(handle.fileno())
-
-            # Preserve a writer that landed while this receipt was serialized.
-            if meta.read_bytes() != before:
-                os.unlink(temporary_path)
-                temporary_path = None
-                continue
-            os.replace(temporary_path, meta)
-            temporary_path = None
-            try:
-                directory_fd = os.open(meta.parent, os.O_RDONLY)
-                try:
-                    os.fsync(directory_fd)
-                finally:
-                    os.close(directory_fd)
-            except OSError:
-                pass
-            return True
-        except OSError:
-            return False
-        finally:
-            if temporary_path is not None:
-                try:
-                    os.unlink(temporary_path)
-                except OSError:
-                    pass
-    return False
+    try:
+        return mutate_run_meta(
+            control_plane_root,
+            meta_path=meta,
+            run_id=run_id,
+            mutator=_merge,
+        )
+    except (OSError, RunMetaMutationError, TypeError, ValueError):
+        return False
 
 
 def main(argv: Sequence[str] | None = None) -> int:

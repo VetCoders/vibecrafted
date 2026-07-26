@@ -43,7 +43,7 @@ from .model_overrides import _model_override_receipt, _with_model_override
 from .package_resources import deck_path as package_deck_path
 from .report_contract import CLAIM_DIGEST_ENV
 from .research_config import ResearchAgentSelection, resolve_research_runtime_config
-from .run_mutation import run_mutation_locks
+from .run_mutation import mutate_run_meta, run_mutation_locks
 from .spawn import _stdin_command
 from .workflow_runtime import WORKER_SIGNAL_DISCIPLINE, native_resume_argv
 from .workflows import registry as workflow_registry
@@ -961,22 +961,28 @@ def _write_terminal_meta(
         return {}
     path = Path(meta_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    existing = _read_json_object(path)
-    payload = {
-        **existing,
-        **_terminal_meta_payload(
-            run_id=run_id,
-            run=run,
-            report_path=report_path,
-            transcript_path=transcript_path,
-            meta_path=meta_path,
-        ),
-    }
-    path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
+    terminal = _terminal_meta_payload(
+        run_id=run_id,
+        run=run,
+        report_path=report_path,
+        transcript_path=transcript_path,
+        meta_path=meta_path,
     )
-    return payload
+    written: dict[str, Any] = {}
+
+    def _merge(payload: dict[str, Any]) -> dict[str, Any]:
+        payload.update(terminal)
+        written.update(payload)
+        return payload
+
+    mutate_run_meta(
+        control_plane_home(),
+        meta_path=path,
+        run_id=run_id,
+        mutator=_merge,
+        create=True,
+    )
+    return written
 
 
 def await_launch_truth(

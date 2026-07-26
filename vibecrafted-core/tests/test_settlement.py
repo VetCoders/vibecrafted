@@ -634,7 +634,13 @@ def test_persist_await_verdict_standalone(tmp_path: Path) -> None:
     meta = tmp_path / "meta.json"
     meta.write_text(json.dumps({"run_id": "x"}), encoding="utf-8")
     fields = persist_await_verdict(
-        meta, rc=1, outcome="timed_out", worker_alive=False, reason="idle_stall"
+        meta,
+        control_plane_root=tmp_path,
+        run_id="x",
+        rc=1,
+        outcome="timed_out",
+        worker_alive=False,
+        reason="idle_stall",
     )
     body = json.loads(meta.read_text(encoding="utf-8"))
     assert body["await_rc"] == 1

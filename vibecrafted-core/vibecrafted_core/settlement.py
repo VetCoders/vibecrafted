@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from .report_contract import validate_report_file
+from .run_mutation import RunMetaMutationError, mutate_run_meta
 from .run_triage import (
     VERDICT_FAILED,
     VERDICT_FINALIZED,
@@ -1088,17 +1089,16 @@ def orphan_settlement_payloads(
     return payloads
 
 
-def persist_settlement_to_meta(meta_path: Path, settlement: Settlement) -> bool:
-    """Merge settlement fields into a run meta.json. Best-effort, never raises."""
-    try:
-        raw = meta_path.read_text(encoding="utf-8")
-        payload = json.loads(raw)
-        if not isinstance(payload, dict):
-            return False
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        return False
-    payload.update(settlement.to_payload())
-    payload["settlement"] = {
+def persist_settlement_to_meta(
+    meta_path: Path,
+    settlement: Settlement,
+    *,
+    control_plane_root: Path,
+    run_id: str,
+) -> bool:
+    """Merge settlement fields through the shared per-run transaction."""
+
+    nested = {
         "verdict": settlement.verdict.value,
         "reason": settlement.reason,
         "settled_at": settlement.settled_at,
@@ -1109,19 +1109,28 @@ def persist_settlement_to_meta(meta_path: Path, settlement: Settlement) -> bool:
         "await_rc": settlement.await_rc,
         "await_outcome": settlement.await_outcome,
     }
+
+    def _merge(payload: dict[str, Any]) -> dict[str, Any]:
+        payload.update(settlement.to_payload())
+        payload["settlement"] = nested
+        return payload
+
     try:
-        meta_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
+        return mutate_run_meta(
+            control_plane_root,
+            meta_path=meta_path,
+            run_id=run_id,
+            mutator=_merge,
         )
-        return True
-    except OSError:
+    except (OSError, RunMetaMutationError, TypeError, ValueError):
         return False
 
 
 def persist_await_verdict(
     meta_path: Path | None,
     *,
+    control_plane_root: Path,
+    run_id: str,
     rc: int | None,
     outcome: str,
     worker_alive: bool,
@@ -1141,15 +1150,19 @@ def persist_await_verdict(
         "await_worker_alive": bool(worker_alive),
         "await_settled_at": stamp,
     }
-    if meta_path is not None and meta_path.is_file():
+    if meta_path is not None:
+
+        def _merge(payload: dict[str, Any]) -> dict[str, Any]:
+            payload.update(fields)
+            return payload
+
         try:
-            payload = json.loads(meta_path.read_text(encoding="utf-8"))
-            if isinstance(payload, dict):
-                payload.update(fields)
-                meta_path.write_text(
-                    json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8",
-                )
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            mutate_run_meta(
+                control_plane_root,
+                meta_path=meta_path,
+                run_id=run_id,
+                mutator=_merge,
+            )
+        except (OSError, RunMetaMutationError, TypeError, ValueError):
             pass
     return fields

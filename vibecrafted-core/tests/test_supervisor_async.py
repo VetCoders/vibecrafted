@@ -21,6 +21,10 @@ from vibecrafted_core.report_contract import CLAIM_DIGEST_ENV
 from vibecrafted_core.supervisor_async import AsyncSupervisor
 
 
+def _runtime_meta(tmp_path: Path, run_id: str) -> Path:
+    return tmp_path / "home" / "control_plane" / "runtime_runs" / run_id / "meta.json"
+
+
 def test_lifecycle_transition_table_rejects_backwards_transition() -> None:
     assert transition_allowed(RunState.CREATED, RunState.PROCESS_SPAWNED)
     assert not transition_allowed(RunState.REPORT_VALIDATED, RunState.ACTIVE)
@@ -228,7 +232,7 @@ def test_async_supervisor_preseeds_and_stamps_launcher_owned_identity(
     digest = "9e0d59e1dc48bc42"
     monkeypatch.setenv(CLAIM_DIGEST_ENV, digest)
     report = tmp_path / "identity.md"
-    meta = tmp_path / "meta.json"
+    meta = _runtime_meta(tmp_path, "identity-run")
     worker = tmp_path / "codex"
     worker.write_text(
         "#!/usr/bin/env python3\n"
@@ -285,7 +289,7 @@ def test_async_supervisor_preserves_explicit_resume_identity_without_new_event(
     monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
     report = tmp_path / "resume-report.md"
     transcript = tmp_path / "resume.log"
-    meta = tmp_path / "resume.meta.json"
+    meta = _runtime_meta(tmp_path, "resume-child")
     worker = tmp_path / "codex"
     worker.write_text(
         "#!/usr/bin/env python3\n"
@@ -532,7 +536,7 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
     monkeypatch.delenv("VIBECRAFTED_AGENT", raising=False)
     report = tmp_path / "dispatch-report.md"
     transcript = tmp_path / "dispatch.log"
-    meta = tmp_path / "dispatch.meta.json"
+    meta = _runtime_meta(tmp_path, "asup-claude-visible")
     claude = tmp_path / "claude"
     claude.write_text(
         "#!/usr/bin/env python3\n"
@@ -602,7 +606,7 @@ def test_async_supervisor_uses_env_model_for_codex_thread_banner(
     monkeypatch.setenv("CODEX_MODEL", "gpt-5.3-codex")
     report = tmp_path / "dispatch-report.md"
     transcript = tmp_path / "dispatch.log"
-    meta = tmp_path / "dispatch.meta.json"
+    meta = _runtime_meta(tmp_path, "asup-codex-visible")
     codex = tmp_path / "codex"
     codex.write_text(
         "#!/usr/bin/env python3\n"
@@ -646,7 +650,7 @@ def test_async_supervisor_records_requested_model_next_to_reported_model(
     monkeypatch.setenv("VIBECRAFTED_MODEL_REQUESTED", "gemini-pro")
     report = tmp_path / "dispatch-report.md"
     transcript = tmp_path / "dispatch.log"
-    meta = tmp_path / "dispatch.meta.json"
+    meta = _runtime_meta(tmp_path, "asup-gemini-model-requested")
     worker = tmp_path / "gemini"
     worker.write_text(
         "#!/usr/bin/env python3\n"
@@ -694,7 +698,7 @@ def test_async_supervisor_salvages_grok_report_from_streaming_json(
     monkeypatch.delenv("VIBECRAFTED_AGENT", raising=False)
     report = tmp_path / "dispatch-report.md"
     transcript = tmp_path / "dispatch.log"
-    meta = tmp_path / "dispatch.meta.json"
+    meta = _runtime_meta(tmp_path, "asup-grok-visible")
     grok = tmp_path / "grok"
     grok.write_text(
         "#!/usr/bin/env python3\n"
@@ -755,7 +759,7 @@ def test_async_supervisor_survives_large_single_json_line_from_mcp(
     monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
     report = tmp_path / "dispatch-report.md"
     transcript = tmp_path / "dispatch.log"
-    meta = tmp_path / "dispatch.meta.json"
+    meta = _runtime_meta(tmp_path, "asup-large-json-line")
     worker = tmp_path / "codex"
     worker.write_text(
         "#!/usr/bin/env python3\n"
