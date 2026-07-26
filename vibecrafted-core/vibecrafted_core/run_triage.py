@@ -36,16 +36,22 @@ classifier cannot read.
 from __future__ import annotations
 
 import argparse
+import errno
+import fcntl
 import hashlib
 import json
 import os
 import stat
 import subprocess
-from collections.abc import Callable, Mapping, Sequence
+import time
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from functools import wraps
 from pathlib import Path
-from typing import Any, TypeGuard
+from typing import Any, Protocol, TypeGuard
 
+from . import run_mutation as run_mutation_module
 from .run_mutation import (
     RunMetaMutationError,
     mutate_run_meta,
@@ -73,6 +79,8 @@ __all__ = [
     "TriageGcResult",
     "TriageOutcome",
     "TriagePlan",
+    "TriageSweepItem",
+    "TriageSweepReport",
     "bucket_for_exit_code",
     "classify_run",
     "load_durable_transfer_proof",
@@ -82,8 +90,10 @@ __all__ = [
     "plan_triage",
     "read_kernel_axes",
     "read_run_signals",
+    "reconcile_untriaged_runs",
     "record_triage_gc_result",
     "triage_finished_run",
+    "triage_outcome_is_complete",
 ]
 
 # Bucket names are vc-frame's wire contract (BucketKind::session_name), not ours.
@@ -109,6 +119,21 @@ OUTCOME_SKIPPED = "skipped"
 OUTCOME_ERROR = "error"
 
 _TRUTHY_OFF = {"0", "false", "no", "off"}
+_PERMANENT_SKIP_REASONS = {
+    "disabled",
+    "foreign_tab",
+    "no_run_id",
+    "no_session",
+    "shared_tab",
+}
+# A newly persisted intent belongs to the caller that is about to spawn
+# vc-frame.  A reconciler which observes that intent after the caller dies
+# gives the child a short window to acquire vc-frame's own transfer.lock before
+# it can consider a retry.  The durable outbox will revisit it.
+_TRANSFER_CHILD_START_GRACE_NS = 5_000_000_000
+_TRANSFER_LOCK_HANDOFF = "inherited_fd_v1"
+_TRIAGE_SWEEP_CURSOR_RUN_ID = "__triage_reconciliation_cursor__"
+_TRIAGE_SWEEP_CURSOR_FILE = ".triage-reconciliation-cursor.json"
 
 # --------------------------------------------------------------------------
 # Signal thresholds. Measured, not guessed (sample: every run transcript under
@@ -177,6 +202,14 @@ _SETTLEMENT_TUI = {
     "invalid": "x",
     VERDICT_NEEDS_ATTENTION: "n",
 }
+_SETTLEMENT_MATERIAL_FIELDS = frozenset(
+    {
+        "settlement_revision",
+        "settlement_verdict",
+        "settlement_tui",
+        "settlement",
+    }
+)
 _TERMINAL_AWAIT_OUTCOMES = {"completed", "timed_out"}
 _TRIAGE_GC_REASONS = {
     "closed",
@@ -242,10 +275,12 @@ class DurableTransferProof:
     origin_tab_state: str
     updated_at: int
     settlement_revision: int = 0
+    settlement_verdict: str = ""
+    settlement_tui: str = ""
 
     def projection(self) -> dict[str, Any]:
         """JSON projection linked from runtime meta after a proven transfer."""
-        return {
+        projection = {
             "schema": TRANSFER_PROOF_SCHEMA,
             "receipt": str(self.receipt_path),
             "receipt_sha256": self.receipt_sha256,
@@ -279,6 +314,13 @@ class DurableTransferProof:
             },
             "updated_at": self.updated_at,
         }
+        if self.settlement_revision > 0:
+            projection["settlement"] = {
+                "revision": self.settlement_revision,
+                "verdict": self.settlement_verdict,
+                "tui": self.settlement_tui,
+            }
+        return projection
 
 
 @dataclass(frozen=True)
@@ -440,6 +482,49 @@ def _runtime_origin(payload: Mapping[str, Any]) -> tuple[str, str]:
     return session, tab
 
 
+def _normalized_command(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    """Normalize the rerun command exactly as :func:`plan_triage` renders it."""
+
+    raw = payload.get("command") or payload.get("launcher")
+    if isinstance(raw, str):
+        return (raw,) if raw.strip() else ()
+    if isinstance(raw, Sequence):
+        return tuple(str(part) for part in raw if str(part).strip())
+    return ()
+
+
+def _normalized_meta_string(payload: Mapping[str, Any], *names: str) -> str:
+    for name in names:
+        value = payload.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _normalized_transfer_request(
+    payload: Mapping[str, Any],
+) -> tuple[tuple[str, ...], str | None, str | None, str | None]:
+    """Return the proof-bound request fields derivable from durable runtime meta."""
+
+    run_id = _safe_run_id(payload.get("run_id"))
+    runtime_transcript = validate_runtime_transcript(
+        payload.get("transcript"),
+        run_id=run_id,
+    )
+    return (
+        _normalized_command(payload),
+        _normalized_meta_string(payload, "root") or None,
+        _normalized_meta_string(
+            payload,
+            "origin_pane_id",
+            "vc_frame_pane_id",
+            "pane_id",
+        )
+        or None,
+        str(runtime_transcript) if runtime_transcript is not None else None,
+    )
+
+
 def load_vc_frame_transfer_proof(
     control_plane: Path,
     runtime_payload: Mapping[str, Any],
@@ -501,9 +586,53 @@ def load_vc_frame_transfer_proof(
         or (runtime_transcript is not None and not isinstance(runtime_transcript, str))
     ):
         raise TransferProofError("transfer receipt request fields are not typed")
+    (
+        expected_command,
+        expected_cwd,
+        expected_pane_id,
+        expected_runtime_transcript,
+    ) = _normalized_transfer_request(runtime_payload)
+    if (
+        command != list(expected_command)
+        or cwd != expected_cwd
+        or pane_id != expected_pane_id
+        or runtime_transcript != expected_runtime_transcript
+    ):
+        raise TransferProofError(
+            "transfer receipt request does not match normalized runtime meta"
+        )
+    settlement = _settlement_identity(runtime_payload)
+    has_settlement = _has_settlement_material(runtime_payload)
+    receipt_settlement_revision = receipt.get("settlement_revision")
+    if has_settlement:
+        if settlement is None:
+            raise TransferProofError("runtime settlement is not exact and typed")
+        if (
+            type(receipt_settlement_revision) is not int
+            or receipt_settlement_revision != settlement[0]
+        ):
+            raise TransferProofError(
+                "transfer receipt settlement revision does not match runtime meta"
+            )
+    elif receipt_settlement_revision is not None and (
+        type(receipt_settlement_revision) is not int or receipt_settlement_revision != 0
+    ):
+        raise TransferProofError(
+            "transfer receipt carries an unexpected settlement revision"
+        )
+    if receipt.get("superseded_viewers") != []:
+        raise TransferProofError("completed transfer still has superseded viewers")
     bucket = receipt.get("bucket")
     if not isinstance(bucket, str) or bucket not in _BUCKET_SESSION:
         raise TransferProofError(f"transfer receipt has unknown bucket: {bucket!r}")
+    if settlement is not None:
+        canonical_verdict = (
+            VERDICT_FAILED if settlement[1] == "invalid" else settlement[1]
+        )
+        if _BUCKET_SESSION[bucket] != _BUCKET_FOR_VERDICT[canonical_verdict]:
+            raise TransferProofError(
+                "transfer receipt bucket disagrees with canonical settlement"
+            )
     if receipt.get("capture_committed") is not True:
         raise TransferProofError("capture is not committed")
     if receipt.get("metadata_committed") is not True:
@@ -664,7 +793,154 @@ def load_vc_frame_transfer_proof(
         viewer_token=token.lower(),
         origin_tab_state="closed",
         updated_at=updated_at,
+        settlement_revision=settlement[0] if settlement is not None else 0,
+        settlement_verdict=settlement[1] if settlement is not None else "",
+        settlement_tui=settlement[2] if settlement is not None else "",
     )
+
+
+class _TransferLockBusy(TransferProofError):
+    """vc-frame or another runtime caller still owns this run transfer."""
+
+
+def _vc_frame_transfer_lock_path(
+    control_plane: Path,
+    runtime_payload: Mapping[str, Any],
+    *,
+    create_parents: bool,
+) -> tuple[Path, Path]:
+    root = _canonical_root(control_plane)
+    run_id = _safe_run_id(runtime_payload.get("run_id"))
+    finished_root = root / "finished_runs"
+    run_dir = finished_root / run_id
+    for directory, label in (
+        (finished_root, "finished run root"),
+        (run_dir, "finished run directory"),
+    ):
+        try:
+            metadata = directory.lstat()
+        except FileNotFoundError:
+            if not create_parents:
+                continue
+            try:
+                directory.mkdir(mode=0o700)
+            except FileExistsError:
+                pass
+            metadata = directory.lstat()
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISDIR(metadata.st_mode)
+            or directory.resolve(strict=True) != directory
+        ):
+            raise TransferProofError(f"{label} is not canonical: {directory}")
+    return root, run_dir / "transfer.lock"
+
+
+def _validate_open_transfer_lock(path: Path, root: Path, descriptor: int) -> None:
+    opened = os.fstat(descriptor)
+    resolved = path.resolve(strict=True)
+    resolved.relative_to(root)
+    current = path.stat(follow_symlinks=False)
+    if (
+        resolved != path
+        or not stat.S_ISREG(opened.st_mode)
+        or opened.st_dev != current.st_dev
+        or opened.st_ino != current.st_ino
+    ):
+        raise TransferProofError(f"transfer lock is not its canonical file: {path}")
+
+
+def _vc_frame_transfer_lock_is_held(
+    control_plane: Path,
+    runtime_payload: Mapping[str, Any],
+) -> bool:
+    """Probe vc-frame's exact per-run lock without creating or following it."""
+
+    root, path = _vc_frame_transfer_lock_path(
+        control_plane,
+        runtime_payload,
+        create_parents=False,
+    )
+    descriptor: int | None = None
+    locked = False
+    try:
+        if path.is_symlink():
+            raise TransferProofError(f"transfer lock is a symlink: {path}")
+        flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        _validate_open_transfer_lock(path, root, descriptor)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            locked = True
+        except OSError as error:
+            if error.errno in {errno.EACCES, errno.EAGAIN}:
+                return True
+            raise TransferProofError(f"cannot probe transfer lock: {path}") from error
+
+        # Revalidate the path after taking the advisory lock.  If another inode
+        # replaced it during the probe, treating it as unsafe prevents a retry
+        # from coordinating against a different lock file than vc-frame.
+        opened = os.fstat(descriptor)
+        current = path.stat(follow_symlinks=False)
+        if opened.st_dev != current.st_dev or opened.st_ino != current.st_ino:
+            raise TransferProofError(f"transfer lock changed during probe: {path}")
+        return False
+    except FileNotFoundError:
+        return False
+    except TransferProofError:
+        raise
+    except (OSError, ValueError) as error:
+        raise TransferProofError(f"cannot inspect transfer lock: {path}") from error
+    finally:
+        if descriptor is not None:
+            try:
+                if locked:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
+
+
+@contextmanager
+def _hold_vc_frame_transfer_lock(
+    control_plane: Path,
+    runtime_payload: Mapping[str, Any],
+) -> Iterator[int]:
+    """Own vc-frame's flock before spawn so the child can inherit it."""
+
+    root, path = _vc_frame_transfer_lock_path(
+        control_plane,
+        runtime_payload,
+        create_parents=True,
+    )
+    descriptor: int | None = None
+    try:
+        if path.is_symlink():
+            raise TransferProofError(f"transfer lock is a symlink: {path}")
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags, 0o600)
+        _validate_open_transfer_lock(path, root, descriptor)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            if error.errno in {errno.EACCES, errno.EAGAIN}:
+                raise _TransferLockBusy(
+                    f"another triage process owns transfer lock: {path}"
+                ) from error
+            raise TransferProofError(f"cannot acquire transfer lock: {path}") from error
+        _validate_open_transfer_lock(path, root, descriptor)
+        yield descriptor
+    except (_TransferLockBusy, TransferProofError):
+        raise
+    except (OSError, ValueError) as error:
+        raise TransferProofError(f"cannot own transfer lock: {path}") from error
+    finally:
+        if descriptor is not None:
+            # Never issue LOCK_UN here. pass_fds gives vc-frame a descriptor
+            # for the same open file description; explicitly unlocking the
+            # parent's fd would therefore unlock the living child too. Closing
+            # only this descriptor releases the lock when no child inherited
+            # it, and preserves it until the last inheriting child closes.
+            os.close(descriptor)
 
 
 def load_durable_transfer_proof(
@@ -715,13 +991,22 @@ def load_durable_transfer_proof(
     if normalized_settlement != triage_verdict:
         raise TransferProofError("settlement and triage verdicts disagree")
 
+    settlement = (revision, settlement_verdict, settlement_tui)
+    if _triage_settlement_identity(payload) != settlement:
+        raise TransferProofError("runtime triage settlement is absent or stale")
+    if (
+        proof.settlement_revision,
+        proof.settlement_verdict,
+        proof.settlement_tui,
+    ) != settlement:
+        raise TransferProofError("transfer proof settlement is absent or stale")
     projection = proof.projection()
     if (
         payload.get("triage_transfer_receipt") != str(proof.receipt_path)
         or payload.get("triage_transfer") != projection
     ):
         raise TransferProofError("runtime transfer projection is absent or stale")
-    return replace(proof, settlement_revision=revision)
+    return proof
 
 
 @dataclass(frozen=True)
@@ -1140,6 +1425,9 @@ class TriagePlan:
     bucket: str = ""
     verdict: str = ""
     verdict_reason: str = ""
+    settlement_revision: int = 0
+    settlement_verdict: str = ""
+    settlement_tui: str = ""
     origin_session: str = ""
     origin_tab: str = ""
     pane_id: str = ""
@@ -1166,6 +1454,8 @@ class TriagePlan:
             argv.append(f"--exit-code={self.exit_code}")
         else:
             argv += ["--exit-code", str(self.exit_code)]
+        if self.settlement_revision > 0:
+            argv += ["--settlement-revision", str(self.settlement_revision)]
         if with_bucket and self.verdict:
             argv += ["--bucket", _BUCKET_FLAG_FOR_VERDICT[self.verdict]]
         if self.origin_session:
@@ -1216,6 +1506,240 @@ class TriageOutcome:
         payload["triage_verdict_reason"] = self.verdict_reason
         payload["triage_verdict_degraded"] = self.verdict_degraded
         return payload
+
+
+@dataclass(frozen=True)
+class TriageSweepItem:
+    """One terminal run examined by the independent triage reconciler."""
+
+    run_id: str
+    meta_path: str
+    outcome: str
+    reason: str = ""
+    bucket: str = ""
+
+
+@dataclass(frozen=True)
+class TriageSweepReport:
+    """Bounded, inspectable result of one recovery sweep."""
+
+    scanned: int
+    attempted: int
+    items: tuple[TriageSweepItem, ...]
+    errors: tuple[TriageSweepItem, ...]
+    truncated: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors and not self.truncated
+
+
+def _settlement_identity(
+    payload: Mapping[str, Any],
+) -> tuple[int, str, str] | None:
+    revision = payload.get("settlement_revision")
+    verdict = payload.get("settlement_verdict")
+    tui = payload.get("settlement_tui")
+    if (
+        type(revision) is not int
+        or revision <= 0
+        or not isinstance(verdict, str)
+        or verdict not in _SETTLEMENT_TUI
+        or tui != _SETTLEMENT_TUI[verdict]
+    ):
+        return None
+
+    if "settlement" in payload:
+        nested = payload.get("settlement")
+        if (
+            not isinstance(nested, Mapping)
+            or type(nested.get("revision")) is not int
+            or nested.get("revision") != revision
+            or nested.get("verdict") != verdict
+            or nested.get("tui") != tui
+        ):
+            return None
+    return revision, verdict, tui
+
+
+def _has_settlement_material(payload: Mapping[str, Any]) -> bool:
+    """Whether runtime meta claims any canonical settlement representation."""
+
+    return any(field in payload for field in _SETTLEMENT_MATERIAL_FIELDS)
+
+
+def _triage_settlement_identity(
+    payload: Mapping[str, Any],
+) -> tuple[int, str, str] | None:
+    revision = payload.get("triage_settlement_revision")
+    verdict = payload.get("triage_settlement_verdict")
+    tui = payload.get("triage_settlement_tui")
+    if (
+        type(revision) is int
+        and revision > 0
+        and isinstance(verdict, str)
+        and verdict in _SETTLEMENT_TUI
+        and tui == _SETTLEMENT_TUI[verdict]
+    ):
+        return revision, verdict, tui
+    return None
+
+
+def _receipt_outcome(
+    payload: Mapping[str, Any],
+    *,
+    require_current_settlement: bool = True,
+) -> TriageOutcome | None:
+    """Return a completed transfer receipt, never a pending intent."""
+
+    outcome = str(payload.get("triage") or "").strip()
+    if payload.get("triage_pending") is not False or outcome not in _BUCKET_FOR_VERDICT:
+        return None
+    bucket = payload.get("triage_bucket")
+    verdict = payload.get("triage_verdict")
+    degraded = payload.get("triage_verdict_degraded")
+    if (
+        bucket != _BUCKET_FOR_VERDICT[outcome]
+        or not isinstance(verdict, str)
+        or verdict not in _BUCKET_FOR_VERDICT
+        or degraded not in {"", "exit_code_only"}
+    ):
+        return None
+    if degraded == "":
+        if verdict != outcome:
+            return None
+    elif outcome != outcome_for_exit_code(
+        payload.get("exit_code")
+    ) or bucket != bucket_for_exit_code(payload.get("exit_code")):
+        return None
+    if require_current_settlement:
+        current_settlement = _settlement_identity(payload)
+        has_settlement = _has_settlement_material(payload)
+        if has_settlement and (
+            current_settlement is None
+            or _triage_settlement_identity(payload) != current_settlement
+        ):
+            return None
+        if current_settlement is not None:
+            settlement_verdict = (
+                VERDICT_FAILED
+                if current_settlement[1] == "invalid"
+                else current_settlement[1]
+            )
+            if (
+                degraded != ""
+                or verdict != settlement_verdict
+                or outcome != settlement_verdict
+                or bucket != _BUCKET_FOR_VERDICT[settlement_verdict]
+            ):
+                return None
+    return TriageOutcome(
+        outcome=outcome,
+        reason=str(payload.get("triage_reason") or ""),
+        bucket=bucket,
+        verdict=verdict,
+        verdict_reason=str(payload.get("triage_verdict_reason") or ""),
+        verdict_degraded=degraded,
+    )
+
+
+def _proof_projection_is_exact(
+    payload: Mapping[str, Any],
+    *,
+    control_plane: Path,
+) -> bool:
+    """Whether terminal triage is linked to its exact current durable proof."""
+
+    completed = _receipt_outcome(payload)
+    if completed is None:
+        return False
+    try:
+        proof = load_vc_frame_transfer_proof(control_plane, payload)
+    except TransferProofError:
+        return False
+    return (
+        proof.bucket_session == completed.bucket
+        and payload.get("triage_transfer_receipt") == str(proof.receipt_path)
+        and payload.get("triage_transfer") == proof.projection()
+    )
+
+
+def triage_outcome_is_complete(outcome: TriageOutcome) -> bool:
+    """Whether durable reconciliation may retire its work item."""
+
+    return outcome.outcome in _BUCKET_FOR_VERDICT or (
+        outcome.outcome == OUTCOME_SKIPPED and outcome.reason in _PERMANENT_SKIP_REASONS
+    )
+
+
+def _proof_recovery_outcome(payload: Mapping[str, Any]) -> TriageOutcome | None:
+    """Recover the exact pre-transfer destination from pending or legacy error."""
+
+    pending = payload.get("triage_pending") is True
+    recoverable_error = (
+        payload.get("triage") == OUTCOME_ERROR
+        and payload.get("triage_pending") is False
+    )
+    if not pending and not recoverable_error:
+        return None
+    current_settlement = _settlement_identity(payload)
+    has_settlement = _has_settlement_material(payload)
+    if has_settlement and (
+        current_settlement is None
+        or _triage_settlement_identity(payload) != current_settlement
+    ):
+        return None
+    outcome = payload.get("triage")
+    bucket = payload.get("triage_bucket")
+    verdict = payload.get("triage_verdict")
+    reason = payload.get("triage_reason")
+    verdict_reason = payload.get("triage_verdict_reason")
+    degraded = payload.get("triage_verdict_degraded")
+    if recoverable_error:
+        if degraded == "":
+            outcome = verdict
+        elif degraded == "exit_code_only":
+            outcome = outcome_for_exit_code(payload.get("exit_code"))
+        reason = verdict_reason
+    if (
+        not isinstance(outcome, str)
+        or outcome not in _BUCKET_FOR_VERDICT
+        or bucket != _BUCKET_FOR_VERDICT[outcome]
+        or not isinstance(verdict, str)
+        or verdict not in _BUCKET_FOR_VERDICT
+        or not isinstance(reason, str)
+        or not isinstance(verdict_reason, str)
+        or degraded not in {"", "exit_code_only"}
+    ):
+        return None
+    if degraded == "":
+        if outcome != verdict or bucket != _BUCKET_FOR_VERDICT[verdict]:
+            return None
+    elif outcome != outcome_for_exit_code(
+        payload.get("exit_code")
+    ) or bucket != bucket_for_exit_code(payload.get("exit_code")):
+        return None
+    if current_settlement is not None:
+        canonical_verdict = (
+            VERDICT_FAILED
+            if current_settlement[1] == "invalid"
+            else current_settlement[1]
+        )
+        if (
+            degraded != ""
+            or verdict != canonical_verdict
+            or outcome != canonical_verdict
+            or bucket != _BUCKET_FOR_VERDICT[canonical_verdict]
+        ):
+            return None
+    return TriageOutcome(
+        outcome=outcome,
+        reason=reason,
+        bucket=bucket,
+        verdict=verdict,
+        verdict_reason=verdict_reason,
+        verdict_degraded=degraded,
+    )
 
 
 def plan_triage(
@@ -1316,19 +1840,29 @@ def plan_triage(
     except (TypeError, ValueError):
         exit_code = 1
 
-    # What the bucket tab's suspended pane will hold, one keypress from rerun.
-    # meta.json has no "command" field today, but it has "launcher" — and the
-    # generated launcher *is* the reproducible run, env and all. Re-running it is
-    # a truer rerun than any reconstructed command line would be.
-    command_raw = meta.get("command") or meta.get("launcher")
-    if isinstance(command_raw, str):
-        command: tuple[str, ...] = (command_raw,) if command_raw.strip() else ()
-    elif isinstance(command_raw, Sequence):
-        command = tuple(str(part) for part in command_raw if str(part).strip())
+    # A typed settlement is the canonical terminal answer.  Heuristics remain
+    # only for legacy runs that predate settlement; a partial/corrupt settlement
+    # must never silently fall back to a contradictory destination.
+    settlement = _settlement_identity(meta)
+    has_settlement = _has_settlement_material(meta)
+    if has_settlement and settlement is None:
+        return TriagePlan(should_run=False, skip_reason="invalid_settlement")
+    if settlement is not None:
+        settlement_revision, raw_settlement_verdict, settlement_tui = settlement
+        canonical_verdict = (
+            VERDICT_FAILED
+            if raw_settlement_verdict == "invalid"
+            else raw_settlement_verdict
+        )
+        classification = RunClassification(
+            canonical_verdict,
+            f"canonical_settlement_revision_{settlement_revision}",
+        )
     else:
-        command = ()
-
-    classification = read_run_signals(meta).classify()
+        settlement_revision = 0
+        canonical_verdict = ""
+        settlement_tui = ""
+        classification = read_run_signals(meta).classify()
     runtime_transcript = validate_runtime_transcript(
         meta.get("transcript"),
         run_id=run_id,
@@ -1341,12 +1875,15 @@ def plan_triage(
         bucket=classification.bucket,
         verdict=classification.verdict,
         verdict_reason=classification.reason,
+        settlement_revision=settlement_revision,
+        settlement_verdict=canonical_verdict,
+        settlement_tui=settlement_tui,
         origin_session=origin_session,
         origin_tab=tab_name,
         pane_id=pane_id,
         cwd=str(meta.get("root", "") or "") or _env("SPAWN_ROOT"),
         runtime_transcript=str(runtime_transcript) if runtime_transcript else "",
-        command=command,
+        command=_normalized_command(meta),
     )
 
 
@@ -1365,6 +1902,8 @@ class _Probe:
 
     supported: bool
     bucket: bool = False
+    settlement_revision: bool = False
+    inherited_lock: bool = False
 
 
 def _probe_triage_run(binary: str, runner: Callable[..., Any]) -> _Probe:
@@ -1386,16 +1925,45 @@ def _probe_triage_run(binary: str, runner: Callable[..., Any]) -> _Probe:
     help_text = (
         f"{getattr(proc, 'stdout', '') or ''}{getattr(proc, 'stderr', '') or ''}"
     )
-    return _Probe(supported=True, bucket="--bucket" in help_text)
+    return _Probe(
+        supported=True,
+        bucket="--bucket" in help_text,
+        settlement_revision="--settlement-revision" in help_text,
+        inherited_lock="--transfer-lock-fd" in help_text,
+    )
 
 
-def _default_runner(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
+def _default_runner(
+    argv: Sequence[str],
+    *,
+    inherited_lock_fd: int | None = None,
+    control_plane: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    child_env: dict[str, str] | None = None
+    pass_fds: tuple[int, ...] = ()
+    if inherited_lock_fd is not None:
+        child_env = dict(os.environ)
+        if control_plane is not None:
+            child_env["VIBECRAFTED_CONTROL_PLANE"] = str(control_plane)
+        pass_fds = (inherited_lock_fd,)
+        argv_with_lock = list(argv)
+        try:
+            command_boundary = argv_with_lock.index("--")
+        except ValueError:
+            command_boundary = len(argv_with_lock)
+        argv_with_lock[command_boundary:command_boundary] = [
+            "--transfer-lock-fd",
+            str(inherited_lock_fd),
+        ]
+        argv = argv_with_lock
     return subprocess.run(
         list(argv),
         capture_output=True,
         text=True,
         timeout=120,
         check=False,
+        env=child_env,
+        pass_fds=pass_fds,
     )
 
 
@@ -1482,6 +2050,84 @@ def _canonical_runtime_meta(
     return control_plane / "runtime_runs" / run_id / "meta.json"
 
 
+def _runtime_meta_identity_is_exact(
+    meta: Path,
+    control_plane: Path,
+    run_id: str,
+) -> bool:
+    """Reject aliases inside runtime_runs while allowing legacy artifact meta."""
+
+    try:
+        root = control_plane.resolve(strict=True)
+        runtime_runs = root / "runtime_runs"
+        canonical_meta = meta.resolve(strict=True)
+        relative = canonical_meta.relative_to(runtime_runs)
+    except ValueError:
+        return True
+    except OSError:
+        return False
+    return relative.parts == (run_id, "meta.json")
+
+
+class _TriageCallable(Protocol):
+    def __call__(
+        self,
+        meta_path: str | os.PathLike[str],
+        env: Mapping[str, str] | None = None,
+        runner: Callable[..., Any] | None = None,
+    ) -> TriageOutcome: ...
+
+
+def _serialized_triage_call(
+    function: _TriageCallable,
+) -> _TriageCallable:
+    """Hold the run lock across intent, external transfer, and final receipt.
+
+    A dispatcher hook and the always-on guardian may observe the same terminal
+    transition.  Serializing only each JSON replacement still lets both invoke
+    ``vc-frame triage-run``.  The outer run lock makes the whole side effect one
+    transaction; the existing mutation helper is re-entrant for nested receipt
+    writes in the same process.
+    """
+
+    @wraps(function)
+    def wrapped(
+        meta_path: str | os.PathLike[str],
+        env: Mapping[str, str] | None = None,
+        runner: Callable[..., Any] | None = None,
+    ) -> TriageOutcome:
+        effective_env = os.environ if env is None else env
+        meta = Path(meta_path)
+        try:
+            payload = read_run_meta(meta)
+        except Exception:  # noqa: BLE001 - preserve the function's no_meta receipt
+            return function(meta_path, env, runner)
+        run_id = str(payload.get("run_id") or "").strip()
+        if not run_id:
+            return function(meta_path, env, runner)
+        try:
+            control_plane = _control_plane_root_for(meta, effective_env)
+            mutation_root = _meta_mutation_root_for(
+                meta,
+                control_plane=control_plane,
+                env=effective_env,
+            )
+            with run_mutation_module.run_mutation_locks(
+                mutation_root,
+                run_id=run_id,
+            ):
+                read_run_meta(meta, expected_run_id=run_id)
+                return function(meta_path, env, runner)
+        except Exception as exc:  # noqa: BLE001 - triage stays fail-open
+            return TriageOutcome(
+                OUTCOME_ERROR,
+                reason=f"triage_lock_unavailable: {type(exc).__name__}: {exc}",
+            )
+
+    return wrapped
+
+
+@_serialized_triage_call
 def triage_finished_run(
     meta_path: str | os.PathLike[str],
     env: Mapping[str, str] | None = None,
@@ -1504,6 +2150,11 @@ def triage_finished_run(
         return TriageOutcome(OUTCOME_SKIPPED, reason=f"no_meta: {exc}")
 
     run_id = str(payload.get("run_id") or "").strip()
+    completed_receipt = _receipt_outcome(payload)
+    historical_receipt = _receipt_outcome(
+        payload,
+        require_current_settlement=False,
+    )
     control_plane = _control_plane_root_for(meta, env)
     try:
         mutation_root = _meta_mutation_root_for(
@@ -1516,6 +2167,151 @@ def triage_finished_run(
             OUTCOME_ERROR,
             reason=f"meta_owner_unavailable: {exc}",
         )
+    if control_plane is not None and not _runtime_meta_identity_is_exact(
+        meta,
+        control_plane,
+        run_id,
+    ):
+        return TriageOutcome(
+            OUTCOME_ERROR,
+            reason="runtime_meta_identity_mismatch",
+        )
+
+    # The dispatcher may have died after vc-frame committed the v4 transfer but
+    # before the runtime replaced its pending intent with the final projection.
+    # Durable transfer files are the authority in that kill window. Adopt them
+    # under the same run lock instead of spawning a second viewer or touching a
+    # now-closed origin tab. A valid proof also repairs an older completed
+    # receipt whose projection was never linked.
+    if control_plane is not None:
+        proof_checks = 2 if payload.get("triage_pending") is True else 1
+        for proof_check in range(proof_checks):
+            try:
+                recovered_proof = load_vc_frame_transfer_proof(control_plane, payload)
+            except TransferProofError:
+                recovered_proof = None
+            if recovered_proof is not None:
+                recovered = _proof_recovery_outcome(payload) or completed_receipt
+                current_settlement = _settlement_identity(payload)
+                if recovered is None and current_settlement is not None:
+                    canonical_verdict = (
+                        VERDICT_FAILED
+                        if current_settlement[1] == "invalid"
+                        else current_settlement[1]
+                    )
+                    recovered = TriageOutcome(
+                        canonical_verdict,
+                        reason=(
+                            f"canonical_settlement_revision_{current_settlement[0]}"
+                        ),
+                        bucket=_BUCKET_FOR_VERDICT[canonical_verdict],
+                        verdict=canonical_verdict,
+                        verdict_reason=(
+                            f"canonical_settlement_revision_{current_settlement[0]}"
+                        ),
+                    )
+                elif recovered is None and historical_receipt is not None:
+                    recovered = historical_receipt
+                if (
+                    recovered is None
+                    or recovered_proof.bucket_session != recovered.bucket
+                ):
+                    failure = TriageOutcome(
+                        OUTCOME_ERROR,
+                        reason="transfer_receipt_intent_invalid",
+                    )
+                    _record_receipt(
+                        meta,
+                        failure,
+                        control_plane_root=mutation_root,
+                        run_id=run_id,
+                    )
+                    return failure
+                if _record_receipt(
+                    meta,
+                    recovered,
+                    control_plane_root=mutation_root,
+                    run_id=run_id,
+                    proof=recovered_proof,
+                ):
+                    return recovered
+                failure = TriageOutcome(
+                    OUTCOME_ERROR,
+                    reason="transfer_projection_persist_failed",
+                    bucket=recovered.bucket,
+                    verdict=recovered.verdict,
+                    verdict_reason=recovered.verdict_reason,
+                    verdict_degraded=recovered.verdict_degraded,
+                )
+                _record_receipt(
+                    meta,
+                    failure,
+                    control_plane_root=mutation_root,
+                    run_id=run_id,
+                )
+                return failure
+
+            if proof_check == 0 and proof_checks == 2:
+                try:
+                    transfer_running = _vc_frame_transfer_lock_is_held(
+                        control_plane, payload
+                    )
+                except TransferProofError as error:
+                    failure = TriageOutcome(
+                        OUTCOME_ERROR,
+                        reason=f"transfer_lock_unavailable: {error}",
+                    )
+                    _record_retryable_triage_error(
+                        meta,
+                        failure,
+                        control_plane_root=mutation_root,
+                        run_id=run_id,
+                    )
+                    return failure
+                if transfer_running:
+                    failure = TriageOutcome(
+                        OUTCOME_ERROR,
+                        reason="transfer_in_progress",
+                    )
+                    _record_retryable_triage_error(
+                        meta,
+                        failure,
+                        control_plane_root=mutation_root,
+                        run_id=run_id,
+                    )
+                    return failure
+                started_at_ns = payload.get("triage_attempt_started_at_ns")
+                now_ns = time.time_ns()
+                if type(started_at_ns) is int and (
+                    started_at_ns > now_ns
+                    or now_ns - started_at_ns < _TRANSFER_CHILD_START_GRACE_NS
+                ):
+                    failure = TriageOutcome(
+                        OUTCOME_ERROR,
+                        reason="transfer_child_start_grace",
+                    )
+                    _record_retryable_triage_error(
+                        meta,
+                        failure,
+                        control_plane_root=mutation_root,
+                        run_id=run_id,
+                    )
+                    return failure
+                if payload.get("triage_lock_handoff") != _TRANSFER_LOCK_HANDOFF:
+                    failure = TriageOutcome(
+                        OUTCOME_ERROR,
+                        reason="legacy_pending_without_lock_handoff",
+                    )
+                    _record_retryable_triage_error(
+                        meta,
+                        failure,
+                        control_plane_root=mutation_root,
+                        run_id=run_id,
+                    )
+                    return failure
+
+    if completed_receipt is not None and control_plane is None:
+        return completed_receipt
 
     plan = plan_triage(payload, env)
     if not plan.should_run:
@@ -1570,6 +2366,35 @@ def triage_finished_run(
             run_id=run_id,
         )
         return outcome
+    if plan.settlement_revision > 0 and (
+        not probe.bucket or not probe.settlement_revision
+    ):
+        outcome = TriageOutcome(
+            OUTCOME_ERROR,
+            reason="unsupported_settlement_contract",
+            bucket=plan.bucket,
+            verdict=plan.verdict,
+            verdict_reason=plan.verdict_reason,
+        )
+        _record_retryable_triage_error(
+            meta,
+            outcome,
+            control_plane_root=mutation_root,
+            run_id=run_id,
+        )
+        return outcome
+    if control_plane is not None and not probe.inherited_lock:
+        outcome = TriageOutcome(
+            OUTCOME_ERROR,
+            reason="unsupported_transfer_lock_handoff",
+        )
+        _record_retryable_triage_error(
+            meta,
+            outcome,
+            control_plane_root=mutation_root,
+            run_id=run_id,
+        )
+        return outcome
 
     # Where the run will actually land. With `--bucket` that is the classifier's
     # verdict; without it vc-frame decides by exit code alone, so the receipt
@@ -1606,9 +2431,50 @@ def triage_finished_run(
         if barrier_error is not None:
             return barrier_error
 
-    outcome = _run_triage(plan, binary, probe, runner, destination, bucket, degraded)
+    if control_plane is None:
+        outcome = _run_triage(
+            plan,
+            binary,
+            probe,
+            runner,
+            destination,
+            bucket,
+            degraded,
+        )
+    else:
+        try:
+            with _hold_vc_frame_transfer_lock(control_plane, payload) as lock_fd:
+                outcome = _run_triage(
+                    plan,
+                    binary,
+                    probe,
+                    runner,
+                    destination,
+                    bucket,
+                    degraded,
+                    inherited_lock_fd=lock_fd,
+                    control_plane=control_plane,
+                )
+        except _TransferLockBusy:
+            outcome = TriageOutcome(
+                OUTCOME_ERROR,
+                reason="transfer_in_progress",
+                bucket=bucket,
+                verdict=plan.verdict,
+                verdict_reason=plan.verdict_reason,
+                verdict_degraded=degraded,
+            )
+        except TransferProofError as error:
+            outcome = TriageOutcome(
+                OUTCOME_ERROR,
+                reason=f"transfer_lock_unavailable: {error}",
+                bucket=bucket,
+                verdict=plan.verdict,
+                verdict_reason=plan.verdict_reason,
+                verdict_degraded=degraded,
+            )
     proof: DurableTransferProof | None = None
-    if outcome.outcome != OUTCOME_ERROR and control_plane is not None:
+    if control_plane is not None:
         try:
             proof = load_vc_frame_transfer_proof(control_plane, payload)
             if proof.bucket_session != bucket:
@@ -1616,14 +2482,29 @@ def triage_finished_run(
                     "transfer receipt bucket does not match the triage verdict"
                 )
         except TransferProofError as error:
-            outcome = TriageOutcome(
-                OUTCOME_ERROR,
-                reason=f"transfer_proof_invalid: {error}",
-                bucket=bucket,
-                verdict=plan.verdict,
-                verdict_reason=plan.verdict_reason,
-                verdict_degraded=degraded,
-            )
+            proof = None
+            if outcome.outcome != OUTCOME_ERROR:
+                outcome = TriageOutcome(
+                    OUTCOME_ERROR,
+                    reason=f"transfer_proof_invalid: {error}",
+                    bucket=bucket,
+                    verdict=plan.verdict,
+                    verdict_reason=plan.verdict_reason,
+                    verdict_degraded=degraded,
+                )
+        else:
+            # A sibling invocation may have returned lock contention while the
+            # original vc-frame child committed the exact proof. The proof wins.
+            outcome = replace(actual_intent, pending=False)
+
+    if control_plane is not None and outcome.outcome == OUTCOME_ERROR and proof is None:
+        _record_retryable_triage_error(
+            meta,
+            outcome,
+            control_plane_root=mutation_root,
+            run_id=run_id,
+        )
+        return outcome
 
     written = _record_receipt(
         meta,
@@ -1672,6 +2553,9 @@ def _run_triage(
     destination: str,
     bucket: str,
     degraded: str,
+    *,
+    inherited_lock_fd: int | None = None,
+    control_plane: Path | None = None,
 ) -> TriageOutcome:
     def _error(reason: str) -> TriageOutcome:
         return TriageOutcome(
@@ -1684,7 +2568,15 @@ def _run_triage(
         )
 
     try:
-        proc = runner(plan.argv(binary, with_bucket=probe.bucket))
+        argv = plan.argv(binary, with_bucket=probe.bucket)
+        if runner is _default_runner:
+            proc = runner(
+                argv,
+                inherited_lock_fd=inherited_lock_fd,
+                control_plane=control_plane,
+            )
+        else:
+            proc = runner(argv)
     except Exception as exc:  # noqa: BLE001
         return _error(f"invoke_error: {type(exc).__name__}: {exc}")
 
@@ -1705,6 +2597,39 @@ def _run_triage(
     )
 
 
+def _record_retryable_triage_error(
+    meta: Path,
+    outcome: TriageOutcome,
+    *,
+    control_plane_root: Path,
+    run_id: str,
+) -> bool:
+    """Keep the pre-transfer intent pending while recording the last failure."""
+
+    def _merge(current: dict[str, Any]) -> dict[str, Any] | None:
+        if (
+            current.get("run_id") != run_id
+            or current.get("triage_pending") is not True
+            or current.get("triage") not in _BUCKET_FOR_VERDICT
+        ):
+            return None
+        current["triage_last_error"] = {
+            "reason": outcome.reason,
+            "recorded_at_ns": time.time_ns(),
+        }
+        return current
+
+    try:
+        return mutate_run_meta(
+            control_plane_root,
+            meta_path=meta,
+            run_id=run_id,
+            mutator=_merge,
+        )
+    except (OSError, RunMetaMutationError, TypeError, ValueError):
+        return False
+
+
 def _record_receipt(
     meta: Path,
     outcome: TriageOutcome,
@@ -1714,14 +2639,32 @@ def _record_receipt(
     proof: DurableTransferProof | None = None,
 ) -> bool:
     """Merge the receipt through the shared per-run mutation transaction."""
-    updates = outcome.receipt()
-    if proof is not None:
-        updates["triage_transfer_receipt"] = str(proof.receipt_path)
-        updates["triage_transfer"] = proof.projection()
+    receipt_updates = outcome.receipt()
 
     transfer_keys = {"triage_transfer_receipt", "triage_transfer"}
 
     def _merge(current: dict[str, Any]) -> dict[str, Any] | None:
+        updates = dict(receipt_updates)
+        settlement = _settlement_identity(current)
+        has_settlement = _has_settlement_material(current)
+        if has_settlement and settlement is None:
+            return None
+        if settlement is not None:
+            revision, settlement_verdict, settlement_tui = settlement
+            updates.update(
+                {
+                    "triage_settlement_revision": revision,
+                    "triage_settlement_verdict": settlement_verdict,
+                    "triage_settlement_tui": settlement_tui,
+                }
+            )
+        else:
+            for key in (
+                "triage_settlement_revision",
+                "triage_settlement_verdict",
+                "triage_settlement_tui",
+            ):
+                current.pop(key, None)
         if proof is not None and (
             current.get("run_id") != proof.run_id
             or type(current.get("exit_code")) is not int
@@ -1730,7 +2673,40 @@ def _record_receipt(
             or current.get("origin_tab") != proof.origin_tab
         ):
             return None
+        if proof is not None:
+            proof_settlement = (
+                proof.settlement_revision,
+                proof.settlement_verdict,
+                proof.settlement_tui,
+            )
+            if (settlement is not None and proof_settlement != settlement) or (
+                settlement is None and proof_settlement != (0, "", "")
+            ):
+                return None
+            if settlement is not None:
+                canonical_verdict = (
+                    VERDICT_FAILED if settlement[1] == "invalid" else settlement[1]
+                )
+                expected_bucket = _BUCKET_FOR_VERDICT[canonical_verdict]
+                if (
+                    proof.bucket_session != expected_bucket
+                    or outcome.outcome != canonical_verdict
+                    or outcome.bucket != expected_bucket
+                    or outcome.verdict != canonical_verdict
+                    or outcome.verdict_degraded != ""
+                ):
+                    return None
+            updates["triage_transfer_receipt"] = str(proof.receipt_path)
+            updates["triage_transfer"] = proof.projection()
         current.update(updates)
+        if outcome.pending:
+            current["triage_lock_handoff"] = _TRANSFER_LOCK_HANDOFF
+            started_at_ns = current.get("triage_attempt_started_at_ns")
+            if type(started_at_ns) is not int or started_at_ns <= 0:
+                current["triage_attempt_started_at_ns"] = time.time_ns()
+        else:
+            current.pop("triage_attempt_started_at_ns", None)
+            current.pop("triage_last_error", None)
         if proof is None and (
             outcome.pending
             or outcome.outcome == OUTCOME_ERROR
@@ -1860,14 +2836,221 @@ def record_triage_gc_result(
         return False
 
 
+def _needs_triage_reconciliation(
+    payload: Mapping[str, Any],
+    *,
+    control_plane: Path,
+) -> bool:
+    """Whether one terminal runtime meta still lacks a durable triage answer."""
+
+    if type(payload.get("exit_code")) is not int:
+        return False
+    if _receipt_outcome(payload) is not None:
+        return not _proof_projection_is_exact(
+            payload,
+            control_plane=control_plane,
+        )
+    return not (
+        payload.get("triage") == OUTCOME_SKIPPED
+        and payload.get("triage_pending") is False
+        and str(payload.get("triage_reason") or "") in _PERMANENT_SKIP_REASONS
+    )
+
+
+def _rotating_sweep_candidates(
+    root: Path,
+    runtime_runs: Path,
+    *,
+    scan_limit: int,
+    attempt_limit: int,
+) -> tuple[tuple[Path, ...], bool]:
+    """Reserve a durable fair page instead of restarting at iterdir's prefix."""
+
+    try:
+        candidates = sorted(runtime_runs.iterdir(), key=lambda path: path.name)
+    except OSError as error:
+        raise TransferProofError(
+            f"runtime run directory is unavailable: {runtime_runs}"
+        ) from error
+    if not candidates:
+        return (), False
+
+    # A page cannot exceed the attempt budget.  That guarantees every eligible
+    # entry in the reserved page can be attempted before the cursor advances;
+    # an always-failing first run therefore cannot starve later stable names.
+    page_size = min(scan_limit, attempt_limit)
+    selected: list[Path] = []
+    cursor_path = root / _TRIAGE_SWEEP_CURSOR_FILE
+
+    def _rotate(current: dict[str, Any]) -> dict[str, Any]:
+        cursor = current.get("cursor")
+        if not isinstance(cursor, str):
+            cursor = ""
+        start = next(
+            (
+                index
+                for index, candidate in enumerate(candidates)
+                if candidate.name > cursor
+            ),
+            0,
+        )
+        ordered = candidates[start:] + candidates[:start]
+        selected.extend(ordered[:page_size])
+        return {
+            "run_id": _TRIAGE_SWEEP_CURSOR_RUN_ID,
+            "cursor": selected[-1].name,
+            "updated_at_ns": time.time_ns(),
+        }
+
+    try:
+        rotated = mutate_run_meta(
+            root,
+            meta_path=cursor_path,
+            run_id=_TRIAGE_SWEEP_CURSOR_RUN_ID,
+            mutator=_rotate,
+            create=True,
+        )
+    except (OSError, RunMetaMutationError, TypeError, ValueError) as error:
+        raise TransferProofError("triage sweep cursor is unavailable") from error
+    if not rotated or not selected:
+        raise TransferProofError("triage sweep cursor did not reserve a page")
+    return tuple(selected), len(candidates) > len(selected)
+
+
+def reconcile_untriaged_runs(
+    control_plane: Path,
+    env: Mapping[str, str] | None = None,
+    runner: Callable[..., Any] | None = None,
+    *,
+    scan_limit: int = 1024,
+    attempt_limit: int = 128,
+) -> TriageSweepReport:
+    """Recover bounded terminal runs independently of their dispatchers.
+
+    Only canonical direct children of ``runtime_runs`` participate. Every
+    individual transfer remains fail-open and serialized by its run lock; a
+    corrupt record is reported without blocking the rest of the sweep.
+    """
+
+    if scan_limit <= 0 or attempt_limit <= 0:
+        raise ValueError("triage reconciliation limits must be positive")
+    root = _canonical_root(control_plane)
+    runtime_runs = root / "runtime_runs"
+    try:
+        if (
+            runtime_runs.is_symlink()
+            or runtime_runs.resolve(strict=True) != runtime_runs
+            or not runtime_runs.is_dir()
+        ):
+            raise TransferProofError(
+                f"runtime run directory is not canonical: {runtime_runs}"
+            )
+    except OSError as error:
+        raise TransferProofError(
+            f"runtime run directory is unavailable: {runtime_runs}"
+        ) from error
+    candidates, truncated = _rotating_sweep_candidates(
+        root,
+        runtime_runs,
+        scan_limit=scan_limit,
+        attempt_limit=attempt_limit,
+    )
+
+    effective_env = dict(os.environ if env is None else env)
+    effective_env["VIBECRAFTED_CONTROL_PLANE"] = str(root)
+    items: list[TriageSweepItem] = []
+    errors: list[TriageSweepItem] = []
+    scanned = 0
+    attempted = 0
+
+    for run_dir in candidates:
+        scanned += 1
+        if run_dir.is_symlink() or not run_dir.is_dir():
+            continue
+        try:
+            canonical_run_dir = run_dir.resolve(strict=True)
+        except OSError:
+            continue
+        if canonical_run_dir != run_dir or canonical_run_dir.parent != runtime_runs:
+            continue
+        meta = run_dir / "meta.json"
+        if meta.is_symlink() or not meta.is_file():
+            continue
+        try:
+            _safe_run_id(run_dir.name)
+            payload = read_run_meta(meta, expected_run_id=run_dir.name)
+        except Exception as exc:  # noqa: BLE001 - one corrupt run cannot stop sweep
+            item = TriageSweepItem(
+                run_id=run_dir.name,
+                meta_path=str(meta),
+                outcome=OUTCOME_ERROR,
+                reason=f"meta_unreadable: {type(exc).__name__}: {exc}",
+            )
+            items.append(item)
+            errors.append(item)
+            continue
+        if not _needs_triage_reconciliation(payload, control_plane=root):
+            continue
+        if attempted >= attempt_limit:
+            truncated = True
+            break
+        attempted += 1
+        outcome = triage_finished_run(meta, effective_env, runner)
+        item = TriageSweepItem(
+            run_id=str(payload.get("run_id") or run_dir.name),
+            meta_path=str(meta),
+            outcome=outcome.outcome,
+            reason=outcome.reason,
+            bucket=outcome.bucket,
+        )
+        items.append(item)
+        if outcome.outcome == OUTCOME_ERROR:
+            errors.append(item)
+
+    return TriageSweepReport(
+        scanned=scanned,
+        attempted=attempted,
+        items=tuple(items),
+        errors=tuple(errors),
+        truncated=truncated,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vibecrafted_core.run_triage",
         description="Transfer a finished run's tab into its vc-frame status bucket.",
     )
-    parser.add_argument("meta", help="Path to the run's launcher meta.json")
+    parser.add_argument("meta", nargs="?", help="Path to the run's launcher meta.json")
+    parser.add_argument(
+        "--sweep-control-plane",
+        type=Path,
+        help="Reconcile terminal runtime_runs under this control-plane root",
+    )
+    parser.add_argument("--scan-limit", type=int, default=1024)
+    parser.add_argument("--attempt-limit", type=int, default=128)
     args = parser.parse_args(argv)
 
+    if bool(args.meta) == bool(args.sweep_control_plane):
+        parser.error("provide exactly one meta path or --sweep-control-plane")
+    if args.sweep_control_plane is not None:
+        try:
+            report = reconcile_untriaged_runs(
+                args.sweep_control_plane,
+                scan_limit=args.scan_limit,
+                attempt_limit=args.attempt_limit,
+            )
+        except (OSError, TransferProofError, ValueError) as exc:
+            print(f"triage sweep: error ({type(exc).__name__}: {exc})")
+            return 0
+        print(
+            "triage sweep: "
+            f"scanned={report.scanned} attempted={report.attempted} "
+            f"errors={len(report.errors)} truncated={str(report.truncated).lower()}"
+        )
+        return 0
+
+    assert args.meta is not None
     outcome = triage_finished_run(args.meta)
     line = f"triage: {outcome.outcome}"
     if outcome.bucket and outcome.outcome in _BUCKET_FOR_VERDICT:

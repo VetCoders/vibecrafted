@@ -1,9 +1,11 @@
-"""Event-driven f/x/n guardian for terminal Vibecrafted runs.
+"""Durable f/x/n guardian for terminal Vibecrafted runs.
 
-The guardian has one trigger substrate: the vibecrafted-server
-``GET /api/control/events`` SSE stream.  For each new typed settlement it
-performs one exact run-projection read before deciding.  It never tails
-``events.jsonl``, polls run lists, or starts a vc-frame loop.
+Live settlement decisions have one trigger substrate: the vibecrafted-server
+``GET /api/control/events`` SSE stream. For each new typed settlement the
+guardian performs one exact run-projection read before deciding. Independently,
+one bounded local startup sweep repairs terminal triage receipts left behind by
+a dispatcher death. It never tails ``events.jsonl``, polls run lists
+continuously, or starts a vc-frame loop.
 
 On the first attachment, historical frames are checkpointed without side
 effects until the server's typed ``stream.caught-up`` receipt proves that the
@@ -28,16 +30,19 @@ import contextlib
 import errno
 import fcntl
 import hashlib
+import heapq
 import hmac
 import json
 import logging
 import math
 import os
+import queue
 import secrets
 import shutil
 import stat
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -66,6 +71,7 @@ GUARDIAN_STATE_SCHEMA = "vibecrafted.guardian-state.v2"
 GUARDIAN_STATE_SCHEMA_V1 = "vibecrafted.guardian-state.v1"
 GUARDIAN_DEAD_LETTER_SCHEMA = "vibecrafted.guardian-dead-letters.v2"
 GUARDIAN_READY_SCHEMA = "vibecrafted.guardian-ready.v1"
+TERMINAL_TRIAGE_OUTBOX_SCHEMA = "vibecrafted.terminal-triage-outbox.v1"
 DEFAULT_SERVER_URL = "http://127.0.0.1:3024"
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
 DEFAULT_RECOVERY_TIMEOUT_SECONDS = 5.0
@@ -73,6 +79,11 @@ DEFAULT_BACKOFF_INITIAL_SECONDS = 1.0
 DEFAULT_BACKOFF_MAX_SECONDS = 30.0
 DEFAULT_REPLAY_HEARTBEATS = 4
 DEFAULT_PENDING_PASS_LIMIT = 64
+TERMINAL_TRIAGE_QUEUE_CAPACITY = 1024
+TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT = 4096
+TERMINAL_TRIAGE_OUTBOX_ATTEMPT_LIMIT = 64
+TERMINAL_TRIAGE_QUARANTINE_CAPACITY = 256
+TERMINAL_TRIAGE_RETRY_SECONDS = 15.0
 MAX_PENDING_RECORDS = 1024
 MAX_PENDING_ATTEMPTS = 8
 MAX_STATE_BYTES = 8 * 1024 * 1024
@@ -627,11 +638,16 @@ class PendingRecord:
 Notifier = Callable[[GuardianNotification], None]
 Reconciler = Callable[[SettlementRevision], ReconcileDecision]
 ResumeCallback = Callable[[SettlementRevision, str], object]
+TriageScheduler = Callable[[str], bool]
 UrlOpener = Callable[..., Any]
 ReadyCallback = Callable[[], None]
 GuardEnforcer = Callable[..., object]
 NativeResumer = Callable[..., Mapping[str, object]]
 CursorParser = Callable[[str], CursorToken | None]
+
+
+def _ignore_triage_schedule(_run_id: str) -> bool:
+    return True
 
 
 @dataclass(frozen=True)
@@ -1976,6 +1992,440 @@ def _server_run_is_terminal(run: Mapping[str, object]) -> bool:
     )
 
 
+def _canonical_triage_run_id(run_id: object) -> str:
+    candidate = str(run_id or "").strip()
+    if (
+        not candidate
+        or len(candidate.encode("utf-8")) > MAX_RUN_ID_BYTES
+        or Path(candidate).name != candidate
+        or "/" in candidate
+        or "\\" in candidate
+    ):
+        raise GuardianStateError("terminal triage run id is not canonical")
+    return candidate
+
+
+def _terminal_triage_outbox_root() -> Path:
+    root = vibecrafted_home() / "control_plane" / "guardian" / "triage-outbox"
+    _ensure_private_directory(root)
+    return root
+
+
+def _terminal_triage_quarantine_root() -> Path:
+    root = vibecrafted_home() / "control_plane" / "guardian" / "triage-quarantine"
+    _ensure_private_directory(root)
+    return root
+
+
+def _terminal_triage_outbox_path(run_id: str) -> Path:
+    candidate = _canonical_triage_run_id(run_id)
+    digest = hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+    return _terminal_triage_outbox_root() / f"{digest}.json"
+
+
+def _terminal_triage_quarantine_has_capacity(root: Path) -> bool:
+    if TERMINAL_TRIAGE_QUARANTINE_CAPACITY <= 0:
+        return False
+    for count, _entry in enumerate(root.iterdir(), start=1):
+        if count >= TERMINAL_TRIAGE_QUARANTINE_CAPACITY:
+            return False
+    return True
+
+
+def _quarantine_terminal_triage_outbox_locked(path: Path) -> bool:
+    """Move invalid evidence aside while the caller holds the triage lock."""
+
+    outbox_root = _terminal_triage_outbox_root()
+    if path.parent != outbox_root:
+        raise GuardianStateError(
+            f"terminal triage quarantine target is outside the outbox: {path}"
+        )
+
+    try:
+        _read_terminal_triage_outbox(path)
+    except FileNotFoundError:
+        return True
+    except (OSError, ValueError, GuardianStateError) as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+    else:
+        return False
+
+    quarantine_root = _terminal_triage_quarantine_root()
+    if not _terminal_triage_quarantine_has_capacity(quarantine_root):
+        LOGGER.critical(
+            "terminal triage quarantine is full; invalid evidence remains at %s",
+            path,
+        )
+        return False
+
+    safe_name = "".join(
+        character
+        if character.isascii() and (character.isalnum() or character in "._-")
+        else "_"
+        for character in path.name
+    )[:64]
+    digest = hashlib.sha256(path.name.encode("utf-8")).hexdigest()[:16]
+    destination = quarantine_root / (
+        f"{time.time_ns()}-{digest}-{secrets.token_hex(4)}-{safe_name}.quarantined"
+    )
+    try:
+        os.replace(path, destination)
+    except FileNotFoundError:
+        return True
+    _fsync_directory(quarantine_root)
+    _fsync_directory(outbox_root)
+
+    LOGGER.error(
+        "terminal triage quarantined invalid outbox evidence %s -> %s (%s)",
+        path,
+        destination,
+        reason,
+    )
+    return True
+
+
+def _quarantine_terminal_triage_outbox(path: Path) -> bool:
+    """Lock and move one invalid outbox entry without following or deleting it."""
+
+    with _TERMINAL_TRIAGE_LOCK:
+        return _quarantine_terminal_triage_outbox_locked(path)
+
+
+def _bounded_terminal_triage_outbox_occupancy_locked(
+    root: Path,
+) -> tuple[int, bool]:
+    """Count valid jobs within one bounded scheduling scan under the lock.
+
+    Invalid entries are moved to the separate evidence quarantine. ``complete``
+    is false when another directory entry exists beyond the bounded page, so
+    the live SSE path can backpressure instead of walking an unbounded tree.
+    """
+
+    limit = TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT
+    if limit <= 0:
+        raise GuardianStateLimitError(
+            "terminal triage outbox scan limit must be positive"
+        )
+    page: list[Path] = []
+    for entry in root.iterdir():
+        page.append(entry)
+        if len(page) > limit:
+            break
+
+    complete = len(page) <= limit
+    valid_jobs = 0
+    for entry in page[:limit]:
+        try:
+            _read_terminal_triage_outbox(entry)
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError, GuardianStateError):
+            if not _quarantine_terminal_triage_outbox_locked(entry):
+                complete = False
+            continue
+        valid_jobs += 1
+    return valid_jobs, complete
+
+
+def _persist_terminal_triage_outbox(run_id: str) -> Path:
+    candidate = _canonical_triage_run_id(run_id)
+    path = _terminal_triage_outbox_path(candidate)
+    # The recovery pass is deliberately bounded.  Keep creation and the bound
+    # under the same process lock so the directory can never grow a valid job
+    # beyond the page the scanner is able to inspect.  Existing jobs may always
+    # refresh their timestamp; that is what rotates retryable failures.
+    with _TERMINAL_TRIAGE_LOCK:
+        previous_generation = 0
+        try:
+            _run_id, previous_generation = _read_terminal_triage_outbox(path)
+            exists = True
+        except FileNotFoundError:
+            exists = False
+        except (OSError, ValueError, GuardianStateError) as exc:
+            if not _quarantine_terminal_triage_outbox_locked(path):
+                raise GuardianStateError(
+                    "invalid terminal triage outbox could not be quarantined"
+                ) from exc
+            exists = False
+        if not exists:
+            (
+                valid_jobs,
+                scan_complete,
+            ) = _bounded_terminal_triage_outbox_occupancy_locked(path.parent)
+            if valid_jobs >= TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT:
+                raise GuardianStateLimitError(
+                    "terminal triage outbox is at its hard recovery capacity"
+                )
+            if not scan_complete:
+                raise GuardianStateLimitError(
+                    "terminal triage outbox capacity could not be established "
+                    "within its bounded scheduling scan"
+                )
+        generation = max(time.time_ns(), previous_generation + 1)
+        encoded = _terminal_triage_outbox_document(candidate, generation)
+        _atomic_private_write(path, encoded)
+    return path
+
+
+def _terminal_triage_outbox_document(run_id: str, queued_at_ns: int) -> bytes:
+    return (
+        json.dumps(
+            {
+                "schema": TERMINAL_TRIAGE_OUTBOX_SCHEMA,
+                "run_id": run_id,
+                "queued_at_ns": queued_at_ns,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def _read_terminal_triage_outbox(path: Path) -> tuple[str, int]:
+    payload = json.loads(_read_private_file(path, maximum=64 * 1024))
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"schema", "run_id", "queued_at_ns"}
+        or payload.get("schema") != TERMINAL_TRIAGE_OUTBOX_SCHEMA
+        or type(payload.get("queued_at_ns")) is not int
+        or payload["queued_at_ns"] <= 0
+    ):
+        raise GuardianStateError(f"terminal triage outbox is invalid: {path}")
+    run_id = _canonical_triage_run_id(payload.get("run_id"))
+    if path != _terminal_triage_outbox_path(run_id):
+        raise GuardianStateError(
+            f"terminal triage outbox filename does not bind its run id: {path}"
+        )
+    return run_id, payload["queued_at_ns"]
+
+
+def _clear_terminal_triage_outbox(
+    run_id: str,
+    *,
+    expected_generation: int | None = None,
+) -> bool:
+    path = _terminal_triage_outbox_path(run_id)
+    with _TERMINAL_TRIAGE_LOCK:
+        try:
+            if expected_generation is not None:
+                _current_run_id, current_generation = _read_terminal_triage_outbox(path)
+                if current_generation != expected_generation:
+                    return False
+            _validate_existing_private_file(path)
+            path.unlink()
+        except FileNotFoundError:
+            return False
+        _fsync_directory(path.parent)
+    return True
+
+
+def _refresh_terminal_triage_outbox(
+    run_id: str,
+    *,
+    expected_generation: int,
+) -> bool:
+    """Rotate one retry only if no newer scheduler write superseded it."""
+
+    candidate = _canonical_triage_run_id(run_id)
+    path = _terminal_triage_outbox_path(candidate)
+    with _TERMINAL_TRIAGE_LOCK:
+        try:
+            _current_run_id, current_generation = _read_terminal_triage_outbox(path)
+        except (FileNotFoundError, OSError, ValueError, GuardianStateError):
+            return False
+        if current_generation != expected_generation:
+            return False
+        generation = max(time.time_ns(), current_generation + 1)
+        _atomic_private_write(
+            path,
+            _terminal_triage_outbox_document(candidate, generation),
+        )
+    return True
+
+
+def _reconcile_terminal_triage_run(run_id: str) -> bool:
+    """Repair one terminal run and report whether its outbox may be retired."""
+
+    try:
+        run_id = _canonical_triage_run_id(run_id)
+    except GuardianStateError:
+        return False
+    meta = vibecrafted_home() / "control_plane" / "runtime_runs" / run_id / "meta.json"
+    if not meta.is_file() or meta.is_symlink():
+        return False
+
+    from .run_triage import (
+        OUTCOME_ERROR,
+        triage_finished_run,
+        triage_outcome_is_complete,
+    )
+
+    outcome = triage_finished_run(meta)
+    if outcome.outcome == OUTCOME_ERROR:
+        LOGGER.error(
+            "terminal triage reconciliation failed for %s: %s",
+            run_id,
+            outcome.reason,
+        )
+    return triage_outcome_is_complete(outcome)
+
+
+def _recover_terminal_triage_outbox() -> None:
+    """Retry a bounded oldest-first page of durable jobs."""
+
+    root = _terminal_triage_outbox_root()
+    # Keep only the oldest attempt page in memory while walking every durable
+    # candidate.  Future writers are hard-capped at SCAN_LIMIT, but a runtime
+    # upgraded from a buggy or manually modified directory may already exceed
+    # it; stopping at an arbitrary filesystem page would starve later jobs
+    # forever.
+    newest_first: list[tuple[int, str, Path]] = []
+    scanned = 0
+    for path in root.iterdir():
+        if path.name.startswith(".") or path.suffix != ".json":
+            continue
+        scanned += 1
+        try:
+            run_id, queued_at_ns = _read_terminal_triage_outbox(path)
+        except Exception:
+            if not _quarantine_terminal_triage_outbox(path):
+                LOGGER.exception("terminal triage outbox remains corrupt: %s", path)
+            continue
+        item = (-queued_at_ns, run_id, path)
+        if len(newest_first) < TERMINAL_TRIAGE_OUTBOX_ATTEMPT_LIMIT:
+            heapq.heappush(newest_first, item)
+        elif item > newest_first[0]:
+            heapq.heapreplace(newest_first, item)
+    if scanned > TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT:
+        LOGGER.critical(
+            "terminal triage outbox has %s candidates, above hard capacity %s; "
+            "draining the oldest bounded page",
+            scanned,
+            TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT,
+        )
+
+    candidates = sorted(
+        ((-queued_at_ns, run_id, path) for queued_at_ns, run_id, path in newest_first)
+    )
+    for queued_at_ns, run_id, _path in candidates:
+        try:
+            complete = _reconcile_terminal_triage_run(run_id)
+            if complete:
+                _clear_terminal_triage_outbox(
+                    run_id,
+                    expected_generation=queued_at_ns,
+                )
+            else:
+                # Rewrite the durable timestamp so persistent failures rotate
+                # behind other pending jobs on the next bounded pass.
+                _refresh_terminal_triage_outbox(
+                    run_id,
+                    expected_generation=queued_at_ns,
+                )
+        except Exception:
+            LOGGER.exception(
+                "terminal triage outbox retry failed for %s; receipt remains durable",
+                run_id,
+            )
+            _refresh_terminal_triage_outbox(
+                run_id,
+                expected_generation=queued_at_ns,
+            )
+
+
+_TERMINAL_TRIAGE_JOBS: queue.Queue[tuple[str, str | None]] = queue.Queue(
+    maxsize=TERMINAL_TRIAGE_QUEUE_CAPACITY
+)
+_TERMINAL_TRIAGE_PENDING: set[str] = set()
+_TERMINAL_TRIAGE_LOCK = threading.Lock()
+_TERMINAL_TRIAGE_THREAD: threading.Thread | None = None
+_TERMINAL_TRIAGE_STOP = threading.Event()
+
+
+def _run_terminal_triage_jobs() -> None:
+    while not _TERMINAL_TRIAGE_STOP.is_set():
+        try:
+            key, run_id = _TERMINAL_TRIAGE_JOBS.get(
+                timeout=TERMINAL_TRIAGE_RETRY_SECONDS
+            )
+        except queue.Empty:
+            if _TERMINAL_TRIAGE_STOP.is_set():
+                break
+            try:
+                _recover_terminal_triage_outbox()
+            except Exception:
+                LOGGER.exception("periodic terminal triage outbox recovery crashed")
+            continue
+        try:
+            if run_id is None:
+                _recover_untriaged_runs_background()
+            else:
+                path = _terminal_triage_outbox_path(run_id)
+                _queued_run_id, generation = _read_terminal_triage_outbox(path)
+                if _reconcile_terminal_triage_run(run_id):
+                    _clear_terminal_triage_outbox(
+                        run_id,
+                        expected_generation=generation,
+                    )
+                else:
+                    _refresh_terminal_triage_outbox(
+                        run_id,
+                        expected_generation=generation,
+                    )
+        except Exception:
+            LOGGER.exception("terminal triage background job crashed for %s", key)
+        finally:
+            with _TERMINAL_TRIAGE_LOCK:
+                _TERMINAL_TRIAGE_PENDING.discard(key)
+            _TERMINAL_TRIAGE_JOBS.task_done()
+
+
+def _enqueue_terminal_triage_job(key: str, run_id: str | None) -> bool:
+    """Enqueue one coalesced job without waiting in the SSE decision path."""
+
+    global _TERMINAL_TRIAGE_THREAD
+
+    with _TERMINAL_TRIAGE_LOCK:
+        if key in _TERMINAL_TRIAGE_PENDING:
+            return True
+        try:
+            _TERMINAL_TRIAGE_JOBS.put_nowait((key, run_id))
+        except queue.Full:
+            LOGGER.error(
+                "terminal triage queue is full; durable job %s remains for startup sweep",
+                key,
+            )
+            return False
+        _TERMINAL_TRIAGE_PENDING.add(key)
+        if _TERMINAL_TRIAGE_THREAD is None or not _TERMINAL_TRIAGE_THREAD.is_alive():
+            _TERMINAL_TRIAGE_THREAD = threading.Thread(
+                target=_run_terminal_triage_jobs,
+                name="vibecrafted-terminal-triage",
+                daemon=True,
+            )
+            _TERMINAL_TRIAGE_THREAD.start()
+    return True
+
+
+def _schedule_terminal_triage_run(run_id: str) -> bool:
+    try:
+        candidate = _canonical_triage_run_id(run_id)
+        _persist_terminal_triage_outbox(candidate)
+    except Exception:
+        LOGGER.exception(
+            "terminal triage work could not be persisted for %r",
+            run_id,
+        )
+        return False
+    return _enqueue_terminal_triage_job(f"run:{candidate}", candidate)
+
+
+def _schedule_triage_startup_sweep() -> bool:
+    return _enqueue_terminal_triage_job("startup-sweep", None)
+
+
 class GuardianRecoveryAdapter:
     """HTTP truth check -> vc-guard -> idempotent native-resume adapter."""
 
@@ -2216,6 +2666,7 @@ class GuardianWorker:
         replay_heartbeats: int = DEFAULT_REPLAY_HEARTBEATS,
         ready_callback: ReadyCallback | None = None,
         pending_pass_limit: int = DEFAULT_PENDING_PASS_LIMIT,
+        triage_scheduler: TriageScheduler = _ignore_triage_schedule,
         clock: Callable[[], float] = time.time,
         cursor_parser: CursorParser = _parse_event_cursor,
         control_parser: ControlParser | None = parse_stream_control,
@@ -2236,6 +2687,7 @@ class GuardianWorker:
         self.replay_heartbeats = replay_heartbeats
         self.ready_callback = ready_callback
         self.pending_pass_limit = pending_pass_limit
+        self.triage_scheduler = triage_scheduler
         self.clock = clock
         self.cursor_parser = cursor_parser
         self.control_parser = control_parser
@@ -2368,9 +2820,9 @@ class GuardianWorker:
                         continue
 
                     stats.frames += 1
-                    latest_cursor = item.cursor
                     event = parse_settlement_revision(item.data)
                     if event is None:
+                        latest_cursor = item.cursor
                         try:
                             if _declares_settlement_event(item.data):
                                 if self.state.quarantine(item.cursor, item.data):
@@ -2388,6 +2840,26 @@ class GuardianWorker:
                             )
                         continue
 
+                    try:
+                        triage_scheduled = self.triage_scheduler(event.run_id)
+                    except Exception:
+                        triage_scheduled = False
+                        LOGGER.exception(
+                            "guardian could not schedule terminal triage for %s",
+                            event.run_id,
+                        )
+                    if not triage_scheduled:
+                        # Do not checkpoint this durable event. Reattach from the
+                        # previous cursor and replay once queue capacity returns.
+                        stats.action_failures += 1
+                        LOGGER.error(
+                            "guardian paused settlement consumption before %s r%s "
+                            "because terminal triage was not durably queued",
+                            event.run_id,
+                            event.revision,
+                        )
+                        return stats
+                    latest_cursor = item.cursor
                     baseline_was_complete = self.state.baseline_complete
                     try:
                         claimed = (
@@ -2833,6 +3305,43 @@ def _recover_pending_trust_before_attach() -> None:
         )
 
 
+def _recover_untriaged_runs_background() -> None:
+    """Run one bounded local fallback sweep outside the SSE decision path."""
+
+    from .run_triage import reconcile_untriaged_runs
+
+    _recover_terminal_triage_outbox()
+    control_plane = vibecrafted_home() / "control_plane"
+    try:
+        report = reconcile_untriaged_runs(control_plane)
+    except Exception:
+        LOGGER.exception(
+            "terminal triage startup reconciliation could not scan %s",
+            control_plane,
+        )
+        return
+    for item in report.errors:
+        LOGGER.error(
+            "terminal triage recovery failed for %s: %s",
+            item.run_id,
+            item.reason,
+        )
+    if report.truncated:
+        LOGGER.critical(
+            "terminal triage recovery hit its bounded limit: "
+            "scanned=%s attempted=%s; explicit operator sweep with a higher "
+            "scan limit is required",
+            report.scanned,
+            report.attempted,
+        )
+    if report.ok:
+        LOGGER.info(
+            "terminal triage recovery complete: scanned=%s attempted=%s",
+            report.scanned,
+            report.attempted,
+        )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -2873,6 +3382,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             connect_timeout=args.connect_timeout,
             replay_heartbeats=args.replay_heartbeats,
             ready_callback=ready_callback,
+            triage_scheduler=_schedule_terminal_triage_run,
         )
         backoff = BoundedBackoff(args.backoff_initial, args.backoff_max)
     except ValueError as exc:
@@ -2882,6 +3392,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         with single_instance_lock(args.lock):
             try:
                 _recover_pending_trust_before_attach()
+                _schedule_triage_startup_sweep()
                 LOGGER.info(
                     "guardian attaching to %s/api/control/events; "
                     "guarded native recovery adapter active",

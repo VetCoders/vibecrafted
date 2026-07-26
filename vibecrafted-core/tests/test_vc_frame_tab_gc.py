@@ -12,6 +12,7 @@ from vibecrafted_core.run_triage import (
     load_durable_transfer_proof,
     load_vc_frame_transfer_proof,
 )
+from vibecrafted_core.runtime_transcript import write_runtime_transcript_manifest
 from vibecrafted_core.vc_frame_tab_gc import (
     BUCKET_SESSIONS,
     LiveTab,
@@ -92,6 +93,7 @@ def durable_run(
         "cwd": "/repo",
         "pane_id": "terminal_3",
         "runtime_transcript": None,
+        "settlement_revision": 3,
         "capture": capture,
         "capture_committed": True,
         "metadata_committed": True,
@@ -99,6 +101,7 @@ def durable_run(
         "viewer_tab_identity": viewer_identity,
         "viewer_creation_pending": False,
         "viewer_token": VIEWER_TOKEN,
+        "superseded_viewers": [],
         "origin_tab_state": "closed",
         "fault": None,
         "updated_at": updated_at,
@@ -143,6 +146,9 @@ def durable_run(
         "exit_code": exit_code,
         "origin_session": origin_session,
         "origin_tab": origin_tab,
+        "origin_pane_id": "terminal_3",
+        "command": ["codex", "exec", run_id],
+        "root": "/repo",
         "triage": verdict,
         "triage_verdict": verdict,
         "triage_pending": False,
@@ -150,6 +156,9 @@ def durable_run(
         "settlement_revision": 3,
         "settlement_verdict": verdict,
         "settlement_tui": tui,
+        "triage_settlement_revision": 3,
+        "triage_settlement_verdict": verdict,
+        "triage_settlement_tui": tui,
         "await_outcome": "completed",
     }
     proof = load_vc_frame_transfer_proof(control_plane, runtime_payload)
@@ -223,27 +232,31 @@ def test_runtime_transcript_capture_is_valid_durable_source(tmp_path: Path) -> N
     cp = tmp_path / "control_plane"
     runtime_payload, runtime_meta = durable_run(cp)
     finished = cp / "finished_runs" / "impl-good"
+    transcript = (tmp_path / "run.transcript.log").resolve()
+    transcript.write_bytes((finished / "scrollback.txt").read_bytes())
+    assert write_runtime_transcript_manifest(transcript, run_id="impl-good")
+    runtime_payload["transcript"] = str(transcript)
     receipt = json.loads((finished / "transfer.json").read_text(encoding="utf-8"))
     capture = dict(receipt["capture"])
     capture.update(
         {
             "capture_source": "runtime_transcript",
-            "source_identity": "/repo/run.transcript.log",
+            "source_identity": str(transcript),
             "origin_tab_identity": None,
         }
     )
-    receipt["runtime_transcript"] = "/repo/run.transcript.log"
+    receipt["runtime_transcript"] = str(transcript)
     receipt["capture"] = capture
     _write_json(finished / "transfer.json", receipt)
     manifest = json.loads(
         (finished / "capture.manifest.json").read_text(encoding="utf-8")
     )
-    manifest["runtime_transcript"] = "/repo/run.transcript.log"
+    manifest["runtime_transcript"] = str(transcript)
     manifest["evidence"] = capture
     _write_json(finished / "capture.manifest.json", manifest)
     finished_meta = json.loads((finished / "meta.json").read_text(encoding="utf-8"))
     finished_meta["capture_source"] = "runtime_transcript"
-    finished_meta["capture_source_identity"] = "/repo/run.transcript.log"
+    finished_meta["capture_source_identity"] = str(transcript)
     _write_json(finished / "meta.json", finished_meta)
     proof = load_vc_frame_transfer_proof(cp, runtime_payload)
     runtime_payload["triage_transfer_receipt"] = str(proof.receipt_path)
@@ -260,16 +273,21 @@ def test_runtime_transcript_source_must_match_requested_path(tmp_path: Path) -> 
     cp = tmp_path / "control_plane"
     runtime_payload, _runtime_meta = durable_run(cp)
     finished = cp / "finished_runs" / "impl-good"
+    requested = (tmp_path / "requested.transcript.log").resolve()
+    requested.write_bytes((finished / "scrollback.txt").read_bytes())
+    assert write_runtime_transcript_manifest(requested, run_id="impl-good")
+    runtime_payload["transcript"] = str(requested)
+    other = (tmp_path / "other.transcript.log").resolve()
     receipt = json.loads((finished / "transfer.json").read_text(encoding="utf-8"))
     capture = dict(receipt["capture"])
     capture.update(
         {
             "capture_source": "runtime_transcript",
-            "source_identity": "/repo/other.transcript.log",
+            "source_identity": str(other),
             "origin_tab_identity": None,
         }
     )
-    receipt["runtime_transcript"] = "/repo/requested.transcript.log"
+    receipt["runtime_transcript"] = str(requested)
     receipt["capture"] = capture
     _write_json(finished / "transfer.json", receipt)
     manifest = json.loads(
@@ -303,7 +321,7 @@ def test_transfer_proof_rejects_bucket_verdict_disagreement(tmp_path: Path) -> N
     )
     _write_json(runtime_meta, runtime_payload)
 
-    with pytest.raises(TransferProofError, match="exact terminal verdict"):
+    with pytest.raises(TransferProofError, match="bucket disagrees"):
         load_durable_transfer_proof(cp, runtime_meta)
 
 
