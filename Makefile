@@ -18,7 +18,7 @@ UV_PROJECT_ENVIRONMENT ?= $(INSTALLER_CACHE_HOME)/vibecrafted/venvs/installer-$(
 # in-tree cache is never read or written by install lanes.
 export PYTHONPYCACHEPREFIX ?= $(INSTALLER_CACHE_HOME)/vibecrafted/pycache-$(INSTALLER_HOST_TAG)
 
-.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-core test-skills test-install test-parity test-vc-frame test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-python-tools install-vendored-binaries install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test install-server server-smoke
+.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-core test-skills test-install test-parity test-vc-frame test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-python-tools install-vendored-binaries install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test install-server install-server-service server-smoke
 
 help:
 	@printf "\n"
@@ -38,7 +38,7 @@ help-dev:
 	@printf "\n"
 	@printf "  \033[1m\033[38;5;173m⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. dev targets\033[0m\n"
 	@printf "\n"
-	@printf "  \033[1minstall\033[0m   install · install-auto · install-all · install-python-tools · install-vendored-binaries · install-app-binaries · install-server · install-hammerspoon\n"
+	@printf "  \033[1minstall\033[0m   install · install-auto · install-all · install-python-tools · install-vendored-binaries · install-app-binaries · install-server · install-server-service · install-hammerspoon\n"
 	@printf "            skills · helpers · setup-dev · wizard · wizard-dev · gui-install · dry-run · restore\n"
 	@printf "            migrate · migrate-dry · foundations · foundations-check · bundle · bundle-check\n"
 	@printf "  \033[1mtests\033[0m     test · test-core · test-skills · test-install · test-parity · test-vc-frame · test-iterm2-migrate\n"
@@ -143,7 +143,7 @@ install:
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "skills and launchers" -- bash -e -c '$(PYTHON) $(INSTALLER) install --source "$$1" --compact --non-interactive --mirror; make --no-print-directory install-python-tools' _ "$(SOURCE)"
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "vc-frame config" -- bash -e -c 'stable_root="$$($(PYTHON) -c '\''import sys; sys.path.insert(0, "$(SOURCE)/vibecrafted-core"); from vibecrafted_core.runtime_paths import vibecrafted_tools_home; print(vibecrafted_tools_home() / "vibecrafted-current")'\'')"; PYTHONPATH="$$stable_root/vibecrafted-core" $(PYTHON) -c "from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config, ensure_zshrc; print(stage_vc_frame_config().render(), end=\"\"); print(ensure_zshrc())"'
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "runtime tools" -- bash scripts/install-runtime.sh --runtime "$(RUNTIME)" --yes
-	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "app and server" -- bash -e -c 'make --no-print-directory install-vendored-binaries; make --no-print-directory install-app-binaries; make --no-print-directory install-server'
+	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "app and server" -- bash -e -c 'make --no-print-directory install-vendored-binaries; make --no-print-directory install-app-binaries; make --no-print-directory install-server; make --no-print-directory install-server-service'
 	@printf "\nVibecrafted is ready.\n\nStart here:\n  vc-start\n\nHealth:\n  vibecrafted doctor\n\nLog:\n  ~/.vibecrafted/install.log\n"
 
 # `make install` calls `install-python-tools`; it was an empty .PHONY name
@@ -208,11 +208,6 @@ install-tools:
 	if [ "$$actual_core" != "$$expected_core" ]; then \
 		echo "[install-tools] FATAL: uv tool imports vibecrafted_core from $$actual_core, expected stable runtime $$expected_core" >&2; \
 		exit 1; \
-	fi; \
-	if [ "$$(uname -s)" = "Darwin" ] && \
-	   [ -f "$$HOME/Library/LaunchAgents/io.vetcoders.vibecrafted.server.plist" ]; then \
-		echo "[install-tools] reconciling installed server supervisor..."; \
-		"$$(command -v vibecrafted)" server service reconcile; \
 	fi
 
 # install-all owns every binary the product ships into BIN (~/.local/bin).
@@ -720,6 +715,26 @@ install-server:
 	echo "[server] installed: $(SERVER_BIN) -> $(BIN_DIR) (real file)"; \
 	echo "[server] compat: $(SERVER_COMPAT_BIN) -> $(BIN_DIR) (real file)"; \
 	echo "[server] assets -> $(SERVER_INSTALL_SITE_ROOT)"
+
+install-server-service:
+	@if [ "$$(uname -s)" != "Darwin" ]; then \
+		echo "[server-service] launchd not available — skipping persistent service"; \
+		exit 0; \
+	fi; \
+	set -e; \
+	export PATH="$(BIN_DIR):$$PATH"; \
+	launcher="$$(command -v vibecrafted 2>/dev/null || true)"; \
+	supervisor="$$(command -v vc-server-supervisor 2>/dev/null || true)"; \
+	if [ -z "$$launcher" ] || [ ! -x "$$launcher" ]; then \
+		echo "[server-service] FATAL: canonical vibecrafted launcher is unavailable after install" >&2; \
+		exit 1; \
+	fi; \
+	if [ -z "$$supervisor" ] || [ ! -x "$$supervisor" ]; then \
+		echo "[server-service] FATAL: vc-server-supervisor is unavailable after install" >&2; \
+		exit 1; \
+	fi; \
+	echo "[server-service] installing or reconciling persistent supervision..."; \
+	"$$launcher" server service install
 
 server-smoke: install-server
 	@echo "[server-smoke] Run 1/3" && bash tests/server_smoke.sh

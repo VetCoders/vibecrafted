@@ -665,9 +665,26 @@ def test_make_install_verifies_server_supervisor_entrypoint() -> None:
     assert "expected uv tool target" in install_tools_block
     assert "uv tool imports vibecrafted_core" in install_tools_block
     assert "$$stable_root/vibecrafted-core" in install_tools_block
-    assert "server service reconcile" in install_tools_block
-    assert "io.vetcoders.vibecrafted.server.plist" in install_tools_block
+    assert "server service" not in install_tools_block
     assert "install-python-tools: install-tools" in text
+
+
+def test_make_install_enables_service_after_server_payload() -> None:
+    text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    install_block = text.split("\ninstall:\n", 1)[1].split("\n# `make install`", 1)[0]
+    service_block = text.split("\ninstall-server-service:\n", 1)[1].split(
+        "\nserver-smoke:", 1
+    )[0]
+
+    assert (
+        "make --no-print-directory install-server; "
+        "make --no-print-directory install-server-service"
+    ) in install_block
+    assert 'if [ "$$(uname -s)" != "Darwin" ]' in service_block
+    assert 'export PATH="$(BIN_DIR):$$PATH"' in service_block
+    assert "command -v vibecrafted" in service_block
+    assert "command -v vc-server-supervisor" in service_block
+    assert '"$$launcher" server service install' in service_block
 
 
 def test_launcher_does_not_pin_stale_supervisor_binary() -> None:
