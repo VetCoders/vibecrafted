@@ -152,6 +152,9 @@ def test_foreground_supervisor_lock_and_receipt_are_truthful(
         tmp_path / "bin" / "vibecrafted",
         f"""#!/bin/sh
 printf '%s\n' "$2" >> {str(lifecycle_log)!r}
+if [ "$2" = "status" ]; then
+    printf '%s\n' 'Server: RUNNING' 'Guardian: RUNNING'
+fi
 exit 0
 """,
     )
@@ -242,6 +245,91 @@ def test_zero_exit_without_verified_pid_pair_is_degraded(
     assert result == [0]
 
 
+def test_zero_exit_with_foreign_live_minimal_identities_is_degraded(
+    tmp_path: Path,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    config = _config(tmp_path, launcher)
+    config.paths.server_dir.mkdir(parents=True)
+    strangers = [
+        subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        for _role in ("server", "guardian")
+    ]
+    stop_event = threading.Event()
+    result: list[int] = []
+    worker: threading.Thread | None = None
+    try:
+        for role, process in zip(("server", "guardian"), strangers, strict=True):
+            (config.paths.server_dir / f"{role}.pid").write_text(
+                f"{process.pid}\n",
+                encoding="utf-8",
+            )
+            (config.paths.server_dir / f"{role}.identity.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "vibecrafted.managed-process.v1",
+                        "role": role,
+                        "pid": process.pid,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        snapshot = supervisor._managed_pair_snapshot(config.paths)
+        assert snapshot == {
+            "server_pid": strangers[0].pid,
+            "guardian_pid": strangers[1].pid,
+        }
+        assert supervisor._managed_pair_healthy(snapshot)
+
+        worker = threading.Thread(
+            target=lambda: result.append(
+                supervisor.run_supervisor(config, stop_event=stop_event)
+            ),
+            daemon=True,
+        )
+        worker.start()
+
+        deadline = time.monotonic() + 5
+        receipt: dict[str, object] = {}
+        while time.monotonic() < deadline:
+            try:
+                receipt = json.loads(
+                    config.paths.receipt_file.read_text(encoding="utf-8")
+                )
+            except (FileNotFoundError, json.JSONDecodeError):
+                time.sleep(0.02)
+                continue
+            if receipt.get("state") == "backoff":
+                break
+            time.sleep(0.02)
+
+        assert receipt["state"] == "backoff"
+        assert receipt["last_exit_code"] == 0
+        assert receipt["last_success_at"] is None
+        assert receipt["managed_pair"] == snapshot
+        assert "without canonical managed-pair status proof" in str(
+            receipt["last_error"]
+        )
+    finally:
+        stop_event.set()
+        if worker is not None:
+            worker.join(timeout=5)
+        for process in strangers:
+            if process.poll() is None:
+                process.terminate()
+        for process in strangers:
+            process.wait(timeout=5)
+
+    assert worker is not None and not worker.is_alive()
+    assert result == [0]
+
+
 def test_start_service_bootstraps_and_kickstarts_only_when_needed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -327,6 +415,54 @@ def test_service_status_distinguishes_all_runtime_dimensions(
         supervisor_service_managed=True,
         build_current=True,
     )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OSError("status executable unavailable"),
+        subprocess.TimeoutExpired(["vibecrafted", "server", "status"], 15),
+    ],
+)
+def test_pair_health_probe_failures_are_degraded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+
+    def fail_probe(
+        *_args: object, **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        raise failure
+
+    monkeypatch.setattr(supervisor.subprocess, "run", fail_probe)
+
+    assert not supervisor._pair_healthy(launcher, {})
+
+
+def test_truncated_launch_agent_plist_degrades_service_and_runtime_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    config = _config(tmp_path, launcher)
+    config.paths.launch_agent_file.parent.mkdir(parents=True)
+    config.paths.launch_agent_file.write_bytes(
+        b'<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key>'
+    )
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: True)
+
+    status = supervisor.service_status(config)
+
+    assert status.installed
+    assert status.loaded
+    assert not status.build_current
+    assert not status.pair_healthy
+    assert supervisor._runtime_status(config.paths) == 1
+    assert "Supervision: BROKEN" in capsys.readouterr().out
 
 
 def test_launcher_fingerprint_is_enforced_by_run_and_service_status(

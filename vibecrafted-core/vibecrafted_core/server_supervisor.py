@@ -18,6 +18,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Self
+from xml.parsers.expat import ExpatError
 
 from . import __version__ as PACKAGE_VERSION
 
@@ -866,7 +867,13 @@ def run_supervisor(
                 if event.is_set():
                     break
                 managed_pair = _managed_pair_snapshot(config.paths)
-                if return_code == 0 and _managed_pair_healthy(managed_pair):
+                managed_pair_live = _managed_pair_healthy(managed_pair)
+                canonical_pair_healthy = (
+                    return_code == 0
+                    and managed_pair_live
+                    and _pair_healthy(config.launcher, child_environment)
+                )
+                if canonical_pair_healthy:
                     consecutive_failures = 0
                     last_success_at = _utc_now()
                     last_error = None
@@ -877,10 +884,16 @@ def run_supervisor(
                     total_failures += 1
                     last_failure_at = _utc_now()
                     if return_code == 0:
-                        last_error = (
-                            "server start returned success without a verified "
-                            "live server and guardian PID pair"
-                        )
+                        if managed_pair_live:
+                            last_error = (
+                                "server start returned success without canonical "
+                                "managed-pair status proof"
+                            )
+                        else:
+                            last_error = (
+                                "server start returned success without a verified "
+                                "live server and guardian PID pair"
+                            )
                     else:
                         last_error = detail or f"server start exited {return_code}"
                     state = "backoff"
@@ -1052,7 +1065,7 @@ def _installed_service_identity(paths: SupervisorPaths) -> SupervisorIdentity | 
         return None
     try:
         payload = plistlib.loads(encoded)
-    except plistlib.InvalidFileException:
+    except (plistlib.InvalidFileException, ExpatError):
         return None
     if not isinstance(payload, dict):
         return None
@@ -1092,7 +1105,7 @@ def _installed_service_launcher(paths: SupervisorPaths) -> Path | None:
         return None
     try:
         payload = plistlib.loads(encoded)
-    except plistlib.InvalidFileException:
+    except (plistlib.InvalidFileException, ExpatError):
         return None
     if not isinstance(payload, dict):
         return None
@@ -1229,14 +1242,17 @@ def _wait_for_managed_supervisor(
 
 
 def _pair_healthy(launcher: Path, environment: dict[str, str]) -> bool:
-    result = subprocess.run(
-        [str(launcher), "server", "status"],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=15,
-        env=environment,
-    )
+    try:
+        result = subprocess.run(
+            [str(launcher), "server", "status"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=environment,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
     return (
         result.returncode == 0
         and "Server: RUNNING" in result.stdout
