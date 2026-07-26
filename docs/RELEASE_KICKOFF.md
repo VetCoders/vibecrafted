@@ -35,12 +35,15 @@ about what the product is.
    ```bash
    make bundle-check
    make check
+   make test-core
    make test
    make semgrep
    env -u VC_FRAME -u VC_FRAME_PANE_ID -u VC_FRAME_SESSION_NAME -u VIBECRAFTED_OPERATOR_SESSION bash scripts/check-portable.sh
    ```
 
-   `make semgrep` is the security gate; the local pre-commit and
+   `make test-core` is the complete Python runtime suite, not a substitute for
+   the installer-facing `make test` suite. `make semgrep` is the security gate;
+   the local pre-commit and
    pre-push hooks under `scripts/hooks/` run the same invocation, so a
    green hook on the release commit gives the same answer as the gate.
    Any blocking finding must be fixed, accepted in writing inside the
@@ -114,6 +117,41 @@ about what the product is.
    - the founder comment is prewritten
    - the portal and installer are both ready for real strangers
    - someone is available to answer comments for the full launch window
+
+## Release integrity path
+
+The tag workflow is deliberately publish-last:
+
+1. It runs shell checks, the full `make test-core` runtime suite, Semgrep, and
+   the installer-facing tests.
+2. It builds the exact runtime archive, marketplace plugin, and public
+   `install.sh` that will become release assets.
+3. It records all three payloads in one `SHA256SUMS`, signs each payload with
+   the existing RSA release key, then verifies the checksums, detached
+   signatures, archive contents, and plugin ZIP before touching a GitHub
+   Release.
+4. GitHub OIDC creates a Sigstore-backed provenance attestation for the same
+   checksummed payload set. No long-lived attestation credential is stored.
+5. The workflow uploads the verified files to a draft release, downloads every
+   draft asset, compares it byte-for-byte with the local build, and only then
+   publishes the release. A rerun refuses to replace assets on an already
+   published release.
+
+### Current signing truth
+
+The operational signing mechanism today is the existing RSA private key exposed
+to the workflow as `VIBECRAFTED_SIGNING_KEY`; the matching public key ships as
+`vibecrafted-signing.pub`. The workflow's OIDC attestation complements that
+signature with build provenance. It does not replace the installer-compatible
+RSA path.
+
+Vibecrafted does **not** yet claim a VetCoders organization GPG trust root. GPG
+is a separate future trust path: create an offline VetCoders certification key,
+issue bounded product signing subkeys, publish and pin their fingerprints, and
+define revocation/rotation before enabling GPG signatures in CI. Do not relabel
+the current RSA key as GPG, and do not silently reuse another organization's
+identity as the permanent VetCoders root. Keep RSA verification operational
+during any announced migration or dual-signing period.
 
 ## Release report contract
 

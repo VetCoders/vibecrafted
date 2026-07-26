@@ -7,12 +7,17 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - name: Install shellcheck
         run: |
           sudo apt-get update
@@ -21,6 +26,8 @@ jobs:
         run: make check
       - name: Install uv
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: Run core runtime tests
+        run: make test-core
       - name: Run Semgrep security gate
         run: make semgrep
       - name: Run installer tests
@@ -31,7 +38,8 @@ jobs:
           tag="${GITHUB_REF_NAME#v}"
           file_version="$(cat VERSION 2>/dev/null || echo unknown)"
           if [[ "$tag" != "$file_version" ]]; then
-            echo "::warning::Tag ($tag) does not match VERSION file ($file_version)"
+            echo "::error::Tag ($tag) does not match VERSION file ($file_version)"
+            exit 1
           fi
           echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
           echo "version=$tag" >> "$GITHUB_OUTPUT"
@@ -40,35 +48,71 @@ jobs:
         run: |
           mkdir -p dist
           uv run python3 scripts/build_marketplace_bundle.py --output dist/vibecrafted-framework.plugin
-          sha256sum dist/vibecrafted-framework.plugin > dist/vibecrafted-framework.plugin.sha256
 
       - name: Build release archive
         run: |
           archive_name="vibecrafted-${{ steps.version.outputs.version }}"
           mkdir -p dist
           uv run python3 scripts/distribution_manifest.py archive --source . --output "dist/${archive_name}.tar.gz" --root-name "$archive_name"
-          echo "archive=${archive_name}.tar.gz" >> "$GITHUB_OUTPUT"
 
-      - name: Sign release artifacts
+      - name: Stage release payloads and sign with existing RSA key
         env:
           SIGNING_KEY_B64: ${{ secrets.VIBECRAFTED_SIGNING_KEY }}
         run: |
-          echo "$SIGNING_KEY_B64" | base64 -d > /tmp/signing.key
+          set -euo pipefail
+          signing_key="$RUNNER_TEMP/vibecrafted-signing.key"
+          umask 077
+          test -n "$SIGNING_KEY_B64"
+          printf '%s' "$SIGNING_KEY_B64" | base64 --decode > "$signing_key"
+          trap 'rm -f "$signing_key"' EXIT
+          test -s "$signing_key"
+          openssl rsa -in "$signing_key" -check -noout
+
+          install -m 0755 install.sh dist/install.sh
           cd dist
-          archive="${{ steps.version.outputs.version }}"
-          archive_file="vibecrafted-${archive}.tar.gz"
+          payloads=(
+            "vibecrafted-${{ steps.version.outputs.version }}.tar.gz"
+            "vibecrafted-framework.plugin"
+            "install.sh"
+          )
 
-          # SHA256SUMS
-          sha256sum "$archive_file" > SHA256SUMS
-          sha256sum ../install.sh | sed 's|  \.\./|  |' >> SHA256SUMS
+          : > SHA256SUMS
+          for payload in "${payloads[@]}"; do
+            test -s "$payload"
+            sha256sum "$payload" >> SHA256SUMS
+            openssl dgst -sha256 -sign "$signing_key" -out "${payload}.sig" "$payload"
+          done
 
-          # Detached signatures
-          openssl dgst -sha256 -sign /tmp/signing.key -out "${archive_file}.sig" "$archive_file"
+          openssl rsa -in "$signing_key" -pubout -out vibecrafted-signing.pub 2>/dev/null
 
-          # Derive public key from private
-          openssl rsa -in /tmp/signing.key -pubout -out vibecrafted-signing.pub 2>/dev/null
+      - name: Verify exact release payloads
+        run: |
+          set -euo pipefail
+          archive_name="vibecrafted-${{ steps.version.outputs.version }}"
+          payloads=(
+            "${archive_name}.tar.gz"
+            "vibecrafted-framework.plugin"
+            "install.sh"
+          )
 
-          rm -f /tmp/signing.key
+          (
+            cd dist
+            sha256sum --check SHA256SUMS
+            for payload in "${payloads[@]}"; do
+              test -s "${payload}.sig"
+              openssl dgst -sha256 \
+                -verify vibecrafted-signing.pub \
+                -signature "${payload}.sig" \
+                "$payload"
+            done
+          )
+
+          extract_dir="$RUNNER_TEMP/release-archive"
+          mkdir -p "$extract_dir"
+          tar -xzf "dist/${archive_name}.tar.gz" -C "$extract_dir"
+          uv run python3 scripts/distribution_manifest.py check \
+            --root "$extract_dir/$archive_name"
+          uv run python3 -m zipfile -t dist/vibecrafted-framework.plugin
 
       - name: Extract changelog entry
         id: changelog
@@ -88,7 +132,28 @@ jobs:
             echo "CHANGELOG_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub Release
+      - name: Attest release payloads with GitHub OIDC
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        with:
+          subject-checksums: dist/SHA256SUMS
+
+      - name: Refuse mutation of an existing published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if draft_state="$(
+            gh api \
+              "/repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
+              --jq '.draft' 2>/dev/null
+          )"; then
+            if [[ "$draft_state" != "true" ]]; then
+              echo "::error::Release ${GITHUB_REF_NAME} is already published; refusing to replace its assets."
+              exit 1
+            fi
+          fi
+
+      - name: Create draft GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
@@ -98,7 +163,51 @@ jobs:
             dist/*.tar.gz
             dist/*.sig
             dist/*.plugin
+            dist/install.sh
             dist/SHA256SUMS
             dist/vibecrafted-signing.pub
-          draft: false
+          fail_on_unmatched_files: true
+          draft: true
           prerelease: ${{ contains(steps.version.outputs.tag, '-') }}
+
+      - name: Verify uploaded draft assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.version.outputs.tag }}"
+          archive="vibecrafted-${{ steps.version.outputs.version }}.tar.gz"
+          expected_assets="$RUNNER_TEMP/expected-release-assets.txt"
+          actual_assets="$RUNNER_TEMP/actual-release-assets.txt"
+          download_dir="$RUNNER_TEMP/uploaded-release-assets"
+
+          printf '%s\n' \
+            "$archive" \
+            "${archive}.sig" \
+            "vibecrafted-framework.plugin" \
+            "vibecrafted-framework.plugin.sig" \
+            "install.sh" \
+            "install.sh.sig" \
+            "SHA256SUMS" \
+            "vibecrafted-signing.pub" \
+            | sort > "$expected_assets"
+
+          test "$(gh release view "$tag" --json isDraft --jq '.isDraft')" = "true"
+          mkdir -p "$download_dir"
+          gh release download "$tag" --dir "$download_dir"
+          find "$download_dir" -maxdepth 1 -type f -exec basename {} \; \
+            | sort > "$actual_assets"
+          diff -u "$expected_assets" "$actual_assets"
+
+          while IFS= read -r asset; do
+            cmp "dist/$asset" "$download_dir/$asset"
+          done < "$expected_assets"
+
+      - name: Publish verified GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.version.outputs.tag }}"
+          gh release edit "$tag" --draft=false
+          test "$(gh release view "$tag" --json isDraft --jq '.isDraft')" = "false"
