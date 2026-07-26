@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 import shlex
-import signal
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -241,30 +240,15 @@ def _replace_tracker_state(
     return changed
 
 
-def _pid_children(pid: int) -> list[int]:
-    proc = subprocess.run(
-        ["pgrep", "-P", str(pid)],
-        text=True,
-        capture_output=True,
-        check=False,
+def _stop_stalled_run(run_id: str) -> dict[str, Any]:
+    """Route recovery through the identity-qualified stop authority."""
+    from .workflow import stop_run
+
+    return stop_run(
+        run_id,
+        reason="spanko stall recovery",
+        grace_seconds=0.5,
     )
-    children: list[int] = []
-    for raw in proc.stdout.splitlines():
-        try:
-            child = int(raw.strip())
-        except ValueError:
-            continue
-        children.extend(_pid_children(child))
-        children.append(child)
-    return children
-
-
-def _kill_launcher_tree(pid: int) -> None:
-    for target in [*_pid_children(pid), pid]:
-        try:
-            os.kill(target, signal.SIGTERM)
-        except ProcessLookupError:
-            continue
 
 
 def _run_then(command: str, *, root: Path, baton: str) -> int:
@@ -561,10 +545,15 @@ def _cmd_spanko_stall(
         "stall: control-plane await timed out; follow "
         "skills/vc-dispatch/references/pulse-and-stall.md before blind restart"
     )
-    pid = int(run.get("launcher_pid") or 0)
-    if pid:
-        _kill_launcher_tree(pid)
-        evidence = f"{evidence}; killed_launcher_pid={pid}"
+    stop = _stop_stalled_run(args.run_id)
+    if stop.get("accepted"):
+        evidence = (
+            f"{evidence}; stop=accepted"
+            f"; target_pid={stop.get('target_pid') or 'already-gone'}"
+        )
+    else:
+        refusal = stop.get("error") or stop.get("reason") or "unproven"
+        evidence = f"{evidence}; stop=refused:{refusal}"
     if args.tracker and args.cut_id:
         _replace_tracker_state(
             Path(args.tracker).expanduser(),

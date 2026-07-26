@@ -1172,12 +1172,24 @@ def test_stop_run_terms_live_launcher_process_group(
 ) -> None:
     home = tmp_path / ".vibecrafted"
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
-    proc = subprocess.Popen(["sleep", "60"], start_new_session=True)
+    run_id = "wflw-live-stop"
+    session_id = "019fa020-2020-7020-8020-202020202020"
+    process_env = {
+        **os.environ,
+        "VIBECRAFTED_RUN_ID": run_id,
+        "VIBECRAFTED_SESSION_ID": session_id,
+    }
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        start_new_session=True,
+        env=process_env,
+    )
     try:
         _write_run_meta(
             home,
             {
-                "run_id": "wflw-live-stop",
+                "run_id": run_id,
+                "session_id": session_id,
                 "status": "running",
                 "agent": "codex",
                 "mode": "workflow",
@@ -1185,13 +1197,12 @@ def test_stop_run_terms_live_launcher_process_group(
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "skill_code": "wflw",
                 "launcher_pid": proc.pid,
+                "worker_pgid": proc.pid,
                 "liveness": "pid_alive",
             },
         )
 
-        payload = workflow.stop_run(
-            "wflw-live-stop", reason="manual", grace_seconds=0.05
-        )
+        payload = workflow.stop_run(run_id, reason="manual", grace_seconds=0.05)
         proc.wait(timeout=2)
 
         assert payload["accepted"] is True
@@ -1204,6 +1215,60 @@ def test_stop_run_terms_live_launcher_process_group(
         assert run["exit_code"] == 143
         assert run["operator_state"] == "stopped"
         assert run["lifecycle"]["stop"] is False
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=2)
+
+
+def test_stop_signal_target_prefers_worker_over_dispatcher() -> None:
+    assert workflow._stop_signal_target(
+        {"launcher_pid": 1001, "worker_pid": 2002}
+    ) == ("worker_pid", 2002)
+
+
+def test_stop_run_rejects_stale_session_without_signalling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    run_id = "wflw-stale-session"
+    actual_session = "019fa021-2121-7021-8021-212121212121"
+    process_env = {
+        **os.environ,
+        "VIBECRAFTED_RUN_ID": run_id,
+        "VIBECRAFTED_SESSION_ID": actual_session,
+    }
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        start_new_session=True,
+        env=process_env,
+    )
+    try:
+        _write_run_meta(
+            home,
+            {
+                "run_id": run_id,
+                "session_id": "019fdead-dead-7dea-8dea-deaddeaddead",
+                "status": "running",
+                "agent": "codex",
+                "mode": "workflow",
+                "root": str(tmp_path),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "skill_code": "wflw",
+                "launcher_pid": proc.pid,
+                "worker_pgid": proc.pid,
+                "liveness": "pid_alive",
+            },
+        )
+
+        payload = workflow.stop_run(run_id, reason="manual", grace_seconds=0)
+
+        assert payload["accepted"] is False
+        assert payload["reason"] == "identity_unproven"
+        assert payload["signal_sent"] is False
+        assert payload["error"] == "identity_unproven:environment_birth_mismatch"
+        assert proc.poll() is None
     finally:
         if proc.poll() is None:
             proc.terminate()

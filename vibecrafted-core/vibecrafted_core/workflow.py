@@ -1088,7 +1088,11 @@ def await_launch_truth(
 
 
 def _stop_signal_target(run: dict[str, Any]) -> tuple[str, int] | None:
-    for key in ("launcher_pid", "worker_pgid", "worker_pid"):
+    # Never treat a process group as one signalable object: killpg would include
+    # members whose birth identity cannot be verified individually.
+    # The worker is the run-owned process recorded alongside worker_pgid.
+    # A dispatcher/launcher may be a different process group.
+    for key in ("worker_pid", "launcher_pid"):
         raw = run.get(key)
         if isinstance(raw, int) and raw > 0:
             return key, raw
@@ -1946,21 +1950,45 @@ def _stop_run_locked(
     alive_after_grace: bool | None = None
     stop_reason = reason
     stop_error = ""
-    try:
-        if target_kind == "launcher_pid":
-            target_pgid = os.getpgid(target_pid)
-            os.killpg(target_pgid, signal.SIGTERM)
-        elif target_kind == "worker_pgid":
-            target_pgid = target_pid
-            os.killpg(target_pgid, signal.SIGTERM)
-        else:
-            os.kill(target_pid, signal.SIGTERM)
-        signal_sent = True
-    except ProcessLookupError:
+    from .run_reaper import (
+        build_env_index,
+        build_process_table,
+        read_process_start_token,
+        verify_run_process,
+    )
+
+    process_table = build_process_table()
+    process_entry = next(
+        (entry for entry in process_table if entry.pid == target_pid),
+        None,
+    )
+    if process_entry is None and not _pid_is_alive(target_pid):
         already_dead = True
         stop_reason = "pid_gone_before_stop"
-    except OSError as exc:
-        stop_error = f"{type(exc).__name__}: {exc}"
+    else:
+        env_index = build_env_index()
+        verified_entry, verify_reason = verify_run_process(
+            run,
+            target_pid,
+            process_table,
+            env_index,
+        )
+        if verified_entry is None:
+            stop_error = f"identity_unproven:{verify_reason}"
+        else:
+            target_pgid = verified_entry.pgid
+            live_birth = read_process_start_token(target_pid)
+            if not live_birth or live_birth != verified_entry.start_token:
+                stop_error = "identity_unproven:birth_changed_before_term"
+            else:
+                try:
+                    os.kill(target_pid, signal.SIGTERM)
+                    signal_sent = True
+                except ProcessLookupError:
+                    already_dead = True
+                    stop_reason = "pid_gone_before_stop"
+                except OSError as exc:
+                    stop_error = f"{type(exc).__name__}: {exc}"
 
     accepted = not stop_error
     if signal_sent:
@@ -1972,7 +2000,7 @@ def _stop_run_locked(
         target,
         run=run,
         accepted=accepted,
-        reason=stop_reason if accepted else "signal_failed",
+        reason=stop_reason if accepted else "identity_unproven",
         signal_name="SIGTERM",
         target=target_kind,
         target_pid=target_pid,
@@ -1993,7 +2021,7 @@ def _stop_run_locked(
         "signal_sent": signal_sent,
         "already_dead": already_dead,
         "alive_after_grace": alive_after_grace,
-        "reason": stop_reason if accepted else "signal_failed",
+        "reason": stop_reason if accepted else "identity_unproven",
         "error": stop_error,
         "run": lookup_run(target),
     }

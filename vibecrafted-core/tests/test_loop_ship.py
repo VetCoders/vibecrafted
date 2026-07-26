@@ -274,12 +274,12 @@ def test_spanko_resolves_runtime_run_when_await_projection_misses(
     assert "runtime123" in text
 
 
-def test_spanko_stall_kills_launcher_tree_and_runs_recovery(
+def test_spanko_stall_routes_stop_through_identity_authority_and_runs_recovery(
     tmp_path: Path, monkeypatch
 ) -> None:
     tracker = tmp_path / "tracker.md"
     tracker.write_text("| Cut | State | Evidence |\n| C9 | [~] | run_id=impl-3 |\n")
-    killed: list[int] = []
+    stopped: list[str] = []
     recoveries: list[str] = []
 
     monkeypatch.setattr(loop, "_framework_heartbeat", lambda **_: 0)
@@ -299,7 +299,15 @@ def test_spanko_stall_kills_launcher_tree_and_runs_recovery(
             },
         },
     )
-    monkeypatch.setattr(loop, "_kill_launcher_tree", lambda pid: killed.append(pid))
+    def fake_stop(run_id: str) -> dict[str, object]:
+        stopped.append(run_id)
+        return {
+            "accepted": False,
+            "reason": "identity_unproven",
+            "error": "identity_unproven:environment_birth_mismatch",
+        }
+
+    monkeypatch.setattr(loop, "_stop_stalled_run", fake_stop)
 
     def fake_run(cmd, **kwargs):
         recoveries.append(" ".join(cmd) if isinstance(cmd, list) else str(cmd))
@@ -324,8 +332,9 @@ def test_spanko_stall_kills_launcher_tree_and_runs_recovery(
     )
 
     assert rc == 4
-    assert killed == [4242]
+    assert stopped == ["impl-3"]
     assert recoveries == ["vibecrafted implement codex --file recovery.md"]
     text = tracker.read_text(encoding="utf-8")
     assert "[!]" in text
     assert "stall" in text
+    assert "stop=refused:identity_unproven:environment_birth_mismatch" in text

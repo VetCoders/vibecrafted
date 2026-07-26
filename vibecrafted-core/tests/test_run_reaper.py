@@ -15,22 +15,52 @@ from vibecrafted_core import run_reaper
 
 TERMINAL_RUN = {
     "run_id": "impl-260720-000001-11000",
+    "session_id": "019fa001-1111-7111-8111-111111111111",
     "state": "completed",
     "exit_code": 0,
     "worker_pgid": 4242,
 }
 LIVE_RUN = {
     "run_id": "impl-260720-000002-22000",
+    "session_id": "019fa002-2222-7222-8222-222222222222",
     "state": "running",
     "worker_pgid": 5252,
 }
 
 
 def entry(
-    pid: int, ppid: int = 1, pgid: int | None = None, command: str = "node agent"
-):
+    pid: int,
+    ppid: int = 1,
+    pgid: int | None = None,
+    command: str = "node agent",
+    start_token: str | None = None,
+) -> run_reaper.ProcessEntry:
     return run_reaper.ProcessEntry(
-        pid=pid, ppid=ppid, pgid=pid if pgid is None else pgid, command=command
+        pid=pid,
+        ppid=ppid,
+        pgid=pid if pgid is None else pgid,
+        command=command,
+        start_token=start_token or f"birth:{pid}",
+    )
+
+
+def identity(run: dict[str, object]) -> run_reaper.ProcessEnvIdentity:
+    return run_reaper.ProcessEnvIdentity(
+        run_id=str(run["run_id"]),
+        session_id=str(run["session_id"]),
+    )
+
+
+def owned_candidate(
+    pid: int, evidence: str = "run_birth_identity"
+) -> run_reaper.ReapCandidate:
+    return run_reaper.ReapCandidate(
+        pid=pid,
+        command="voc",
+        run_id="r",
+        evidence=evidence,
+        session_id="019fa099-9999-7999-8999-999999999999",
+        start_token=f"birth:{pid}",
     )
 
 
@@ -39,35 +69,119 @@ def entry(
 # --------------------------------------------------------------------------
 
 
-def test_env_run_id_proves_ownership():
-    table = [entry(900, command="voc monitor")]
+def test_full_run_birth_identity_proves_ownership():
+    table = [entry(900, pgid=4242, command="voc monitor")]
     plan = run_reaper.plan_reap(
         [TERMINAL_RUN],
         table,
-        env_index={900: TERMINAL_RUN["run_id"]},
+        env_index={900: identity(TERMINAL_RUN)},
         self_pid=1000,
         env={},
     )
     assert [c.pid for c in plan.doomed] == [900]
-    assert plan.doomed[0].evidence == "env_run_id"
+    assert plan.doomed[0].evidence == "run_birth_identity"
     assert plan.doomed[0].run_id == TERMINAL_RUN["run_id"]
 
 
-def test_worker_pgid_proves_ownership_without_env():
-    """The orphan case: parent is gone (ppid=1) and the env is unreadable."""
+def test_runtime_session_identity_wins_over_agent_resume_session():
+    run = {
+        **TERMINAL_RUN,
+        "session_id": "provider-resume-session",
+        "runtime_session_id": "019fa005-5555-7555-8555-555555555555",
+    }
+    env_identity = run_reaper.ProcessEnvIdentity(
+        run_id=str(run["run_id"]),
+        session_id=str(run["runtime_session_id"]),
+    )
+    plan = run_reaper.plan_reap(
+        [run],
+        [entry(900, pgid=4242)],
+        env_index={900: env_identity},
+        self_pid=1000,
+        env={},
+    )
+    assert [candidate.pid for candidate in plan.doomed] == [900]
+
+
+def test_worker_pgid_without_birth_identity_fails_closed():
+    """A reused PGID cannot authorize a signal when environment identity is absent."""
     table = [entry(901, ppid=1, pgid=4242, command="/bin/sleep 99")]
     plan = run_reaper.plan_reap(
         [TERMINAL_RUN], table, env_index={}, self_pid=1000, env={}
     )
-    assert [c.pid for c in plan.doomed] == [901]
-    assert plan.doomed[0].evidence == "worker_pgid"
+    assert plan.doomed == ()
+    assert [c.pid for c in plan.unproven] == [901]
+    assert "stale or reused pgid" in plan.unproven[0].detail
 
 
-def test_worker_pid_also_registers_as_a_group():
-    run = {"run_id": "r-1", "state": "completed", "worker_pid": 7777}
+def test_reused_pid_and_pgid_with_same_command_but_stale_session_fails_closed():
+    table = [entry(901, ppid=1, pgid=4242, command="node agent")]
+    stale = run_reaper.ProcessEnvIdentity(
+        run_id=TERMINAL_RUN["run_id"],
+        session_id="019fdead-dead-7dea-8dea-deaddeaddead",
+    )
+    plan = run_reaper.plan_reap(
+        [TERMINAL_RUN],
+        table,
+        env_index={901: stale},
+        self_pid=1000,
+        env={},
+    )
+    assert plan.doomed == ()
+    assert [c.pid for c in plan.unproven] == [901]
+    assert "stale or reused pgid" in plan.unproven[0].detail
+
+
+def test_complete_identity_without_process_birth_token_fails_closed():
+    table = [
+        run_reaper.ProcessEntry(
+            pid=901,
+            ppid=1,
+            pgid=4242,
+            command="node agent",
+            start_token="",
+        )
+    ]
+    plan = run_reaper.plan_reap(
+        [TERMINAL_RUN],
+        table,
+        env_index={901: identity(TERMINAL_RUN)},
+        self_pid=1000,
+        env={},
+    )
+    assert plan.doomed == ()
+    assert plan.unproven[0].detail == "process birth token unavailable"
+
+
+def test_worker_pid_registers_group_only_with_complete_birth_identity():
+    run = {
+        "run_id": "r-1",
+        "session_id": "019fa003-3333-7333-8333-333333333333",
+        "state": "completed",
+        "worker_pid": 7777,
+    }
     table = [entry(902, pgid=7777)]
-    plan = run_reaper.plan_reap([run], table, env_index={}, self_pid=1000, env={})
+    plan = run_reaper.plan_reap(
+        [run], table, env_index={902: identity(run)}, self_pid=1000, env={}
+    )
     assert [c.pid for c in plan.doomed] == [902]
+
+
+def test_explicit_verifier_requires_launch_recorded_process_group():
+    run = {
+        "run_id": "r-no-pgid",
+        "session_id": "019fa004-4444-7444-8444-444444444444",
+        "state": "running",
+    }
+    verified, reason = run_reaper.verify_run_process(
+        run,
+        903,
+        [entry(903, pgid=9003)],
+        {903: identity(run)},
+        self_pid=1000,
+    )
+    assert verified is None
+    assert reason == "missing_recorded_pgid"
 
 
 # --------------------------------------------------------------------------
@@ -90,7 +204,7 @@ def test_process_of_a_live_run_is_unproven_not_doomed():
     plan = run_reaper.plan_reap(
         [TERMINAL_RUN, LIVE_RUN],
         table,
-        env_index={904: LIVE_RUN["run_id"]},
+        env_index={904: identity(LIVE_RUN)},
         self_pid=1000,
         env={},
     )
@@ -100,7 +214,7 @@ def test_process_of_a_live_run_is_unproven_not_doomed():
 
 
 def test_run_id_in_a_command_line_cannot_forge_ownership():
-    """Only a real SPAWN_RUN_ID= token counts; a mention in argv is not proof."""
+    """A bare run id is incomplete; run and session ids must both agree."""
     index = run_reaper.build_env_index(
         runner=lambda argv: SimpleNamespace(
             returncode=0,
@@ -108,11 +222,14 @@ def test_run_id_in_a_command_line_cannot_forge_ownership():
                 "  PID   TT  STAT      TIME COMMAND\n"
                 f"  905   ??  Ss     0:00.00 grep --run 'SPAWN_RUN_ID:{TERMINAL_RUN['run_id']}'\n"
                 f"  906   ??  Ss     0:00.00 node agent SPAWN_RUN_ID={TERMINAL_RUN['run_id']}\n"
+                f"  907   ??  Ss     0:00.00 node agent SPAWN_RUN_ID={TERMINAL_RUN['run_id']} "
+                f"VIBECRAFTED_SESSION_ID={TERMINAL_RUN['session_id']}\n"
             ),
         )
     )
     assert 905 not in index
-    assert index[906] == TERMINAL_RUN["run_id"]
+    assert index[906].complete is False
+    assert index[907] == identity(TERMINAL_RUN)
 
 
 def test_pgid_zero_and_one_never_prove_ownership():
@@ -129,26 +246,57 @@ def test_non_terminal_runs_contribute_no_targets():
     assert plan.doomed == ()
 
 
+def test_negative_exit_terminal_run_still_requires_full_birth_identity():
+    crashed = {**TERMINAL_RUN, "state": "failed", "exit_code": -9}
+    plan = run_reaper.plan_reap(
+        [crashed],
+        [entry(909, pgid=4242)],
+        env_index={},
+        self_pid=1000,
+        env={},
+    )
+    assert plan.doomed == ()
+    assert [c.pid for c in plan.unproven] == [909]
+
+
 # --------------------------------------------------------------------------
 # Self-preservation
 # --------------------------------------------------------------------------
 
 
-def test_reaper_never_kills_itself_or_its_ancestors():
-    """The terminal-seam caller is itself a process of the run being reaped."""
+def test_reaper_protects_self_ancestors_and_same_group_siblings():
+    """A shared terminal group is operator lineage, never implicit kill scope."""
     table = [
         entry(500, ppid=1, pgid=4242, command="launcher.sh"),  # our parent
         entry(600, ppid=500, pgid=4242, command="python -m run_reaper"),  # us
-        entry(700, ppid=1, pgid=4242, command="voc monitor"),  # sibling: fair game
+        entry(700, ppid=1, pgid=4242, command="voc monitor"),  # sibling
     ]
     plan = run_reaper.plan_reap(
         [TERMINAL_RUN],
         table,
-        env_index={p: TERMINAL_RUN["run_id"] for p in (500, 600, 700)},
+        env_index={p: identity(TERMINAL_RUN) for p in (500, 600, 700)},
         self_pid=600,
         env={},
     )
-    assert [c.pid for c in plan.doomed] == [700]
+    assert plan.doomed == ()
+    assert {c.pid for c in plan.protected} == {500, 600, 700}
+
+
+def test_reaper_protects_current_run_even_outside_its_process_group():
+    table = [entry(701, ppid=1, pgid=4242, command="node agent")]
+    current_env = {
+        "VIBECRAFTED_RUN_ID": str(TERMINAL_RUN["run_id"]),
+        "VIBECRAFTED_SESSION_ID": str(TERMINAL_RUN["session_id"]),
+    }
+    plan = run_reaper.plan_reap(
+        [TERMINAL_RUN],
+        table,
+        env_index={701: identity(TERMINAL_RUN)},
+        self_pid=1000,
+        env=current_env,
+    )
+    assert plan.doomed == ()
+    assert [candidate.pid for candidate in plan.protected] == [701]
 
 
 def test_pid_one_is_never_a_candidate():
@@ -156,7 +304,7 @@ def test_pid_one_is_never_a_candidate():
     plan = run_reaper.plan_reap(
         [TERMINAL_RUN],
         table,
-        env_index={1: TERMINAL_RUN["run_id"]},
+        env_index={1: identity(TERMINAL_RUN)},
         self_pid=1000,
         env={},
     )
@@ -165,12 +313,23 @@ def test_pid_one_is_never_a_candidate():
 
 @pytest.mark.parametrize(
     "command",
-    ["vc-frame --server", "zellij attach main", "loctree-mcp serve", "tmux new"],
+    [
+        "vc-frame --server",
+        "zellij attach main",
+        "loctree-mcp serve",
+        "tmux new",
+        "vibecrafted-server",
+        "control-core serve",
+    ],
 )
 def test_workspace_infrastructure_is_protected_even_when_proven(command):
     table = [entry(910, pgid=4242, command=command)]
     plan = run_reaper.plan_reap(
-        [TERMINAL_RUN], table, env_index={}, self_pid=1000, env={}
+        [TERMINAL_RUN],
+        table,
+        env_index={910: identity(TERMINAL_RUN)},
+        self_pid=1000,
+        env={},
     )
     assert plan.doomed == ()
     assert [c.pid for c in plan.protected] == [910]
@@ -222,11 +381,7 @@ def test_grace_seconds_falls_back_on_garbage():
 def test_escalation_terms_then_kills_a_survivor():
     plan = run_reaper.ReapPlan(
         should_run=True,
-        doomed=(
-            run_reaper.ReapCandidate(
-                pid=920, command="voc", run_id="r", evidence="env_run_id"
-            ),
-        ),
+        doomed=(owned_candidate(920),),
     )
     sent: list[tuple[int, int]] = []
 
@@ -236,6 +391,7 @@ def test_escalation_terms_then_kills_a_survivor():
         sleeper=lambda _: None,
         alive_check=lambda pid: (pid, signal.SIGKILL) not in sent,
         signaller=lambda pid, sig: (sent.append((pid, sig)), "signalled")[1],
+        birth_reader=lambda pid: f"birth:{pid}",
     )
 
     assert sent == [(920, signal.SIGTERM), (920, signal.SIGKILL)]
@@ -248,11 +404,7 @@ def test_escalation_terms_then_kills_a_survivor():
 def test_escalation_stops_at_term_when_the_process_exits():
     plan = run_reaper.ReapPlan(
         should_run=True,
-        doomed=(
-            run_reaper.ReapCandidate(
-                pid=921, command="voc", run_id="r", evidence="worker_pgid"
-            ),
-        ),
+        doomed=(owned_candidate(921),),
     )
     sent: list[tuple[int, int]] = []
 
@@ -262,6 +414,7 @@ def test_escalation_stops_at_term_when_the_process_exits():
         sleeper=lambda _: None,
         alive_check=lambda pid: False,
         signaller=lambda pid, sig: (sent.append((pid, sig)), "signalled")[1],
+        birth_reader=lambda pid: f"birth:{pid}",
     )
 
     assert sent == [(921, signal.SIGTERM)]
@@ -274,11 +427,7 @@ def test_delivered_sigkill_reads_as_killed_not_survived():
     """A killed orphan lingers as a zombie; that must not be reported as survival."""
     plan = run_reaper.ReapPlan(
         should_run=True,
-        doomed=(
-            run_reaper.ReapCandidate(
-                pid=924, command="voc", run_id="r", evidence="env_run_id"
-            ),
-        ),
+        doomed=(owned_candidate(924),),
     )
     receipts = run_reaper.execute_reap(
         plan,
@@ -286,6 +435,7 @@ def test_delivered_sigkill_reads_as_killed_not_survived():
         sleeper=lambda _: None,
         alive_check=lambda pid: True,  # zombie: still visible to kill(pid, 0)
         signaller=lambda pid, sig: "signalled",
+        birth_reader=lambda pid: f"birth:{pid}",
     )
     assert receipts["r"].reaped[0]["outcome"] == "killed"
 
@@ -293,11 +443,7 @@ def test_delivered_sigkill_reads_as_killed_not_survived():
 def test_undeliverable_sigkill_reads_as_survived():
     plan = run_reaper.ReapPlan(
         should_run=True,
-        doomed=(
-            run_reaper.ReapCandidate(
-                pid=925, command="voc", run_id="r", evidence="env_run_id"
-            ),
-        ),
+        doomed=(owned_candidate(925),),
     )
     receipts = run_reaper.execute_reap(
         plan,
@@ -305,6 +451,7 @@ def test_undeliverable_sigkill_reads_as_survived():
         sleeper=lambda _: None,
         alive_check=lambda pid: True,
         signaller=lambda pid, sig: "permission_denied",
+        birth_reader=lambda pid: f"birth:{pid}",
     )
     assert receipts["r"].reaped[0]["outcome"] == "survived"
 
@@ -312,11 +459,7 @@ def test_undeliverable_sigkill_reads_as_survived():
 def test_already_gone_pid_is_receipted_not_escalated():
     plan = run_reaper.ReapPlan(
         should_run=True,
-        doomed=(
-            run_reaper.ReapCandidate(
-                pid=922, command="voc", run_id="r", evidence="env_run_id"
-            ),
-        ),
+        doomed=(owned_candidate(922),),
     )
     receipts = run_reaper.execute_reap(
         plan,
@@ -324,6 +467,7 @@ def test_already_gone_pid_is_receipted_not_escalated():
         sleeper=lambda _: None,
         alive_check=lambda pid: False,
         signaller=lambda pid, sig: "already_gone",
+        birth_reader=lambda pid: f"birth:{pid}",
     )
     assert receipts["r"].reaped[0]["term"] == "already_gone"
 
@@ -331,11 +475,7 @@ def test_already_gone_pid_is_receipted_not_escalated():
 def test_grace_window_is_waited_before_kill():
     plan = run_reaper.ReapPlan(
         should_run=True,
-        doomed=(
-            run_reaper.ReapCandidate(
-                pid=923, command="voc", run_id="r", evidence="env_run_id"
-            ),
-        ),
+        doomed=(owned_candidate(923),),
     )
     slept: list[float] = []
     run_reaper.execute_reap(
@@ -344,8 +484,40 @@ def test_grace_window_is_waited_before_kill():
         sleeper=lambda s: slept.append(s),
         alive_check=lambda pid: True,
         signaller=lambda pid, sig: "signalled",
+        birth_reader=lambda pid: f"birth:{pid}",
     )
     assert slept, "expected the reaper to wait out the grace window before SIGKILL"
+
+
+def test_pid_reuse_before_term_fails_closed_and_is_receipted():
+    sent: list[tuple[int, int]] = []
+    receipts = run_reaper.execute_reap(
+        run_reaper.ReapPlan(should_run=True, doomed=(owned_candidate(926),)),
+        grace=0,
+        signaller=lambda pid, sig: (sent.append((pid, sig)), "signalled")[1],
+        alive_check=lambda _pid: True,
+        birth_reader=lambda _pid: "birth:reused",
+    )
+    assert sent == []
+    row = receipts["r"].reaped[0]
+    assert row["term"] == "not_signalled"
+    assert row["outcome"] == "identity_changed"
+
+
+def test_pid_reuse_between_term_and_kill_blocks_escalation():
+    sent: list[tuple[int, int]] = []
+    births = iter(["birth:927", "birth:reused"])
+    receipts = run_reaper.execute_reap(
+        run_reaper.ReapPlan(should_run=True, doomed=(owned_candidate(927),)),
+        grace=0,
+        signaller=lambda pid, sig: (sent.append((pid, sig)), "signalled")[1],
+        alive_check=lambda _pid: True,
+        birth_reader=lambda _pid: next(births),
+    )
+    assert sent == [(927, signal.SIGTERM)]
+    row = receipts["r"].reaped[0]
+    assert row["kill"] == "not_signalled"
+    assert row["outcome"] == "identity_changed"
 
 
 def test_disabled_plan_signals_nothing():
@@ -397,9 +569,21 @@ def test_dry_run_never_signals(monkeypatch):
         env={},
         runs=[TERMINAL_RUN],
         table=[entry(940, pgid=4242)],
-        env_index={},
+        env_index={940: identity(TERMINAL_RUN)},
     )
     assert [c.pid for c in plan.doomed] == [940]
+
+
+def test_implicit_sweep_is_audit_only(monkeypatch):
+    calls: list[dict] = []
+
+    def fake_reap_terminal_runs(**kwargs):
+        calls.append(kwargs)
+        return run_reaper.ReapPlan(should_run=True)
+
+    monkeypatch.setattr(run_reaper, "reap_terminal_runs", fake_reap_terminal_runs)
+    run_reaper.sweep_quietly(env={})
+    assert calls == [{"dry_run": True, "env": {}}]
 
 
 # --------------------------------------------------------------------------
@@ -416,7 +600,8 @@ def test_process_table_parses_ps_output():
                 "  500   400   500 node /path/agent --flag value\n"
                 "garbage line\n"
             ),
-        )
+        ),
+        start_reader=lambda pid: f"birth:{pid}",
     )
     assert [e.pid for e in table] == [1, 500]
     assert table[1].command == "node /path/agent --flag value"
@@ -485,6 +670,7 @@ LEGACY_MARKED = {
 
 PROVABLE_TERMINAL = {
     "run_id": "impl-provable-000003-33000",
+    "session_id": "019fa004-4444-7444-8444-444444444444",
     "state": "completed",
     "exit_code": 0,
     "worker_pgid": 7777,
@@ -492,6 +678,7 @@ PROVABLE_TERMINAL = {
 
 LIVE_NO_PGID = {
     "run_id": "impl-live-000004-44000",
+    "session_id": "019fa005-5555-7555-8555-555555555555",
     "state": "running",
     # no worker_pgid — still live; migration must not mark legacy
 }
@@ -558,7 +745,7 @@ def test_quarantine_is_idempotent():
 
 
 def test_quarantine_recovers_pgid_for_live_run_with_env_proof():
-    """Best-effort: live run without pgid gets worker_pgid only via SPAWN_RUN_ID proof."""
+    """Live pgid recovery requires the complete run birth identity."""
     written: dict[str, dict] = {}
 
     def writer(run_id: str, payload: dict) -> None:
@@ -566,7 +753,7 @@ def test_quarantine_recovers_pgid_for_live_run_with_env_proof():
 
     live = dict(LIVE_NO_PGID)
     table = [entry(8801, pgid=8801, command="node agent")]
-    env_index = {8801: live["run_id"]}
+    env_index = {8801: identity(live)}
 
     result = run_reaper.quarantine_legacy_runs(
         runs=[live],
@@ -583,7 +770,7 @@ def test_quarantine_recovers_pgid_for_live_run_with_env_proof():
 
 
 def test_quarantine_does_not_guess_pgid_without_env_proof():
-    """A matching pgid alone on a live run is NOT enough — need SPAWN_RUN_ID."""
+    """A matching pgid alone is not enough without run and session identity."""
     written: dict[str, dict] = {}
 
     def writer(run_id: str, payload: dict) -> None:
@@ -595,7 +782,7 @@ def test_quarantine_does_not_guess_pgid_without_env_proof():
     result = run_reaper.quarantine_legacy_runs(
         runs=[live],
         table=table,
-        env_index={},  # no SPAWN_RUN_ID visible
+        env_index={},  # no run birth identity visible
         writer=writer,
     )
     assert result.recovered_pgid == []
@@ -657,7 +844,10 @@ def test_reap_json_exposes_three_ownership_buckets():
             entry(7777, pgid=7777, command="voc survivor"),
             entry(8800, command="voc orphan"),
         ],
-        env_index={8800: LEGACY_MARKED["run_id"]},
+        env_index={
+            7777: identity(PROVABLE_TERMINAL),
+            8800: LEGACY_MARKED["run_id"],
+        },
         self_pid=1000,
         env={},
     )
