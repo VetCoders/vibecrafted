@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -79,6 +80,45 @@ TERMINAL_STATES = {
     "stopped",
     "timed_out",
 }
+_INSTALLER_LEASE_FD_ENV = "VIBECRAFTED_INSTALL_LEASE_FD"
+_INSTALLER_LOCK_NAME = ".vibecrafted-install.lock"
+_EX_TEMPFAIL = 75
+
+
+def _installer_lease_pass_fds(tools_home: Path) -> tuple[int, ...]:
+    raw_descriptor = os.environ.get(_INSTALLER_LEASE_FD_ENV)
+    if not raw_descriptor:
+        return ()
+    if os.name != "posix":
+        raise OSError("installer coordination descriptors require POSIX")
+    try:
+        descriptor = int(raw_descriptor)
+    except ValueError as exc:
+        raise OSError("invalid installer coordination descriptor") from exc
+    if descriptor < 0:
+        raise OSError("invalid installer coordination descriptor")
+
+    lock_path = tools_home.resolve(strict=False) / _INSTALLER_LOCK_NAME
+    try:
+        opened = os.fstat(descriptor)
+        named = os.stat(lock_path, follow_symlinks=False)
+    except OSError as exc:
+        raise OSError(
+            f"installer coordination lease is unavailable at {lock_path}"
+        ) from exc
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or not stat.S_ISREG(named.st_mode)
+        or opened.st_uid != os.geteuid()
+        or named.st_uid != os.geteuid()
+        or opened.st_nlink != 1
+        or named.st_nlink != 1
+        or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
+    ):
+        raise OSError(
+            f"installer coordination descriptor does not own {lock_path}"
+        )
+    return (descriptor,)
 
 
 def _add_launch_parser(sub: argparse._SubParsersAction, name: str) -> None:
@@ -738,13 +778,27 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         from .runtime_paths import vibecrafted_tools_home
 
-        deck = (
-            vibecrafted_tools_home() / "vibecrafted-current" / "scripts" / "vibecrafted"
-        )
+        tools_home = vibecrafted_tools_home()
+        deck = tools_home / "vibecrafted-current" / "scripts" / "vibecrafted"
         if not deck.is_file():
             deck = deck_path()
         if deck.is_file():
-            res = subprocess.run([str(deck), *raw_args], check=False)
+            try:
+                lease_pass_fds = _installer_lease_pass_fds(tools_home)
+            except OSError as exc:
+                print(
+                    f"error: cannot preserve installer coordination lease: {exc}",
+                    file=sys.stderr,
+                )
+                return _EX_TEMPFAIL
+            if lease_pass_fds:
+                res = subprocess.run(
+                    [str(deck), *raw_args],
+                    check=False,
+                    pass_fds=lease_pass_fds,
+                )
+            else:
+                res = subprocess.run([str(deck), *raw_args], check=False)
             return res.returncode
         if shell_wrapper_verb is not None:
             print(
