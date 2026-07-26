@@ -956,9 +956,11 @@ cmd_server_help() {
   printf '%b⚒%b  %bserver%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
   printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
   printf '  Manage the local control-plane viewer server and its process guardian.\n'
+  printf '  Persistent service management is macOS launchd-only in this release.\n'
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted server [start|stop|status|open|doctor] [options]\n'
+  printf '  vibecrafted server service [install|start|stop|status|uninstall] [options]\n'
   printf '\n'
   printf '%bOptions:%b\n' "$_bold" "$_reset"
   printf '  --port, -p <port>  Specify the port (default: 3024)\n'
@@ -966,8 +968,10 @@ cmd_server_help() {
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted server start --port 3024\n'
+  printf '  vibecrafted server service install --port 3024\n'
+  printf '  vibecrafted server service start\n'
   printf '  vibecrafted server status\n'
-  printf '  vibecrafted server stop\n'
+  printf '  vibecrafted server service stop\n'
   printf '\n'
 }
 
@@ -1210,6 +1214,60 @@ cmd_gui() {
 
 _server_runtime_dir() {
   printf '%s/server\n' "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
+}
+
+_server_launcher_path() {
+  local candidate=""
+  candidate="$(command -v vibecrafted 2>/dev/null || true)"
+  [[ -n "$candidate" ]] || candidate="$0"
+  _realpath_quiet "$candidate"
+}
+
+_server_supervisor_binary() {
+  local candidate="$HOME/.local/bin/vc-server-supervisor"
+  if [[ ! -x "$candidate" ]]; then
+    candidate="$(command -v vc-server-supervisor 2>/dev/null || true)"
+  fi
+  [[ -n "$candidate" && -x "$candidate" ]] || return 1
+  _realpath_quiet "$candidate"
+}
+
+_server_supervisor_cli() {
+  local command_name="${1:-}"
+  shift || true
+  local core_dir python_bin launcher supervisor_bin
+  local -a common_args command_args
+  core_dir="$(_core_module_dir 2>/dev/null || true)"
+  [[ -n "$core_dir" ]] || {
+    printf '%b✗%b server_supervisor runtime module not found; reinstall Vibecrafted.\n' \
+      "$_red" "$_reset" >&2
+    return 78
+  }
+  python_bin="$(_vibecrafted_python)"
+  common_args=(
+    --home "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
+    --runtime-home "${VIBECRAFTED_RUNTIME_HOME:-$HOME/.local/share/vibecrafted}"
+    --operator-home "$HOME"
+  )
+  command_args=("$command_name" "$@")
+  case "$command_name" in
+    service)
+      launcher="$(_server_launcher_path 2>/dev/null || true)"
+      [[ -n "$launcher" ]] || {
+        printf '%b✗%b Cannot resolve an absolute Vibecrafted launcher.\n' \
+          "$_red" "$_reset" >&2
+        return 78
+      }
+      command_args+=(--launcher "$launcher")
+      supervisor_bin="$(_server_supervisor_binary 2>/dev/null || true)"
+      if [[ -n "$supervisor_bin" ]]; then
+        command_args+=(--supervisor-bin "$supervisor_bin")
+      fi
+      ;;
+  esac
+  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" \
+    "$python_bin" -m vibecrafted_core.server_supervisor \
+    "${command_args[@]}" "${common_args[@]}"
 }
 
 _pid_file_value() {
@@ -2344,6 +2402,10 @@ cmd_server() {
     cmd_server_help
     return 0
   fi
+  if [[ "$verb" == "stop" && \
+    "${VIBECRAFTED_SERVER_SUPERVISOR_CHILD:-0}" != "1" ]]; then
+    _server_supervisor_cli manual-stop-guard || return $?
+  fi
   if [[ ( "$verb" == "start" || "$verb" == "stop" ) ]] && \
     ! _server_lifecycle_lock_is_owned; then
     _with_server_lifecycle_lock "$verb" "$@"
@@ -2423,6 +2485,15 @@ cmd_server() {
         else
           printf "Healing %s server PID evidence (%s).\n" \
             "$existing_state" "${existing_pid:-empty}"
+          local configured_guardian_url requested_guardian_url
+          configured_guardian_url="$(_pid_file_value "$runtime_dir/guardian.url" 2>/dev/null || true)"
+          requested_guardian_url="$(_server_origin "$host" "$port")"
+          if [[ -n "$configured_guardian_url" && \
+            "$configured_guardian_url" != "$requested_guardian_url" ]]; then
+            printf "Guardian endpoint changed (%s -> %s). Restarting sidecar...\n" \
+              "$configured_guardian_url" "$requested_guardian_url"
+          fi
+          _stop_guardian || return 1
           _stop_managed_process server Server || return 1
         fi
       fi
@@ -2575,6 +2646,8 @@ cmd_server() {
       local endpoint=""
       local target_url=""
 
+      _server_supervisor_cli runtime-status || has_errors=1
+
       if endpoint="$(_server_endpoint "$status_file" 2>/dev/null)"; then
         IFS=$'\t' read -r host port <<< "$endpoint"
         target_url="$(_server_origin "$host" "$port")"
@@ -2648,6 +2721,9 @@ cmd_server() {
       esac
       return "$has_errors"
       ;;
+    service)
+      _server_supervisor_cli service "$@"
+      ;;
     open)
       local status_file
       status_file="$(_server_runtime_dir)/status.json"
@@ -2681,6 +2757,7 @@ cmd_server() {
     doctor)
       local has_errors=0
       printf "Checking vibecrafted-server and process guardian installation/runtime health...\n"
+      _server_supervisor_cli runtime-status || has_errors=1
 
       # 1. Binary check
       local server_bin="$HOME/.local/bin/vc-server"

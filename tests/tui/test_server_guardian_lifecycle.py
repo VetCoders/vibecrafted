@@ -68,6 +68,127 @@ def _wait_for_path(path: Path, timeout: float = 5.0) -> None:
     raise AssertionError(f"{path} did not appear within {timeout} seconds")
 
 
+def _wait_for_proven_managed_pid(
+    state_dir: Path,
+    role: str,
+    *,
+    previous: int | None = None,
+    timeout: float = 12.0,
+) -> int:
+    deadline = time.monotonic() + timeout
+    pid_file = state_dir / f"{role}.pid"
+    identity_file = state_dir / f"{role}.identity.json"
+    last_error = "evidence not written"
+    while time.monotonic() < deadline:
+        try:
+            raw_pid = pid_file.read_text(encoding="utf-8").strip()
+            identity = json.loads(identity_file.read_text(encoding="utf-8"))
+            pid = int(raw_pid)
+            if previous is not None and pid == previous:
+                last_error = f"{role} still has previous PID {pid}"
+            elif (
+                identity.get("schema") != "vibecrafted.managed-process.v1"
+                or identity.get("role") != role
+                or identity.get("pid") != pid
+                or not isinstance(identity.get("process"), dict)
+            ):
+                last_error = f"{role} PID and identity do not agree"
+            elif not _process_alive(pid):
+                last_error = f"{role} PID {pid} is not live"
+            else:
+                return pid
+        except (FileNotFoundError, ValueError, json.JSONDecodeError, OSError) as exc:
+            last_error = str(exc)
+        time.sleep(0.05)
+    raise AssertionError(
+        f"no proven live {role} PID appeared within {timeout} seconds: {last_error}"
+    )
+
+
+def _wait_for_proven_supervisor_pid(
+    wrapper_receipt: Path,
+    state_dir: Path,
+    *,
+    previous: int | None = None,
+    timeout: float = 12.0,
+) -> int:
+    deadline = time.monotonic() + timeout
+    lock_file = state_dir / "supervisor.lock"
+    status_file = state_dir / "supervisor.status.json"
+    last_error = "evidence not written"
+    while time.monotonic() < deadline:
+        try:
+            wrapper = json.loads(wrapper_receipt.read_text(encoding="utf-8"))
+            lock = json.loads(lock_file.read_text(encoding="utf-8"))
+            status = json.loads(status_file.read_text(encoding="utf-8"))
+            pid = int(wrapper["pid"])
+            if previous is not None and pid == previous:
+                last_error = f"supervisor still has previous PID {pid}"
+            elif wrapper.get("schema") != "fake.launchd-supervisor.v1":
+                last_error = "fake service receipt has wrong schema"
+            elif lock.get("schema") != "vibecrafted.server-supervisor-lock.v1":
+                last_error = "supervisor lock has wrong schema"
+            elif lock.get("pid") != pid or status.get("supervisor_pid") != pid:
+                last_error = "wrapper, lock, and status PID do not agree"
+            elif not _process_alive(pid):
+                last_error = f"supervisor PID {pid} is not live"
+            else:
+                return pid
+        except (
+            FileNotFoundError,
+            ValueError,
+            KeyError,
+            json.JSONDecodeError,
+            OSError,
+        ) as exc:
+            last_error = str(exc)
+        time.sleep(0.05)
+    raise AssertionError(
+        f"no proven live supervisor PID appeared within {timeout} seconds: {last_error}"
+    )
+
+
+def _wait_for_supervisor_success(
+    state_dir: Path,
+    *,
+    previous: str | None = None,
+    server_pid: int | None = None,
+    guardian_pid: int | None = None,
+    timeout: float = 12.0,
+) -> str:
+    deadline = time.monotonic() + timeout
+    status_file = state_dir / "supervisor.status.json"
+    last_error = "status receipt not written"
+    while time.monotonic() < deadline:
+        try:
+            payload = json.loads(status_file.read_text(encoding="utf-8"))
+            success = payload.get("last_success_at")
+            if payload.get("state") != "healthy":
+                last_error = f"supervisor state is {payload.get('state')!r}"
+            elif not isinstance(success, str) or not success:
+                last_error = "last_success_at is absent"
+            elif previous is not None and success == previous:
+                last_error = f"last_success_at has not advanced from {previous}"
+            elif (
+                server_pid is not None
+                and payload.get("managed_pair", {}).get("server_pid") != server_pid
+            ):
+                last_error = f"success does not attest server PID {server_pid}"
+            elif (
+                guardian_pid is not None
+                and payload.get("managed_pair", {}).get("guardian_pid") != guardian_pid
+            ):
+                last_error = f"success does not attest guardian PID {guardian_pid}"
+            else:
+                return success
+        except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
+            last_error = str(exc)
+        time.sleep(0.05)
+    raise AssertionError(
+        f"supervisor did not record a new healthy pass within {timeout}s: {last_error}"
+    )
+
+
 def _run_launcher(
     env: dict[str, str], *args: str, check: bool = False
 ) -> subprocess.CompletedProcess[str]:
@@ -106,7 +227,9 @@ import signal
 import time
 
 host, raw_port = os.environ["VC_SERVER_ADDR"].rsplit(":", 1)
-log_path = os.environ["LIFECYCLE_LOG"]
+log_path = os.environ.get("VIBECRAFTED_TEST_LIFECYCLE_LOG") or os.environ[
+    "LIFECYCLE_LOG"
+]
 
 def record(message):
     with open(log_path, "a", encoding="utf-8") as handle:
@@ -174,7 +297,10 @@ parser.add_argument("--server-url", required=True)
 parser.add_argument("--ready-file", type=Path, required=True)
 parser.add_argument("--ready-nonce", required=True)
 args = parser.parse_args()
-log_path = Path(os.environ["LIFECYCLE_LOG"])
+log_path = Path(
+    os.environ.get("VIBECRAFTED_TEST_LIFECYCLE_LOG")
+    or os.environ["LIFECYCLE_LOG"]
+)
 
 def record(message):
     with log_path.open("a", encoding="utf-8") as handle:
@@ -231,6 +357,7 @@ while True:
             "VIBECRAFTED_HOME": str(home / ".vibecrafted"),
             "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
             "LIFECYCLE_LOG": str(lifecycle_log),
+            "VIBECRAFTED_TEST_LIFECYCLE_LOG": str(lifecycle_log),
         }
     )
 
@@ -755,6 +882,243 @@ def test_server_runtime_uses_custom_vibecrafted_home(
     assert doctor.returncode == 0, doctor.stderr
     stopped = _run_launcher(env, "server", "stop")
     assert stopped.returncode == 0, stopped.stderr
+
+
+def test_supervisor_and_fake_service_manager_repair_every_proven_process(
+    isolated_server_runtime: tuple[dict[str, str], Path, Path],
+    tmp_path: Path,
+) -> None:
+    env, state_dir, _ = isolated_server_runtime
+    port = _free_port()
+    wrapper_receipt = tmp_path / "fake-launchd.json"
+    wrapper_script = tmp_path / "fake-launchd.py"
+    wrapper_script.write_text(
+        """from __future__ import annotations
+
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+receipt = Path(sys.argv[1])
+command = sys.argv[2:]
+stopping = False
+generation = 0
+
+def request_stop(_signum, _frame):
+    global stopping
+    stopping = True
+
+def write_receipt(pid, state):
+    payload = {
+        "schema": "fake.launchd-supervisor.v1",
+        "pid": pid,
+        "state": state,
+        "generation": generation,
+        "command": command,
+    }
+    temporary = receipt.with_name("." + receipt.name + ".tmp")
+    temporary.write_text(json.dumps(payload) + "\\n", encoding="utf-8")
+    os.replace(temporary, receipt)
+
+signal.signal(signal.SIGTERM, request_stop)
+signal.signal(signal.SIGINT, request_stop)
+
+while not stopping:
+    generation += 1
+    child = subprocess.Popen(command)
+    write_receipt(child.pid, "running")
+    while child.poll() is None and not stopping:
+        time.sleep(0.05)
+    if stopping and child.poll() is None:
+        child.terminate()
+    try:
+        child.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait(timeout=5)
+    if not stopping:
+        time.sleep(0.1)
+
+write_receipt(None, "stopped")
+""",
+        encoding="utf-8",
+    )
+    supervisor_env = env.copy()
+    supervisor_env["PYTHONPATH"] = str(REPO_ROOT / "vibecrafted-core")
+    supervisor_env["VIBECRAFTED_SERVER_SERVICE"] = "launchd"
+    supervisor_command = [
+        sys.executable,
+        "-m",
+        "vibecrafted_core.server_supervisor",
+        "run",
+        "--launcher",
+        str(LAUNCHER.resolve()),
+        "--home",
+        env["VIBECRAFTED_HOME"],
+        "--runtime-home",
+        env["VIBECRAFTED_RUNTIME_HOME"],
+        "--operator-home",
+        env["HOME"],
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+        "--interval",
+        "0.5",
+        "--maximum-backoff",
+        "1.0",
+        "--command-timeout",
+        "20",
+    ]
+    wrapper = subprocess.Popen(
+        [
+            sys.executable,
+            str(wrapper_script),
+            str(wrapper_receipt),
+            *supervisor_command,
+        ],
+        cwd=REPO_ROOT,
+        env=supervisor_env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        first_supervisor = _wait_for_proven_supervisor_pid(
+            wrapper_receipt,
+            state_dir,
+        )
+        first_server = _wait_for_proven_managed_pid(state_dir, "server")
+        first_guardian = _wait_for_proven_managed_pid(state_dir, "guardian")
+        first_success = _wait_for_supervisor_success(
+            state_dir,
+            server_pid=first_server,
+            guardian_pid=first_guardian,
+        )
+
+        status = _run_launcher(env, "server", "status")
+        assert status.returncode == 0, status.stderr
+        assert "Supervision: FOREGROUND" in status.stdout
+        assert f"Server: RUNNING (PID {first_server}" in status.stdout
+        assert f"Guardian: RUNNING (PID {first_guardian}" in status.stdout
+        packaged_pair_probe = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import sys; from pathlib import Path; "
+                    "from vibecrafted_core.server_supervisor import "
+                    "SupervisorPaths, _child_environment, _pair_healthy; "
+                    "paths=SupervisorPaths.create(home=Path(sys.argv[2]), "
+                    "runtime_home=Path(sys.argv[3]), "
+                    "operator_home=Path(sys.argv[4])); "
+                    "raise SystemExit(0 if _pair_healthy("
+                    "Path(sys.argv[1]), _child_environment(paths)) else 1)"
+                ),
+                str(PACKAGED_LAUNCHER.resolve()),
+                env["VIBECRAFTED_HOME"],
+                env["VIBECRAFTED_RUNTIME_HOME"],
+                env["HOME"],
+            ],
+            cwd=REPO_ROOT,
+            env=supervisor_env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        assert packaged_pair_probe.returncode == 0, packaged_pair_probe.stderr
+
+        refused = _run_launcher(env, "server", "stop")
+        assert refused.returncode == 75
+        assert "active foreground supervisor" in refused.stderr
+        assert "vibecrafted server service stop" in refused.stderr
+        assert _process_alive(first_server)
+        assert _process_alive(first_guardian)
+
+        os.kill(first_server, signal.SIGKILL)
+        _wait_until_dead(first_server)
+        second_server = _wait_for_proven_managed_pid(
+            state_dir,
+            "server",
+            previous=first_server,
+        )
+        second_guardian = _wait_for_proven_managed_pid(
+            state_dir,
+            "guardian",
+            previous=first_guardian,
+        )
+        second_success = _wait_for_supervisor_success(
+            state_dir,
+            previous=first_success,
+            server_pid=second_server,
+            guardian_pid=second_guardian,
+        )
+        assert second_server != first_server
+        assert second_guardian != first_guardian
+
+        os.kill(second_guardian, signal.SIGKILL)
+        _wait_until_dead(second_guardian)
+        third_guardian = _wait_for_proven_managed_pid(
+            state_dir,
+            "guardian",
+            previous=second_guardian,
+        )
+        _wait_for_supervisor_success(
+            state_dir,
+            previous=second_success,
+            server_pid=second_server,
+            guardian_pid=third_guardian,
+        )
+        assert _wait_for_proven_managed_pid(state_dir, "server") == second_server
+
+        os.kill(first_supervisor, signal.SIGKILL)
+        _wait_until_dead(first_supervisor)
+        second_supervisor = _wait_for_proven_supervisor_pid(
+            wrapper_receipt,
+            state_dir,
+            previous=first_supervisor,
+        )
+        assert second_supervisor != first_supervisor
+        assert _wait_for_proven_managed_pid(state_dir, "server") == second_server
+        assert _wait_for_proven_managed_pid(state_dir, "guardian") == third_guardian
+
+        healed = _run_launcher(env, "server", "status")
+        assert healed.returncode == 0, healed.stderr
+        assert "Server: RUNNING" in healed.stdout
+        assert "Guardian: RUNNING" in healed.stdout
+
+        wrapper.terminate()
+        wrapper.wait(timeout=30)
+        _wait_until_dead(second_server, timeout=10)
+        _wait_until_dead(third_guardian, timeout=10)
+        assert not (state_dir / "server.pid").exists()
+        assert not (state_dir / "guardian.pid").exists()
+        assert not _process_alive(second_supervisor)
+        stopped_receipt = json.loads(
+            (state_dir / "supervisor.status.json").read_text(encoding="utf-8")
+        )
+        assert stopped_receipt["state"] == "stopped"
+        stopped = _run_launcher(env, "server", "status")
+        assert stopped.returncode == 0, stopped.stderr
+        assert "Supervision: UNSUPERVISED" in stopped.stdout
+        assert "Server: STOPPED" in stopped.stdout
+        assert "Guardian: STOPPED" in stopped.stdout
+    finally:
+        if wrapper.poll() is None:
+            wrapper.terminate()
+            try:
+                wrapper.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                wrapper.kill()
+                wrapper.wait(timeout=5)
+        cleanup_env = env.copy()
+        cleanup_env["VIBECRAFTED_SERVER_SUPERVISOR_CHILD"] = "1"
+        _run_launcher(cleanup_env, "server", "stop")
 
 
 def test_malicious_cli_host_and_status_json_are_never_executed(

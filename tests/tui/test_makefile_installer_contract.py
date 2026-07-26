@@ -650,3 +650,14 @@ def test_install_server_is_in_install_all() -> None:
 
     install_all_block = text.split("install-all:", 1)[1].split("\nskills:", 1)[0]
     assert "make --no-print-directory install-server" in install_all_block
+
+
+def test_make_install_verifies_server_supervisor_entrypoint() -> None:
+    text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    install_tools_block = text.split("install-tools:", 1)[1].split(
+        "\n# install-all owns", 1
+    )[0]
+
+    assert "vc-server-supervisor" in install_tools_block
+    assert "expected executable entrypoint" in install_tools_block
+    assert "install-python-tools: install-tools" in text

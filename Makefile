@@ -178,7 +178,15 @@ install-tools:
 	uv tool uninstall vibecrafted-core >/dev/null 2>&1 || true; \
 	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-core"; \
 	uv tool install --force --reinstall --editable "$$stable_root/plugins/iterm2"; \
-	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-mcp" --with-editable "$$stable_root/vibecrafted-core"
+	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-mcp" --with-editable "$$stable_root/vibecrafted-core"; \
+	for entrypoint in vibecrafted vc-guardian vc-server-supervisor; do \
+		resolved="$$(command -v "$$entrypoint" 2>/dev/null || true)"; \
+		if [ -z "$$resolved" ] || [ ! -x "$$resolved" ]; then \
+			echo "[install-tools] FATAL: expected executable entrypoint $$entrypoint was not installed" >&2; \
+			exit 1; \
+		fi; \
+		echo "[install-tools] installed: $$entrypoint -> $$resolved"; \
+	done
 
 # install-all owns every binary the product ships into BIN (~/.local/bin).
 # The vibecrafted-app members ship `voc` and `vc-admin`; vibecrafted-server
