@@ -8,6 +8,8 @@
 //! runtime already produced.
 //!
 //! Routes:
+//! * `GET /api/health` — constant-time process readiness; never scans the
+//!   control plane.
 //! * `GET /api/control/state` — merged [`StateView`](control_core::StateView)
 //!   (canonical settlement board, active/recent runs, warnings, event tail),
 //!   computed in Rust from retained snapshots plus the three raw live sources
@@ -48,12 +50,19 @@ pub mod api {
     /// app router carries so it merges without a state-type mismatch.
     pub fn control_routes() -> Router<leptos::config::LeptosOptions> {
         Router::<leptos::config::LeptosOptions>::new()
+            .route("/api/health", get(health))
             .route("/api/control/state", get(state))
             .route("/api/control/runs", get(runs))
             .route("/api/control/runs/{run_id}", get(run))
             .route("/api/control/lifecycle", get(lifecycle))
             .route("/api/control/lifecycle/{run_id}", get(lifecycle_run))
             .route("/api/control/events", get(events_sse))
+    }
+
+    /// Constant-time readiness for service supervision. Runtime health must
+    /// not recursively trigger an unbounded control-plane projection.
+    async fn health() -> StatusCode {
+        StatusCode::OK
     }
 
     /// Canonical server projection consumed by both JSON and dashboard SSR.

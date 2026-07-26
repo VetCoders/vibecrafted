@@ -1683,7 +1683,7 @@ elif operation == "status-read":
 elif operation == "health":
     host, port = validate_endpoint(args[0], args[1])
     request = urllib.request.Request(
-        f"{origin(host, port)}/api/control/state",
+        f"{origin(host, port)}/api/health",
         headers={"Accept": "application/json"},
     )
     with urllib.request.urlopen(request, timeout=1.0) as response:
@@ -2608,7 +2608,7 @@ cmd_server() {
         fi
         return 0
       else
-        printf "%b✗%b Server started but failed health check at %s/api/control/state after %s seconds.\n" \
+        printf "%b✗%b Server started but failed health check at %s/api/health after %s seconds.\n" \
           "$_red" "$_reset" "$(_server_origin "$host" "$port")" "$timeout" >&2
         if _stop_managed_process server Server; then
           _server_python update-status "$status_file" "failed" "none"

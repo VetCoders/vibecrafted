@@ -5,7 +5,7 @@
 #   - install-all / install-server copies vc-server and assets/fonts.
 #   - Starts a copied binary from /tmp with no LEPTOS_* environment.
 #   - Binds to a free ephemeral port (no hardcoded port).
-#   - Polls /api/control/state and /api/control/runs to 200 OK.
+#   - Polls constant-time /api/health, then proves state and runs return 200.
 #   - Asserts JSON payload structure, dashboard visibility, and favicon hygiene.
 #   - SIGTERM shuts down clean (no process leaks, no panics in log).
 #
@@ -281,14 +281,10 @@ while [[ $elapsed -lt $((timeout * 2)) ]]; do
     exit 1
   fi
   if python3 -c '
-import urllib.request, json, sys
+import urllib.request, sys
 try:
-    resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/control/state", timeout=1.0)
+    resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/health", timeout=1.0)
     if resp.status == 200:
-        data = json.loads(resp.read().decode())
-        assert "generated_at" in data, "missing generated_at"
-        assert "active_runs" in data, "missing active_runs"
-        assert "recent_runs" in data, "missing recent_runs"
         sys.exit(0)
     sys.exit(1)
 except Exception as e:
@@ -302,9 +298,24 @@ except Exception as e:
 done
 
 if [[ $healthy -eq 1 ]]; then
-  ok "HTTP health check to http://127.0.0.1:$PORT/api/control/state OK (200 + valid JSON keys)"
+  ok "constant-time health check to http://127.0.0.1:$PORT/api/health OK (200)"
 else
   fail "health check timed out after 15 seconds"
+  cat "$LOG_FILE"
+  exit 1
+fi
+
+if python3 -c '
+import urllib.request, json
+resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/control/state", timeout=2.0)
+data = json.loads(resp.read().decode())
+assert "generated_at" in data, "missing generated_at"
+assert "active_runs" in data, "missing active_runs"
+assert "recent_runs" in data, "missing recent_runs"
+' >/dev/null 2>&1; then
+  ok "state route returns HTTP 200 with canonical JSON keys"
+else
+  fail "state route did not return canonical JSON"
   cat "$LOG_FILE"
   exit 1
 fi

@@ -50,6 +50,7 @@ Reads against the live `~/.vibecrafted/control_plane/` (or `$VIBECRAFTED_HOME`):
 
 | route                                 | returns                                                                                                                 |
 | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/health`                     | constant-time process readiness; never scans control-plane history                                                      |
 | `GET /api/control/state`              | merged `StateView` — `active_runs`, `recent_runs`, `warnings`, `events`, `generated_at`; includes lifecycle projections |
 | `GET /api/control/runs`               | every `runs/<id>.json` snapshot, newest-first, with `count`                                                             |
 | `GET /api/control/runs/{run_id}`      | a single flat run projection, including lifecycle runs, or `404` JSON                                                   |
@@ -65,6 +66,7 @@ values stay unknown.
 Smoke it:
 
 ```bash
+curl -fsS http://127.0.0.1:3024/api/health
 curl -s http://127.0.0.1:3024/api/control/state | python3 -m json.tool | head
 curl -s http://127.0.0.1:3024/api/control/runs  | python3 -c 'import sys,json;print(json.load(sys.stdin)["count"],"runs")'
 curl -s http://127.0.0.1:3024/api/control/lifecycle | python3 -c 'import sys,json;print(json.load(sys.stdin)["count"],"lifecycle runs")'

@@ -238,6 +238,16 @@ def _run_launcher(
     )
 
 
+def test_server_healthcheck_uses_constant_time_endpoint() -> None:
+    launcher = LAUNCHER.read_text(encoding="utf-8")
+    health_block = launcher.split('elif operation == "health":', 1)[1].split(
+        'elif operation == "port-free":', 1
+    )[0]
+
+    assert "/api/health" in health_block
+    assert "/api/control/state" not in health_block
+
+
 @pytest.fixture
 def isolated_server_runtime(
     tmp_path: Path,
@@ -279,7 +289,7 @@ def stop(_signum, _frame):
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/api/control/state":
+        if self.path in {"/api/health", "/api/control/state"}:
             payload = json.dumps({"status": "ok"}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
