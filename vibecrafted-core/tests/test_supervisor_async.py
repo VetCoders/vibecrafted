@@ -84,6 +84,44 @@ def test_async_supervisor_emits_lifecycle_and_validates_artifacts(
     assert "report_validated" in states
 
 
+def test_async_supervisor_uses_declared_workflow_meta_authority(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    run_id = "workflow-child"
+    child_dir = home / "workflow-parent-children"
+    meta = child_dir / f"{run_id}.meta.json"
+    report = child_dir / f"{run_id}.md"
+    script = tmp_path / "workflow-worker.py"
+    script.write_text(
+        "from pathlib import Path\n"
+        f"Path({str(report)!r}).write_text("
+        f"'---\\nrun_id: {run_id}\\nagent: python\\nskill: test\\n"
+        "status: completed\\nclaim_status: completed\\n---\\nbody\\n', "
+        "encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id=run_id,
+            command=[sys.executable, str(script)],
+            root=tmp_path,
+            meta_path=meta,
+            meta_mutation_root=child_dir,
+            report_path=report,
+        )
+    )
+
+    assert handle.exit_code == 0
+    assert handle.meta_mutation_root == child_dir
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["run_id"] == run_id
+    assert payload["status"] == "completed"
+    assert payload["report"] == str(report)
+
+
 def test_async_supervisor_heartbeats_while_worker_stdout_is_silent(
     tmp_path: Path, monkeypatch
 ) -> None:

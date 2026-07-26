@@ -923,7 +923,11 @@ class LifecycleRunner:
                 reason="awaited_stage_completed",
             )
             if not next_stage:
-                state["status"] = "completed"
+                # The final stage owns the lifecycle's terminal execution
+                # truth.  A failed worker with no fallback used to be
+                # rewritten to "completed" here even though the stage axes
+                # already said execution=failed.
+                state["status"] = str(record.get("status") or "failed")
                 break
             current = next_stage
         else:

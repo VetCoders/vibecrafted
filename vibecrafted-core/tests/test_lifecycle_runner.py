@@ -114,6 +114,56 @@ def test_lifecycle_runner_honors_reserved_parent_run_id(
     assert state["stages"][0]["launch"]["run_id"] == "child-implement"
 
 
+def test_lifecycle_runner_preserves_terminal_stage_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+
+    def fake_launcher(spec, _source_dir):
+        return {
+            "accepted": True,
+            "run_id": "failed-dou",
+            "report": str(tmp_path / f"{spec.skill}.md"),
+            "transcript": str(tmp_path / f"{spec.skill}.log"),
+            "meta": str(tmp_path / f"{spec.skill}.json"),
+        }
+
+    runner = LifecycleRunner(
+        launcher=fake_launcher,
+        awaiter=lambda payload: {
+            "completed": False,
+            "artifact_ok": False,
+            "exit_code": 23,
+            "execution_state": "failed",
+            "report": payload["report"],
+        },
+    )
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-dou",
+                agent="codex",
+                prompt="prove terminal failure truth",
+                root=str(tmp_path),
+                await_stages=True,
+            )
+        )
+    )
+
+    assert state["status"] == "failed"
+    assert state["execution_state"] == "failed"
+    assert state["proof_state"] == "undeclared"
+    assert state["delivery_state"] == "unverified"
+    assert state["stages"][0]["status"] == "failed"
+    persisted = json.loads(Path(state["state_path"]).read_text(encoding="utf-8"))
+    assert persisted["status"] == "failed"
+    assert persisted["execution_state"] == "failed"
+
+
 def test_lifecycle_runner_triggers_audit_after_marbles(
     monkeypatch, tmp_path: Path
 ) -> None:

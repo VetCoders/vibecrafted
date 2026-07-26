@@ -563,6 +563,7 @@ async def _run_child(
         root=root,
         env=_child_env(agent, report, transcript, meta, model_requested),
         meta_path=meta,
+        meta_mutation_root=meta.parent,
         report_path=report,
         transcript_path=transcript,
         prompt_file_path=prompt_file,
