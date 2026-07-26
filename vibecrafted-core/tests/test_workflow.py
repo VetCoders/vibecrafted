@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -13,6 +14,41 @@ from typing import Any
 
 import pytest
 from vibecrafted_core import workflow
+
+_NATIVE_RESUME_CLAIM_SCRIPT = r"""
+import json
+import os
+import time
+
+from vibecrafted_core import workflow
+from vibecrafted_core.run_mutation import run_mutation_locks
+
+key = os.environ["NATIVE_RESUME_TEST_KEY"]
+parent = os.environ["NATIVE_RESUME_TEST_PARENT"]
+agent = os.environ.get("NATIVE_RESUME_TEST_AGENT", "codex")
+meta = {"attempt": 1}
+run = {"attempt": 1}
+with run_mutation_locks(
+    workflow.control_plane_home(),
+    run_id=parent,
+    resume_root=parent,
+    idempotency_key=key,
+):
+    record, created = workflow._claim_native_resume_idempotency(
+        key=key,
+        parent_run_id=parent,
+        agent=agent,
+        agent_session_id=f"{agent}-native-id",
+        parent_runtime_session_id="runtime-parent-id",
+        parent_meta=meta,
+        parent_run=run,
+        settlement_revision=7,
+    )
+    print(json.dumps({"created": created, "record": record}), flush=True)
+    if os.environ.get("NATIVE_RESUME_TEST_CRASH") == "1":
+        os._exit(91)
+    time.sleep(float(os.environ.get("NATIVE_RESUME_TEST_HOLD", "0")))
+"""
 
 
 def _source_dir(tmp_path: Path) -> Path:
@@ -1353,6 +1389,12 @@ def _native_resume_parent(
         "skill": "implement",
         "root": str(tmp_path),
         "exit_code": 9,
+        "worker_alive": False,
+        "recovery_required": True,
+        "settlement_tui": "n",
+        "settlement_verdict": "needs_attention",
+        "settlement_source": "trust",
+        "settlement_revision": 7,
     }
     run.update(run_fields or {})
     meta = {
@@ -1368,6 +1410,23 @@ def _native_resume_parent(
     (run_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
     monkeypatch.setattr(workflow, "lookup_run", lambda _run_id: dict(run))
     return run_id, run
+
+
+def _native_resume_claim_env(
+    tmp_path: Path,
+    *,
+    key: str,
+    parent: str,
+) -> dict[str, str]:
+    env = dict(os.environ)
+    core_root = str(Path(__file__).resolve().parents[1])
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (core_root, env.get("PYTHONPATH", "")) if part
+    )
+    env["VIBECRAFTED_HOME"] = str(tmp_path / "home")
+    env["NATIVE_RESUME_TEST_KEY"] = key
+    env["NATIVE_RESUME_TEST_PARENT"] = parent
+    return env
 
 
 def test_native_resume_creates_new_tracked_monotonic_attempts(
@@ -1416,6 +1475,8 @@ def test_native_resume_creates_new_tracked_monotonic_attempts(
     )
 
     assert first["accepted"] is True
+    assert first["retryable"] is False
+    assert first["terminal"] is True
     assert first["resume_run_id"] == "rsme-child-1"
     assert first["attempt"] == 2
     assert second["resume_run_id"] == "rsme-child-2"
@@ -1437,6 +1498,9 @@ def test_native_resume_creates_new_tracked_monotonic_attempts(
         "runtime-parent-id"
     )
     assert launches[0]["launch_meta"]["attempt"] == 2
+    assert launches[0]["launch_meta"]["resume_mode"] == "manual"
+    assert launches[0]["launch_meta"]["automatic_attempt_budget"] == 1
+    assert launches[0]["launch_meta"]["automatic_attempt_number"] == 0
     assert launches[0]["spec"].runtime == "headless"
     assert launches[0]["spec"].prompt == "continue safely"
     assert events[-1]["kind"] == "audit:native_resume"
@@ -1461,8 +1525,8 @@ def test_native_resume_never_uses_legacy_session_id(
     result = workflow.native_resume_run(run_id, source_dir=tmp_path)
 
     assert result["accepted"] is False
-    assert result["reason"] == "missing_agent_session_id"
-    assert events[-1]["payload"]["reason"] == "missing_agent_session_id"
+    assert result["reason"] == "native_resume_candidate_missing"
+    assert events[-1]["payload"]["reason"] == "native_resume_candidate_missing"
 
 
 def test_native_resume_requires_explicit_runtime_identity(
@@ -1650,6 +1714,8 @@ def test_native_resume_idempotency_conflicts_fail_closed(
     assert first["accepted"] is True
     assert wrong_agent["accepted"] is False
     assert wrong_agent["reason"] == "idempotency_conflict"
+    assert wrong_agent["retryable"] is False
+    assert wrong_agent["terminal"] is True
     assert wrong_parent["accepted"] is False
     assert wrong_parent["reason"] == "idempotency_conflict"
     assert launches == ["rsme-owned"]
@@ -1779,10 +1845,350 @@ def test_native_resume_idempotency_serializes_concurrent_duplicate_calls(
     assert first["accepted"] is True
     assert duplicate["accepted"] is False
     assert duplicate["reason"] == "idempotency_in_progress"
+    assert duplicate["retryable"] is True
+    assert duplicate["terminal"] is False
     assert duplicate["deduplicated"] is True
     assert duplicate["resume_run_id"] == first["resume_run_id"] == "rsme-concurrent"
     assert reserved == ["rsme-concurrent"]
     assert launches == ["rsme-concurrent"]
+
+
+def test_native_resume_dead_owner_takes_over_pre_spawn_reservation_exactly(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    key = f"settlement:{run_id}:7"
+    env = _native_resume_claim_env(tmp_path, key=key, parent=run_id)
+    env["NATIVE_RESUME_TEST_CRASH"] = "1"
+    crashed = subprocess.run(
+        [sys.executable, "-c", _NATIVE_RESUME_CLAIM_SCRIPT],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert crashed.returncode == 91
+    reserved = json.loads(crashed.stdout)["record"]
+
+    monkeypatch.setattr(
+        workflow,
+        "reserve_run_id",
+        lambda _skill: (_ for _ in ()).throw(
+            AssertionError("takeover must reuse the reserved child id")
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launches: list[dict[str, Any]] = []
+
+    def launch(
+        spec: workflow.WorkflowLaunchSpec,
+        _source_dir: str | Path,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        launches.append({"spec": spec, **kwargs})
+        return {"accepted": True, "run_id": spec.run_id, "status": "launching"}
+
+    monkeypatch.setattr(workflow, "launch_workflow", launch)
+    result = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        expected_agent="codex",
+        idempotency_key=key,
+    )
+
+    assert result["accepted"] is True
+    assert result["resume_run_id"] == reserved["child_run_id"]
+    assert result["runtime_session_id"] == reserved["runtime_session_id"]
+    assert result["attempt"] == reserved["attempt"]
+    assert launches[0]["spec"].run_id == reserved["child_run_id"]
+    receipt = workflow._lookup_native_resume_idempotency(key)
+    assert receipt is not None
+    assert receipt["state"] == "dispatched"
+    assert receipt["lease_generation"] == 2
+
+
+def test_native_resume_claim_is_atomic_across_processes(
+    tmp_path: Path,
+) -> None:
+    run_id = "impl-multiprocess"
+    key = f"settlement:{run_id}:7"
+    env = _native_resume_claim_env(tmp_path, key=key, parent=run_id)
+    env["NATIVE_RESUME_TEST_HOLD"] = "0.2"
+    processes = [
+        subprocess.Popen(
+            [sys.executable, "-c", _NATIVE_RESUME_CLAIM_SCRIPT],
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        for _ in range(2)
+    ]
+    outputs = [process.communicate(timeout=10) for process in processes]
+    assert [process.returncode for process in processes] == [0, 0]
+    results = [json.loads(stdout) for stdout, _stderr in outputs]
+
+    assert sorted(result["created"] for result in results) == [False, True]
+    assert len({result["record"]["child_run_id"] for result in results}) == 1
+    assert len({result["record"]["runtime_session_id"] for result in results}) == 1
+    assert len({result["record"]["attempt"] for result in results}) == 1
+    receipts = list(
+        (tmp_path / "home" / "control_plane" / "native_resume_idempotency").glob(
+            "*.json"
+        )
+    )
+    assert len(receipts) == 1
+
+
+def test_native_resume_automatic_budget_is_one_per_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launched: list[str] = []
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda spec, *_args, **_kwargs: (
+            launched.append(spec.run_id) or {"accepted": True, "run_id": spec.run_id}
+        ),
+    )
+
+    first = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=f"settlement:{run_id}:7",
+    )
+    second = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=f"settlement:{run_id}:7:other-guardian",
+    )
+
+    assert first["accepted"] is True
+    assert first["resume_mode"] == "automatic"
+    assert first["automatic_attempt_budget"] == 1
+    assert first["automatic_attempt_number"] == 1
+    assert second["accepted"] is False
+    assert second["reason"] == "automatic_resume_budget_exhausted"
+    assert second["retryable"] is False
+    assert second["terminal"] is True
+    assert len(launched) == 1
+
+
+def test_native_resume_retryable_launch_failure_reuses_same_automatic_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    monkeypatch.setattr(workflow, "reserve_run_id", lambda _skill: "rsme-retry")
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launched: list[str] = []
+
+    def launch(spec, *_args, **_kwargs):
+        launched.append(spec.run_id)
+        accepted = len(launched) > 1
+        return {"accepted": accepted, "run_id": spec.run_id}
+
+    monkeypatch.setattr(workflow, "launch_workflow", launch)
+    key = f"settlement:{run_id}:7"
+
+    failed = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=key,
+    )
+    recovered = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=key,
+    )
+
+    assert failed["accepted"] is False
+    assert failed["reason"] == "launch_failed"
+    assert failed["retryable"] is True
+    assert failed["terminal"] is False
+    assert recovered["accepted"] is True
+    assert recovered["resume_run_id"] == failed["resume_run_id"] == "rsme-retry"
+    assert recovered["attempt"] == failed["attempt"]
+    assert launched == ["rsme-retry", "rsme-retry"]
+
+
+def test_native_resume_revision_cas_rejects_probe_window_change(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, parent = _native_resume_parent(monkeypatch, tmp_path)
+    lookups = 0
+
+    def lookup(target: str) -> dict[str, Any] | None:
+        nonlocal lookups
+        if target != run_id:
+            return None
+        lookups += 1
+        current = dict(parent)
+        current["settlement_revision"] = 7 if lookups == 1 else 8
+        return current
+
+    monkeypatch.setattr(workflow, "lookup_run", lookup)
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("changed settlement revision must not launch")
+        ),
+    )
+
+    result = workflow.native_resume_run(run_id, source_dir=tmp_path)
+
+    assert result["accepted"] is False
+    assert result["reason"] == "settlement_revision_changed"
+    assert result["detail"] == "expected=7 current=8"
+    assert result["retryable"] is False
+    assert result["terminal"] is True
+
+
+def test_native_resume_holds_parent_mutation_lock_until_launch_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    monkeypatch.setattr(workflow, "reserve_run_id", lambda _skill: "rsme-lock")
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launch_started = threading.Event()
+    release_launch = threading.Event()
+
+    def slow_launch(
+        spec: workflow.WorkflowLaunchSpec,
+        _source_dir: str | Path,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        launch_started.set()
+        assert release_launch.wait(timeout=5)
+        return {"accepted": True, "run_id": spec.run_id}
+
+    monkeypatch.setattr(workflow, "launch_workflow", slow_launch)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        resume_future = executor.submit(
+            workflow.native_resume_run,
+            run_id,
+            tmp_path,
+        )
+        assert launch_started.wait(timeout=5)
+        block_future = executor.submit(workflow.block_run, run_id)
+        time.sleep(0.05)
+        assert block_future.done() is False
+        release_launch.set()
+        resumed = resume_future.result(timeout=5)
+        blocked = block_future.result(timeout=5)
+
+    assert resumed["accepted"] is True
+    assert blocked["accepted"] is False
+    assert blocked["reason"] == "run_terminal"
+
+
+@pytest.mark.parametrize(
+    ("run_fields", "reason"),
+    [
+        (
+            {"settlement_tui": "f", "settlement_verdict": "finalized"},
+            "settlement_f_not_resumable",
+        ),
+        (
+            {"settlement_tui": "", "settlement_verdict": ""},
+            "settlement_unknown_not_resumable",
+        ),
+        ({"settlement_source": "auto"}, "vc_trust_authority_missing"),
+        ({"recovery_required": False}, "recovery_not_required"),
+        ({"worker_alive": True}, "worker_not_confirmed_dead"),
+        ({"settlement_revision": None}, "settlement_revision_missing"),
+        (
+            {"state": "running", "exit_code": None, "liveness": "active"},
+            "run_not_terminal",
+        ),
+    ],
+)
+def test_native_resume_public_boundary_rejects_unsafe_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    run_fields: dict[str, Any],
+    reason: str,
+) -> None:
+    run_id, _parent = _native_resume_parent(
+        monkeypatch,
+        tmp_path,
+        run_fields=run_fields,
+    )
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda _agent: (_ for _ in ()).throw(
+            AssertionError("policy rejection must happen before provider probe")
+        ),
+    )
+
+    result = workflow.native_resume_run(run_id, source_dir=tmp_path)
+
+    assert result["accepted"] is False
+    assert result["reason"] == reason
+    assert result["retryable"] is (
+        reason
+        in {"recovery_not_required", "worker_not_confirmed_dead", "run_not_terminal"}
+    )
+    assert result["terminal"] is not result["retryable"]
 
 
 @pytest.mark.parametrize(
@@ -1814,6 +2220,8 @@ def test_native_resume_refuses_operator_and_trust_terminals(
 
     assert result["accepted"] is False
     assert result["reason"] == reason
+    assert result["retryable"] is False
+    assert result["terminal"] is True
     assert events[-1]["payload"]["reason"] == reason
 
 
@@ -1841,6 +2249,8 @@ def test_native_resume_refuses_unsupported_or_unverified_providers(
 
     assert result["accepted"] is False
     assert result["reason"] == reason
+    assert result["retryable"] is False
+    assert result["terminal"] is True
     assert events[-1]["payload"]["reason"] == reason
 
 
@@ -1869,6 +2279,23 @@ def test_native_resume_requires_confirmed_runtime_probe(
     assert result["accepted"] is False
     assert result["reason"] == "native_resume_probe_failed"
     assert result["detail"] == "codex not found"
+    assert result["retryable"] is True
+    assert result["terminal"] is False
+
+
+def test_native_resume_missing_projection_is_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(workflow, "lookup_run", lambda _run_id: None)
+
+    result = workflow.native_resume_run("run-not-projected", source_dir=tmp_path)
+
+    assert result["accepted"] is False
+    assert result["reason"] == "run_not_found"
+    assert result["retryable"] is True
+    assert result["terminal"] is False
 
 
 def test_build_launch_command_uses_core_stdin_agent_command_not_legacy_deck(

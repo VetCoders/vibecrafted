@@ -1292,6 +1292,10 @@ def _merge_event_stream(
             "attempt",
             "native_resume",
             "resume_idempotency_key",
+            "resume_mode",
+            "automatic_attempt_budget",
+            "automatic_attempt_number",
+            "resume_settlement_revision",
             "worker_command",
             "worker_pid",
             "worker_pgid",
@@ -1970,6 +1974,7 @@ def _project_run_payload(
     # months later. A current worker PID is durable process evidence; the
     # launch window is covered independently by a fresh heartbeat.
     has_live_process = _worker_is_alive(payload)
+    payload["worker_alive"] = has_live_process
     if _run_is_terminal(payload):
         payload["health"] = "final"
     elif state == "stalled":

@@ -4,9 +4,11 @@ import argparse
 import json
 import subprocess
 import textwrap
+import threading
 from pathlib import Path
 
 from vibecrafted_core import cli, guard, trust, workflow
+from vibecrafted_core.run_mutation import run_mutation_locks
 from vibecrafted_core.settlement import board_fxn_counts
 from vibecrafted_core.workflows import registry
 
@@ -209,6 +211,64 @@ def test_note_appends_claim_evidence_and_projects_settlement(
         if json.loads(line).get("kind") == "settlement.changed"
     ]
     assert len(replayed) == 1
+
+
+def test_note_verdict_uses_shared_parent_mutation_lock(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
+    sha = _commit(repo, _fair_message(), {"proof.txt": "proof\n"})
+    crafted_home = tmp_path / "crafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
+    attempted = threading.Event()
+    persisted = threading.Event()
+    original_locks = trust.run_mutation_locks
+
+    def observed_locks(*args, **kwargs):
+        attempted.set()
+        return original_locks(*args, **kwargs)
+
+    monkeypatch.setattr(trust, "run_mutation_locks", observed_locks)
+    monkeypatch.setattr(
+        trust,
+        "_persist_trust_settlement",
+        lambda **_kwargs: persisted.set() or "n",
+    )
+    result: list[dict[str, object]] = []
+
+    def record() -> None:
+        result.append(
+            trust.note_verdict(
+                repo=repo,
+                journal=tmp_path / "journal.jsonl",
+                sha=sha,
+                verdict="pass-with-gaps",
+                claims=[
+                    {
+                        "claim": "serialized",
+                        "grade": "strong",
+                        "evidence": "shared mutation lock",
+                    }
+                ],
+                run_id="run-serialized",
+            )
+        )
+
+    with run_mutation_locks(
+        trust.control_plane.control_plane_home(),
+        run_id="run-serialized",
+    ):
+        worker = threading.Thread(target=record)
+        worker.start()
+        assert attempted.wait(timeout=5)
+        assert persisted.is_set() is False
+        assert worker.is_alive()
+
+    worker.join(timeout=5)
+    assert worker.is_alive() is False
+    assert persisted.is_set() is True
+    assert result[0]["settlement_tui"] == "n"
 
 
 def test_enumerate_skips_commits_already_in_append_only_journal(

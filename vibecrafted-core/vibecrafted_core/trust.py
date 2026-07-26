@@ -17,11 +17,13 @@ import subprocess
 import sys
 import time
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from . import control_plane
+from .run_mutation import run_mutation_locks
 from .settlement import (
     Settlement,
     SettlementVerdict,
@@ -794,28 +796,34 @@ def note_verdict(
     resolved_repo = _repo_root(repo)
     commit = _commit_record(resolved_repo, sha)
     stamp = _now_iso()
-    tui = (
-        _persist_trust_settlement(
-            run_id=run_id,
-            verdict=verdict,
-            sha=commit["sha"],
-            claims=claims,
-            stamp=stamp,
-        )
+    lock = (
+        run_mutation_locks(control_plane.control_plane_home(), run_id=run_id)
         if run_id
-        else tui_key_for(VERDICT_TO_SETTLEMENT[verdict])
+        else nullcontext()
     )
-    entry: dict[str, Any] = {
-        "schema": "vibecrafted.trust-journal.v1",
-        "recorded_at": stamp,
-        "repo_root": str(resolved_repo),
-        **commit,
-        "verdict": verdict,
-        "settlement_tui": tui,
-        "run_id": run_id,
-        "claims": list(claims),
-    }
-    _append_jsonl(journal, entry)
+    with lock:
+        tui = (
+            _persist_trust_settlement(
+                run_id=run_id,
+                verdict=verdict,
+                sha=commit["sha"],
+                claims=claims,
+                stamp=stamp,
+            )
+            if run_id
+            else tui_key_for(VERDICT_TO_SETTLEMENT[verdict])
+        )
+        entry: dict[str, Any] = {
+            "schema": "vibecrafted.trust-journal.v1",
+            "recorded_at": stamp,
+            "repo_root": str(resolved_repo),
+            **commit,
+            "verdict": verdict,
+            "settlement_tui": tui,
+            "run_id": run_id,
+            "claims": list(claims),
+        }
+        _append_jsonl(journal, entry)
     return entry
 
 
