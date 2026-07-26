@@ -24,8 +24,8 @@ use crate::events::EventStream;
 use crate::model::{
     AgentMeta, DeliverySealRef, Event, FINAL_STATES, Health, LifecycleRun, LifecycleRunSummary,
     RECENT_RUN_LIMIT, RUN_STALL_SECONDS, RunStatus, SettlementBoard, SettlementTui,
-    SettlementVerdict, coerce_int_value, is_final_state, merge_status, operator_session_name,
-    parse_iso, skill_from_code, state_health,
+    SettlementVerdict, TrustReceiptV1, coerce_int_value, is_final_state, merge_status,
+    operator_session_name, parse_iso, skill_from_code, state_health,
 };
 
 /// Resolve `~`-prefixed paths against `$HOME`. Other paths pass through.
@@ -292,6 +292,11 @@ impl ControlPlane {
         if run.attempt.is_none() {
             run.attempt = payload.get("attempt").and_then(json_u64);
         }
+        if run.trust_receipt.is_none() {
+            run.trust_receipt = payload
+                .get("trust_receipt")
+                .and_then(|value| serde_json::from_value::<TrustReceiptV1>(value.clone()).ok());
+        }
 
         let terminal = run.is_terminal();
         let await_run = !terminal
@@ -453,6 +458,10 @@ impl ControlPlane {
                 .as_ref()
                 .and_then(|payload| payload.get("settlement_revision"))
                 .and_then(json_u64),
+            trust_receipt: meta
+                .as_ref()
+                .and_then(|payload| payload.get("trust_receipt"))
+                .and_then(|value| serde_json::from_value::<TrustReceiptV1>(value.clone()).ok()),
             controls: None,
             // No delivery section on a still-launching runtime dir unless a
             // seal file is later attached by attach_seal_if_present.
@@ -1075,6 +1084,11 @@ fn normalize_event(event: &Event, existing: Option<&RunStatus>, now: DateTime<Ut
             .or_else(|| existing.and_then(|run| run.settlement_waived)),
         settlement_revision: payload_u64("settlement_revision")
             .or_else(|| existing.and_then(|run| run.settlement_revision)),
+        trust_receipt: event
+            .payload
+            .get("trust_receipt")
+            .and_then(|value| serde_json::from_value::<TrustReceiptV1>(value.clone()).ok())
+            .or_else(|| existing.and_then(|run| run.trust_receipt.clone())),
         controls: None,
         execution_state: None,
         proof_state: None,
@@ -1488,6 +1502,7 @@ fn normalize_lock(path: &Path, now: DateTime<Utc>) -> Option<RunStatus> {
         settlement_claim_digest: String::new(),
         settlement_waived: None,
         settlement_revision: None,
+        trust_receipt: None,
         controls: None,
         execution_state: None,
         proof_state: None,
@@ -1615,6 +1630,7 @@ impl MarblesState {
             settlement_claim_digest: String::new(),
             settlement_waived: None,
             settlement_revision: None,
+            trust_receipt: None,
             controls: None,
             execution_state: None,
             proof_state: None,
@@ -1719,6 +1735,88 @@ mod tests {
         );
         assert_eq!(view.settlement_counts.active, 1);
         assert_eq!(view.settlement_counts.total_settled, 0);
+
+        fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn lookup_run_projects_typed_trust_receipt_from_runtime_meta() {
+        let unique = format!(
+            "control-core-trust-receipt-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let home = std::env::temp_dir().join(unique);
+        let control_plane = home.join("control_plane");
+        let runtime = control_plane.join("runtime_runs/receipt-run");
+        let snapshots = control_plane.join("runs");
+        fs::create_dir_all(&runtime).expect("runtime");
+        fs::create_dir_all(&snapshots).expect("snapshots");
+        let receipt = json!({
+            "schema": "vibecrafted.trust-receipt.v1",
+            "receipt_id": "a".repeat(64),
+            "repo_root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+            "run_id": "receipt-run",
+            "commit_sha": "b".repeat(40),
+            "trust_verdict": "pass-with-gaps",
+            "settlement_verdict": "needs_attention",
+            "settlement_tui": "n",
+            "settlement_revision": 9,
+            "claim_digest": "c".repeat(64)
+        });
+        fs::write(
+            runtime.join("meta.json"),
+            serde_json::to_vec(&json!({
+                "run_id": "receipt-run",
+                "status": "failed",
+                "exit_code": 9,
+                "agent": "codex",
+                "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                "settlement_verdict": "needs_attention",
+                "settlement_tui": "n",
+                "settlement_source": "trust",
+                "settlement_revision": 9,
+                "trust_receipt": receipt
+            }))
+            .expect("meta json"),
+        )
+        .expect("meta");
+        fs::write(
+            snapshots.join("receipt-run.json"),
+            serde_json::to_vec(&json!({
+                "run_id": "receipt-run",
+                "state": "failed",
+                "agent": "codex",
+                "skill": "implement",
+                "mode": "workflow",
+                "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                "operator_session": "vibecrafted-receipt-run",
+                "latest_report": "",
+                "latest_transcript": "",
+                "last_error": "",
+                "updated_at": "2026-07-26T00:00:00Z",
+                "started_at": "2026-07-26T00:00:00Z",
+                "health": "final",
+                "source": "agent-meta",
+                "lock_present": false,
+                "exit_code": 9,
+                "settlement_verdict": "needs_attention",
+                "settlement_tui": "n",
+                "settlement_source": "trust",
+                "settlement_revision": 9
+            }))
+            .expect("snapshot json"),
+        )
+        .expect("snapshot");
+
+        let run = ControlPlane::new(&home)
+            .lookup_run("receipt-run")
+            .expect("run");
+        let projected = run.trust_receipt.expect("typed trust receipt");
+        assert_eq!(projected.schema, "vibecrafted.trust-receipt.v1");
+        assert_eq!(projected.receipt_id, "a".repeat(64));
+        assert_eq!(projected.commit_sha, "b".repeat(40));
+        assert_eq!(projected.settlement_revision, 9);
 
         fs::remove_dir_all(home).ok();
     }

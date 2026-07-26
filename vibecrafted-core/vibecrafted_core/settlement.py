@@ -57,14 +57,19 @@ __all__ = [
     "SETTLED_TERMINALS",
     "SETTLEMENT_EVENT_KIND",
     "SETTLEMENT_EVENT_SCHEMA",
+    "SETTLEMENT_EVENT_SCHEMA_V2",
+    "TRUST_RECEIPT_SCHEMA",
     "TUI_FAILED",
     "TUI_FINALIZED",
     "TUI_NEEDS_ATTENTION",
     "BareMarkdownError",
     "Settlement",
     "SettlementEventV1",
+    "SettlementEventV2",
     "SettlementVerdict",
+    "TrustReceiptV1",
     "board_fxn_counts",
+    "build_trust_settlement_event",
     "can_archive",
     "claim_digest_from_payload",
     "emit_settlement_event",
@@ -85,6 +90,8 @@ TUI_FAILED = "x"
 TUI_NEEDS_ATTENTION = "n"
 SETTLEMENT_EVENT_KIND = "settlement.changed"
 SETTLEMENT_EVENT_SCHEMA = "vibecrafted.settlement-event.v1"
+SETTLEMENT_EVENT_SCHEMA_V2 = "vibecrafted.settlement-event.v2"
+TRUST_RECEIPT_SCHEMA = "vibecrafted.trust-receipt.v1"
 
 # Operator waive must be explicit and traced — never inferred from exit 0.
 _WAIVE_KEYS = ("settlement_waive", "operator_waive", "waive_settlement")
@@ -194,6 +201,260 @@ class SettlementEventV1:
             "waived": self.waived,
             "revision": self.revision,
         }
+
+
+def _canonical_json(payload: Mapping[str, Any]) -> bytes:
+    return json.dumps(
+        dict(payload),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+
+@dataclass(frozen=True)
+class TrustReceiptV1:
+    """Exact authority receipt issued by one explicit ``vc-trust note``.
+
+    ``receipt_id`` is the SHA-256 of every other field in the receipt. The
+    claims digest is independently the full SHA-256 of the canonical claim
+    array, so neither digest is a shortened display token.
+    """
+
+    receipt_id: str
+    repo_root: str
+    run_id: str
+    commit_sha: str
+    trust_verdict: str
+    settlement_verdict: str
+    settlement_tui: str
+    settlement_revision: int
+    claim_digest: str
+    schema: str = TRUST_RECEIPT_SCHEMA
+
+    @classmethod
+    def issue(
+        cls,
+        *,
+        repo_root: str,
+        run_id: str,
+        commit_sha: str,
+        trust_verdict: str,
+        settlement_verdict: str,
+        settlement_tui: str,
+        settlement_revision: int,
+        claim_digest: str,
+    ) -> TrustReceiptV1:
+        claims = {
+            "schema": TRUST_RECEIPT_SCHEMA,
+            "repo_root": repo_root,
+            "run_id": run_id,
+            "commit_sha": commit_sha,
+            "trust_verdict": trust_verdict,
+            "settlement_verdict": settlement_verdict,
+            "settlement_tui": settlement_tui,
+            "settlement_revision": settlement_revision,
+            "claim_digest": claim_digest,
+        }
+        receipt_id = hashlib.sha256(_canonical_json(claims)).hexdigest()
+        return cls(
+            schema=TRUST_RECEIPT_SCHEMA,
+            receipt_id=receipt_id,
+            repo_root=repo_root,
+            run_id=run_id,
+            commit_sha=commit_sha,
+            trust_verdict=trust_verdict,
+            settlement_verdict=settlement_verdict,
+            settlement_tui=settlement_tui,
+            settlement_revision=settlement_revision,
+            claim_digest=claim_digest,
+        )
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> TrustReceiptV1:
+        expected_fields = {
+            "schema",
+            "receipt_id",
+            "repo_root",
+            "run_id",
+            "commit_sha",
+            "trust_verdict",
+            "settlement_verdict",
+            "settlement_tui",
+            "settlement_revision",
+            "claim_digest",
+        }
+        if set(payload) != expected_fields:
+            raise ValueError("trust_receipt_fields_invalid")
+        if payload.get("schema") != TRUST_RECEIPT_SCHEMA:
+            raise ValueError("trust_receipt_schema_invalid")
+        strings: dict[str, str] = {}
+        for field_name in expected_fields - {"settlement_revision"}:
+            value = payload.get(field_name)
+            if not isinstance(value, str):
+                raise TypeError(f"trust_receipt_{field_name}_invalid")
+            strings[field_name] = value
+        revision = payload.get("settlement_revision")
+        if type(revision) is not int or revision <= 0:
+            raise ValueError("trust_receipt_settlement_revision_invalid")
+        if not strings["repo_root"] or not Path(strings["repo_root"]).is_absolute():
+            raise ValueError("trust_receipt_repo_root_invalid")
+        if not strings["run_id"]:
+            raise ValueError("trust_receipt_run_id_invalid")
+        if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", strings["commit_sha"]):
+            raise ValueError("trust_receipt_commit_sha_invalid")
+        if strings["trust_verdict"] not in {"pass", "pass-with-gaps", "block"}:
+            raise ValueError("trust_receipt_trust_verdict_invalid")
+        try:
+            settlement = SettlementVerdict(strings["settlement_verdict"])
+        except ValueError as exc:
+            raise ValueError("trust_receipt_settlement_verdict_invalid") from exc
+        if tui_key_for(settlement) != strings["settlement_tui"]:
+            raise ValueError("trust_receipt_settlement_tui_invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", strings["claim_digest"]):
+            raise ValueError("trust_receipt_claim_digest_invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", strings["receipt_id"]):
+            raise ValueError("trust_receipt_receipt_id_invalid")
+        issued = cls.issue(
+            repo_root=strings["repo_root"],
+            run_id=strings["run_id"],
+            commit_sha=strings["commit_sha"],
+            trust_verdict=strings["trust_verdict"],
+            settlement_verdict=strings["settlement_verdict"],
+            settlement_tui=strings["settlement_tui"],
+            settlement_revision=revision,
+            claim_digest=strings["claim_digest"],
+        )
+        if issued.receipt_id != strings["receipt_id"]:
+            raise ValueError("trust_receipt_receipt_id_mismatch")
+        return issued
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema": self.schema,
+            "receipt_id": self.receipt_id,
+            "repo_root": self.repo_root,
+            "run_id": self.run_id,
+            "commit_sha": self.commit_sha,
+            "trust_verdict": self.trust_verdict,
+            "settlement_verdict": self.settlement_verdict,
+            "settlement_tui": self.settlement_tui,
+            "settlement_revision": self.settlement_revision,
+            "claim_digest": self.claim_digest,
+        }
+
+
+@dataclass(frozen=True)
+class SettlementEventV2:
+    """Settlement event whose resume authority is one exact trust receipt."""
+
+    run_id: str
+    previous: SettlementEventStateV1 | None
+    current: SettlementEventStateV1
+    reason: str
+    source: str
+    settled_at: str
+    claim_digest: str
+    waived: bool
+    revision: int
+    trust_receipt: TrustReceiptV1
+
+    @property
+    def event_key(self) -> str:
+        return f"{self.run_id}:{self.revision}:{self.trust_receipt.receipt_id}"
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema": SETTLEMENT_EVENT_SCHEMA_V2,
+            "event_key": self.event_key,
+            "run_id": self.run_id,
+            "previous": self.previous.to_payload() if self.previous else None,
+            "current": self.current.to_payload(),
+            "reason": self.reason,
+            "source": self.source,
+            "settled_at": self.settled_at,
+            "claim_digest": self.claim_digest,
+            "waived": self.waived,
+            "revision": self.revision,
+            "trust_receipt": self.trust_receipt.to_payload(),
+        }
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> SettlementEventV2:
+        if payload.get("schema") != SETTLEMENT_EVENT_SCHEMA_V2:
+            raise ValueError("settlement_event_schema_invalid")
+        receipt_payload = payload.get("trust_receipt")
+        if not isinstance(receipt_payload, Mapping):
+            raise TypeError("settlement_event_trust_receipt_missing")
+        receipt = TrustReceiptV1.from_payload(receipt_payload)
+        current_payload = payload.get("current")
+        if not isinstance(current_payload, Mapping):
+            raise TypeError("settlement_event_current_invalid")
+        current = SettlementEventStateV1(
+            verdict=str(current_payload.get("verdict") or ""),
+            tui=str(current_payload.get("tui") or ""),
+        )
+        previous_payload = payload.get("previous")
+        previous = (
+            SettlementEventStateV1(
+                verdict=str(previous_payload.get("verdict") or ""),
+                tui=str(previous_payload.get("tui") or ""),
+            )
+            if isinstance(previous_payload, Mapping)
+            else None
+        )
+        revision = payload.get("revision")
+        waived = payload.get("waived")
+        if type(revision) is not int or revision <= 0:
+            raise ValueError("settlement_event_revision_invalid")
+        if type(waived) is not bool:
+            raise ValueError("settlement_event_waived_invalid")
+        event = cls(
+            run_id=str(payload.get("run_id") or ""),
+            previous=previous,
+            current=current,
+            reason=str(payload.get("reason") or ""),
+            source=str(payload.get("source") or ""),
+            settled_at=str(payload.get("settled_at") or ""),
+            claim_digest=str(payload.get("claim_digest") or ""),
+            waived=waived,
+            revision=revision,
+            trust_receipt=receipt,
+        )
+        if (
+            event.run_id != receipt.run_id
+            or event.revision != receipt.settlement_revision
+            or event.current.verdict != receipt.settlement_verdict
+            or event.current.tui != receipt.settlement_tui
+            or event.claim_digest != receipt.claim_digest
+            or event.source != "trust"
+            or payload.get("event_key") != event.event_key
+        ):
+            raise ValueError("settlement_event_trust_receipt_mismatch")
+        return event
+
+
+def build_trust_settlement_event(
+    *,
+    previous_payload: Mapping[str, Any] | None,
+    settlement: Settlement,
+    receipt: TrustReceiptV1,
+) -> SettlementEventV2:
+    """Build the v2 event from the same receipt persisted on both projections."""
+
+    previous = settlement_from_payload(previous_payload or {})
+    return SettlementEventV2(
+        run_id=receipt.run_id,
+        previous=_settlement_event_state(previous) if previous else None,
+        current=_settlement_event_state(settlement),
+        reason=settlement.reason,
+        source=settlement.source,
+        settled_at=settlement.settled_at,
+        claim_digest=settlement.claim_digest,
+        waived=settlement.waived,
+        revision=receipt.settlement_revision,
+        trust_receipt=receipt,
+    )
 
 
 def _now_iso() -> str:
@@ -439,7 +700,9 @@ def prepare_settlement_event(
     )
 
 
-def emit_settlement_event(event: SettlementEventV1) -> dict[str, Any]:
+def emit_settlement_event(
+    event: SettlementEventV1 | SettlementEventV2,
+) -> dict[str, Any]:
     """Append a prepared settlement revision after its snapshot is durable."""
 
     from .events import append_event
@@ -524,12 +787,16 @@ def settle_payload(
             and existing.claim_digest == candidate.claim_digest
             and existing.waived == candidate.waived
         )
-        if same_resolution and (
-            existing.source == candidate.source
-            # A normal board sync is not stronger provenance than the await
-            # finalizer. Keep the durable await source instead of toggling
-            # await -> auto -> await and inventing two revisions per replay.
-            or (existing.source == "await" and candidate.source == "auto")
+        if (
+            existing is not None
+            and same_resolution
+            and (
+                existing.source == candidate.source
+                # A normal board sync is not stronger provenance than the await
+                # finalizer. Keep the durable await source instead of toggling
+                # await -> auto -> await and inventing two revisions per replay.
+                or (existing.source == "await" and candidate.source == "auto")
+            )
         ):
             return existing
         return candidate

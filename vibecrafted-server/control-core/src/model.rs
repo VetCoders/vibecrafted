@@ -550,6 +550,9 @@ pub struct RunStatus {
     /// Monotonic revision of the complete settlement fingerprint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settlement_revision: Option<u64>,
+    /// Exact vc-trust resume authority receipt. Absent on legacy settlements.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust_receipt: Option<TrustReceiptV1>,
     /// Read-model action projection. Old snapshots may omit it on disk; every
     /// ControlPlane read path materialises it before returning a run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -662,6 +665,32 @@ pub enum SettlementTui {
     F,
     X,
     N,
+}
+
+/// Explicit vc-trust verdict bound into a resume authority receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TrustVerdict {
+    #[serde(rename = "pass")]
+    Pass,
+    #[serde(rename = "pass-with-gaps")]
+    PassWithGaps,
+    #[serde(rename = "block")]
+    Block,
+}
+
+/// Typed projection of `vibecrafted.trust-receipt.v1`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustReceiptV1 {
+    pub schema: String,
+    pub receipt_id: String,
+    pub repo_root: String,
+    pub run_id: String,
+    pub commit_sha: String,
+    pub trust_verdict: TrustVerdict,
+    pub settlement_verdict: SettlementVerdict,
+    pub settlement_tui: SettlementTui,
+    pub settlement_revision: u64,
+    pub claim_digest: String,
 }
 
 /// Declared time/scope boundary for a settlement aggregate.
@@ -995,6 +1024,7 @@ impl LifecycleRun {
             settlement_claim_digest: String::new(),
             settlement_waived: None,
             settlement_revision: None,
+            trust_receipt: None,
             controls: None,
             execution_state: Some(axes.execution_state),
             proof_state: Some(axes.proof_state),
@@ -1262,6 +1292,8 @@ pub struct AgentMeta {
     pub settlement_waived: Option<bool>,
     #[serde(default, deserialize_with = "de_optional_u64")]
     pub settlement_revision: Option<u64>,
+    #[serde(default)]
+    pub trust_receipt: Option<TrustReceiptV1>,
 }
 
 fn de_coerced_int<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
@@ -1379,6 +1411,7 @@ impl AgentMeta {
             settlement_claim_digest: self.settlement_claim_digest.clone(),
             settlement_waived: self.settlement_waived,
             settlement_revision: self.settlement_revision,
+            trust_receipt: self.trust_receipt.clone(),
             controls: None,
             // Meta is not a delivery receipt; axes stay absent until a
             // snapshot or seal file provides them (never inferred here).
@@ -1472,6 +1505,7 @@ pub fn merge_status(existing: Option<RunStatus>, incoming: RunStatus) -> RunStat
         settlement_claim_digest: settlement_owner.settlement_claim_digest.clone(),
         settlement_waived: settlement_owner.settlement_waived,
         settlement_revision: settlement_owner.settlement_revision,
+        trust_receipt: settlement_owner.trust_receipt.clone(),
         controls: None,
         // Prefer explicit axes; never synthesise from the other side's state.
         execution_state: preferred.execution_state.or(other.execution_state),

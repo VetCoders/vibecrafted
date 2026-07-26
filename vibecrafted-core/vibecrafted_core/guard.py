@@ -16,7 +16,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from . import trust
+from . import control_plane, trust
+from .settlement import TrustReceiptV1
 
 # Gate inventory — naming what already exists (coverage, not reimplementation).
 GATE_INVENTORY: tuple[dict[str, str], ...] = (
@@ -97,6 +98,323 @@ class GuardDecision:
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class GuardianResumeAuthority:
+    """Fail-closed authority decision for one native Guardian resume."""
+
+    allowed: bool
+    reason: str
+    retryable: bool
+    terminal: bool
+    receipt_id: str = ""
+    journal: str = ""
+    detail: str = ""
+
+    def to_payload(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _guardian_resume_decision(
+    *,
+    allowed: bool,
+    reason: str,
+    journal: Path,
+    receipt_id: str = "",
+    retryable: bool = False,
+    detail: str = "",
+) -> GuardianResumeAuthority:
+    return GuardianResumeAuthority(
+        allowed=allowed,
+        reason=reason,
+        retryable=retryable,
+        terminal=not retryable,
+        receipt_id=receipt_id,
+        journal=str(journal),
+        detail=detail,
+    )
+
+
+def _canonical_root(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        return str(Path(raw).expanduser().resolve())
+    except OSError:
+        return ""
+
+
+def _latest_run_trust_record(
+    records: Sequence[Mapping[str, Any]],
+    run_id: str,
+) -> Mapping[str, Any] | None:
+    latest: Mapping[str, Any] | None = None
+    for record in records:
+        if str(record.get("run_id") or "") == run_id:
+            latest = record
+    return latest
+
+
+def _journal_receipt(
+    record: Mapping[str, Any],
+) -> tuple[TrustReceiptV1 | None, str]:
+    if record.get("schema") != trust.TRUST_JOURNAL_SCHEMA_V2:
+        return None, "legacy_trust_record_not_resume_authority"
+    raw = record.get("trust_receipt")
+    if not isinstance(raw, Mapping):
+        return None, "trust_receipt_missing"
+    try:
+        receipt = TrustReceiptV1.from_payload(raw)
+    except (TypeError, ValueError) as exc:
+        return None, str(exc)
+    claims = record.get("claims")
+    if not isinstance(claims, list) or not all(
+        isinstance(item, Mapping) for item in claims
+    ):
+        return None, "trust_receipt_claims_invalid"
+    journal_bindings = {
+        "repo_root": str(record.get("repo_root") or ""),
+        "run_id": str(record.get("run_id") or ""),
+        "commit_sha": str(record.get("sha") or ""),
+        "trust_verdict": str(record.get("verdict") or ""),
+        "settlement_tui": str(record.get("settlement_tui") or ""),
+        "claim_digest": str(record.get("claim_digest") or ""),
+    }
+    receipt_bindings = {
+        "repo_root": receipt.repo_root,
+        "run_id": receipt.run_id,
+        "commit_sha": receipt.commit_sha,
+        "trust_verdict": receipt.trust_verdict,
+        "settlement_tui": receipt.settlement_tui,
+        "claim_digest": receipt.claim_digest,
+    }
+    for field_name, value in journal_bindings.items():
+        if value != receipt_bindings[field_name]:
+            return None, f"trust_journal_{field_name}_mismatch"
+    if trust._claims_digest(claims) != receipt.claim_digest:
+        return None, "trust_journal_claim_digest_mismatch"
+    return receipt, ""
+
+
+def _projection_receipt_mismatch(
+    payload: Mapping[str, Any],
+    receipt: TrustReceiptV1,
+    *,
+    label: str,
+) -> str:
+    raw = payload.get("trust_receipt")
+    if not isinstance(raw, Mapping):
+        return f"{label}_trust_receipt_missing"
+    if dict(raw) != receipt.to_payload():
+        return f"{label}_trust_receipt_mismatch"
+    expected = {
+        "settlement_revision": receipt.settlement_revision,
+        "settlement_verdict": receipt.settlement_verdict,
+        "settlement_tui": receipt.settlement_tui,
+        "settlement_source": "trust",
+        "settlement_claim_digest": receipt.claim_digest,
+    }
+    for field_name, value in expected.items():
+        if payload.get(field_name) != value:
+            return f"{label}_{field_name}_mismatch"
+    return ""
+
+
+def _outbox_has_receipt(run_id: str, receipt_id: str) -> bool:
+    outbox = control_plane._read_json(trust._trust_outbox_path(run_id))
+    raw = outbox.get("trust_receipt")
+    if not isinstance(raw, Mapping):
+        return False
+    try:
+        receipt = TrustReceiptV1.from_payload(raw)
+    except (TypeError, ValueError):
+        return False
+    return (
+        outbox.get("schema") == trust.TRUST_OUTBOX_SCHEMA
+        and str(outbox.get("run_id") or "") == run_id
+        and receipt.receipt_id == receipt_id
+    )
+
+
+def _outbox_projection_lag(
+    run_id: str,
+    receipt: TrustReceiptV1,
+    payload: Mapping[str, Any],
+) -> bool:
+    """True only for the pre-receipt projection an exact pending outbox can heal."""
+
+    return _outbox_has_receipt(run_id, receipt.receipt_id) and (
+        trust._can_complete_projection(
+            payload,
+            receipt=receipt,
+            previous_revision=receipt.settlement_revision - 1,
+        )
+    )
+
+
+def authorize_guardian_resume(
+    *,
+    run_id: str,
+    repo: Path | str | None = None,
+    journal: Path | None = None,
+    meta: Mapping[str, Any] | None = None,
+    projection: Mapping[str, Any] | None = None,
+    expected_receipt_id: str = "",
+) -> GuardianResumeAuthority:
+    """Authorize only the exact latest v2 receipt that owns live ``n`` state.
+
+    This boundary intentionally never resolves ``HEAD``. The commit identity is
+    the full SHA already bound by the receipt; every persisted copy must match
+    field-for-field before native resume can launch.
+    """
+
+    target = str(run_id or "").strip()
+    resolved_journal = (journal or trust.default_journal_path()).expanduser()
+    if not target or Path(target).name != target or target in {".", ".."}:
+        return _guardian_resume_decision(
+            allowed=False,
+            reason="invalid_run_id",
+            journal=resolved_journal,
+        )
+    expected = str(expected_receipt_id or "").strip()
+    if expected and (
+        len(expected) != 64 or any(char not in "0123456789abcdef" for char in expected)
+    ):
+        return _guardian_resume_decision(
+            allowed=False,
+            reason="invalid_expected_receipt_id",
+            journal=resolved_journal,
+        )
+    if not resolved_journal.is_file():
+        return _guardian_resume_decision(
+            allowed=False,
+            reason="trust_journal_missing",
+            journal=resolved_journal,
+        )
+    try:
+        records = trust._read_journal(resolved_journal)
+    except (OSError, TypeError, ValueError) as exc:
+        return _guardian_resume_decision(
+            allowed=False,
+            reason="trust_journal_unreadable",
+            journal=resolved_journal,
+            detail=f"{type(exc).__name__}: {exc}",
+        )
+    record = _latest_run_trust_record(records, target)
+    if record is None:
+        retryable = bool(expected and _outbox_has_receipt(target, expected))
+        return _guardian_resume_decision(
+            allowed=False,
+            reason=(
+                "trust_receipt_not_yet_visible"
+                if retryable
+                else "trust_receipt_missing"
+            ),
+            journal=resolved_journal,
+            receipt_id=expected,
+            retryable=retryable,
+        )
+    receipt, error = _journal_receipt(record)
+    if receipt is None:
+        return _guardian_resume_decision(
+            allowed=False,
+            reason=error,
+            journal=resolved_journal,
+        )
+    if expected and receipt.receipt_id != expected:
+        return _guardian_resume_decision(
+            allowed=False,
+            reason="expected_trust_receipt_mismatch",
+            journal=resolved_journal,
+            receipt_id=receipt.receipt_id,
+        )
+    if (
+        receipt.trust_verdict != "pass-with-gaps"
+        or receipt.settlement_verdict != "needs_attention"
+        or receipt.settlement_tui != "n"
+    ):
+        return _guardian_resume_decision(
+            allowed=False,
+            reason="trust_receipt_not_resumable",
+            journal=resolved_journal,
+            receipt_id=receipt.receipt_id,
+        )
+
+    live_meta = dict(meta or {})
+    live_projection = dict(projection or {})
+    if not live_meta or not live_projection:
+        try:
+            resolved = control_plane.resolve_run(target)
+        except (OSError, ValueError, control_plane.RunNotResolved) as exc:
+            return _guardian_resume_decision(
+                allowed=False,
+                reason="run_projection_unreadable",
+                journal=resolved_journal,
+                receipt_id=receipt.receipt_id,
+                detail=f"{type(exc).__name__}: {exc}",
+            )
+        if not live_meta and resolved.meta is not None:
+            live_meta = control_plane._read_json(resolved.meta)
+        if not live_projection:
+            live_projection = control_plane._read_json(
+                control_plane.run_snapshot_dir() / f"{target}.json"
+            )
+    if not live_meta or not live_projection:
+        retryable = _outbox_has_receipt(target, receipt.receipt_id)
+        return _guardian_resume_decision(
+            allowed=False,
+            reason=(
+                "trust_receipt_projection_pending"
+                if retryable
+                else "run_projection_unreadable"
+            ),
+            journal=resolved_journal,
+            receipt_id=receipt.receipt_id,
+            retryable=retryable,
+        )
+
+    if _canonical_root(receipt.repo_root) != receipt.repo_root:
+        return _guardian_resume_decision(
+            allowed=False,
+            reason="trust_receipt_repo_root_mismatch",
+            journal=resolved_journal,
+            receipt_id=receipt.receipt_id,
+        )
+    roots = [
+        value
+        for value in (
+            repo,
+            live_meta.get("root"),
+            live_projection.get("root"),
+        )
+        if str(value or "").strip()
+    ]
+    if not roots or any(_canonical_root(value) != receipt.repo_root for value in roots):
+        return _guardian_resume_decision(
+            allowed=False,
+            reason="trust_receipt_repo_root_mismatch",
+            journal=resolved_journal,
+            receipt_id=receipt.receipt_id,
+        )
+    for label, payload in (("meta", live_meta), ("projection", live_projection)):
+        mismatch = _projection_receipt_mismatch(payload, receipt, label=label)
+        if mismatch:
+            retryable = _outbox_projection_lag(target, receipt, payload)
+            return _guardian_resume_decision(
+                allowed=False,
+                reason=("trust_receipt_projection_pending" if retryable else mismatch),
+                journal=resolved_journal,
+                receipt_id=receipt.receipt_id,
+                retryable=retryable,
+            )
+    return _guardian_resume_decision(
+        allowed=True,
+        reason="trust_receipt_authorized",
+        journal=resolved_journal,
+        receipt_id=receipt.receipt_id,
+    )
 
 
 def inventory() -> dict[str, Any]:

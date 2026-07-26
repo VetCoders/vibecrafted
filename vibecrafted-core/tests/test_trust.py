@@ -7,9 +7,10 @@ import textwrap
 import threading
 from pathlib import Path
 
+import pytest
 from vibecrafted_core import cli, guard, trust, workflow
 from vibecrafted_core.run_mutation import run_mutation_locks
-from vibecrafted_core.settlement import board_fxn_counts
+from vibecrafted_core.settlement import TrustReceiptV1, board_fxn_counts
 from vibecrafted_core.workflows import registry
 
 
@@ -178,6 +179,11 @@ def test_note_appends_claim_evidence_and_projects_settlement(
     projected = json.loads(snapshot.read_text())
     assert projected["settlement_source"] == "trust"
     assert projected["settlement_revision"] == 1
+    assert len(projected["settlement_claim_digest"]) == 64
+    assert entry["schema"] == trust.TRUST_JOURNAL_SCHEMA_V2
+    assert entry["claim_digest"] == projected["settlement_claim_digest"]
+    assert entry["trust_receipt"] == settled["trust_receipt"]
+    assert entry["trust_receipt"] == projected["trust_receipt"]
     assert board_fxn_counts([projected]) == {"f": 0, "x": 0, "n": 1}
     settlement_events = [
         json.loads(line)
@@ -187,18 +193,21 @@ def test_note_appends_claim_evidence_and_projects_settlement(
         if json.loads(line).get("kind") == "settlement.changed"
     ]
     assert len(settlement_events) == 1
-    assert settlement_events[0]["payload"] == {
-        "schema": "vibecrafted.settlement-event.v1",
-        "run_id": "run-trust",
-        "previous": None,
-        "current": {"verdict": "needs_attention", "tui": "n"},
-        "reason": f"trust_pass_with_gaps:{sha}",
-        "source": "trust",
-        "settled_at": entry["recorded_at"],
-        "claim_digest": projected["settlement_claim_digest"],
-        "waived": False,
-        "revision": 1,
-    }
+    event_payload = settlement_events[0]["payload"]
+    assert event_payload["schema"] == "vibecrafted.settlement-event.v2"
+    assert event_payload["run_id"] == "run-trust"
+    assert event_payload["previous"] is None
+    assert event_payload["current"] == {"verdict": "needs_attention", "tui": "n"}
+    assert event_payload["reason"] == f"trust_pass_with_gaps:{sha}"
+    assert event_payload["source"] == "trust"
+    assert event_payload["settled_at"] == entry["recorded_at"]
+    assert event_payload["claim_digest"] == projected["settlement_claim_digest"]
+    assert event_payload["waived"] is False
+    assert event_payload["revision"] == 1
+    assert event_payload["trust_receipt"] == entry["trust_receipt"]
+    assert event_payload["event_key"] == (
+        f"run-trust:1:{entry['trust_receipt']['receipt_id']}"
+    )
 
     # The explicit trust snapshot write follows sync_state; it must not publish
     # a second event for the same revision.
@@ -233,7 +242,12 @@ def test_note_verdict_uses_shared_parent_mutation_lock(
     monkeypatch.setattr(
         trust,
         "_persist_trust_settlement",
-        lambda **_kwargs: persisted.set() or "n",
+        lambda **_kwargs: (
+            persisted.set()
+            or {
+                "settlement_tui": "n",
+            }
+        ),
     )
     result: list[dict[str, object]] = []
 
@@ -269,6 +283,277 @@ def test_note_verdict_uses_shared_parent_mutation_lock(
     assert worker.is_alive() is False
     assert persisted.is_set() is True
     assert result[0]["settlement_tui"] == "n"
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "schema",
+        "receipt_id",
+        "repo_root",
+        "run_id",
+        "commit_sha",
+        "trust_verdict",
+        "settlement_verdict",
+        "settlement_tui",
+        "settlement_revision",
+        "claim_digest",
+    ],
+)
+def test_trust_receipt_rejects_mutation_of_every_bound_field(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    receipt = TrustReceiptV1.issue(
+        repo_root=str(tmp_path.resolve()),
+        run_id="run-bound",
+        commit_sha="a" * 40,
+        trust_verdict="pass-with-gaps",
+        settlement_verdict="needs_attention",
+        settlement_tui="n",
+        settlement_revision=4,
+        claim_digest="b" * 64,
+    )
+    payload = receipt.to_payload()
+    replacements: dict[str, object] = {
+        "schema": "vibecrafted.trust-receipt.v0",
+        "receipt_id": "c" * 64,
+        "repo_root": str((tmp_path / "other").resolve()),
+        "run_id": "other-run",
+        "commit_sha": "d" * 40,
+        "trust_verdict": "block",
+        "settlement_verdict": "failed",
+        "settlement_tui": "x",
+        "settlement_revision": 5,
+        "claim_digest": "e" * 64,
+    }
+    payload[field] = replacements[field]
+
+    with pytest.raises((TypeError, ValueError)):
+        TrustReceiptV1.from_payload(payload)
+
+
+def _trust_run_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    run_id: str,
+) -> tuple[Path, str, Path, Path, Path]:
+    repo = _init_repo(tmp_path)
+    sha = _commit(repo, _fair_message(), {"proof.txt": "proof\n"})
+    crafted_home = tmp_path / "crafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
+    run_dir = crafted_home / "control_plane" / "runtime_runs" / run_id
+    run_dir.mkdir(parents=True)
+    meta = run_dir / "meta.json"
+    meta.write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "state": "failed",
+                "exit_code": 9,
+                "agent": "codex",
+                "skill": "implement",
+                "root": str(repo),
+                "worker_alive": False,
+                "recovery_required": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    snapshot = crafted_home / "control_plane" / "runs" / f"{run_id}.json"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "state": "failed",
+                "exit_code": 9,
+                "root": str(repo),
+                "worker_alive": False,
+                "recovery_required": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return repo, sha, tmp_path / "journal.jsonl", meta, snapshot
+
+
+def test_trust_transaction_orders_journal_outbox_projection_then_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, sha, journal, meta, snapshot = _trust_run_fixture(
+        tmp_path, monkeypatch, run_id="run-order"
+    )
+    order: list[str] = []
+    original_append = trust._append_jsonl
+    original_write = trust.control_plane._write_json_durable
+    original_publish = trust._publish_trust_event
+
+    def append(path, payload):
+        order.append("journal")
+        return original_append(path, payload)
+
+    def write(path, payload):
+        if "trust_settlement_outbox" in path.parts:
+            order.append("outbox")
+        elif path == meta:
+            order.append("meta")
+        elif path == snapshot:
+            order.append("snapshot")
+        return original_write(path, payload)
+
+    def publish(event):
+        order.append("event")
+        return original_publish(event)
+
+    monkeypatch.setattr(trust, "_append_jsonl", append)
+    monkeypatch.setattr(trust.control_plane, "_write_json_durable", write)
+    monkeypatch.setattr(trust, "_publish_trust_event", publish)
+
+    trust.note_verdict(
+        repo=repo,
+        journal=journal,
+        sha=sha,
+        verdict="pass-with-gaps",
+        run_id="run-order",
+        claims=[{"claim": "order", "grade": "strong", "evidence": "fsync"}],
+    )
+
+    assert order.index("journal") < order.index("outbox")
+    assert order.index("outbox") < order.index("meta")
+    assert order.index("meta") < order.index("snapshot")
+    assert order.index("snapshot") < order.index("event")
+
+
+def test_trust_crash_after_projection_recovers_same_receipt_and_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, sha, journal, _meta, snapshot = _trust_run_fixture(
+        tmp_path, monkeypatch, run_id="run-crash"
+    )
+    claims = [{"claim": "recover", "grade": "strong", "evidence": "outbox"}]
+    original_publish = trust._publish_trust_event
+    monkeypatch.setattr(
+        trust,
+        "_publish_trust_event",
+        lambda _event: (_ for _ in ()).throw(OSError("crash after snapshot")),
+    )
+
+    with pytest.raises(OSError, match="crash after snapshot"):
+        trust.note_verdict(
+            repo=repo,
+            journal=journal,
+            sha=sha,
+            verdict="pass-with-gaps",
+            run_id="run-crash",
+            claims=claims,
+        )
+
+    projected = json.loads(snapshot.read_text(encoding="utf-8"))
+    receipt_id = projected["trust_receipt"]["receipt_id"]
+    outbox = trust._trust_outbox_path("run-crash")
+    assert outbox.is_file()
+    monkeypatch.setattr(trust, "_publish_trust_event", original_publish)
+
+    recovered = trust.note_verdict(
+        repo=repo,
+        journal=journal,
+        sha=sha,
+        verdict="pass-with-gaps",
+        run_id="run-crash",
+        claims=claims,
+    )
+
+    assert recovered["trust_receipt"]["receipt_id"] == receipt_id
+    assert not outbox.exists()
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "crafted" / "control_plane" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if json.loads(line).get("kind") == "settlement.changed"
+        and json.loads(line).get("payload", {}).get("schema")
+        == "vibecrafted.settlement-event.v2"
+    ]
+    assert [event["payload"]["trust_receipt"]["receipt_id"] for event in events] == [
+        receipt_id
+    ]
+
+
+def test_guardian_resume_authority_is_exact_and_legacy_is_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, sha, journal, meta_path, snapshot_path = _trust_run_fixture(
+        tmp_path, monkeypatch, run_id="run-authority"
+    )
+    entry = trust.note_verdict(
+        repo=repo,
+        journal=journal,
+        sha=sha,
+        verdict="pass-with-gaps",
+        run_id="run-authority",
+        claims=[{"claim": "resume", "grade": "strong", "evidence": "exact"}],
+    )
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    receipt_id = entry["trust_receipt"]["receipt_id"]
+
+    allowed = guard.authorize_guardian_resume(
+        run_id="run-authority",
+        repo=repo,
+        journal=journal,
+        meta=meta,
+        projection=snapshot,
+        expected_receipt_id=receipt_id,
+    )
+    assert allowed.allowed is True
+    assert allowed.receipt_id == receipt_id
+
+    for field in entry["trust_receipt"]:
+        mismatched = dict(snapshot)
+        mismatched["trust_receipt"] = dict(snapshot["trust_receipt"])
+        mismatched["trust_receipt"][field] = "mismatch"
+        denied = guard.authorize_guardian_resume(
+            run_id="run-authority",
+            repo=repo,
+            journal=journal,
+            meta=meta,
+            projection=mismatched,
+            expected_receipt_id=receipt_id,
+        )
+        assert denied.allowed is False, field
+        assert denied.retryable is False, field
+
+    legacy = tmp_path / "legacy.jsonl"
+    legacy.write_text(
+        json.dumps(
+            {
+                "schema": "vibecrafted.trust-journal.v1",
+                "repo_root": str(repo.resolve()),
+                "sha": sha,
+                "verdict": "pass-with-gaps",
+                "settlement_tui": "n",
+                "run_id": "run-authority",
+                "claims": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    denied_legacy = guard.authorize_guardian_resume(
+        run_id="run-authority",
+        repo=repo,
+        journal=legacy,
+        meta=meta,
+        projection=snapshot,
+    )
+    assert denied_legacy.allowed is False
+    assert denied_legacy.reason == "legacy_trust_record_not_resume_authority"
+    assert denied_legacy.terminal is True
 
 
 def test_enumerate_skips_commits_already_in_append_only_journal(

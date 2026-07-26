@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from . import guard as guard_mod
 from .artifacts import validate_artifacts
 from .continuity.capabilities import (
     PROBE_CONFIRMED,
@@ -2403,6 +2404,7 @@ def _write_native_resume_attempt(
     attempt: int,
     resume_mode: str,
     settlement_revision: int,
+    trust_receipt_id: str = "",
     idempotency_key: str = "",
 ) -> None:
     reservation_dir = _native_resume_reservation_dir(resume_root)
@@ -2418,6 +2420,7 @@ def _write_native_resume_attempt(
         "automatic_attempt_budget": NATIVE_RESUME_AUTOMATIC_ATTEMPT_BUDGET,
         "automatic_attempt_number": 1 if resume_mode == "automatic" else 0,
         "settlement_revision": settlement_revision,
+        **({"trust_receipt_id": trust_receipt_id} if trust_receipt_id else {}),
         "reserved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         **({"resume_idempotency_key": idempotency_key} if idempotency_key else {}),
     }
@@ -2448,6 +2451,7 @@ def _reserve_native_resume_attempt(
     idempotency_key: str = "",
     resume_mode: str = "manual",
     settlement_revision: int = 0,
+    trust_receipt_id: str = "",
 ) -> tuple[str, int]:
     """Reserve one manual lineage attempt while the caller holds its lock."""
 
@@ -2464,6 +2468,7 @@ def _reserve_native_resume_attempt(
         attempt=attempt,
         resume_mode=resume_mode,
         settlement_revision=settlement_revision,
+        trust_receipt_id=trust_receipt_id,
         idempotency_key=idempotency_key,
     )
     return resume_root, attempt
@@ -2579,6 +2584,7 @@ def _claim_native_resume_idempotency(
     parent_meta: dict[str, Any],
     parent_run: dict[str, Any],
     settlement_revision: int,
+    trust_receipt_id: str = "",
 ) -> tuple[dict[str, Any], bool]:
     """Return/create one automatic claim while ordered locks are held."""
 
@@ -2632,6 +2638,7 @@ def _claim_native_resume_idempotency(
             attempt=int(record["attempt"]),
             resume_mode="automatic",
             settlement_revision=int(record.get("settlement_revision") or 0),
+            trust_receipt_id=str(record.get("trust_receipt_id") or ""),
             idempotency_key=key,
         )
         return record, False
@@ -2660,6 +2667,7 @@ def _claim_native_resume_idempotency(
         "automatic_attempt_budget": NATIVE_RESUME_AUTOMATIC_ATTEMPT_BUDGET,
         "automatic_attempt_number": 1,
         "settlement_revision": settlement_revision,
+        "trust_receipt_id": trust_receipt_id,
         "state": "reserved",
         "launch_accepted": False,
         "owner_token": owner_token,
@@ -2679,6 +2687,7 @@ def _claim_native_resume_idempotency(
         attempt=attempt,
         resume_mode="automatic",
         settlement_revision=settlement_revision,
+        trust_receipt_id=trust_receipt_id,
         idempotency_key=key,
     )
     atomic_write_json(path, record)
@@ -2873,6 +2882,7 @@ def _native_resume_idempotency_result(
         ),
         "automatic_attempt_number": int(record.get("automatic_attempt_number") or 1),
         "settlement_revision": int(record.get("settlement_revision") or 0),
+        "trust_receipt_id": str(record.get("trust_receipt_id") or ""),
         "lease_generation": int(record.get("lease_generation") or 0),
         "idempotency_state": state,
     }
@@ -2902,6 +2912,7 @@ def _native_resume_idempotency_result(
         "automatic_attempt_budget": payload["automatic_attempt_budget"],
         "automatic_attempt_number": payload["automatic_attempt_number"],
         "settlement_revision": payload["settlement_revision"],
+        "trust_receipt_id": payload["trust_receipt_id"],
         "lease_generation": payload["lease_generation"],
         "idempotency_state": state,
         "launch": {
@@ -2923,6 +2934,7 @@ def native_resume_run(
     expected_agent: str = "",
     expected_agent_session_id: str = "",
     expected_settlement_revision: int | None = None,
+    expected_receipt_id: str = "",
     env: dict[str, str] | None = None,
     idempotency_key: str = "",
 ) -> dict[str, Any]:
@@ -2930,17 +2942,18 @@ def native_resume_run(
 
     The public boundary is fail-closed even when called without the Guardian:
     only a terminal trust ``n`` with a dead worker, explicit native identity,
-    recovery requirement, and stable settlement revision may launch. A keyed
-    call is an automatic Guardian attempt (one per lineage); an unkeyed call is
-    a separate explicit manual attempt. Guardian callers may pin the event's
-    provider-session identity and settlement revision; both are revalidated
-    against live state while the run mutation locks are held.
+    recovery requirement, stable settlement revision, and one exact v2 trust
+    receipt may launch. A keyed call is an automatic Guardian attempt (one per
+    lineage); an unkeyed call is a separate explicit manual attempt. Guardian
+    callers may pin the provider-session identity, settlement revision, and
+    receipt id; all are revalidated under the live run mutation locks.
     """
 
     target = str(run_id or "").strip()
     if not target:
         raise ValueError("run_id is required")
     requested_agent = str(expected_agent or "").strip().lower()
+    requested_receipt_id = str(expected_receipt_id or "").strip()
     raw_expected_agent_session = str(expected_agent_session_id or "").strip()
     requested_agent_session = _explicit_native_identity(raw_expected_agent_session)
     if raw_expected_agent_session and not requested_agent_session:
@@ -2959,9 +2972,6 @@ def native_resume_run(
                 "invalid_expected_settlement_revision",
             )
         requested_settlement_revision = expected_settlement_revision
-    requires_locked_expectation = bool(
-        requested_agent_session or requested_settlement_revision is not None
-    )
     try:
         resume_idempotency_key = _normalize_native_resume_idempotency_key(
             idempotency_key
@@ -3006,25 +3016,24 @@ def native_resume_run(
                 ),
                 idempotency_key=resume_idempotency_key,
             )
-        if existing_idempotency is not None:
-            existing_state = str(existing_idempotency.get("state") or "reserved")
-            existing_child = lookup_run(
-                str(existing_idempotency.get("child_run_id") or "")
+        # A prior dispatched idempotency receipt is not resume authority.
+        # Replay is resolved only after the live parent and exact trust receipt
+        # have been revalidated under the ordered mutation locks below.
+        if (
+            existing_idempotency is not None
+            and not requested_agent_session
+            and requested_settlement_revision is None
+            and not requested_receipt_id
+            and _native_resume_owner_active_here(existing_idempotency)
+        ):
+            return _native_resume_idempotency_result(
+                target=target,
+                agent=str(existing_idempotency.get("agent") or "").lower(),
+                requested_agent=requested_agent,
+                key=resume_idempotency_key,
+                record=existing_idempotency,
+                run={"run_id": target},
             )
-            if not requires_locked_expectation and (
-                existing_state == "dispatched"
-                or _native_resume_child_was_dispatched(existing_child)
-                or _native_resume_owner_active_here(existing_idempotency)
-            ):
-                recorded_agent = str(existing_idempotency.get("agent") or "").lower()
-                return _native_resume_idempotency_result(
-                    target=target,
-                    agent=recorded_agent,
-                    requested_agent=requested_agent,
-                    key=resume_idempotency_key,
-                    record=existing_idempotency,
-                    run={"run_id": target},
-                )
 
     run = lookup_run(target)
     if run is None:
@@ -3226,6 +3235,25 @@ def native_resume_run(
                 run=locked_run,
                 idempotency_key=resume_idempotency_key,
             )
+        authority = guard_mod.authorize_guardian_resume(
+            run_id=target,
+            repo=Path(
+                str(locked_run.get("root") or locked_meta.get("root") or source_dir)
+            ),
+            meta=locked_meta,
+            projection=locked_run,
+            expected_receipt_id=requested_receipt_id,
+        )
+        if not authority.allowed:
+            return _native_resume_rejection(
+                target,
+                authority.reason,
+                run=locked_run,
+                detail=authority.detail,
+                idempotency_key=resume_idempotency_key,
+                retryable=authority.retryable,
+            )
+        locked_receipt_id = authority.receipt_id
 
         resume_mode = "automatic" if resume_idempotency_key else "manual"
         owner_token = ""
@@ -3240,6 +3268,7 @@ def native_resume_run(
                     parent_meta=locked_meta,
                     parent_run=locked_run,
                     settlement_revision=locked_revision,
+                    trust_receipt_id=locked_receipt_id,
                 )
             except _AutomaticResumeBudgetExhausted as exc:
                 return _native_resume_rejection(
@@ -3277,6 +3306,16 @@ def native_resume_run(
                     run=locked_run,
                     idempotency_key=resume_idempotency_key,
                 )
+            if (
+                str(idempotency_record.get("trust_receipt_id") or "")
+                != locked_receipt_id
+            ):
+                return _native_resume_rejection(
+                    target,
+                    "trust_receipt_id_changed",
+                    run=locked_run,
+                    idempotency_key=resume_idempotency_key,
+                )
             if not created:
                 child = lookup_run(str(idempotency_record.get("child_run_id") or ""))
                 idempotency_state = str(idempotency_record.get("state") or "reserved")
@@ -3311,6 +3350,7 @@ def native_resume_run(
                     parent_run=locked_run,
                     resume_mode=resume_mode,
                     settlement_revision=locked_revision,
+                    trust_receipt_id=locked_receipt_id,
                 )
             except (OSError, ValueError) as exc:
                 return _native_resume_rejection(
@@ -3340,6 +3380,7 @@ def native_resume_run(
             "automatic_attempt_budget": NATIVE_RESUME_AUTOMATIC_ATTEMPT_BUDGET,
             "automatic_attempt_number": automatic_attempt_number,
             "resume_settlement_revision": locked_revision,
+            "resume_trust_receipt_id": locked_receipt_id,
             **(
                 {"resume_idempotency_key": resume_idempotency_key}
                 if resume_idempotency_key
@@ -3445,6 +3486,7 @@ def native_resume_run(
             "automatic_attempt_budget": NATIVE_RESUME_AUTOMATIC_ATTEMPT_BUDGET,
             "automatic_attempt_number": automatic_attempt_number,
             "settlement_revision": locked_revision,
+            "trust_receipt_id": locked_receipt_id,
             "probe_state": provider_probe.state,
             "probe_version": provider_probe.version or "",
             "deduplicated": False,

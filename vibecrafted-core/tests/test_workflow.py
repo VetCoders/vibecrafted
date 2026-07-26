@@ -13,7 +13,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from vibecrafted_core import workflow
+from vibecrafted_core import trust, workflow
+from vibecrafted_core.settlement import TrustReceiptV1
 
 _NATIVE_RESUME_CLAIM_SCRIPT = r"""
 import json
@@ -43,6 +44,7 @@ with run_mutation_locks(
         parent_meta=meta,
         parent_run=run,
         settlement_revision=7,
+        trust_receipt_id=os.environ.get("NATIVE_RESUME_TEST_RECEIPT", ""),
     )
     print(json.dumps({"created": created, "record": record}), flush=True)
     if os.environ.get("NATIVE_RESUME_TEST_CRASH") == "1":
@@ -1382,6 +1384,25 @@ def _native_resume_parent(
     home = tmp_path / "home"
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
     run_id = "impl-parent"
+    claims = [
+        {
+            "claim": "recovery remains unfinished",
+            "grade": "strong",
+            "evidence": "worker exited before closure",
+        }
+    ]
+    claim_digest = trust._claims_digest(claims)
+    receipt = TrustReceiptV1.issue(
+        repo_root=str(tmp_path.resolve()),
+        run_id=run_id,
+        commit_sha="a" * 40,
+        trust_verdict="pass-with-gaps",
+        settlement_verdict="needs_attention",
+        settlement_tui="n",
+        settlement_revision=7,
+        claim_digest=claim_digest,
+    )
+    receipt_payload = receipt.to_payload()
     run = {
         "run_id": run_id,
         "state": "failed",
@@ -1395,6 +1416,8 @@ def _native_resume_parent(
         "settlement_verdict": "needs_attention",
         "settlement_source": "trust",
         "settlement_revision": 7,
+        "settlement_claim_digest": claim_digest,
+        "trust_receipt": receipt_payload,
     }
     run.update(run_fields or {})
     meta = {
@@ -1403,11 +1426,42 @@ def _native_resume_parent(
         "agent_session_id": f"{agent}-native-id",
         "runtime_session_id": "runtime-parent-id",
         "attempt": 1,
+        "root": str(tmp_path),
+        "settlement_tui": "n",
+        "settlement_verdict": "needs_attention",
+        "settlement_source": "trust",
+        "settlement_revision": 7,
+        "settlement_claim_digest": claim_digest,
+        "trust_receipt": receipt_payload,
     }
     meta.update(meta_fields or {})
     run_dir = home / "control_plane" / "runtime_runs" / run_id
     run_dir.mkdir(parents=True)
     (run_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    journal = home / "trust" / "journal.jsonl"
+    journal.parent.mkdir(parents=True)
+    journal.write_text(
+        json.dumps(
+            {
+                "schema": trust.TRUST_JOURNAL_SCHEMA_V2,
+                "recorded_at": "2026-07-26T00:00:00+00:00",
+                "repo_root": str(tmp_path.resolve()),
+                "sha": "a" * 40,
+                "author_name": "Codex",
+                "author_email": "agents@vetcoders.io",
+                "authored_at": "2026-07-26T00:00:00+00:00",
+                "subject": "[codex/codex] fix(runtime): retain recovery",
+                "verdict": "pass-with-gaps",
+                "settlement_tui": "n",
+                "run_id": run_id,
+                "claims": claims,
+                "claim_digest": claim_digest,
+                "trust_receipt": receipt_payload,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(workflow, "lookup_run", lambda _run_id: dict(run))
     return run_id, run
 
@@ -1426,6 +1480,12 @@ def _native_resume_claim_env(
     env["VIBECRAFTED_HOME"] = str(tmp_path / "home")
     env["NATIVE_RESUME_TEST_KEY"] = key
     env["NATIVE_RESUME_TEST_PARENT"] = parent
+    journal = tmp_path / "home" / "trust" / "journal.jsonl"
+    if journal.is_file():
+        latest = json.loads(journal.read_text(encoding="utf-8").splitlines()[-1])
+        env["NATIVE_RESUME_TEST_RECEIPT"] = latest["trust_receipt"]["receipt_id"]
+    else:
+        env["NATIVE_RESUME_TEST_RECEIPT"] = "b" * 64
     return env
 
 
@@ -1503,10 +1563,80 @@ def test_native_resume_creates_new_tracked_monotonic_attempts(
     assert launches[0]["launch_meta"]["resume_mode"] == "manual"
     assert launches[0]["launch_meta"]["automatic_attempt_budget"] == 1
     assert launches[0]["launch_meta"]["automatic_attempt_number"] == 0
+    assert (
+        launches[0]["launch_meta"]["resume_trust_receipt_id"]
+        == (first["trust_receipt_id"])
+    )
+    assert len(first["trust_receipt_id"]) == 64
     assert launches[0]["spec"].runtime == "headless"
     assert launches[0]["spec"].prompt == "continue safely"
     assert events[-1]["kind"] == "audit:native_resume"
     assert events[-1]["payload"]["new_run_id"] == "rsme-child-2"
+
+
+@pytest.mark.parametrize(
+    ("journal_mode", "expected_receipt_id", "reason"),
+    [
+        ("missing", "", "trust_journal_missing"),
+        ("legacy", "", "legacy_trust_record_not_resume_authority"),
+        ("current", "f" * 64, "expected_trust_receipt_mismatch"),
+    ],
+)
+def test_native_resume_direct_boundary_cannot_bypass_receipt_authority(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    journal_mode: str,
+    expected_receipt_id: str,
+    reason: str,
+) -> None:
+    run_id, _run = _native_resume_parent(monkeypatch, tmp_path)
+    journal = tmp_path / "home" / "trust" / "journal.jsonl"
+    if journal_mode == "missing":
+        journal.unlink()
+    elif journal_mode == "legacy":
+        journal.write_text(
+            json.dumps(
+                {
+                    "schema": "vibecrafted.trust-journal.v1",
+                    "repo_root": str(tmp_path.resolve()),
+                    "sha": "a" * 40,
+                    "verdict": "pass-with-gaps",
+                    "settlement_tui": "n",
+                    "run_id": run_id,
+                    "claims": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("receipt authority denial must launch nothing")
+        ),
+    )
+
+    result = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        expected_receipt_id=expected_receipt_id,
+    )
+
+    assert result["accepted"] is False
+    assert result["reason"] == reason
+    assert result["terminal"] is True
 
 
 def test_native_resume_never_uses_legacy_session_id(
@@ -1649,8 +1779,8 @@ def test_native_resume_idempotency_replay_returns_same_child_without_relaunch(
     assert replay["reason"] == "idempotent_replay"
     assert replay["resume_run_id"] == first["resume_run_id"] == "rsme-idempotent"
     assert replay["attempt"] == first["attempt"] == 2
-    assert archived_parent_replay["accepted"] is True
-    assert archived_parent_replay["resume_run_id"] == "rsme-idempotent"
+    assert archived_parent_replay["accepted"] is False
+    assert archived_parent_replay["reason"] == "run_not_found"
     assert len(reserved) == 1
     assert len(launches) == 1
     assert launches[0]["launch_meta"]["resume_idempotency_key"] == key

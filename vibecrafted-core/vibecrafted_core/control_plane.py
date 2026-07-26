@@ -326,6 +326,42 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
             tmp.unlink()
 
 
+def _write_json_durable(path: Path, payload: dict[str, Any]) -> None:
+    """Atomically publish JSON and durably commit both data and directory entry."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    descriptor = -1
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
+    try:
+        descriptor = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+        written = os.write(descriptor, data)
+        if written != len(data):
+            raise OSError(errno.EIO, f"short write to {tmp}")
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(tmp, path)
+        _fsync_directory_durable(path.parent)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+
+
+def _fsync_directory_durable(path: Path) -> None:
+    """Fsync a directory or raise; authority receipts cannot be best-effort."""
+
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _write_run_snapshot(
     path: Path,
     previous: dict[str, Any] | None,
@@ -1287,6 +1323,7 @@ def _normalize_agent_meta(path: Path) -> RunStatus | None:
         "artifact_errors",
         "artifact_gate",
         "operator_state",
+        "trust_receipt",
     ):
         if key in payload and payload.get(key) not in (None, ""):
             extra[key] = payload[key]
@@ -1496,6 +1533,7 @@ def _merge_event_stream(
             "automatic_attempt_budget",
             "automatic_attempt_number",
             "resume_settlement_revision",
+            "resume_trust_receipt_id",
             "worker_command",
             "worker_pid",
             "worker_pgid",
@@ -2256,6 +2294,7 @@ def _project_run_payload(
             "settlement_waived",
             "settlement_claim_digest",
             "settlement_revision",
+            "trust_receipt",
             "settlement",
             "await_rc",
             "await_outcome",
