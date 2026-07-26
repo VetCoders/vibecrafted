@@ -161,7 +161,18 @@ install-python-tools: install-tools
 # of truth, honours VIBECRAFTED_TOOLS_HOME / VIBECRAFTED_RUNTIME_HOME / XDG_DATA_HOME)
 # and refuse to fall back to the checkout if staging is missing.
 install-tools:
-	@if ! command -v uv >/dev/null 2>&1; then \
+	@set -eu; \
+	rollback_tools_handoff() { \
+		status=$$?; \
+		trap - EXIT; \
+		if [ "$$status" -ne 0 ]; then \
+			$(PYTHON) -c 'import sys; from pathlib import Path; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; restored = v.rollback_current_tools(Path.home()); print("[install-tools] restored previous runtime generation" if restored else "[install-tools] runtime pointer did not require rollback")' || true; \
+			echo "[install-tools] FAILED: persistent service remains stopped and recoverable; rerun make install" >&2; \
+		fi; \
+		exit "$$status"; \
+	}; \
+	trap rollback_tools_handoff EXIT; \
+	if ! command -v uv >/dev/null 2>&1; then \
 		echo "bootstrapping uv..."; \
 		curl -LsSf https://astral.sh/uv/install.sh | sh; \
 	fi; \
@@ -175,7 +186,22 @@ install-tools:
 		echo "[install-tools] FATAL: stable runtime home not staged at $$stable_root; refusing to source the uv-tool from the dev checkout" >&2; \
 		exit 1; \
 	fi; \
-	uv tool uninstall vibecrafted-core >/dev/null 2>&1 || true; \
+	service_was_loaded=0; \
+	if [ "$$(uname -s)" = "Darwin" ] && \
+	   /bin/launchctl print "gui/$$(id -u)/io.vetcoders.vibecrafted.server" >/dev/null 2>&1; then \
+		if [ ! -f "$$HOME/Library/LaunchAgents/io.vetcoders.vibecrafted.server.plist" ]; then \
+			echo "[install-tools] FATAL: launchd service is loaded without its owned LaunchAgent plist; refusing to replace active tool executables" >&2; \
+			exit 1; \
+		fi; \
+		prior_launcher="$$(command -v vibecrafted 2>/dev/null || true)"; \
+		if [ -z "$$prior_launcher" ] || [ ! -x "$$prior_launcher" ]; then \
+			echo "[install-tools] FATAL: cannot stop the active service without its current launcher" >&2; \
+			exit 1; \
+		fi; \
+		echo "[install-tools] stopping active service before replacing tool executables..."; \
+		"$$prior_launcher" server service stop; \
+		service_was_loaded=1; \
+	fi; \
 	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-core"; \
 	uv tool install --force --reinstall --editable "$$stable_root/plugins/iterm2"; \
 	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-mcp" --with-editable "$$stable_root/vibecrafted-core"; \
@@ -208,7 +234,14 @@ install-tools:
 	if [ "$$actual_core" != "$$expected_core" ]; then \
 		echo "[install-tools] FATAL: uv tool imports vibecrafted_core from $$actual_core, expected stable runtime $$expected_core" >&2; \
 		exit 1; \
-	fi
+	fi; \
+	if [ "$$service_was_loaded" -eq 1 ]; then \
+		current_launcher="$$(command -v vibecrafted 2>/dev/null || true)"; \
+		echo "[install-tools] reactivating the verified persistent service..."; \
+		"$$current_launcher" server service install; \
+	fi; \
+	$(PYTHON) -c 'import sys; from pathlib import Path; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; v.complete_current_tools_handoff(Path.home())'; \
+	trap - EXIT
 
 # install-all owns every binary the product ships into BIN (~/.local/bin).
 # The vibecrafted-app members ship `voc` and `vc-admin`; vibecrafted-server

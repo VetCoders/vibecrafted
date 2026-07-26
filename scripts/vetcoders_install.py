@@ -2610,32 +2610,198 @@ def _remove_path(path: Path) -> None:
         shutil.rmtree(path)
 
 
+_TOOLS_HANDOFF_SCHEMA = "vibecrafted.tools-handoff.v1"
+
+
+def _tools_handoff_path(current_link: Path) -> Path:
+    return current_link.parent / ".vibecrafted-current-handoff.json"
+
+
+def _tools_handoff_file(shared_home: Path) -> Path:
+    return _tools_handoff_path(_current_tools_link(shared_home))
+
+
+def _symlink_target(path: Path) -> Path | None:
+    if not path.is_symlink():
+        return None
+    raw_target = Path(os.readlink(path))
+    if not raw_target.is_absolute():
+        raw_target = path.parent / raw_target
+    return raw_target.resolve(strict=False)
+
+
+def _atomic_symlink(target: Path, link: Path) -> None:
+    """Publish ``link`` in one rename without ever removing its old target."""
+    canonical_target = target.resolve(strict=True)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.exists() and not link.is_symlink():
+        raise OSError(
+            f"cannot atomically publish over non-symlink runtime root: {link}"
+        )
+    temporary = link.parent / (f".{link.name}.tmp-{os.getpid()}-{os.urandom(6).hex()}")
+    relative_target = os.path.relpath(canonical_target, link.parent)
+    try:
+        temporary.symlink_to(relative_target, target_is_directory=True)
+        os.replace(temporary, link)
+    finally:
+        if temporary.is_symlink():
+            temporary.unlink()
+
+
+def _atomic_json_file(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.parent / (f".{path.name}.tmp-{os.getpid()}-{os.urandom(6).hex()}")
+    encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2) + "\n"
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        try:
+            view = memoryview(encoded.encode("utf-8"))
+            while view:
+                written = os.write(descriptor, view)
+                view = view[written:]
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists() or temporary.is_symlink():
+            temporary.unlink()
+
+
+def _read_tools_handoff(shared_home: Path) -> dict[str, Any] | None:
+    path = _tools_handoff_file(shared_home)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != _TOOLS_HANDOFF_SCHEMA
+        or payload.get("state") not in {"prepared", "rolled-back", "complete"}
+        or not isinstance(payload.get("old_target"), str)
+        or not isinstance(payload.get("new_target"), str)
+    ):
+        return None
+    return payload
+
+
 def sync_control_plane_tree(
-    src: Path, dst: Path, dry_run: bool = False, mirror: bool = False
-) -> None:
-    """Atomically replace the staged source tree used by installed launchers."""
+    src: Path,
+    dst: Path,
+    dry_run: bool = False,
+    mirror: bool = False,
+    *,
+    install_version: str | None = None,
+) -> Path:
+    """Publish a complete immutable runtime generation through a symlink swap.
+
+    ``dst`` is the stable ``vibecrafted-current`` pointer, never a mutable
+    generation directory.  Staging, validation, and version stamping all happen
+    before the sole publication operation (``os.replace`` on the symlink).
+    """
     if dry_run:
-        return
+        return dst
     _ = mirror  # staged runtime is always an exact distribution payload
-    staging = dst.parent / f".{dst.name}.staging-{os.getpid()}"
-    previous = dst.parent / f".{dst.name}.previous-{os.getpid()}"
-    if staging.exists() or staging.is_symlink():
-        _remove_path(staging)
-    if previous.exists() or previous.is_symlink():
-        _remove_path(previous)
+    if dst.exists() and not dst.is_symlink():
+        raise OSError(
+            f"refusing non-atomic in-place runtime upgrade at {dst}; "
+            "vibecrafted-current must be a symlink pointer"
+        )
+
+    token = f"{os.getpid()}-{os.urandom(6).hex()}"
+    version_slug = (
+        re.sub(
+            r"[^A-Za-z0-9._+-]+",
+            "-",
+            (install_version or "local").strip(),
+        ).strip("-")
+        or "local"
+    )
+    staging = dst.parent / f".{dst.name}.staging-{token}"
+    generation = dst.parent / f"vibecrafted-generation-{version_slug}-{token}"
+    old_candidate = _symlink_target(dst)
+    old_target = (
+        old_candidate
+        if old_candidate is not None and _is_framework_source_root(old_candidate)
+        else None
+    )
+    pointer_swapped = False
     try:
         stage_distribution_payload(src, staging, mirror=True)
-        if dst.exists() or dst.is_symlink():
-            dst.rename(previous)
-        staging.rename(dst)
-        if previous.exists() or previous.is_symlink():
-            _remove_path(previous)
+        if install_version:
+            stamp_install_version(staging, install_version)
+        staging.rename(generation)
+        _atomic_json_file(
+            _tools_handoff_path(dst),
+            {
+                "schema": _TOOLS_HANDOFF_SCHEMA,
+                "state": "prepared",
+                "old_target": str(old_target) if old_target is not None else "",
+                "new_target": str(generation),
+                "prepared_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        _atomic_symlink(generation, dst)
+        pointer_swapped = True
+        return generation
     except Exception:
         if staging.exists() or staging.is_symlink():
             _remove_path(staging)
-        if not dst.exists() and previous.exists():
-            previous.rename(dst)
+        if generation.exists() and not pointer_swapped:
+            _remove_path(generation)
         raise
+
+
+def rollback_current_tools(shared_home: Path) -> bool:
+    """Restore the runtime pointer recorded by the latest pending handoff."""
+    payload = _read_tools_handoff(shared_home)
+    if payload is None or payload["state"] != "prepared":
+        return False
+    old_raw = payload["old_target"]
+    if not old_raw:
+        return False
+    old_target = Path(old_raw)
+    new_target = Path(payload["new_target"])
+    current_link = _current_tools_link(shared_home)
+    current_target = _symlink_target(current_link)
+    if current_target == old_target.resolve(strict=False):
+        return False
+    if current_target != new_target.resolve(strict=False):
+        raise OSError(
+            "refusing runtime rollback because vibecrafted-current no longer "
+            "matches the pending handoff"
+        )
+    _atomic_symlink(old_target, current_link)
+    payload["state"] = "rolled-back"
+    payload["rolled_back_at"] = datetime.now(timezone.utc).isoformat()
+    _atomic_json_file(_tools_handoff_file(shared_home), payload)
+    return True
+
+
+def complete_current_tools_handoff(shared_home: Path) -> bool:
+    """Seal the latest runtime handoff after uv tools and service are verified."""
+    payload = _read_tools_handoff(shared_home)
+    if payload is None or payload["state"] != "prepared":
+        return False
+    current_target = _symlink_target(_current_tools_link(shared_home))
+    expected = Path(payload["new_target"]).resolve(strict=False)
+    if current_target != expected:
+        raise OSError(
+            "cannot complete tools handoff: vibecrafted-current does not point "
+            "at the prepared generation"
+        )
+    payload["state"] = "complete"
+    payload["completed_at"] = datetime.now(timezone.utc).isoformat()
+    _atomic_json_file(_tools_handoff_file(shared_home), payload)
+    return True
 
 
 def _staged_sync_failure_detail(exc: Exception) -> str:
@@ -2683,13 +2849,14 @@ def _ensure_current_tools_target(shared_home: Path) -> Path:
         target = current_link.resolve(strict=False)
         if target.exists():
             return target
-        current_link.unlink()
     elif current_link.exists():
         return current_link
 
-    target = tools_dir / "vibecrafted-local"
+    target = tools_dir / (
+        f"vibecrafted-generation-bootstrap-{os.getpid()}-{os.urandom(6).hex()}"
+    )
     target.mkdir(parents=True, exist_ok=True)
-    current_link.symlink_to(target)
+    _atomic_symlink(target, current_link)
     return target
 
 
@@ -2707,6 +2874,12 @@ def refresh_current_tools(
                 # Dev/portable: tools link points at the checkout. Do NOT write
                 # +gSHA into the live git tree (would dirty VERSION files).
                 # Display still uses get_install_version() at banner time.
+                # A receipt from an older immutable-generation handoff must not
+                # survive this no-op path: a later failed install would
+                # otherwise mistake it for the transaction it should roll back.
+                handoff = _tools_handoff_path(current_link)
+                if not dry_run and (handoff.exists() or handoff.is_symlink()):
+                    _remove_path(handoff)
                 return current_link
         except OSError:
             pass
@@ -2714,15 +2887,13 @@ def refresh_current_tools(
     if dry_run:
         return current_link
 
-    target = _ensure_current_tools_target(shared_home)
-    if target.resolve(strict=False) == repo_root:
-        return target
-
-    sync_control_plane_tree(repo_root, target, dry_run=dry_run, mirror=mirror)
-    # Staged install tree must carry X.Y.Z+gSHA on every VERSION surface.
-    # Source checkout stays plain semver for version-bump / git cleanliness.
-    if not dry_run:
-        stamp_install_version(target, get_install_version(repo_root))
+    sync_control_plane_tree(
+        repo_root,
+        current_link,
+        dry_run=dry_run,
+        mirror=mirror,
+        install_version=get_install_version(repo_root),
+    )
     return current_link
 
 

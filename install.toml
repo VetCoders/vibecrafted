@@ -82,6 +82,7 @@ make --no-print-directory install-python-tools
 make --no-print-directory install-vendored-binaries
 make --no-print-directory install-app-binaries
 make --no-print-directory install-server
+make --no-print-directory install-server-service
 ''',
 ]
 

@@ -210,6 +210,10 @@ def test_install_manifest_post_install_uses_mirror_sync() -> None:
     ) in text
     assert "make --no-print-directory install-python-tools" in text
     assert (
+        "make --no-print-directory install-server\n"
+        "make --no-print-directory install-server-service"
+    ) in text
+    assert (
         'bash "$PWD/vibecrafted-core/vibecrafted_core/runtime/scripts/'
         'install-frontier-config.sh" --source "$PWD"'
     ) in text
@@ -665,7 +669,21 @@ def test_make_install_verifies_server_supervisor_entrypoint() -> None:
     assert "expected uv tool target" in install_tools_block
     assert "uv tool imports vibecrafted_core" in install_tools_block
     assert "$$stable_root/vibecrafted-core" in install_tools_block
-    assert "server service" not in install_tools_block
+    assert "uv tool uninstall" not in install_tools_block
+    assert "rollback_current_tools" in install_tools_block
+    assert "complete_current_tools_handoff" in install_tools_block
+    assert "trap rollback_tools_handoff EXIT" in install_tools_block
+    assert "server service stop" in install_tools_block
+    assert "server service install" in install_tools_block
+    assert "launchd service is loaded without its owned LaunchAgent plist" in (
+        install_tools_block
+    )
+    assert install_tools_block.index("server service stop") < install_tools_block.index(
+        "uv tool install --force --reinstall"
+    )
+    assert install_tools_block.index(
+        "uv tool install --force --reinstall"
+    ) < install_tools_block.index("server service install")
     assert "install-python-tools: install-tools" in text
 
 
