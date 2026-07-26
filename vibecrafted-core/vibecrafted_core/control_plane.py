@@ -8,6 +8,7 @@ import fcntl
 import json
 import os
 import re
+import stat
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -115,6 +116,8 @@ RUN_SNAPSHOT_RETENTION_COUNT_ENV = "VIBECRAFTED_RUN_SNAPSHOT_RETENTION_COUNT"
 EVENT_TAIL_LIMIT = 16
 EVENTS_ROTATE_BYTES = 32 * 1024 * 1024
 EVENTS_ROTATE_BYTES_ENV = "VIBECRAFTED_EVENTS_ROTATE_BYTES"
+EVENT_SEGMENT_SCHEMA = "vibecrafted.event-stream-segment.v1"
+EVENT_MAX_LINE_BYTES = 256 * 1024
 RECENT_RUN_LIMIT = 12
 MISSING_SESSION_IDS = {"", "pending", "none", "null", "unknown"}
 
@@ -184,6 +187,10 @@ def event_stream_path() -> Path:
     return control_plane_home() / "events.jsonl"
 
 
+def _event_lock_path() -> Path:
+    return control_plane_home() / ".events.lock"
+
+
 def _sync_lock_path() -> Path:
     return control_plane_home() / ".sync.lock"
 
@@ -212,6 +219,44 @@ def _sync_lock_timeout_seconds() -> float:
         except ValueError:
             pass
     return _DEFAULT_SYNC_LOCK_TIMEOUT_SECONDS
+
+
+@contextlib.contextmanager
+def _event_lock(*, exclusive: bool) -> Iterator[None]:
+    """Coordinate event appends with generation rotation.
+
+    Lock order is ``_sync_lock`` then ``_event_lock`` whenever both are held.
+    Appenders take a shared lock and still run concurrently; their single
+    ``O_APPEND`` write remains the hot path. Rotation takes the exclusive lock,
+    so no writer can open the old inode after it has been archived.
+
+    The lock file is deliberately stable across rotations. ``O_NOFOLLOW`` plus
+    owner/mode checks prevent a replaced symlink or another user's writable
+    file from becoming the synchronization authority.
+    """
+
+    home = control_plane_home()
+    home.mkdir(parents=True, exist_ok=True)
+    flags = os.O_RDWR | os.O_CREAT
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(_event_lock_path(), flags, 0o600)
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError(errno.EINVAL, "event lock is not a regular file")
+        if metadata.st_uid != os.getuid():
+            raise PermissionError("event lock is not owned by the current user")
+        if metadata.st_mode & 0o022:
+            raise PermissionError("event lock must not be group/world writable")
+        operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        fcntl.flock(fd, operation)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 @contextlib.contextmanager
@@ -1005,25 +1050,180 @@ def _skill_from_code(skill_code: str) -> str:
     return SKILL_CODE_MAP.get(skill_code, skill_code or "unknown")
 
 
-def _append_event(event: dict[str, Any]) -> None:
-    """Append one event line to the stream — atomically, WITHOUT the sync lock.
+def _segment_header(epoch: str, generation: int) -> dict[str, Any]:
+    return {
+        "ts": _now().isoformat(),
+        "run_id": "",
+        "kind": "stream.segment",
+        "message": f"event stream generation {generation}",
+        "payload": {
+            "schema": EVENT_SEGMENT_SCHEMA,
+            "epoch": epoch,
+            "generation": generation,
+        },
+    }
 
-    Appending to events.jsonl is the hottest control-plane path (every spawn /
-    emit / stop of every run). It must never serialize on the global lock: a
-    single ``O_APPEND`` ``os.write`` of one already-encoded line is atomic on a
-    local filesystem (the kernel appends at the current end without a
-    read-modify-write), so concurrent writers interleave cleanly by whole lines.
-    This is the last piece of the flock migraine — the emit path used to take the
-    global lock and, under a herd, raise ControlPlaneLockBusy after the timeout.
-    """
-    stream_path = event_stream_path()
-    stream_path.parent.mkdir(parents=True, exist_ok=True)
-    line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
-    fd = os.open(stream_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+
+def _read_segment_header(path: Path) -> tuple[str, int] | None:
     try:
-        os.write(fd, line)
+        with path.open("rb") as handle:
+            raw = handle.readline(EVENT_MAX_LINE_BYTES + 1)
+    except OSError:
+        return None
+    if not raw.endswith(b"\n") or len(raw) > EVENT_MAX_LINE_BYTES:
+        return None
+    try:
+        header = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    payload = header.get("payload")
+    if (
+        header.get("kind") != "stream.segment"
+        or not isinstance(payload, dict)
+        or payload.get("schema") != EVENT_SEGMENT_SCHEMA
+    ):
+        return None
+    epoch = str(payload.get("epoch") or "").strip()
+    generation = payload.get("generation")
+    if not epoch or ":" in epoch or type(generation) is not int or generation < 0:
+        return None
+    return epoch, generation
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def _write_new_event_segment_locked(path: Path, epoch: str, generation: int) -> None:
+    """Atomically publish an fsynced empty segment. Caller holds event EX."""
+
+    line = (
+        json.dumps(_segment_header(epoch, generation), ensure_ascii=False) + "\n"
+    ).encode("utf-8")
+    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(tmp, flags, 0o600)
+    try:
+        written = os.write(fd, line)
+        if written != len(line):
+            raise OSError(errno.EIO, "short event segment header write")
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    try:
+        os.replace(tmp, path)
+        _fsync_directory(path.parent)
+    finally:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+
+
+def _latest_archived_segment_header() -> tuple[str, int] | None:
+    candidates: list[tuple[int, str, int]] = []
+    archive_dir = _events_archive_dir()
+    if not archive_dir.is_dir():
+        return None
+    for path in archive_dir.glob("events-*.jsonl"):
+        header = _read_segment_header(path)
+        if header is None:
+            continue
+        try:
+            modified = path.stat().st_mtime_ns
+        except OSError:
+            continue
+        candidates.append((modified, header[0], header[1]))
+    if not candidates:
+        return None
+    _, epoch, generation = max(candidates)
+    return epoch, generation
+
+
+def _legacy_archive_target() -> Path:
+    archive_dir = _events_archive_dir()
+    stamp = _now().strftime("%Y%m%dT%H%M%S%fZ")
+    return archive_dir / f"events-legacy-{stamp}-{uuid.uuid4().hex}.jsonl"
+
+
+def _ensure_event_segment() -> None:
+    """Ensure the active stream has a v1 header without racing appenders."""
+
+    stream_path = event_stream_path()
+    with _event_lock(exclusive=False):
+        header = _read_segment_header(stream_path)
+        if header is not None:
+            return
+        try:
+            if not stream_path.exists() or stream_path.stat().st_size == 0:
+                pass
+            else:
+                # A non-empty legacy stream must be moved, never rewritten:
+                # prepending a header would invalidate every saved byte cursor.
+                header = None
+        except OSError:
+            pass
+
+    with _event_lock(exclusive=True):
+        if _read_segment_header(stream_path) is not None:
+            return
+        stream_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy = False
+        try:
+            legacy = stream_path.is_file() and stream_path.stat().st_size > 0
+        except OSError:
+            legacy = False
+        if legacy:
+            archive_dir = _events_archive_dir()
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            stream_path.replace(_legacy_archive_target())
+            _fsync_directory(archive_dir)
+            _fsync_directory(stream_path.parent)
+            epoch, generation = str(uuid.uuid4()), 0
+        else:
+            previous = _latest_archived_segment_header()
+            if previous is None:
+                epoch, generation = str(uuid.uuid4()), 0
+            else:
+                epoch, generation = previous[0], previous[1] + 1
+        _write_new_event_segment_locked(stream_path, epoch, generation)
+
+
+def _append_event(event: dict[str, Any]) -> None:
+    """Append one durable event line without serialising on the sync lock.
+
+    Appending to events.jsonl is the hottest control-plane path (every spawn /
+    emit / stop of every run). It never acquires the global sync lock. A shared
+    event lock excludes only rotation; concurrent appenders issue one bounded
+    ``O_APPEND`` write each. ``fsync`` is the receipt: once this call returns,
+    the complete newline-delimited effect is on the durable segment.
+    """
+    _ensure_event_segment()
+    stream_path = event_stream_path()
+    line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
+    if len(line) > EVENT_MAX_LINE_BYTES:
+        raise ValueError(
+            f"event line exceeds {EVENT_MAX_LINE_BYTES} byte stream contract"
+        )
+    with _event_lock(exclusive=False):
+        flags = os.O_WRONLY | os.O_APPEND
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(stream_path, flags)
+        try:
+            written = os.write(fd, line)
+            if written != len(line):
+                raise OSError(errno.EIO, "short atomic event append")
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
 
 def _iter_meta_files() -> Iterator[Path]:
@@ -1462,16 +1662,26 @@ def _read_tail_lines(path: Path, limit: int, *, window_bytes: int = 65536) -> li
 
 
 def _rotate_event_stream() -> Path | None:
-    """Rotate an oversized events.jsonl into events_archive/, keeping the tail.
+    """Rotate an oversized generation under the exclusive event lock.
 
     The event stream is append-only and unbounded; every full board rebuild
     re-parses it whole, so past ~1 GB a sync took a minute and starved every
     await on the lock. Rotation is safe exactly at the end of an unscoped sync:
     all information the stream carried has just been projected into per-run
-    snapshots, which are the durable state. The last ``EVENT_TAIL_LIMIT`` lines
-    are re-seeded into the fresh stream so the board's event tail stays
-    continuous. Caller must hold the sync lock.
+    snapshots, which are the durable state. The archived generation remains the
+    cursor bridge for SSE reconnects. The fresh generation contains only its
+    header: copying tail records would replay effects.
+
+    The normal caller already holds ``_sync_lock``. Lock order is therefore
+    sync -> event, never the reverse.
     """
+    with _event_lock(exclusive=True):
+        return _rotate_event_stream_locked()
+
+
+def _rotate_event_stream_locked() -> Path | None:
+    """Implementation for tests/recovery; caller holds event EX."""
+
     threshold = _configured_events_rotate_bytes()
     if threshold <= 0:
         return None
@@ -1481,20 +1691,35 @@ def _rotate_event_stream() -> Path | None:
             return None
     except OSError:
         return None
-    tail = _read_tail_lines(stream_path, EVENT_TAIL_LIMIT)
+    header = _read_segment_header(stream_path)
+    if header is None:
+        # Legacy input is archived intact. A fresh epoch makes the discontinuity
+        # explicit to v2 clients instead of pretending byte offsets still align.
+        epoch, generation = str(uuid.uuid4()), 0
+    else:
+        epoch, generation = header[0], header[1] + 1
     archive_dir = _events_archive_dir()
     archive_dir.mkdir(parents=True, exist_ok=True)
-    stamp = _now().strftime("%Y%m%dT%H%M%SZ")
-    target = archive_dir / f"events-{stamp}.jsonl"
-    counter = 0
-    while target.exists():
-        counter += 1
-        target = archive_dir / f"events-{stamp}-{counter}.jsonl"
+    if header is None:
+        target = _legacy_archive_target()
+    else:
+        target = archive_dir / f"events-{header[0]}-g{header[1]:020d}.jsonl"
+        # Two files claiming the same epoch/generation make exactly-once replay
+        # ambiguous. Keep the active segment in place and fail closed.
+        if target.exists():
+            return None
     try:
         stream_path.replace(target)
-        if tail:
-            stream_path.write_text("\n".join(tail) + "\n", encoding="utf-8")
+        _fsync_directory(archive_dir)
+        _fsync_directory(stream_path.parent)
+        _write_new_event_segment_locked(stream_path, epoch, generation)
     except OSError:
+        # Best-effort rollback preserves the only copy when publishing the new
+        # header fails (for example ENOSPC). The archive is never overwritten.
+        if not stream_path.exists() and target.exists():
+            with contextlib.suppress(OSError):
+                target.replace(stream_path)
+                _fsync_directory(stream_path.parent)
         return None
     return target
 
@@ -1858,19 +2083,37 @@ def _warnings_for_runs(runs: list[dict[str, Any]]) -> list[str]:
 
 def read_event_tail(limit: int = EVENT_TAIL_LIMIT) -> list[dict[str, Any]]:
     stream = event_stream_path()
-    if not stream.exists():
+    if limit <= 0:
         return []
-    events = []
-    for line in reversed(stream.read_text(encoding="utf-8").splitlines()):
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if _event_has_test_provenance(event):
-            continue
-        events.append(event)
-        if len(events) >= limit:
-            break
+    paths: list[Path] = []
+    if stream.is_file():
+        paths.append(stream)
+    archive_dir = _events_archive_dir()
+    if archive_dir.is_dir():
+        archived = list(archive_dir.glob("events-*.jsonl"))
+
+        def _mtime_ns(path: Path) -> int:
+            try:
+                return path.stat().st_mtime_ns
+            except OSError:
+                return 0
+
+        archived.sort(key=_mtime_ns, reverse=True)
+        paths.extend(archived)
+    events: list[dict[str, Any]] = []
+    for path in paths:
+        for line in reversed(_read_tail_lines(path, limit + 1)):
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("kind") == "stream.segment":
+                continue
+            if _event_has_test_provenance(event):
+                continue
+            events.append(event)
+            if len(events) >= limit:
+                return events
     return events
 
 
@@ -1899,6 +2142,8 @@ def subscribe_events(
                     except json.JSONDecodeError:
                         continue
                     kind = str(payload.get("kind") or "")
+                    if kind == "stream.segment":
+                        continue
                     if kinds_filter and kind not in kinds_filter:
                         continue
                     event = Event(

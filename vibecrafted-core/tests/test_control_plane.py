@@ -3,13 +3,29 @@ from __future__ import annotations
 import datetime as dt
 import fcntl
 import json
+import multiprocessing
 import os
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import pytest
 from vibecrafted_core import control_plane
+
+
+def _append_event_in_process(home: str, ready: Any) -> None:
+    os.environ["VIBECRAFTED_HOME"] = home
+    ready.set()
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T06:30:00+00:00",
+            "run_id": "append-during-rotation",
+            "kind": "state",
+            "message": "must land exactly once",
+            "payload": {"state": "active"},
+        }
+    )
 
 
 def _write_meta(home: Path, payload: dict[str, object]) -> Path:
@@ -2089,16 +2105,15 @@ def test_sync_state_keeps_retained_snapshot_only_runs_on_board(
     assert board["settlement_counts"]["x"] == 1
 
 
-def test_sync_state_rotates_oversized_event_stream_and_keeps_tail(
+def test_sync_state_rotates_oversized_stream_without_tail_replay(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     home = tmp_path / ".vibecrafted"
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
     monkeypatch.setenv("VIBECRAFTED_EVENTS_ROTATE_BYTES", "512")
-    events = home / "control_plane" / "events.jsonl"
-    events.parent.mkdir(parents=True, exist_ok=True)
-    lines = [
-        json.dumps(
+    events = control_plane.event_stream_path()
+    for index in range(40):
+        control_plane._append_event(
             {
                 "ts": f"2026-05-19T00:00:{index:02d}+00:00",
                 "run_id": "impl-rotate-1",
@@ -2107,26 +2122,107 @@ def test_sync_state_rotates_oversized_event_stream_and_keeps_tail(
                 "payload": {"state": "active", "agent": "codex"},
             }
         )
-        for index in range(40)
-    ]
-    events.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     board = control_plane.sync_state()
 
     archive = control_plane._events_archive_dir()
     rotated = list(archive.glob("events-*.jsonl"))
     assert len(rotated) == 1
-    # Tail re-seeded: the fresh stream keeps the last records for the board.
-    fresh_text = events.read_text(encoding="utf-8")
-    fresh = fresh_text.strip().splitlines()
-    # Tail re-seed happens after projection appended its own transition events,
-    # so the fresh stream holds the last pre-rotation records, not the whole log.
-    assert 0 < len(fresh) <= control_plane.EVENT_TAIL_LIMIT
-    assert "tick 39" in fresh_text
-    assert 'tick 0"' not in fresh_text
+    archived_text = rotated[0].read_text(encoding="utf-8")
+    assert "tick 39" in archived_text
+    assert 'tick 0"' in archived_text
+    # The new segment is a header only. Tail copying would duplicate effects
+    # during an archived-generation reconnect.
+    fresh = [
+        json.loads(line) for line in events.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [event["kind"] for event in fresh] == ["stream.segment"]
+    assert fresh[0]["payload"]["schema"] == control_plane.EVENT_SEGMENT_SCHEMA
+    assert fresh[0]["payload"]["generation"] == 1
+    assert any(
+        event["message"] == "tick 39"
+        for event in control_plane.read_event_tail(control_plane.EVENT_TAIL_LIMIT)
+    )
     # The run projected before rotation stays resolvable from its snapshot.
     assert control_plane.lookup_run("impl-rotate-1") is not None
     assert any(run.get("run_id") == "impl-rotate-1" for run in board["recent_runs"])
+
+
+def test_append_during_rotation_lands_once_in_new_generation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_EVENTS_ROTATE_BYTES", "1")
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T06:29:00+00:00",
+            "run_id": "before-rotation",
+            "kind": "state",
+            "message": "old generation",
+            "payload": {},
+        }
+    )
+
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    process = context.Process(
+        target=_append_event_in_process,
+        args=(str(home), ready),
+    )
+    with control_plane._event_lock(exclusive=True):
+        process.start()
+        assert ready.wait(timeout=5)
+        time.sleep(0.1)
+        assert process.is_alive(), "append must wait behind rotation EX"
+        rotated_path = control_plane._rotate_event_stream_locked()
+        assert rotated_path is not None
+    process.join(timeout=10)
+    assert process.exitcode == 0
+
+    records: list[dict[str, object]] = []
+    paths = list(control_plane._events_archive_dir().glob("events-*.jsonl"))
+    paths.append(control_plane.event_stream_path())
+    for path in paths:
+        records.extend(
+            json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+        )
+    raced = [
+        record for record in records if record.get("run_id") == "append-during-rotation"
+    ]
+    assert len(raced) == 1
+    assert raced[0]["message"] == "must land exactly once"
+    active = [
+        json.loads(line)
+        for line in control_plane.event_stream_path()
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert active[0]["kind"] == "stream.segment"
+    assert active[0]["payload"]["generation"] == 1
+    assert active[1]["run_id"] == "append-during-rotation"
+
+
+def test_legacy_subscriber_hides_segment_header(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(control_plane.time, "sleep", lambda _seconds: None)
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T06:30:00+00:00",
+            "run_id": "legacy-subscriber",
+            "kind": "unit",
+            "message": "visible event",
+            "payload": {},
+        }
+    )
+
+    events = list(control_plane.subscribe_events())
+
+    assert [(event.kind, event.run_id) for event in events] == [
+        ("unit", "legacy-subscriber")
+    ]
 
 
 def test_lock_busy_message_names_install_doctor_sync(

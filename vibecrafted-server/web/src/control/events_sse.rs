@@ -1,9 +1,9 @@
-//! `GET /api/control/events` — Server-Sent Events over the control-plane
-//! `events.jsonl` cursor stream.
+//! `GET /api/control/events` — generation-aware SSE over the control plane.
 //!
-//! Read-only: the server never writes a resume file or mutates the control
-//! plane. The client holds the cursor via SSE `id:` / `Last-Event-ID` /
-//! `?since=`. Polling is in-process only (`read_since` on a tick).
+//! The response is read-only. Data events carry opaque v2 cursor IDs, while
+//! `stream.boundary`, `stream.caught-up`, and `stream.gap` make connection and
+//! recovery state explicit. Numeric cursors remain a deprecated compatibility
+//! mode for clients that send numeric `?since=` / `Last-Event-ID`.
 
 use std::collections::VecDeque;
 use std::convert::Infallible;
@@ -12,101 +12,227 @@ use std::time::Duration;
 use axum::extract::Query;
 use axum::http::HeaderMap;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
-use control_core::{ControlPlane, Event as ControlEvent};
+use control_core::{
+    ControlPlane, Event as ControlEvent, StreamBoundary, StreamCursor, StreamGap, StreamItem,
+    StreamRecord,
+};
 use futures_util::stream::{self, Stream};
 use serde::Deserialize;
 
-/// Default poll when the file is quiet (ms). Overridable via
-/// `VC_CONTROL_SSE_POLL_MS` (tests use a short interval).
 const DEFAULT_POLL_MS: u64 = 500;
-
-/// Default SSE comment keepalive (ms). Spec requires ≤30s; default 15s.
-/// Overridable via `VC_CONTROL_SSE_KEEPALIVE_MS`.
 const DEFAULT_KEEPALIVE_MS: u64 = 15_000;
 
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct EventsQuery {
-    /// Byte-offset cursor into `events.jsonl` (same unit as
-    /// [`control_core::EventStream::read_since`]).
-    pub since: Option<u64>,
+    /// Opaque v2 cursor. Numeric values select deprecated legacy mode.
+    pub since: Option<String>,
+}
+
+#[derive(Debug)]
+enum Outbound {
+    Event(StreamRecord),
+    Boundary {
+        boundary: StreamBoundary,
+        reason: &'static str,
+    },
+    Gap(StreamGap),
+    CaughtUp {
+        cursor: StreamCursor,
+        high_watermark: StreamCursor,
+    },
 }
 
 struct StreamState {
-    cursor: u64,
-    pending: VecDeque<ControlEvent>,
+    cursor: StreamCursor,
+    high_watermark: StreamCursor,
+    pending: VecDeque<Outbound>,
+    caught_up: bool,
 }
 
-/// Resolve the start cursor: explicit `?since=` wins over `Last-Event-ID`.
-fn resolve_cursor(query: &EventsQuery, headers: &HeaderMap) -> u64 {
-    if let Some(since) = query.since {
-        return since;
-    }
-    headers
-        .get("last-event-id")
-        .or_else(|| headers.get("Last-Event-ID"))
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.trim().parse::<u64>().ok())
-        .unwrap_or(0)
+fn resolve_cursor_raw(query: &EventsQuery, headers: &HeaderMap) -> Option<String> {
+    query.since.clone().or_else(|| {
+        headers
+            .get("last-event-id")
+            .or_else(|| headers.get("Last-Event-ID"))
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
 }
 
 fn env_ms(name: &str, default: u64) -> u64 {
     std::env::var(name)
         .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .filter(|&n| n > 0)
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
         .unwrap_or(default)
 }
 
-/// JSON payload for `data:` — on-disk shape (no reader-stamped `cursor`).
 fn event_data_json(event: &ControlEvent) -> String {
     let mut value = serde_json::to_value(event).unwrap_or_else(|_| serde_json::json!({}));
-    if let Some(obj) = value.as_object_mut() {
-        obj.remove("cursor");
+    if let Some(object) = value.as_object_mut() {
+        object.remove("cursor");
     }
     value.to_string()
 }
 
-fn to_sse_frame(event: &ControlEvent) -> SseEvent {
-    SseEvent::default()
-        .id(event.cursor.to_string())
-        .data(event_data_json(event))
+fn outbound_frame(outbound: Outbound) -> SseEvent {
+    match outbound {
+        Outbound::Event(record) => SseEvent::default()
+            .id(record.cursor.to_string())
+            .data(event_data_json(&record.event)),
+        Outbound::Boundary { boundary, reason } => {
+            let cursor = boundary.to.to_string();
+            SseEvent::default()
+                .event("stream.boundary")
+                .id(cursor.clone())
+                .data(
+                    serde_json::json!({
+                        "schema": "vibecrafted.stream-boundary.v1",
+                        "kind": "stream.boundary",
+                        "from": boundary.from.to_string(),
+                        "to": cursor,
+                        "reason": reason,
+                    })
+                    .to_string(),
+                )
+        }
+        Outbound::Gap(gap) => {
+            let cursor = gap.resumed_at.to_string();
+            SseEvent::default()
+                .event("stream.gap")
+                .id(cursor.clone())
+                .data(
+                    serde_json::json!({
+                        "schema": "vibecrafted.stream-gap.v1",
+                        "kind": "stream.gap",
+                        "requested": gap.requested,
+                        "resumed_at": cursor,
+                        "reason": gap.reason,
+                        "action": "resnapshot",
+                    })
+                    .to_string(),
+                )
+        }
+        Outbound::CaughtUp {
+            cursor,
+            high_watermark,
+        } => SseEvent::default()
+            .event("stream.caught-up")
+            .id(cursor.to_string())
+            .data(
+                serde_json::json!({
+                    "schema": "vibecrafted.stream-caught-up.v1",
+                    "kind": "stream.caught-up",
+                    "cursor": cursor.to_string(),
+                    "high_watermark": high_watermark.to_string(),
+                })
+                .to_string(),
+            ),
+    }
 }
 
-/// Long-lived SSE response: drains [`ControlPlane::events`] from `cursor`,
-/// yields one frame per event, and heartbeats with `: ping` under silence.
+fn initial_state(query: &EventsQuery, headers: &HeaderMap) -> StreamState {
+    let stream = ControlPlane::from_env().events();
+    let high_watermark = stream.high_watermark().unwrap_or(StreamCursor::Legacy(0));
+    let raw = resolve_cursor_raw(query, headers);
+    let (cursor, invalid) = match raw {
+        Some(raw) => match raw.parse::<StreamCursor>() {
+            Ok(cursor) => (cursor, None),
+            Err(_) => (high_watermark.clone(), Some(raw)),
+        },
+        None => (
+            stream
+                .start_cursor()
+                .unwrap_or_else(|_| high_watermark.clone()),
+            None,
+        ),
+    };
+    let mut pending = VecDeque::new();
+    if let Some(requested) = invalid {
+        pending.push_back(Outbound::Gap(StreamGap {
+            requested,
+            resumed_at: cursor.clone(),
+            reason: "invalid_cursor".to_string(),
+        }));
+    }
+    pending.push_back(Outbound::Boundary {
+        boundary: StreamBoundary {
+            from: cursor.clone(),
+            to: cursor.clone(),
+        },
+        reason: "connection_start",
+    });
+    StreamState {
+        cursor,
+        high_watermark,
+        pending,
+        caught_up: false,
+    }
+}
+
+/// Long-lived SSE response with a finite baseline and an explicit caught-up
+/// marker independent of heartbeat traffic.
 pub(crate) async fn events_sse(
     Query(query): Query<EventsQuery>,
     headers: HeaderMap,
 ) -> Sse<impl Stream<Item = Result<SseEvent, Infallible>>> {
-    let start = resolve_cursor(&query, &headers);
     let poll_ms = env_ms("VC_CONTROL_SSE_POLL_MS", DEFAULT_POLL_MS);
     let keepalive_ms = env_ms("VC_CONTROL_SSE_KEEPALIVE_MS", DEFAULT_KEEPALIVE_MS);
-
-    let state = StreamState {
-        cursor: start,
-        pending: VecDeque::new(),
-    };
+    let state = initial_state(&query, &headers);
 
     let event_stream = stream::unfold(state, move |mut state| async move {
         loop {
-            if let Some(event) = state.pending.pop_front() {
-                let frame = to_sse_frame(&event);
-                return Some((Ok::<_, Infallible>(frame), state));
+            if let Some(outbound) = state.pending.pop_front() {
+                return Some((Ok::<_, Infallible>(outbound_frame(outbound)), state));
+            }
+            if !state.caught_up && state.cursor.reaches(&state.high_watermark) {
+                state.caught_up = true;
+                let outbound = Outbound::CaughtUp {
+                    cursor: state.cursor.clone(),
+                    high_watermark: state.high_watermark.clone(),
+                };
+                return Some((Ok::<_, Infallible>(outbound_frame(outbound)), state));
             }
 
             let plane = ControlPlane::from_env();
-            match plane.events().read_since(state.cursor, &[]) {
+            match plane.events().read_stream(&state.cursor, &[]) {
                 Ok(batch) => {
                     state.cursor = batch.cursor;
-                    if batch.events.is_empty() {
-                        tokio::time::sleep(Duration::from_millis(poll_ms)).await;
-                        continue;
+                    let mut saw_gap = false;
+                    for item in batch.items {
+                        match item {
+                            StreamItem::Event(record) => {
+                                state.pending.push_back(Outbound::Event(record));
+                            }
+                            StreamItem::Boundary(boundary) => {
+                                state.pending.push_back(Outbound::Boundary {
+                                    boundary,
+                                    reason: "generation_change",
+                                });
+                            }
+                            StreamItem::Gap(gap) => {
+                                saw_gap = true;
+                                state.pending.push_back(Outbound::Gap(gap));
+                            }
+                        }
                     }
-                    state.pending.extend(batch.events);
+                    if saw_gap {
+                        // Gap recovery cursor is a fresh active high-watermark.
+                        // The client must resnapshot, then future stream effects
+                        // resume from this explicit receipt.
+                        state.high_watermark = state.cursor.clone();
+                    }
+                    if state.pending.is_empty()
+                        && !(state.cursor.reaches(&state.high_watermark) && !state.caught_up)
+                    {
+                        tokio::time::sleep(Duration::from_millis(poll_ms)).await;
+                    }
                 }
                 Err(_) => {
-                    // Transient open/read failure — keep the connection; client
-                    // distinguishes silence from death via keepalive.
+                    // Rotation has a tiny rename/publish window. Retrying the
+                    // same opaque cursor lets the archive bridge resolve it.
                     tokio::time::sleep(Duration::from_millis(poll_ms)).await;
                 }
             }
@@ -116,7 +242,6 @@ pub(crate) async fn events_sse(
     Sse::new(event_stream).keep_alive(
         KeepAlive::new()
             .interval(Duration::from_millis(keepalive_ms))
-            // field() formats as `: <text>` → `: ping` (SSE comment heartbeat).
             .text("ping"),
     )
 }
