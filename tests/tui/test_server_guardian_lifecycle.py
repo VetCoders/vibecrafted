@@ -148,6 +148,41 @@ def _wait_for_proven_supervisor_pid(
     )
 
 
+def _wait_for_coordination_role(
+    state_dir: Path,
+    role: str,
+    *,
+    timeout: float = 5.0,
+) -> int:
+    deadline = time.monotonic() + timeout
+    lock_file = state_dir / "supervisor.lock"
+    last_error = "lock payload not written"
+    while time.monotonic() < deadline:
+        try:
+            payload = json.loads(lock_file.read_text(encoding="utf-8"))
+            pid = int(payload["pid"])
+            if payload.get("schema") != "vibecrafted.server-supervisor-lock.v1":
+                last_error = "wrong lock schema"
+            elif payload.get("role") != role:
+                last_error = f"lock role is {payload.get('role')!r}"
+            elif not _process_alive(pid):
+                last_error = f"lease PID {pid} is not live"
+            else:
+                return pid
+        except (
+            FileNotFoundError,
+            KeyError,
+            ValueError,
+            json.JSONDecodeError,
+            OSError,
+        ) as exc:
+            last_error = str(exc)
+        time.sleep(0.02)
+    raise AssertionError(
+        f"no live {role!r} coordination lease appeared within {timeout}s: {last_error}"
+    )
+
+
 def _wait_for_supervisor_success(
     state_dir: Path,
     *,
@@ -609,6 +644,83 @@ def test_concurrent_server_starts_create_exactly_one_managed_pair(
     assert stopped.returncode == 0, stopped.stderr
 
 
+def test_manual_stop_serializes_against_concurrent_supervisor_acquire(
+    isolated_server_runtime: tuple[dict[str, str], Path, Path],
+) -> None:
+    env, state_dir, _ = isolated_server_runtime
+    port = _free_port()
+    started = _run_launcher(
+        env,
+        "server",
+        "start",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+    )
+    assert started.returncode == 0, started.stderr
+    server_pid = _wait_for_proven_managed_pid(state_dir, "server")
+    guardian_pid = _wait_for_proven_managed_pid(state_dir, "guardian")
+
+    delayed_stop_env = env.copy()
+    delayed_stop_env["VIBECRAFTED_TEST_SERVER_STOP_DELAY"] = "0.6"
+    stopper = subprocess.Popen(
+        [str(LAUNCHER), "server", "stop"],
+        cwd=REPO_ROOT,
+        env=delayed_stop_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    _wait_for_coordination_role(state_dir, "manual-stop")
+
+    supervisor_env = env.copy()
+    supervisor_env["PYTHONPATH"] = str(REPO_ROOT / "vibecrafted-core")
+    contender = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "vibecrafted_core.server_supervisor",
+            "run",
+            "--launcher",
+            str(LAUNCHER.resolve()),
+            "--home",
+            env["VIBECRAFTED_HOME"],
+            "--runtime-home",
+            env["VIBECRAFTED_RUNTIME_HOME"],
+            "--operator-home",
+            env["HOME"],
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--interval",
+            "0.1",
+            "--maximum-backoff",
+            "0.2",
+            "--command-timeout",
+            "5",
+        ],
+        cwd=REPO_ROOT,
+        env=supervisor_env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    stopped_stdout, stopped_stderr = stopper.communicate(timeout=20)
+
+    assert contender.returncode == 75
+    assert "coordination lease is already active" in contender.stderr
+    assert stopper.returncode == 0, stopped_stderr
+    assert "Guardian stopped" in stopped_stdout
+    assert "Server stopped" in stopped_stdout
+    _wait_until_dead(server_pid)
+    _wait_until_dead(guardian_pid)
+    assert not (state_dir / "server.pid").exists()
+    assert not (state_dir / "guardian.pid").exists()
+
+
 def test_stale_lifecycle_lock_is_quarantined_once_under_parallel_recovery(
     isolated_server_runtime: tuple[dict[str, str], Path, Path],
 ) -> None:
@@ -949,7 +1061,6 @@ write_receipt(None, "stopped")
     )
     supervisor_env = env.copy()
     supervisor_env["PYTHONPATH"] = str(REPO_ROOT / "vibecrafted-core")
-    supervisor_env["VIBECRAFTED_SERVER_SERVICE"] = "launchd"
     supervisor_command = [
         sys.executable,
         "-m",
@@ -1035,8 +1146,7 @@ write_receipt(None, "stopped")
 
         refused = _run_launcher(env, "server", "stop")
         assert refused.returncode == 75
-        assert "active foreground supervisor" in refused.stderr
-        assert "vibecrafted server service stop" in refused.stderr
+        assert "coordination lease is already active" in refused.stderr
         assert _process_alive(first_server)
         assert _process_alive(first_guardian)
 

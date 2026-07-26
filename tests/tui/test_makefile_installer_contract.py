@@ -660,4 +660,19 @@ def test_make_install_verifies_server_supervisor_entrypoint() -> None:
 
     assert "vc-server-supervisor" in install_tools_block
     assert "expected executable entrypoint" in install_tools_block
+    assert '"$$resolved" --help' in install_tools_block
+    assert 'tool_root="$$(uv tool dir)/vibecrafted"' in install_tools_block
+    assert "expected uv tool target" in install_tools_block
+    assert "uv tool imports vibecrafted_core" in install_tools_block
+    assert "$$stable_root/vibecrafted-core" in install_tools_block
+    assert "server service reconcile" in install_tools_block
+    assert "io.vetcoders.vibecrafted.server.plist" in install_tools_block
     assert "install-python-tools: install-tools" in text
+
+
+def test_launcher_does_not_pin_stale_supervisor_binary() -> None:
+    launcher = (REPO_ROOT / "scripts" / "vibecrafted").read_text(encoding="utf-8")
+    resolver = launcher.split("_server_supervisor_binary() {", 1)[1].split("\n}", 1)[0]
+
+    assert "command -v vc-server-supervisor" in resolver
+    assert "$HOME/.local/bin/vc-server-supervisor" not in resolver

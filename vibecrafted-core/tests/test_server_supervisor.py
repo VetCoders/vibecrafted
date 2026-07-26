@@ -4,6 +4,7 @@ import json
 import os
 import plistlib
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -38,6 +39,27 @@ def _config(tmp_path: Path, launcher: Path) -> supervisor.SupervisorConfig:
     )
 
 
+def _managed_probe(
+    config: supervisor.SupervisorConfig,
+    *,
+    pid: int,
+    service_managed: bool = True,
+) -> supervisor.SupervisorProbe:
+    identity = supervisor._installed_service_identity(config.paths)
+    assert identity is not None
+    return supervisor.SupervisorProbe(
+        True,
+        True,
+        pid,
+        service_managed,
+        "supervisor",
+        str(identity.executable),
+        identity.executable_sha256,
+        identity.runtime_sha256,
+        identity.build_version,
+    )
+
+
 def test_plistlib_renderer_preserves_metacharacters_without_xml_injection(
     tmp_path: Path,
 ) -> None:
@@ -54,8 +76,20 @@ def test_plistlib_renderer_preserves_metacharacters_without_xml_injection(
 
     assert payload["Label"] == supervisor.LAUNCH_AGENT_LABEL
     assert payload["ProgramArguments"][0] == str(supervisor_binary)
-    assert payload["ProgramArguments"][3] == str(launcher)
-    assert payload["ProgramArguments"][5] == str(config.paths.home)
+    arguments = payload["ProgramArguments"]
+    assert arguments[arguments.index("--supervisor-bin") + 1] == str(supervisor_binary)
+    assert arguments[arguments.index("--launcher") + 1] == str(launcher)
+    assert arguments[arguments.index("--home") + 1] == str(config.paths.home)
+    assert arguments[
+        arguments.index("--expected-supervisor-sha256") + 1
+    ] == supervisor._sha256_file(supervisor_binary)
+    assert (
+        arguments[arguments.index("--expected-build-version") + 1]
+        == supervisor.PACKAGE_VERSION
+    )
+    assert arguments[
+        arguments.index("--expected-runtime-sha256") + 1
+    ] == supervisor._sha256_file(Path(supervisor.__file__).resolve())
     assert payload["RunAtLoad"] is True
     assert payload["KeepAlive"] is True
     assert set(payload["EnvironmentVariables"]) == {
@@ -64,6 +98,11 @@ def test_plistlib_renderer_preserves_metacharacters_without_xml_injection(
         "VIBECRAFTED_HOME",
         "VIBECRAFTED_RUNTIME_HOME",
         "VIBECRAFTED_SERVER_SERVICE",
+        "VIBECRAFTED_SERVER_SUPERVISOR_PATH",
+        "VIBECRAFTED_SERVER_SUPERVISOR_SHA256",
+        "VIBECRAFTED_SERVER_SUPERVISOR_RUNTIME_SHA256",
+        "VIBECRAFTED_SERVER_SUPERVISOR_VERSION",
+        "VIBECRAFTED_SERVER_LAUNCHER_SHA256",
     }
     assert b"&amp;" in rendered
     assert b"<path>" not in rendered
@@ -102,6 +141,7 @@ def test_service_install_is_idempotent_and_refuses_symlink_destination(
 
 def test_foreground_supervisor_lock_and_receipt_are_truthful(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     lifecycle_log = tmp_path / "lifecycle.log"
     launcher = _executable(
@@ -112,6 +152,14 @@ exit 0
 """,
     )
     config = _config(tmp_path, launcher)
+    monkeypatch.setattr(
+        supervisor,
+        "_managed_pair_snapshot",
+        lambda _paths: {
+            "server_pid": os.getpid(),
+            "guardian_pid": os.getppid(),
+        },
+    )
     stop_event = threading.Event()
     result: list[int] = []
     worker = threading.Thread(
@@ -148,6 +196,48 @@ exit 0
     assert lifecycle_log.read_text(encoding="utf-8").splitlines()[-1] == "stop"
 
 
+def test_zero_exit_without_verified_pid_pair_is_degraded(
+    tmp_path: Path,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    config = _config(tmp_path, launcher)
+    stop_event = threading.Event()
+    result: list[int] = []
+    worker = threading.Thread(
+        target=lambda: result.append(
+            supervisor.run_supervisor(config, stop_event=stop_event)
+        ),
+        daemon=True,
+    )
+    worker.start()
+
+    deadline = time.monotonic() + 5
+    receipt: dict[str, object] = {}
+    while time.monotonic() < deadline:
+        try:
+            receipt = json.loads(config.paths.receipt_file.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError):
+            time.sleep(0.02)
+            continue
+        if receipt.get("state") == "backoff":
+            break
+        time.sleep(0.02)
+
+    assert receipt["state"] == "backoff"
+    assert receipt["last_exit_code"] == 0
+    assert receipt["last_success_at"] is None
+    assert receipt["managed_pair"] == {
+        "server_pid": None,
+        "guardian_pid": None,
+    }
+    assert "without a verified live server and guardian PID pair" in str(
+        receipt["last_error"]
+    )
+    stop_event.set()
+    worker.join(timeout=5)
+    assert result == [0]
+
+
 def test_start_service_bootstraps_and_kickstarts_only_when_needed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -179,12 +269,10 @@ def test_start_service_bootstraps_and_kickstarts_only_when_needed(
     monkeypatch.setattr(supervisor, "probe_supervisor", lambda _paths: next(probes))
     monkeypatch.setattr(
         supervisor,
-        "_wait_for_supervisor",
-        lambda _paths, *, live: supervisor.SupervisorProbe(
-            live,
-            live,
-            1234 if live else None,
-            True if live else None,
+        "_wait_for_managed_supervisor",
+        lambda _config, *, identity, previous_pid=None: _managed_probe(
+            config,
+            pid=1234,
         ),
     )
 
@@ -195,7 +283,7 @@ def test_start_service_bootstraps_and_kickstarts_only_when_needed(
     monkeypatch.setattr(
         supervisor,
         "probe_supervisor",
-        lambda _paths: supervisor.SupervisorProbe(True, True, 1234, True),
+        lambda _paths: _managed_probe(config, pid=1234),
     )
     supervisor.start_service(config)
     assert calls == []
@@ -214,9 +302,14 @@ def test_service_status_distinguishes_all_runtime_dimensions(
     monkeypatch.setattr(
         supervisor,
         "probe_supervisor",
-        lambda _paths: supervisor.SupervisorProbe(True, True, 9876, True),
+        lambda _paths: _managed_probe(config, pid=9876),
     )
     monkeypatch.setattr(supervisor, "_pair_healthy", lambda _launcher, _env: True)
+    monkeypatch.setattr(
+        supervisor,
+        "_managed_pair_snapshot",
+        lambda _paths: {"server_pid": 123, "guardian_pid": 456},
+    )
 
     status = supervisor.service_status(config)
 
@@ -227,7 +320,220 @@ def test_service_status_distinguishes_all_runtime_dimensions(
         supervisor_verified=True,
         pair_healthy=True,
         supervisor_pid=9876,
+        supervisor_service_managed=True,
+        build_current=True,
     )
+
+
+def test_start_service_rejects_foreground_marked_final_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    config = _config(tmp_path, launcher)
+    supervisor.install_service(config, supervisor_binary=supervisor_binary)
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: True)
+    foreground = _managed_probe(config, pid=4321, service_managed=False)
+    monkeypatch.setattr(
+        supervisor,
+        "probe_supervisor",
+        lambda _paths: supervisor.SupervisorProbe(False, False, None, None),
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "_launchctl",
+        lambda args: subprocess.CompletedProcess(args, 0, "", ""),
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "_wait_for_managed_supervisor",
+        lambda _config, *, identity, previous_pid=None: foreground,
+    )
+
+    with pytest.raises(
+        supervisor.SupervisorError,
+        match="no current service-managed supervisor",
+    ) as failure:
+        supervisor.start_service(config)
+
+    assert failure.value.exit_code == supervisor.EX_TEMPFAIL
+
+
+def test_install_reconciles_loaded_service_to_new_binary_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(
+        tmp_path / "bin" / "vc-server-supervisor",
+        "#!/bin/sh\n# build one\nexit 0\n",
+    )
+    config = _config(tmp_path, launcher)
+    supervisor.install_service(config, supervisor_binary=supervisor_binary)
+    old_identity = supervisor._installed_service_identity(config.paths)
+    assert old_identity is not None
+    old_probe = _managed_probe(config, pid=1111)
+
+    supervisor_binary.write_text(
+        "#!/bin/sh\n# build two\nexit 0\n",
+        encoding="utf-8",
+    )
+    supervisor_binary.chmod(0o755)
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: True)
+    monkeypatch.setattr(supervisor, "probe_supervisor", lambda _paths: old_probe)
+    restarted: list[tuple[int | None, supervisor.SupervisorIdentity]] = []
+
+    def fake_restart(
+        target: supervisor.SupervisorConfig,
+        *,
+        previous_pid: int | None = None,
+    ) -> supervisor.SupervisorProbe:
+        identity = supervisor._installed_service_identity(target.paths)
+        assert identity is not None
+        restarted.append((previous_pid, identity))
+        return _managed_probe(target, pid=2222)
+
+    monkeypatch.setattr(supervisor, "restart_service", fake_restart)
+
+    changed, did_restart = supervisor.install_and_reconcile_service(
+        config,
+        supervisor_binary=supervisor_binary,
+    )
+
+    new_identity = supervisor._installed_service_identity(config.paths)
+    assert changed and did_restart
+    assert restarted == [(1111, new_identity)]
+    assert new_identity is not None
+    assert new_identity.executable == supervisor_binary
+    assert new_identity.executable_sha256 == supervisor._sha256_file(supervisor_binary)
+    assert new_identity.executable_sha256 != old_identity.executable_sha256
+    assert new_identity.runtime_sha256 == supervisor._sha256_file(
+        Path(supervisor.__file__).resolve()
+    )
+    assert new_identity.build_version == supervisor.PACKAGE_VERSION
+
+
+def test_hermetic_service_upgrade_restarts_into_new_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(
+        tmp_path / "bin" / "vc-server-supervisor",
+        (
+            "#!/bin/sh\n"
+            f"exec {str(Path(sys.executable).resolve())!r} "
+            '-m vibecrafted_core.server_supervisor "$@"\n'
+        ),
+    )
+    config = _config(tmp_path, launcher)
+    supervisor.install_service(config, supervisor_binary=supervisor_binary)
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    loaded = False
+    service_process: subprocess.Popen[str] | None = None
+
+    def stop_process() -> None:
+        nonlocal service_process
+        if service_process is None or service_process.poll() is not None:
+            return
+        service_process.terminate()
+        service_process.wait(timeout=10)
+
+    def fake_launchctl(args: list[str]) -> subprocess.CompletedProcess[str]:
+        nonlocal loaded, service_process
+        action = args[0]
+        if action == "bootstrap":
+            loaded = True
+        elif action == "bootout":
+            loaded = False
+            stop_process()
+        elif action == "kickstart":
+            stop_process()
+            payload = plistlib.loads(config.paths.launch_agent_file.read_bytes())
+            environment = os.environ.copy()
+            environment.update(payload["EnvironmentVariables"])
+            environment["PYTHONPATH"] = str(
+                Path(supervisor.__file__).resolve().parents[1]
+            )
+            service_process = subprocess.Popen(
+                payload["ProgramArguments"],
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: loaded)
+    monkeypatch.setattr(supervisor, "_launchctl", fake_launchctl)
+    try:
+        supervisor.start_service(config)
+        first = supervisor.probe_supervisor(config.paths)
+        first_identity = supervisor._installed_service_identity(config.paths)
+        assert first_identity is not None
+        assert supervisor._probe_matches_identity(
+            first,
+            first_identity,
+            service_managed=True,
+        )
+
+        supervisor_binary.write_text(
+            (
+                "#!/bin/sh\n"
+                "# upgraded wrapper\n"
+                f"exec {str(Path(sys.executable).resolve())!r} "
+                '-m vibecrafted_core.server_supervisor "$@"\n'
+            ),
+            encoding="utf-8",
+        )
+        supervisor_binary.chmod(0o755)
+
+        changed, restarted = supervisor.install_and_reconcile_service(
+            config,
+            supervisor_binary=supervisor_binary,
+        )
+        second = supervisor.probe_supervisor(config.paths)
+        second_identity = supervisor._installed_service_identity(config.paths)
+
+        assert changed and restarted
+        assert first.pid is not None and second.pid is not None
+        assert second.pid != first.pid
+        assert not supervisor._process_alive(first.pid)
+        assert second_identity is not None
+        assert second_identity.executable_sha256 != (first_identity.executable_sha256)
+        assert second_identity.runtime_sha256 == supervisor._sha256_file(
+            Path(supervisor.__file__).resolve()
+        )
+        assert supervisor._probe_matches_identity(
+            second,
+            second_identity,
+            service_managed=True,
+        )
+    finally:
+        loaded = False
+        stop_process()
+
+
+def test_default_config_uses_runtime_environment_without_argparse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operator_home = tmp_path / "operator"
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    monkeypatch.setenv("HOME", str(operator_home))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_HOME", str(tmp_path / "runtime"))
+
+    config = supervisor.default_config(launcher=launcher)
+
+    assert config.launcher == launcher
+    assert config.paths.operator_home == operator_home.resolve()
+    assert config.paths.home == (tmp_path / "state").resolve()
+    assert config.paths.runtime_home == (tmp_path / "runtime").resolve()
 
 
 def test_linux_service_command_fails_closed_without_mutation(
@@ -299,6 +605,47 @@ def test_manual_stop_guard_refuses_loaded_service(
     ) as failure:
         supervisor.manual_stop_guard(config.paths)
     assert failure.value.exit_code == supervisor.EX_TEMPFAIL
+
+
+def test_manual_stop_holds_common_lease_against_concurrent_supervisor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = tmp_path / "stopped"
+    launcher = _executable(
+        tmp_path / "bin" / "vibecrafted",
+        f"""#!/bin/sh
+sleep "${{VIBECRAFTED_TEST_SERVER_STOP_DELAY:-0}}"
+printf stopped > {str(marker)!r}
+""",
+    )
+    config = _config(tmp_path, launcher)
+    monkeypatch.setenv("VIBECRAFTED_TEST_SERVER_STOP_DELAY", "0.4")
+    result: list[str] = []
+    worker = threading.Thread(
+        target=lambda: (supervisor.manual_stop(config), result.append("stopped")),
+        daemon=True,
+    )
+    worker.start()
+
+    deadline = time.monotonic() + 5
+    probe = supervisor.probe_supervisor(config.paths)
+    while probe.role != "manual-stop" and time.monotonic() < deadline:
+        time.sleep(0.02)
+        probe = supervisor.probe_supervisor(config.paths)
+    assert probe.live and probe.verified and probe.role == "manual-stop"
+
+    with pytest.raises(
+        supervisor.SupervisorError,
+        match="coordination lease is already active",
+    ) as failure:
+        supervisor.run_supervisor(config, stop_event=threading.Event())
+    assert failure.value.exit_code == supervisor.EX_TEMPFAIL
+
+    worker.join(timeout=5)
+    assert result == ["stopped"]
+    assert marker.read_text(encoding="utf-8") == "stopped"
+    assert not supervisor.probe_supervisor(config.paths).live
 
 
 def test_invalid_held_kernel_lock_remains_fail_closed(tmp_path: Path) -> None:

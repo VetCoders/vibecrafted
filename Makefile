@@ -179,14 +179,41 @@ install-tools:
 	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-core"; \
 	uv tool install --force --reinstall --editable "$$stable_root/plugins/iterm2"; \
 	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-mcp" --with-editable "$$stable_root/vibecrafted-core"; \
+	tool_root="$$(uv tool dir)/vibecrafted"; \
+	tool_python="$$tool_root/bin/python"; \
+	if [ ! -x "$$tool_python" ]; then \
+		echo "[install-tools] FATAL: expected uv tool interpreter missing at $$tool_python" >&2; \
+		exit 1; \
+	fi; \
 	for entrypoint in vibecrafted vc-guardian vc-server-supervisor; do \
 		resolved="$$(command -v "$$entrypoint" 2>/dev/null || true)"; \
 		if [ -z "$$resolved" ] || [ ! -x "$$resolved" ]; then \
 			echo "[install-tools] FATAL: expected executable entrypoint $$entrypoint was not installed" >&2; \
 			exit 1; \
 		fi; \
+		resolved_real="$$($(PYTHON) -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$$resolved")"; \
+		expected_real="$$($(PYTHON) -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$$tool_root/bin/$$entrypoint")"; \
+		if [ "$$resolved_real" != "$$expected_real" ]; then \
+			echo "[install-tools] FATAL: $$entrypoint resolves to $$resolved_real, expected uv tool target $$expected_real" >&2; \
+			exit 1; \
+		fi; \
+		if ! "$$resolved" --help >/dev/null 2>&1; then \
+			echo "[install-tools] FATAL: installed entrypoint $$entrypoint does not execute successfully" >&2; \
+			exit 1; \
+		fi; \
 		echo "[install-tools] installed: $$entrypoint -> $$resolved"; \
-	done
+	done; \
+	actual_core="$$("$$tool_python" -c 'from pathlib import Path; import vibecrafted_core; print(Path(vibecrafted_core.__file__).resolve().parent)')"; \
+	expected_core="$$($(PYTHON) -c 'from pathlib import Path; import sys; print((Path(sys.argv[1]) / "vibecrafted_core").resolve())' "$$stable_root/vibecrafted-core")"; \
+	if [ "$$actual_core" != "$$expected_core" ]; then \
+		echo "[install-tools] FATAL: uv tool imports vibecrafted_core from $$actual_core, expected stable runtime $$expected_core" >&2; \
+		exit 1; \
+	fi; \
+	if [ "$$(uname -s)" = "Darwin" ] && \
+	   [ -f "$$HOME/Library/LaunchAgents/io.vetcoders.vibecrafted.server.plist" ]; then \
+		echo "[install-tools] reconciling installed server supervisor..."; \
+		"$$(command -v vibecrafted)" server service reconcile; \
+	fi
 
 # install-all owns every binary the product ships into BIN (~/.local/bin).
 # The vibecrafted-app members ship `voc` and `vc-admin`; vibecrafted-server

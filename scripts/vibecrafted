@@ -1224,10 +1224,8 @@ _server_launcher_path() {
 }
 
 _server_supervisor_binary() {
-  local candidate="$HOME/.local/bin/vc-server-supervisor"
-  if [[ ! -x "$candidate" ]]; then
-    candidate="$(command -v vc-server-supervisor 2>/dev/null || true)"
-  fi
+  local candidate=""
+  candidate="$(command -v vc-server-supervisor 2>/dev/null || true)"
   [[ -n "$candidate" && -x "$candidate" ]] || return 1
   _realpath_quiet "$candidate"
 }
@@ -1251,7 +1249,7 @@ _server_supervisor_cli() {
   )
   command_args=("$command_name" "$@")
   case "$command_name" in
-    service)
+    service|manual-stop)
       launcher="$(_server_launcher_path 2>/dev/null || true)"
       [[ -n "$launcher" ]] || {
         printf '%b✗%b Cannot resolve an absolute Vibecrafted launcher.\n' \
@@ -1259,9 +1257,11 @@ _server_supervisor_cli() {
         return 78
       }
       command_args+=(--launcher "$launcher")
-      supervisor_bin="$(_server_supervisor_binary 2>/dev/null || true)"
-      if [[ -n "$supervisor_bin" ]]; then
-        command_args+=(--supervisor-bin "$supervisor_bin")
+      if [[ "$command_name" == "service" ]]; then
+        supervisor_bin="$(_server_supervisor_binary 2>/dev/null || true)"
+        if [[ -n "$supervisor_bin" ]]; then
+          command_args+=(--supervisor-bin "$supervisor_bin")
+        fi
       fi
       ;;
   esac
@@ -2404,7 +2404,13 @@ cmd_server() {
   fi
   if [[ "$verb" == "stop" && \
     "${VIBECRAFTED_SERVER_SUPERVISOR_CHILD:-0}" != "1" ]]; then
-    _server_supervisor_cli manual-stop-guard || return $?
+    _server_supervisor_cli manual-stop "$@"
+    return $?
+  fi
+  if [[ "$verb" == "stop" && \
+    "${VIBECRAFTED_SERVER_SUPERVISOR_CHILD:-0}" == "1" && \
+    -n "${VIBECRAFTED_TEST_SERVER_STOP_DELAY:-}" ]]; then
+    sleep "$VIBECRAFTED_TEST_SERVER_STOP_DELAY"
   fi
   if [[ ( "$verb" == "start" || "$verb" == "stop" ) ]] && \
     ! _server_lifecycle_lock_is_owned; then

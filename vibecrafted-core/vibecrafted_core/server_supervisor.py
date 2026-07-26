@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import errno
 import fcntl
+import hashlib
 import json
 import os
 import plistlib
@@ -17,6 +18,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Self
+
+from . import __version__ as PACKAGE_VERSION
 
 SUPERVISOR_SCHEMA = "vibecrafted.server-supervisor.v1"
 SUPERVISOR_LOCK_SCHEMA = "vibecrafted.server-supervisor-lock.v1"
@@ -35,6 +38,7 @@ _PASSTHROUGH_ENVIRONMENT = (
     "VIBECRAFTED_STOP_KILL_WAIT_TICKS",
     "VIBECRAFTED_STOP_TERM_WAIT_TICKS",
     "VIBECRAFTED_TEST_LIFECYCLE_LOG",
+    "VIBECRAFTED_TEST_SERVER_STOP_DELAY",
 )
 
 
@@ -108,6 +112,11 @@ class SupervisorProbe:
     verified: bool
     pid: int | None
     service_managed: bool | None
+    role: str | None = None
+    executable: str | None = None
+    executable_sha256: str | None = None
+    runtime_sha256: str | None = None
+    build_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +127,16 @@ class ServiceStatus:
     supervisor_verified: bool
     pair_healthy: bool
     supervisor_pid: int | None
+    supervisor_service_managed: bool = False
+    build_current: bool = False
+
+
+@dataclass(frozen=True)
+class SupervisorIdentity:
+    executable: Path
+    executable_sha256: str
+    runtime_sha256: str
+    build_version: str
 
 
 def _absolute_path(path: Path) -> Path:
@@ -171,6 +190,70 @@ def _validate_owned_regular_file(
     if executable and not os.access(canonical, os.X_OK):
         raise SupervisorError(f"path is not executable: {canonical}", EX_CONFIG)
     return canonical
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        opened = os.fstat(descriptor)
+        visible = path.lstat()
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != os.getuid()
+            or opened.st_nlink != 1
+            or (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino)
+        ):
+            raise SupervisorError(
+                f"cannot hash unstable or unowned executable: {path}",
+                EX_CONFIG,
+            )
+        while chunk := os.read(descriptor, 1024 * 1024):
+            digest.update(chunk)
+    finally:
+        os.close(descriptor)
+    return digest.hexdigest()
+
+
+def _supervisor_identity(
+    executable: Path | None = None,
+    *,
+    expected_sha256: str | None = None,
+    expected_runtime_sha256: str | None = None,
+    expected_version: str | None = None,
+) -> SupervisorIdentity:
+    candidate = executable
+    if candidate is None:
+        candidate = Path(sys.argv[0])
+        if not candidate.is_absolute() or not os.access(candidate, os.X_OK):
+            candidate = Path(sys.executable)
+    canonical = _validate_owned_regular_file(candidate, executable=True)
+    digest = _sha256_file(canonical)
+    runtime_digest = _sha256_file(Path(__file__).resolve())
+    if expected_sha256 and digest != expected_sha256:
+        raise SupervisorError(
+            "supervisor executable hash differs from the installed LaunchAgent",
+            EX_CONFIG,
+        )
+    if expected_version and PACKAGE_VERSION != expected_version:
+        raise SupervisorError(
+            "supervisor package version differs from the installed LaunchAgent",
+            EX_CONFIG,
+        )
+    if expected_runtime_sha256 and runtime_digest != expected_runtime_sha256:
+        raise SupervisorError(
+            "supervisor runtime hash differs from the installed LaunchAgent",
+            EX_CONFIG,
+        )
+    return SupervisorIdentity(
+        canonical,
+        digest,
+        runtime_digest,
+        PACKAGE_VERSION,
+    )
 
 
 def _validate_existing_destination(path: Path) -> None:
@@ -303,13 +386,25 @@ def _read_lock_payload(descriptor: int) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _write_lock_payload(descriptor: int, *, service_managed: bool) -> None:
+def _write_lock_payload(
+    descriptor: int,
+    *,
+    role: str,
+    service_managed: bool,
+    identity: SupervisorIdentity | None,
+) -> None:
     payload = {
         "schema": SUPERVISOR_LOCK_SCHEMA,
         "pid": os.getpid(),
+        "role": role,
         "service_managed": service_managed,
         "acquired_at": _utc_now(),
     }
+    if identity is not None:
+        payload["supervisor_executable"] = str(identity.executable)
+        payload["supervisor_executable_sha256"] = identity.executable_sha256
+        payload["supervisor_runtime_sha256"] = identity.runtime_sha256
+        payload["build_version"] = identity.build_version
     encoded = (json.dumps(payload, ensure_ascii=True, sort_keys=True) + "\n").encode(
         "utf-8"
     )
@@ -415,6 +510,18 @@ def _managed_pair_snapshot(paths: SupervisorPaths) -> dict[str, int | None]:
     return snapshot
 
 
+def _managed_pair_healthy(snapshot: dict[str, int | None]) -> bool:
+    server_pid = snapshot.get("server_pid")
+    guardian_pid = snapshot.get("guardian_pid")
+    return (
+        isinstance(server_pid, int)
+        and not isinstance(server_pid, bool)
+        and isinstance(guardian_pid, int)
+        and not isinstance(guardian_pid, bool)
+        and server_pid != guardian_pid
+    )
+
+
 def probe_supervisor(paths: SupervisorPaths) -> SupervisorProbe:
     try:
         descriptor = _open_verified_lock(paths.lock_file, create=False)
@@ -433,18 +540,42 @@ def probe_supervisor(paths: SupervisorPaths) -> SupervisorProbe:
                 return SupervisorProbe(True, False, None, None)
             pid = payload.get("pid")
             service_managed = payload.get("service_managed")
+            role = payload.get("role")
+            executable = payload.get("supervisor_executable")
+            executable_sha256 = payload.get("supervisor_executable_sha256")
+            runtime_sha256 = payload.get("supervisor_runtime_sha256")
+            build_version = payload.get("build_version")
             verified = (
                 payload.get("schema") == SUPERVISOR_LOCK_SCHEMA
                 and isinstance(pid, int)
                 and not isinstance(pid, bool)
                 and _process_alive(pid)
                 and isinstance(service_managed, bool)
+                and role in {"supervisor", "manual-stop"}
+                and (
+                    role == "manual-stop"
+                    or (
+                        isinstance(executable, str)
+                        and bool(executable)
+                        and isinstance(executable_sha256, str)
+                        and len(executable_sha256) == 64
+                        and isinstance(runtime_sha256, str)
+                        and len(runtime_sha256) == 64
+                        and isinstance(build_version, str)
+                        and bool(build_version)
+                    )
+                )
             )
             return SupervisorProbe(
                 True,
                 verified,
                 pid if verified else None,
                 service_managed if isinstance(service_managed, bool) else None,
+                role if isinstance(role, str) else None,
+                executable if isinstance(executable, str) else None,
+                executable_sha256 if isinstance(executable_sha256, str) else None,
+                runtime_sha256 if isinstance(runtime_sha256, str) else None,
+                build_version if isinstance(build_version, str) else None,
             )
         else:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
@@ -454,9 +585,18 @@ def probe_supervisor(paths: SupervisorPaths) -> SupervisorProbe:
 
 
 class _SupervisorLease:
-    def __init__(self, paths: SupervisorPaths, *, service_managed: bool) -> None:
+    def __init__(
+        self,
+        paths: SupervisorPaths,
+        *,
+        service_managed: bool,
+        role: str = "supervisor",
+        identity: SupervisorIdentity | None = None,
+    ) -> None:
         self.paths = paths
         self.service_managed = service_managed
+        self.role = role
+        self.identity = identity
         self.descriptor = -1
 
     def __enter__(self) -> Self:
@@ -467,13 +607,18 @@ class _SupervisorLease:
             os.close(descriptor)
             if exc.errno in {errno.EACCES, errno.EAGAIN}:
                 raise SupervisorError(
-                    "server supervisor is already active",
+                    "server supervision coordination lease is already active",
                     EX_TEMPFAIL,
                 ) from exc
             raise
         self.descriptor = descriptor
         try:
-            _write_lock_payload(descriptor, service_managed=self.service_managed)
+            _write_lock_payload(
+                descriptor,
+                role=self.role,
+                service_managed=self.service_managed,
+                identity=self.identity,
+            )
         except BaseException:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
             os.close(descriptor)
@@ -492,6 +637,8 @@ class _SupervisorLease:
 def _receipt(
     config: SupervisorConfig,
     *,
+    identity: SupervisorIdentity,
+    managed_pair: dict[str, int | None],
     state: str,
     started_at: str,
     service_managed: bool,
@@ -508,12 +655,19 @@ def _receipt(
         "supervisor_pid": os.getpid(),
         "service_managed": service_managed,
         "launcher": str(config.launcher),
+        "launcher_sha256": _sha256_file(config.launcher),
+        "supervisor_executable": {
+            "path": str(identity.executable),
+            "sha256": identity.executable_sha256,
+            "runtime_sha256": identity.runtime_sha256,
+            "version": identity.build_version,
+        },
         "endpoint": {
             "host": config.host,
             "port": config.port,
             "url": config.endpoint,
         },
-        "managed_pair": _managed_pair_snapshot(config.paths),
+        "managed_pair": managed_pair,
         "started_at": started_at,
         "updated_at": _utc_now(),
         "last_success_at": last_success_at,
@@ -569,6 +723,7 @@ def run_supervisor(
     *,
     stop_event: threading.Event | None = None,
     service_managed: bool = False,
+    identity: SupervisorIdentity | None = None,
 ) -> int:
     event = stop_event or threading.Event()
     if (
@@ -581,6 +736,7 @@ def run_supervisor(
     launcher = _validate_owned_regular_file(config.launcher, executable=True)
     if launcher != config.launcher:
         raise SupervisorError("launcher path must already be canonical", EX_CONFIG)
+    runtime_identity = identity or _supervisor_identity()
 
     started_at = _utc_now()
     last_success_at: str | None = None
@@ -591,11 +747,18 @@ def run_supervisor(
     last_exit_code: int | None = None
     child_environment = _child_environment(config.paths)
 
-    with _SupervisorLease(config.paths, service_managed=service_managed):
+    with _SupervisorLease(
+        config.paths,
+        service_managed=service_managed,
+        identity=runtime_identity,
+    ):
+        managed_pair = _managed_pair_snapshot(config.paths)
         _atomic_json(
             config.paths.receipt_file,
             _receipt(
                 config,
+                identity=runtime_identity,
+                managed_pair=managed_pair,
                 state="starting",
                 started_at=started_at,
                 service_managed=service_managed,
@@ -626,16 +789,24 @@ def run_supervisor(
                 last_exit_code = return_code
                 if event.is_set():
                     break
-                if return_code == 0:
+                managed_pair = _managed_pair_snapshot(config.paths)
+                if return_code == 0 and _managed_pair_healthy(managed_pair):
                     consecutive_failures = 0
                     last_success_at = _utc_now()
+                    last_error = None
                     state = "healthy"
                     delay = config.interval
                 else:
                     consecutive_failures += 1
                     total_failures += 1
                     last_failure_at = _utc_now()
-                    last_error = detail or f"server start exited {return_code}"
+                    if return_code == 0:
+                        last_error = (
+                            "server start returned success without a verified "
+                            "live server and guardian PID pair"
+                        )
+                    else:
+                        last_error = detail or f"server start exited {return_code}"
                     state = "backoff"
                     delay = min(
                         config.maximum_backoff,
@@ -645,6 +816,8 @@ def run_supervisor(
                     config.paths.receipt_file,
                     _receipt(
                         config,
+                        identity=runtime_identity,
+                        managed_pair=managed_pair,
                         state=state,
                         started_at=started_at,
                         service_managed=service_managed,
@@ -658,10 +831,13 @@ def run_supervisor(
                 )
                 event.wait(delay)
         finally:
+            managed_pair = _managed_pair_snapshot(config.paths)
             _atomic_json(
                 config.paths.receipt_file,
                 _receipt(
                     config,
+                    identity=runtime_identity,
+                    managed_pair=managed_pair,
                     state="stopping",
                     started_at=started_at,
                     service_managed=service_managed,
@@ -688,10 +864,13 @@ def run_supervisor(
                 last_failure_at = _utc_now()
                 last_error = stop_detail or f"server stop exited {stop_code}"
                 last_exit_code = stop_code
+            managed_pair = _managed_pair_snapshot(config.paths)
             _atomic_json(
                 config.paths.receipt_file,
                 _receipt(
                     config,
+                    identity=runtime_identity,
+                    managed_pair=managed_pair,
                     state="stopped" if stop_code == 0 else "stop-failed",
                     started_at=started_at,
                     service_managed=service_managed,
@@ -713,6 +892,9 @@ def render_launch_agent_plist(
 ) -> bytes:
     supervisor = _validate_owned_regular_file(supervisor_binary, executable=True)
     launcher = _validate_owned_regular_file(config.launcher, executable=True)
+    supervisor_sha256 = _sha256_file(supervisor)
+    runtime_sha256 = _sha256_file(Path(__file__).resolve())
+    launcher_sha256 = _sha256_file(launcher)
     for directory in (
         config.paths.server_dir,
         config.paths.runtime_home,
@@ -724,6 +906,14 @@ def render_launch_agent_plist(
         "ProgramArguments": [
             str(supervisor),
             "run",
+            "--supervisor-bin",
+            str(supervisor),
+            "--expected-supervisor-sha256",
+            supervisor_sha256,
+            "--expected-runtime-sha256",
+            runtime_sha256,
+            "--expected-build-version",
+            PACKAGE_VERSION,
             "--launcher",
             str(launcher),
             "--home",
@@ -746,6 +936,11 @@ def render_launch_agent_plist(
             "VIBECRAFTED_HOME": str(config.paths.home),
             "VIBECRAFTED_RUNTIME_HOME": str(config.paths.runtime_home),
             "VIBECRAFTED_SERVER_SERVICE": "launchd",
+            "VIBECRAFTED_SERVER_SUPERVISOR_PATH": str(supervisor),
+            "VIBECRAFTED_SERVER_SUPERVISOR_SHA256": supervisor_sha256,
+            "VIBECRAFTED_SERVER_SUPERVISOR_RUNTIME_SHA256": runtime_sha256,
+            "VIBECRAFTED_SERVER_SUPERVISOR_VERSION": PACKAGE_VERSION,
+            "VIBECRAFTED_SERVER_LAUNCHER_SHA256": launcher_sha256,
         },
     }
     return plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=True)
@@ -761,6 +956,58 @@ def install_service(
         supervisor_binary=supervisor_binary,
     )
     return _atomic_private_write(config.paths.launch_agent_file, rendered)
+
+
+def _installed_service_identity(paths: SupervisorPaths) -> SupervisorIdentity | None:
+    encoded = _read_owned_bytes(paths.launch_agent_file)
+    if encoded is None:
+        return None
+    try:
+        payload = plistlib.loads(encoded)
+    except plistlib.InvalidFileException:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    environment = payload.get("EnvironmentVariables")
+    if not isinstance(environment, dict):
+        return None
+    executable = environment.get("VIBECRAFTED_SERVER_SUPERVISOR_PATH")
+    digest = environment.get("VIBECRAFTED_SERVER_SUPERVISOR_SHA256")
+    runtime_digest = environment.get("VIBECRAFTED_SERVER_SUPERVISOR_RUNTIME_SHA256")
+    version = environment.get("VIBECRAFTED_SERVER_SUPERVISOR_VERSION")
+    if (
+        not isinstance(executable, str)
+        or not executable
+        or not isinstance(digest, str)
+        or len(digest) != 64
+        or not isinstance(runtime_digest, str)
+        or len(runtime_digest) != 64
+        or not isinstance(version, str)
+        or not version
+    ):
+        return None
+    return SupervisorIdentity(Path(executable), digest, runtime_digest, version)
+
+
+def _probe_is_supervisor(probe: SupervisorProbe) -> bool:
+    return probe.live and probe.verified and probe.role == "supervisor"
+
+
+def _probe_matches_identity(
+    probe: SupervisorProbe,
+    identity: SupervisorIdentity | None,
+    *,
+    service_managed: bool,
+) -> bool:
+    return (
+        identity is not None
+        and _probe_is_supervisor(probe)
+        and probe.service_managed is service_managed
+        and probe.executable == str(identity.executable)
+        and probe.executable_sha256 == identity.executable_sha256
+        and probe.runtime_sha256 == identity.runtime_sha256
+        and probe.build_version == identity.build_version
+    )
 
 
 def _launchctl(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
@@ -826,6 +1073,25 @@ def _wait_for_supervisor(
     return probe
 
 
+def _wait_for_managed_supervisor(
+    config: SupervisorConfig,
+    *,
+    identity: SupervisorIdentity,
+    previous_pid: int | None = None,
+    timeout: float = 10.0,
+) -> SupervisorProbe:
+    deadline = time.monotonic() + timeout
+    probe = probe_supervisor(config.paths)
+    while time.monotonic() < deadline:
+        if _probe_matches_identity(probe, identity, service_managed=True) and (
+            previous_pid is None or probe.pid != previous_pid
+        ):
+            return probe
+        time.sleep(0.1)
+        probe = probe_supervisor(config.paths)
+    return probe
+
+
 def _pair_healthy(launcher: Path, environment: dict[str, str]) -> bool:
     result = subprocess.run(
         [str(launcher), "server", "status"],
@@ -855,15 +1121,28 @@ def service_status(config: SupervisorConfig) -> ServiceStatus:
         installed = True
     loaded = _launchctl_loaded() if sys.platform == "darwin" else False
     probe = probe_supervisor(config.paths)
+    identity = _installed_service_identity(config.paths) if installed else None
     environment = _child_environment(config.paths)
-    pair_healthy = _pair_healthy(config.launcher, environment)
+    pair_snapshot = _managed_pair_snapshot(config.paths)
+    pair_healthy = _managed_pair_healthy(pair_snapshot) and _pair_healthy(
+        config.launcher,
+        environment,
+    )
     return ServiceStatus(
         installed=installed,
         loaded=loaded,
         supervisor_live=probe.live,
-        supervisor_verified=probe.verified,
+        supervisor_verified=_probe_is_supervisor(probe),
         pair_healthy=pair_healthy,
         supervisor_pid=probe.pid,
+        supervisor_service_managed=(
+            _probe_is_supervisor(probe) and probe.service_managed is True
+        ),
+        build_current=_probe_matches_identity(
+            probe,
+            identity,
+            service_managed=True,
+        ),
     )
 
 
@@ -879,9 +1158,20 @@ def start_service(config: SupervisorConfig) -> None:
         config.paths.launch_agent_file,
         allow_symlink=False,
     )
+    identity = _installed_service_identity(config.paths)
+    if identity is None:
+        raise SupervisorError(
+            "installed LaunchAgent has no verified supervisor identity; reinstall it",
+            EX_CONFIG,
+        )
     loaded = _launchctl_loaded()
     probe = probe_supervisor(config.paths)
-    if loaded and probe.live and probe.service_managed is not True:
+    if loaded and probe.live and not _probe_is_supervisor(probe):
+        raise SupervisorError(
+            "launchd is loaded but a non-supervisor coordination lease is held",
+            EX_TEMPFAIL,
+        )
+    if loaded and _probe_is_supervisor(probe) and probe.service_managed is not True:
         raise SupervisorError(
             "launchd is loaded but a foreground supervisor owns the lock; "
             "refusing to report service startup success",
@@ -889,8 +1179,8 @@ def start_service(config: SupervisorConfig) -> None:
         )
     if probe.live and not loaded:
         raise SupervisorError(
-            "a foreground server supervisor is already active; stop it before "
-            "starting the launchd service",
+            "a server supervision coordination lease is already active; stop it "
+            "before starting the launchd service",
             EX_TEMPFAIL,
         )
     if not loaded:
@@ -907,17 +1197,18 @@ def start_service(config: SupervisorConfig) -> None:
                 result.returncode or 1,
             )
     probe = probe_supervisor(config.paths)
-    if not probe.live:
+    if not _probe_matches_identity(probe, identity, service_managed=True):
         result = _launchctl(["kickstart", "-k", _launch_target()])
         if result.returncode != 0:
             raise SupervisorError(
                 f"launchctl kickstart failed: {result.stderr.strip()}",
                 result.returncode or 1,
             )
-    probe = _wait_for_supervisor(config.paths, live=True)
-    if not probe.live or not probe.verified:
+    probe = _wait_for_managed_supervisor(config, identity=identity)
+    if not _probe_matches_identity(probe, identity, service_managed=True):
         raise SupervisorError(
-            "launchd is loaded but no verified supervisor acquired its lock",
+            "launchd is loaded but no current service-managed supervisor "
+            "acquired its lock",
             EX_TEMPFAIL,
         )
 
@@ -964,6 +1255,72 @@ def stop_service(config: SupervisorConfig) -> None:
         )
 
 
+def restart_service(
+    config: SupervisorConfig,
+    *,
+    previous_pid: int | None = None,
+) -> SupervisorProbe:
+    _require_macos_service()
+    if _launchctl_loaded():
+        active = probe_supervisor(config.paths)
+        if active.live and (
+            not _probe_is_supervisor(active) or active.service_managed is not True
+        ):
+            raise SupervisorError(
+                "refusing to reload launchd while an unowned coordination lease "
+                "is active",
+                EX_TEMPFAIL,
+            )
+        if previous_pid is None:
+            previous_pid = active.pid
+        stop_service(config)
+    start_service(config)
+    identity = _installed_service_identity(config.paths)
+    if identity is None:
+        raise SupervisorError(
+            "reloaded LaunchAgent has no verified supervisor identity",
+            EX_CONFIG,
+        )
+    probe = _wait_for_managed_supervisor(
+        config,
+        identity=identity,
+        previous_pid=previous_pid,
+    )
+    if not _probe_matches_identity(probe, identity, service_managed=True):
+        raise SupervisorError(
+            "LaunchAgent reload did not activate the installed supervisor build",
+            EX_TEMPFAIL,
+        )
+    if previous_pid is not None and probe.pid == previous_pid:
+        raise SupervisorError(
+            "LaunchAgent reload retained the previous supervisor PID",
+            EX_TEMPFAIL,
+        )
+    return probe
+
+
+def install_and_reconcile_service(
+    config: SupervisorConfig,
+    *,
+    supervisor_binary: Path,
+) -> tuple[bool, bool]:
+    _require_macos_service()
+    loaded = _launchctl_loaded()
+    previous = probe_supervisor(config.paths)
+    changed = install_service(config, supervisor_binary=supervisor_binary)
+    installed_identity = _installed_service_identity(config.paths)
+    current = _probe_matches_identity(
+        previous,
+        installed_identity,
+        service_managed=True,
+    )
+    restarted = False
+    if loaded and (changed or not current):
+        restart_service(config, previous_pid=previous.pid)
+        restarted = True
+    return changed, restarted
+
+
 def uninstall_service(config: SupervisorConfig) -> bool:
     _require_macos_service()
     if _launchctl_loaded():
@@ -983,9 +1340,7 @@ def uninstall_service(config: SupervisorConfig) -> bool:
     return True
 
 
-def manual_stop_guard(paths: SupervisorPaths) -> None:
-    if os.environ.get("VIBECRAFTED_SERVER_SUPERVISOR_CHILD") == "1":
-        return
+def _launchd_owns_pair(paths: SupervisorPaths) -> bool:
     installed = False
     if paths.launch_agent_file.exists() or paths.launch_agent_file.is_symlink():
         _validate_owned_regular_file(
@@ -994,11 +1349,17 @@ def manual_stop_guard(paths: SupervisorPaths) -> None:
         )
         installed = True
     default_home = (paths.operator_home / ".vibecrafted").resolve(strict=False)
-    loaded = (
+    return (
         sys.platform == "darwin"
         and (installed or paths.home == default_home)
         and _launchctl_loaded()
     )
+
+
+def manual_stop_guard(paths: SupervisorPaths) -> None:
+    if os.environ.get("VIBECRAFTED_SERVER_SUPERVISOR_CHILD") == "1":
+        return
+    loaded = _launchd_owns_pair(paths)
     probe = probe_supervisor(paths)
     if loaded or probe.live:
         owner = "launchd service" if loaded else "foreground supervisor"
@@ -1009,6 +1370,53 @@ def manual_stop_guard(paths: SupervisorPaths) -> None:
             "supervisor) instead.",
             EX_TEMPFAIL,
         )
+
+
+def manual_stop(config: SupervisorConfig) -> None:
+    if os.environ.get("VIBECRAFTED_SERVER_SUPERVISOR_CHILD") == "1":
+        raise SupervisorError(
+            "manual-stop coordination command cannot run as a supervisor child",
+            EX_CONFIG,
+        )
+    if _launchd_owns_pair(config.paths):
+        raise SupervisorError(
+            "server pair is owned by an active launchd service; use "
+            "'vibecrafted server service stop' instead",
+            EX_TEMPFAIL,
+        )
+    with _SupervisorLease(
+        config.paths,
+        service_managed=False,
+        role="manual-stop",
+    ):
+        # Re-check after acquiring the common lease. A concurrent launchd start
+        # can no longer race a manual stop without being observed here.
+        if _launchd_owns_pair(config.paths):
+            raise SupervisorError(
+                "launchd became active while acquiring the manual-stop lease; "
+                "use 'vibecrafted server service stop' instead",
+                EX_TEMPFAIL,
+            )
+        environment = _child_environment(config.paths)
+        environment["VIBECRAFTED_SERVER_SUPERVISOR_CHILD"] = "1"
+        result = subprocess.run(
+            [str(config.launcher), "server", "stop"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=config.command_timeout,
+            env=environment,
+        )
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
+        if result.returncode != 0:
+            raise SupervisorError(
+                "manual server pair stop failed while holding the coordination "
+                f"lease (exit {result.returncode})",
+                result.returncode,
+            )
 
 
 def _validated_endpoint(host: str, port: int) -> tuple[str, int]:
@@ -1023,6 +1431,49 @@ def _validated_endpoint(host: str, port: int) -> tuple[str, int]:
     if not 1 <= port <= 65535:
         raise SupervisorError(f"server port out of range: {port}", 2)
     return host, port
+
+
+def default_config(
+    *,
+    launcher: Path,
+    home: Path | None = None,
+    runtime_home: Path | None = None,
+    operator_home: Path | None = None,
+    host: str = "127.0.0.1",
+    port: int = 3024,
+) -> SupervisorConfig:
+    resolved_operator_home = _absolute_path(
+        operator_home or Path(os.environ.get("HOME", str(Path.home())))
+    )
+    resolved_home = _absolute_path(
+        home
+        or Path(
+            os.environ.get(
+                "VIBECRAFTED_HOME",
+                str(resolved_operator_home / ".vibecrafted"),
+            )
+        )
+    )
+    resolved_runtime_home = _absolute_path(
+        runtime_home
+        or Path(
+            os.environ.get(
+                "VIBECRAFTED_RUNTIME_HOME",
+                str(resolved_operator_home / ".local" / "share" / "vibecrafted"),
+            )
+        )
+    )
+    validated_host, validated_port = _validated_endpoint(host, port)
+    return SupervisorConfig(
+        paths=SupervisorPaths.create(
+            home=resolved_home,
+            runtime_home=resolved_runtime_home,
+            operator_home=resolved_operator_home,
+        ),
+        launcher=_validate_owned_regular_file(launcher, executable=True),
+        host=validated_host,
+        port=validated_port,
+    )
 
 
 def _paths_from_args(args: argparse.Namespace) -> SupervisorPaths:
@@ -1081,6 +1532,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     run = subparsers.add_parser("run", help="run the foreground supervisor")
     _add_config_arguments(run)
+    run.add_argument("--supervisor-bin", default="")
+    run.add_argument("--expected-supervisor-sha256", default="")
+    run.add_argument("--expected-runtime-sha256", default="")
+    run.add_argument("--expected-build-version", default="")
 
     service = subparsers.add_parser(
         "service",
@@ -1088,7 +1543,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     service.add_argument(
         "action",
-        choices=("install", "start", "stop", "status", "uninstall"),
+        choices=(
+            "install",
+            "reconcile",
+            "restart",
+            "start",
+            "stop",
+            "status",
+            "uninstall",
+        ),
     )
     _add_config_arguments(service)
     service.add_argument("--supervisor-bin", default="")
@@ -1105,6 +1568,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="refuse a manual pair stop while a supervisor owns it",
     )
     _add_common_paths(guard)
+
+    manual = subparsers.add_parser(
+        "manual-stop",
+        help="stop the pair while holding the supervision coordination lease",
+    )
+    _add_config_arguments(manual)
 
     probe = subparsers.add_parser("probe", help="probe the kernel supervisor lock")
     _add_common_paths(probe)
@@ -1127,6 +1596,8 @@ def _print_service_status(status: ServiceStatus, *, as_json: bool) -> None:
         "loaded": status.loaded,
         "supervisor_live": status.supervisor_live,
         "supervisor_verified": status.supervisor_verified,
+        "supervisor_service_managed": status.supervisor_service_managed,
+        "build_current": status.build_current,
         "pair_healthy": status.pair_healthy,
         "supervisor_pid": status.supervisor_pid,
     }
@@ -1139,6 +1610,8 @@ def _print_service_status(status: ServiceStatus, *, as_json: bool) -> None:
         f"loaded={'yes' if status.loaded else 'no'} "
         f"supervisor-live={'yes' if status.supervisor_live else 'no'} "
         f"supervisor-verified={'yes' if status.supervisor_verified else 'no'} "
+        f"service-managed={'yes' if status.supervisor_service_managed else 'no'} "
+        f"build-current={'yes' if status.build_current else 'no'} "
         f"pair-healthy={'yes' if status.pair_healthy else 'no'}"
     )
 
@@ -1158,13 +1631,18 @@ def _runtime_status(paths: SupervisorPaths) -> int:
         and _launchctl_loaded()
     )
     probe = probe_supervisor(paths)
-    if loaded and probe.live and probe.verified:
+    identity = _installed_service_identity(paths) if installed else None
+    if loaded and _probe_matches_identity(
+        probe,
+        identity,
+        service_managed=True,
+    ):
         print(
             f"Supervision: LAUNCHD (installed=yes, loaded=yes, "
             f"supervisor PID {probe.pid})"
         )
         return 0
-    if probe.live and probe.verified:
+    if _probe_is_supervisor(probe) and probe.service_managed is False:
         print(
             f"Supervision: FOREGROUND (installed={'yes' if installed else 'no'}, "
             f"supervisor PID {probe.pid})"
@@ -1188,15 +1666,20 @@ def _runtime_status(paths: SupervisorPaths) -> int:
 def _service_command(args: argparse.Namespace) -> int:
     _require_macos_service()
     config = _config_from_args(args)
-    if args.action == "install":
-        changed = install_service(
+    if args.action in {"install", "reconcile"}:
+        changed, restarted = install_and_reconcile_service(
             config,
             supervisor_binary=_install_requires_supervisor_binary(args),
         )
         print(
             f"LaunchAgent {'installed' if changed else 'already current'} at "
             f"{config.paths.launch_agent_file}"
+            f"{'; reloaded current supervisor build' if restarted else ''}"
         )
+        return 0
+    if args.action == "restart":
+        probe = restart_service(config)
+        print(f"LaunchAgent reloaded; current supervisor PID {probe.pid}.")
         return 0
     if args.action == "start":
         start_service(config)
@@ -1219,6 +1702,8 @@ def _service_command(args: argparse.Namespace) -> int:
             and status.loaded
             and status.supervisor_live
             and status.supervisor_verified
+            and status.supervisor_service_managed
+            and status.build_current
             and status.pair_healthy
         )
         else 1
@@ -1230,6 +1715,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "run":
             config = _config_from_args(args)
+            supervisor_binary = (
+                Path(args.supervisor_bin) if args.supervisor_bin else None
+            )
+            identity = _supervisor_identity(
+                supervisor_binary,
+                expected_sha256=args.expected_supervisor_sha256 or None,
+                expected_runtime_sha256=args.expected_runtime_sha256 or None,
+                expected_version=args.expected_build_version or None,
+            )
             stop_event = threading.Event()
 
             def request_stop(_signum: int, _frame: object) -> None:
@@ -1244,6 +1738,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     service_managed=(
                         os.environ.get("VIBECRAFTED_SERVER_SERVICE") == "launchd"
                     ),
+                    identity=identity,
                 )
             finally:
                 signal.signal(signal.SIGTERM, previous_term)
@@ -1256,12 +1751,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "manual-stop-guard":
             manual_stop_guard(paths)
             return 0
+        if args.command == "manual-stop":
+            manual_stop(_config_from_args(args))
+            return 0
         probe = probe_supervisor(paths)
         payload = {
             "live": probe.live,
             "verified": probe.verified,
             "pid": probe.pid,
             "service_managed": probe.service_managed,
+            "role": probe.role,
+            "supervisor_executable": probe.executable,
+            "supervisor_executable_sha256": probe.executable_sha256,
+            "supervisor_runtime_sha256": probe.runtime_sha256,
+            "build_version": probe.build_version,
         }
         if args.json:
             print(json.dumps(payload, sort_keys=True))
