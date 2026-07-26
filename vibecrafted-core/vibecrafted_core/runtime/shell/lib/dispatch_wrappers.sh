@@ -328,14 +328,14 @@ _vetcoders_await_status_is_active() {
 _vetcoders_active_await_meta_for_run_id() {
   local run_id="$1"
   local artifacts_root="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/artifacts"
-  local candidate status pid
+  local candidate await_status pid
   [[ -n "$run_id" && -d "$artifacts_root" ]] || return 1
 
   while IFS= read -r candidate; do
     [[ -f "$candidate" ]] || continue
     [[ "$(jq -r '.run_id // ""' "$candidate" 2>/dev/null)" == "$run_id" ]] || continue
-    status="$(jq -r '.status // ""' "$candidate" 2>/dev/null || true)"
-    _vetcoders_await_status_is_active "$status" || continue
+    await_status="$(jq -r '.status // ""' "$candidate" 2>/dev/null || true)"
+    _vetcoders_await_status_is_active "$await_status" || continue
     pid="$(jq -r '.launcher_pid // ""' "$candidate" 2>/dev/null || true)"
     if [[ "$pid" =~ ^[0-9]+$ ]] && [[ "$pid" -gt 0 ]] && ! kill -0 "$pid" 2>/dev/null; then
       continue

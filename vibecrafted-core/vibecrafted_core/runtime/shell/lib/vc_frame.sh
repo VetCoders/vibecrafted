@@ -440,15 +440,15 @@ _vetcoders_vc_frame_create_host_session() {
   local vc_frame_bin="${1:-}"
   local session_name="${2:-}"
   [[ -n "$vc_frame_bin" && -n "$session_name" ]] || return 1
-  local out="" status=0
-  out="$("$vc_frame_bin" attach --create-background "$session_name" 2>&1)" || status=$?
+  local out="" action_status=0
+  out="$("$vc_frame_bin" attach --create-background "$session_name" 2>&1)" || action_status=$?
   if [[ -n "$out" ]]; then
     printf '%s\n' "$out" >&2
   fi
   if [[ "$(_vetcoders_vc_frame_session_state "$session_name")" == "live" ]]; then
     return 0
   fi
-  [[ "$status" -eq 0 ]] || return "$status"
+  [[ "$action_status" -eq 0 ]] || return "$action_status"
   return 1
 }
 
@@ -460,7 +460,7 @@ _vetcoders_vc_frame_session_action() {
   [[ -n "$vc_frame_bin" ]] || return 1
   [[ "$#" -ge 1 ]] || return 1
 
-  local err_file out_file status=0 err=""
+  local err_file out_file action_status=0 err=""
   err_file="$(mktemp "${TMPDIR:-/tmp}/vc-frame-action.XXXXXX.err")"
   out_file="$(mktemp "${TMPDIR:-/tmp}/vc-frame-action.XXXXXX.out")"
 
@@ -472,8 +472,8 @@ _vetcoders_vc_frame_session_action() {
     fi
   }
 
-  status=0
-  _vetcoders_vc_frame_action_invoke "$@" || status=$?
+  action_status=0
+  _vetcoders_vc_frame_action_invoke "$@" || action_status=$?
   err="$(cat "$err_file" 2>/dev/null || true)"
   if [[ -n "$err" ]]; then
     printf '%s\n' "$err" >&2
@@ -492,21 +492,21 @@ _vetcoders_vc_frame_session_action() {
       rm -f "$err_file" "$out_file"
       return 2
     fi
-    status=0
-    _vetcoders_vc_frame_action_invoke "$@" || status=$?
+    action_status=0
+    _vetcoders_vc_frame_action_invoke "$@" || action_status=$?
     err="$(cat "$err_file" 2>/dev/null || true)"
     if [[ -n "$err" ]]; then
       printf '%s\n' "$err" >&2
     fi
-    if _vetcoders_vc_frame_stderr_is_session_not_found "$err" || [[ "$status" -ne 0 ]]; then
-      VETCODERS_VC_FRAME_LAST_ERROR="${err:-vc-frame action failed after host resurrect (exit ${status})}"
+    if _vetcoders_vc_frame_stderr_is_session_not_found "$err" || [[ "$action_status" -ne 0 ]]; then
+      VETCODERS_VC_FRAME_LAST_ERROR="${err:-vc-frame action failed after host resurrect (exit ${action_status})}"
       rm -f "$err_file" "$out_file"
       return 2
     fi
-  elif [[ "$status" -ne 0 ]]; then
-    VETCODERS_VC_FRAME_LAST_ERROR="${err:-vc-frame action exit ${status}}"
+  elif [[ "$action_status" -ne 0 ]]; then
+    VETCODERS_VC_FRAME_LAST_ERROR="${err:-vc-frame action exit ${action_status}}"
     rm -f "$err_file" "$out_file"
-    return "$status"
+    return "$action_status"
   fi
 
   rm -f "$err_file" "$out_file"
@@ -536,7 +536,7 @@ _vetcoders_spawn_into_operator_session() {
   local cmd_script
   local vc_frame_bin=""
   local run_id="${VIBECRAFTED_RUN_ID:-interactive}"
-  local status=0
+  local action_status=0
 
   _vetcoders_require_vc_frame || return 1
   vc_frame_bin="$(_vetcoders_vc_frame_bin)" || return 1
@@ -575,13 +575,13 @@ _vetcoders_spawn_into_operator_session() {
       "$run_id" "$session_name" "$tab_name" "$session_name"
     return 0
   else
-    status=$?
+    action_status=$?
   fi
 
   printf 'launch failed: run_id=%s target=%s/%s status=%s\n' \
-    "$run_id" "$session_name" "$tab_name" "$status" >&2
+    "$run_id" "$session_name" "$tab_name" "$action_status" >&2
   if [[ -n "${VETCODERS_VC_FRAME_LAST_ERROR:-}" ]]; then
     printf '%s\n' "$VETCODERS_VC_FRAME_LAST_ERROR" >&2
   fi
-  return "$status"
+  return "$action_status"
 }

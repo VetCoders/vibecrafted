@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import subprocess
 import time
 from pathlib import Path
+
+import pytest
 
 from scripts import vetcoders_install
 
@@ -15,6 +18,64 @@ SHELL_SH = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
 def _write_fake_command(path: Path, body: str) -> None:
     path.write_text(body, encoding="utf-8")
     path.chmod(0o755)
+
+
+def test_operator_shell_helpers_do_not_shadow_zsh_status(
+    tmp_path: Path,
+) -> None:
+    zsh = shutil.which("zsh")
+    if zsh is None:
+        pytest.skip("zsh is required for the operator-shell regression")
+
+    meta_path = (
+        tmp_path
+        / "vibecrafted-home"
+        / "artifacts"
+        / "status-regression"
+        / "await-run.meta.json"
+    )
+    meta_path.parent.mkdir(parents=True)
+    meta_path.write_text(
+        '{"run_id":"await-run","status":"running"}\n',
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    env["TEST_COMMAND_SCRIPT"] = str(tmp_path / "command.sh")
+    env["VIBECRAFTED_HOME"] = str(tmp_path / "vibecrafted-home")
+    env["VIBECRAFTED_OPERATOR_SESSION"] = "operator-session"
+    result = subprocess.run(
+        [
+            zsh,
+            "-f",
+            "-c",
+            "\n".join(
+                [
+                    f'source "{SHELL_SH}"',
+                    "vc_raise_launcher_limits() { :; }",
+                    '_vetcoders_path_with_bundled_bin_priority() { print -r -- "$1"; }',
+                    '_vetcoders_repo_root() { print -r -- "$PWD"; }',
+                    "_vetcoders_require_vc_frame() { return 0; }",
+                    "_vetcoders_vc_frame_bin() { print -r -- /usr/bin/true; }",
+                    "_vetcoders_in_vc_frame() { return 0; }",
+                    '_vetcoders_tmp_script_path() { print -r -- "$TEST_COMMAND_SCRIPT"; }',
+                    "_vetcoders_write_command_script() { return 0; }",
+                    "_vetcoders_spawn_into_operator_session resume-codex true",
+                    "_vetcoders_active_await_meta_for_run_id await-run",
+                ]
+            ),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "read-only variable: status" not in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "launch accepted:" in result.stdout
+    assert str(meta_path) in result.stdout
 
 
 def _probe_codex_resume_contract(
