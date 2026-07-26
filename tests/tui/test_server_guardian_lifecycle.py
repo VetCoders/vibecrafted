@@ -569,7 +569,7 @@ start_delay = float(os.environ.get("SERVER_START_DELAY", "0"))
 if start_delay > 0:
     record(f"server-delay {start_delay:g}")
     time.sleep(start_delay)
-http.server.ThreadingHTTPServer((host, int(raw_port)), Handler).serve_forever()
+http.server.HTTPServer((host, int(raw_port)), Handler).serve_forever()
 """,
     )
     _write_executable(
