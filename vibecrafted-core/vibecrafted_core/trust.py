@@ -22,6 +22,7 @@ import sys
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -47,10 +48,49 @@ VERDICT_TO_SETTLEMENT = {
 }
 TRUST_JOURNAL_SCHEMA_V2 = "vibecrafted.trust-journal.v2"
 TRUST_OUTBOX_SCHEMA = "vibecrafted.trust-settlement-outbox.v1"
+TRUST_RECOVERY_DEFAULT_LIMIT = 256
+TRUST_RECOVERY_MAX_LIMIT = 1024
+TRUST_OUTBOX_MAX_BYTES = 1024 * 1024
+_TRUST_OUTBOX_NAME_RE = re.compile(r"^[0-9a-f]{64}\.json$")
 
 
 class TrustJournalRetryable(RuntimeError):
-    """The journal is temporarily busy or has an in-flight partial tail."""
+    """Durable trust authority is busy, changing, or has an in-flight tail."""
+
+
+@dataclass(frozen=True)
+class TrustRecoverySuccess:
+    """One exact prepared receipt completed by a recovery sweep."""
+
+    run_id: str
+    receipt_id: str
+    settlement_revision: int
+
+
+@dataclass(frozen=True)
+class TrustRecoveryError:
+    """One fail-closed pending outbox result."""
+
+    outbox_path: str
+    run_id: str
+    error_type: str
+    message: str
+    retryable: bool
+
+
+@dataclass(frozen=True)
+class TrustRecoveryReport:
+    """Bounded one-shot recovery result; no background polling is implied."""
+
+    scanned: int
+    recovered: tuple[TrustRecoverySuccess, ...]
+    errors: tuple[TrustRecoveryError, ...]
+    skipped: int
+    truncated: bool
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors and not self.truncated
 
 
 # Subject: [<agent>/<runtime>] <type>(optional scope): <subject>
@@ -603,6 +643,35 @@ def recommend_verdict_from_inspect(inspect: Mapping[str, Any]) -> str:
     return verdict
 
 
+def _parse_journal_bytes(
+    raw_journal: bytes,
+    path: Path,
+    *,
+    partial_is_retryable: bool,
+) -> list[dict[str, Any]]:
+    if raw_journal and not raw_journal.endswith(b"\n"):
+        error = f"trust journal has a partial tail: {path}"
+        if partial_is_retryable:
+            raise TrustJournalRetryable(error)
+        raise ValueError(error)
+    try:
+        journal_text = raw_journal.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"invalid journal encoding at {path}") from exc
+    records: list[dict[str, Any]] = []
+    for line_number, raw in enumerate(journal_text.splitlines(), start=1):
+        if not raw.strip():
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid journal JSON at {path}:{line_number}") from exc
+        if not isinstance(payload, dict):
+            raise TypeError(f"invalid journal record at {path}:{line_number}")
+        records.append(payload)
+    return records
+
+
 def _read_journal(path: Path) -> list[dict[str, Any]]:
     flags = os.O_RDONLY
     flags |= getattr(os, "O_CLOEXEC", 0)
@@ -640,24 +709,11 @@ def _read_journal(path: Path) -> list[dict[str, Any]]:
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
         os.close(descriptor)
 
-    if raw_journal and not raw_journal.endswith(b"\n"):
-        raise TrustJournalRetryable(f"trust journal has a partial tail: {path}")
-    try:
-        journal_text = raw_journal.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise ValueError(f"invalid journal encoding at {path}") from exc
-    records: list[dict[str, Any]] = []
-    for line_number, raw in enumerate(journal_text.splitlines(), start=1):
-        if not raw.strip():
-            continue
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"invalid journal JSON at {path}:{line_number}") from exc
-        if not isinstance(payload, dict):
-            raise TypeError(f"invalid journal record at {path}:{line_number}")
-        records.append(payload)
-    return records
+    return _parse_journal_bytes(
+        raw_journal,
+        path,
+        partial_is_retryable=True,
+    )
 
 
 def _journal_write(descriptor: int, data: bytes) -> int:
@@ -717,6 +773,194 @@ def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
         os.close(descriptor)
     control_plane._fsync_directory_durable(path.parent)
+
+
+def _validate_owned_directory(path: Path, *, label: str) -> Path:
+    absolute = Path(os.path.abspath(path.expanduser()))
+    try:
+        canonical = absolute.resolve(strict=True)
+    except OSError as exc:
+        raise PermissionError(f"{label} directory is unavailable: {absolute}") from exc
+    if canonical != absolute:
+        raise PermissionError(f"{label} directory is not canonical: {absolute}")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(absolute, flags)
+    try:
+        opened = os.fstat(descriptor)
+        visible = absolute.stat(follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or not stat.S_ISDIR(visible.st_mode)
+            or not os.path.samestat(opened, visible)
+        ):
+            raise PermissionError(f"{label} path is not a stable directory: {absolute}")
+        if opened.st_uid != os.getuid():
+            raise PermissionError(
+                f"{label} directory is not owned by the current user: {absolute}"
+            )
+        if stat.S_IMODE(opened.st_mode) & 0o022:
+            raise PermissionError(
+                f"{label} directory is group/world writable: {absolute}"
+            )
+    finally:
+        os.close(descriptor)
+    return absolute
+
+
+def _read_descriptor_all(descriptor: int) -> bytes:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    chunks: list[bytes] = []
+    while True:
+        try:
+            chunk = os.read(descriptor, 64 * 1024)
+        except InterruptedError:
+            continue
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def _receipt_entries(
+    records: Sequence[Mapping[str, Any]],
+    receipt_id: str,
+) -> list[dict[str, Any]]:
+    matches: list[dict[str, Any]] = []
+    for item in records:
+        receipt = item.get("trust_receipt")
+        if (
+            isinstance(receipt, Mapping)
+            and str(receipt.get("receipt_id") or "") == receipt_id
+        ):
+            matches.append(dict(item))
+    return matches
+
+
+def _recover_prepared_journal_entry(
+    path: Path,
+    payload: Mapping[str, Any],
+    *,
+    receipt_id: str,
+) -> dict[str, Any]:
+    """Repair only this prepared append's torn prefix, then append exactly once."""
+
+    receipt_payload = payload.get("trust_receipt")
+    if (
+        not isinstance(receipt_payload, Mapping)
+        or str(receipt_payload.get("receipt_id") or "") != receipt_id
+    ):
+        raise ValueError("prepared journal entry receipt mismatch")
+    path = Path(os.path.abspath(path.expanduser()))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    parent = _validate_owned_directory(path.parent, label="trust journal")
+    if path.parent != parent:
+        raise PermissionError(f"trust journal parent mismatch: {path}")
+    encoded = (
+        json.dumps(dict(payload), sort_keys=True, ensure_ascii=False) + "\n"
+    ).encode("utf-8")
+    expected_without_newline = encoded[:-1]
+    flags = os.O_APPEND | os.O_CREAT | os.O_RDWR
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    locked = False
+    try:
+        opened = os.fstat(descriptor)
+        visible = path.stat(follow_symlinks=False)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or not stat.S_ISREG(visible.st_mode)
+            or not os.path.samestat(opened, visible)
+        ):
+            raise OSError(errno.EINVAL, f"trust journal is not a stable file: {path}")
+        if opened.st_uid != os.getuid():
+            raise PermissionError(
+                f"trust journal is not owned by the current user: {path}"
+            )
+        if opened.st_nlink != 1 or stat.S_IMODE(opened.st_mode) & 0o022:
+            raise PermissionError(f"trust journal permissions are unsafe: {path}")
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        locked = True
+        raw_journal = _read_descriptor_all(descriptor)
+        complete_raw = raw_journal
+        torn_tail = b""
+        if raw_journal and not raw_journal.endswith(b"\n"):
+            split_at = raw_journal.rfind(b"\n") + 1
+            complete_raw = raw_journal[:split_at]
+            torn_tail = raw_journal[split_at:]
+        records = _parse_journal_bytes(
+            complete_raw,
+            path,
+            partial_is_retryable=False,
+        )
+        existing = _receipt_entries(records, receipt_id)
+
+        if torn_tail:
+            try:
+                decoded_tail = torn_tail.decode("utf-8")
+                json.loads(decoded_tail)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                pass
+            else:
+                raise ValueError(
+                    f"trust journal has a complete unterminated record: {path}"
+                )
+            if existing:
+                raise ValueError(
+                    f"trust journal has a foreign tail after prepared receipt: {path}"
+                )
+            if (
+                not expected_without_newline.startswith(torn_tail)
+                or torn_tail == expected_without_newline
+            ):
+                raise ValueError(
+                    f"trust journal partial tail is not this prepared receipt: {path}"
+                )
+            os.ftruncate(descriptor, len(complete_raw))
+            os.fsync(descriptor)
+            control_plane._fsync_directory_durable(parent)
+            raw_journal = complete_raw
+
+        if existing:
+            if len(existing) != 1 or existing[0] != dict(payload):
+                raise ValueError(
+                    "trust settlement journal receipt missing or mismatched"
+                )
+            return existing[0]
+
+        pre_append_offset = len(raw_journal)
+        try:
+            _write_all(descriptor, encoded)
+            os.fsync(descriptor)
+        except BaseException:
+            try:
+                os.ftruncate(descriptor, pre_append_offset)
+                os.fsync(descriptor)
+            except OSError as rollback_error:
+                raise OSError(
+                    errno.EIO,
+                    f"trust journal recovery append rollback failed for {path}",
+                ) from rollback_error
+            raise
+        control_plane._fsync_directory_durable(parent)
+        verified = _parse_journal_bytes(
+            _read_descriptor_all(descriptor),
+            path,
+            partial_is_retryable=False,
+        )
+        matches = _receipt_entries(verified, receipt_id)
+        if len(matches) != 1 or matches[0] != dict(payload):
+            raise OSError("trust settlement journal durability verification failed")
+        return matches[0]
+    finally:
+        if locked:
+            with contextlib.suppress(OSError):
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
 
 
 # ISO-ish timestamps from control-plane run meta (started_at / created_at).
@@ -836,13 +1080,123 @@ def _claims_digest(claims: Sequence[Mapping[str, str]]) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _trust_outbox_dir() -> Path:
+    return control_plane.control_plane_home() / "trust_settlement_outbox"
+
+
+def _ensure_trust_outbox_directory() -> Path:
+    path = Path(os.path.abspath(_trust_outbox_dir().expanduser()))
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return _validate_owned_directory(path, label="trust settlement outbox")
+
+
 def _trust_outbox_path(run_id: str) -> Path:
     digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()
-    return (
-        control_plane.control_plane_home()
-        / "trust_settlement_outbox"
-        / f"{digest}.json"
+    return _trust_outbox_dir() / f"{digest}.json"
+
+
+def _strict_json_object(encoded: bytes, *, label: str) -> dict[str, Any]:
+    def reject_duplicates(
+        pairs: list[tuple[str, Any]],
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in payload:
+                raise ValueError(f"{label} has duplicate JSON key: {key}")
+            payload[key] = value
+        return payload
+
+    try:
+        payload = json.loads(
+            encoded.decode("utf-8"),
+            object_pairs_hook=reject_duplicates,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"{label} has non-finite JSON number: {value}")
+            ),
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} is not valid UTF-8 JSON") from exc
+    if not isinstance(payload, dict):
+        raise TypeError(f"{label} is not a JSON object")
+    return payload
+
+
+def _read_trust_outbox(path: Path) -> dict[str, Any] | None:
+    expected_parent = Path(os.path.abspath(_trust_outbox_dir().expanduser()))
+    absolute = Path(os.path.abspath(path.expanduser()))
+    if absolute.parent != expected_parent:
+        raise ValueError(f"trust settlement outbox path escaped authority: {absolute}")
+    if not _TRUST_OUTBOX_NAME_RE.fullmatch(absolute.name):
+        raise ValueError(f"trust settlement outbox filename invalid: {absolute.name}")
+    try:
+        expected_parent.lstat()
+    except FileNotFoundError:
+        return None
+    _validate_owned_directory(expected_parent, label="trust settlement outbox")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(absolute, flags)
+    except FileNotFoundError:
+        return None
+    try:
+        opened = os.fstat(descriptor)
+        visible = absolute.stat(follow_symlinks=False)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or not stat.S_ISREG(visible.st_mode)
+            or not os.path.samestat(opened, visible)
+        ):
+            raise PermissionError(
+                f"trust settlement outbox is not a stable file: {absolute}"
+            )
+        if opened.st_uid != os.getuid() or opened.st_nlink != 1:
+            raise PermissionError(
+                f"trust settlement outbox ownership is unsafe: {absolute}"
+            )
+        if stat.S_IMODE(opened.st_mode) & 0o077:
+            raise PermissionError(
+                f"trust settlement outbox permissions are not private: {absolute}"
+            )
+        if opened.st_size > TRUST_OUTBOX_MAX_BYTES:
+            raise ValueError(
+                f"trust settlement outbox exceeds {TRUST_OUTBOX_MAX_BYTES} bytes"
+            )
+        chunks: list[bytes] = []
+        remaining = TRUST_OUTBOX_MAX_BYTES + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, min(remaining, 64 * 1024))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        encoded = b"".join(chunks)
+        if len(encoded) > TRUST_OUTBOX_MAX_BYTES:
+            raise ValueError(
+                f"trust settlement outbox exceeds {TRUST_OUTBOX_MAX_BYTES} bytes"
+            )
+        opened_after = os.fstat(descriptor)
+        visible_after = absolute.stat(follow_symlinks=False)
+        if (
+            not os.path.samestat(opened, opened_after)
+            or not os.path.samestat(opened_after, visible_after)
+            or opened.st_size != opened_after.st_size
+            or opened.st_mtime_ns != opened_after.st_mtime_ns
+        ):
+            raise TrustJournalRetryable(
+                f"trust settlement outbox changed while reading: {absolute}"
+            )
+    finally:
+        os.close(descriptor)
+    payload = _strict_json_object(
+        encoded,
+        label=f"trust settlement outbox {absolute}",
     )
+    run_id = str(payload.get("run_id") or "")
+    if not run_id:
+        raise ValueError("trust settlement outbox run id missing")
+    if absolute.name != _trust_outbox_path(run_id).name:
+        raise ValueError("trust settlement outbox filename/run id mismatch")
+    return payload
 
 
 def _nested_settlement(settlement: Settlement) -> dict[str, Any]:
@@ -1061,7 +1415,6 @@ def _trust_event_exists(event: SettlementEventV2) -> bool:
     """Find an exact prior publish across retained active and archived segments."""
 
     expected = event.to_payload()
-    encoded_key = event.event_key.encode("utf-8")
     matches = False
     with control_plane._event_lock(exclusive=False):
         paths = [control_plane.event_stream_path()]
@@ -1075,8 +1428,6 @@ def _trust_event_exists(event: SettlementEventV2) -> bool:
                 continue
             with handle:
                 for raw in handle:
-                    if encoded_key not in raw:
-                        continue
                     try:
                         candidate = json.loads(raw)
                     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -1109,9 +1460,9 @@ def _recover_trust_outbox(
 ) -> dict[str, Any] | None:
     """Finish one prepared trust transaction with the same exact receipt."""
 
-    if not outbox_path.exists():
+    outbox = _read_trust_outbox(outbox_path)
+    if outbox is None:
         return None
-    outbox = control_plane._read_json(outbox_path)
     if (
         outbox.get("schema") != TRUST_OUTBOX_SCHEMA
         or str(outbox.get("run_id") or "") != run_id
@@ -1235,12 +1586,11 @@ def _recover_trust_outbox(
         ):
             raise ValueError(f"trust settlement recovery {label} projection diverged")
 
-    journal_entry = _journal_entry_for_receipt(journal, receipt.receipt_id)
-    if journal_entry is None:
-        _append_jsonl(journal, entry_payload)
-        journal_entry = _journal_entry_for_receipt(journal, receipt.receipt_id)
-    if journal_entry != dict(entry_payload):
-        raise ValueError("trust settlement journal receipt missing or mismatched")
+    _recover_prepared_journal_entry(
+        journal,
+        entry_payload,
+        receipt_id=receipt.receipt_id,
+    )
     _after_trust_transition("journal")
 
     if not _projection_matches_plan(meta, receipt=receipt, fields=fields):
@@ -1265,15 +1615,150 @@ def _recover_trust_outbox(
     published_event_key = str(outbox.get("published_event_key") or "")
     if published_event_key and published_event_key != event.event_key:
         raise ValueError("trust settlement outbox published event mismatch")
+    if not _trust_event_exists(event):
+        _publish_trust_event(event)
+    if not _trust_event_exists(event):
+        raise OSError("trust settlement event durability verification failed")
     if not published_event_key:
-        if not _trust_event_exists(event):
-            _publish_trust_event(event)
         acknowledged = dict(outbox)
         acknowledged["published_event_key"] = event.event_key
         control_plane._write_json_durable(outbox_path, acknowledged)
         _after_trust_transition("event")
     _remove_durable(outbox_path)
     return dict(entry_payload)
+
+
+def _trust_recovery_error(
+    path: Path,
+    *,
+    run_id: str,
+    error: BaseException,
+) -> TrustRecoveryError:
+    return TrustRecoveryError(
+        outbox_path=str(path),
+        run_id=run_id,
+        error_type=type(error).__name__,
+        message=str(error),
+        retryable=isinstance(error, TrustJournalRetryable),
+    )
+
+
+def recover_pending_trust_settlements(
+    *,
+    limit: int = TRUST_RECOVERY_DEFAULT_LIMIT,
+) -> TrustRecoveryReport:
+    """Complete a bounded snapshot of durable trust outboxes exactly once."""
+
+    if type(limit) is not int or not 1 <= limit <= TRUST_RECOVERY_MAX_LIMIT:
+        raise ValueError(f"trust recovery limit must be 1..{TRUST_RECOVERY_MAX_LIMIT}")
+    outbox_dir = Path(os.path.abspath(_trust_outbox_dir().expanduser()))
+    try:
+        outbox_dir.lstat()
+    except FileNotFoundError:
+        return TrustRecoveryReport(
+            scanned=0,
+            recovered=(),
+            errors=(),
+            skipped=0,
+            truncated=False,
+        )
+    try:
+        _validate_owned_directory(outbox_dir, label="trust settlement outbox")
+    except (OSError, ValueError) as exc:
+        return TrustRecoveryReport(
+            scanned=0,
+            recovered=(),
+            errors=(
+                _trust_recovery_error(
+                    outbox_dir,
+                    run_id="",
+                    error=exc,
+                ),
+            ),
+            skipped=0,
+            truncated=False,
+        )
+
+    names: list[str] = []
+    truncated = False
+    try:
+        with os.scandir(outbox_dir) as directory_entries:
+            for directory_entry in directory_entries:
+                if len(names) >= limit:
+                    truncated = True
+                    break
+                names.append(directory_entry.name)
+    except OSError as exc:
+        return TrustRecoveryReport(
+            scanned=0,
+            recovered=(),
+            errors=(
+                _trust_recovery_error(
+                    outbox_dir,
+                    run_id="",
+                    error=exc,
+                ),
+            ),
+            skipped=0,
+            truncated=False,
+        )
+
+    recovered: list[TrustRecoverySuccess] = []
+    errors: list[TrustRecoveryError] = []
+    skipped = 0
+    for name in sorted(names):
+        outbox_path = outbox_dir / name
+        run_id = ""
+        try:
+            if not _TRUST_OUTBOX_NAME_RE.fullmatch(name):
+                raise ValueError(f"trust settlement outbox filename invalid: {name}")
+            outbox_payload = _read_trust_outbox(outbox_path)
+            if outbox_payload is None:
+                skipped += 1
+                continue
+            run_id = str(outbox_payload.get("run_id") or "")
+            journal = Path(str(outbox_payload.get("journal") or "")).expanduser()
+            if not journal.is_absolute():
+                raise ValueError("trust settlement outbox journal path invalid")
+            with run_mutation_locks(
+                control_plane.control_plane_home(),
+                run_id=run_id,
+            ):
+                recovered_entry = _recover_trust_outbox(
+                    run_id=run_id,
+                    outbox_path=outbox_path,
+                    expected_journal=journal,
+                )
+            if recovered_entry is None:
+                skipped += 1
+                continue
+            receipt_payload = recovered_entry.get("trust_receipt")
+            if not isinstance(receipt_payload, Mapping):
+                raise TypeError("recovered trust receipt missing")
+            receipt = TrustReceiptV1.from_payload(receipt_payload)
+            recovered.append(
+                TrustRecoverySuccess(
+                    run_id=receipt.run_id,
+                    receipt_id=receipt.receipt_id,
+                    settlement_revision=receipt.settlement_revision,
+                )
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            errors.append(
+                _trust_recovery_error(
+                    outbox_path,
+                    run_id=run_id,
+                    error=exc,
+                )
+            )
+
+    return TrustRecoveryReport(
+        scanned=len(names),
+        recovered=tuple(recovered),
+        errors=tuple(errors),
+        skipped=skipped,
+        truncated=truncated,
+    )
 
 
 def _persist_trust_settlement(
@@ -1391,6 +1876,9 @@ def _persist_trust_settlement(
         "projection_fields": fields,
         "event": event.to_payload(),
     }
+    outbox_dir = _ensure_trust_outbox_directory()
+    if Path(os.path.abspath(outbox_path.parent.expanduser())) != outbox_dir:
+        raise PermissionError("trust settlement outbox directory mismatch")
     control_plane._write_json_durable(outbox_path, outbox)
     _after_trust_transition("outbox")
     persisted = _recover_trust_outbox(

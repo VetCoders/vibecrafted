@@ -381,6 +381,58 @@ def _trust_run_fixture(
     return repo, sha, tmp_path / "journal.jsonl", meta, snapshot
 
 
+def _wait_for_child(pid: int, *, expected_exit: int) -> None:
+    waited, status = os.waitpid(pid, 0)
+    assert waited == pid
+    assert os.waitstatus_to_exitcode(status) == expected_exit
+
+
+def _fresh_process_recovery_report(report_path: Path) -> dict[str, object]:
+    pid = os.fork()
+    if pid == 0:  # pragma: no branch - the child never returns to pytest
+        try:
+            report = trust.recover_pending_trust_settlements()
+            payload = {
+                "scanned": report.scanned,
+                "recovered": [
+                    {
+                        "run_id": item.run_id,
+                        "receipt_id": item.receipt_id,
+                        "settlement_revision": item.settlement_revision,
+                    }
+                    for item in report.recovered
+                ],
+                "errors": [
+                    {
+                        "outbox_path": item.outbox_path,
+                        "run_id": item.run_id,
+                        "error_type": item.error_type,
+                        "message": item.message,
+                        "retryable": item.retryable,
+                    }
+                    for item in report.errors
+                ],
+                "skipped": report.skipped,
+                "truncated": report.truncated,
+                "ok": report.ok,
+            }
+            report_path.write_text(json.dumps(payload), encoding="utf-8")
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "child_error": type(exc).__name__,
+                        "message": str(exc),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            os._exit(98)
+        os._exit(0)
+    _wait_for_child(pid, expected_exit=0)
+    return json.loads(report_path.read_text(encoding="utf-8"))
+
+
 def test_trust_transaction_orders_outbox_journal_projection_then_event(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -389,13 +441,17 @@ def test_trust_transaction_orders_outbox_journal_projection_then_event(
         tmp_path, monkeypatch, run_id="run-order"
     )
     order: list[str] = []
-    original_append = trust._append_jsonl
+    original_recover_journal = trust._recover_prepared_journal_entry
     original_write = trust.control_plane._write_json_durable
     original_publish = trust._publish_trust_event
 
-    def append(path, payload):
+    def recover_journal(path, payload, *, receipt_id):
         order.append("journal")
-        return original_append(path, payload)
+        return original_recover_journal(
+            path,
+            payload,
+            receipt_id=receipt_id,
+        )
 
     def write(path, payload):
         if "trust_settlement_outbox" in path.parts:
@@ -410,7 +466,11 @@ def test_trust_transaction_orders_outbox_journal_projection_then_event(
         order.append("event")
         return original_publish(event)
 
-    monkeypatch.setattr(trust, "_append_jsonl", append)
+    monkeypatch.setattr(
+        trust,
+        "_recover_prepared_journal_entry",
+        recover_journal,
+    )
     monkeypatch.setattr(trust.control_plane, "_write_json_durable", write)
     monkeypatch.setattr(trust, "_publish_trust_event", publish)
 
@@ -533,6 +593,80 @@ def test_trust_recovery_after_every_durable_transition_is_exactly_once(
     )
 
 
+@pytest.mark.parametrize("transition", ["outbox", "journal", "meta", "snapshot"])
+def test_fresh_process_sweep_recovers_after_hard_exit_at_each_transition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    transition: str,
+) -> None:
+    run_id = f"run-hard-exit-{transition}"
+    repo, sha, journal, meta_path, snapshot_path = _trust_run_fixture(
+        tmp_path,
+        monkeypatch,
+        run_id=run_id,
+    )
+    claims = [
+        {
+            "claim": f"hard exit after {transition}",
+            "grade": "strong",
+            "evidence": "fresh process recovery sweep",
+        }
+    ]
+    exit_code = 80
+    pid = os.fork()
+    if pid == 0:  # pragma: no branch - the child never returns to pytest
+
+        def stop_after(durable_transition: str) -> None:
+            if durable_transition == transition:
+                os._exit(exit_code)
+
+        trust._after_trust_transition = stop_after
+        trust.note_verdict(
+            repo=repo,
+            journal=journal,
+            sha=sha,
+            verdict="pass-with-gaps",
+            run_id=run_id,
+            claims=claims,
+        )
+        os._exit(97)
+    _wait_for_child(pid, expected_exit=exit_code)
+
+    outbox_path = trust._trust_outbox_path(run_id)
+    prepared = json.loads(outbox_path.read_text(encoding="utf-8"))
+    expected_receipt = prepared["trust_receipt"]
+    report = _fresh_process_recovery_report(
+        tmp_path / f"recovery-report-{transition}.json"
+    )
+
+    assert report["ok"] is True
+    assert report["errors"] == []
+    assert report["recovered"] == [
+        {
+            "run_id": run_id,
+            "receipt_id": expected_receipt["receipt_id"],
+            "settlement_revision": expected_receipt["settlement_revision"],
+        }
+    ]
+    assert not outbox_path.exists()
+    records = trust._read_journal(journal)
+    assert len(records) == 1
+    assert records[0]["trust_receipt"] == expected_receipt
+    for projection_path in (meta_path, snapshot_path):
+        projection = json.loads(projection_path.read_text(encoding="utf-8"))
+        assert projection["trust_receipt"] == expected_receipt
+        assert projection["settlement_revision"] == 1
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "crafted" / "control_plane" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if json.loads(line).get("kind") == "settlement.changed"
+    ]
+    assert len(events) == 1
+    assert events[0]["payload"]["trust_receipt"] == expected_receipt
+
+
 def test_trust_crash_after_projection_recovers_same_receipt_and_event(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -587,6 +721,187 @@ def test_trust_crash_after_projection_recovers_same_receipt_and_event(
     assert [event["payload"]["trust_receipt"]["receipt_id"] for event in events] == [
         receipt_id
     ]
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    ['run-quote-"', "run-backslash-\\", "run-newline-\n-mid"],
+    ids=["quoted", "backslash", "newline"],
+)
+def test_event_replay_deduplicates_json_escaped_event_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    run_id: str,
+) -> None:
+    repo, sha, journal, _meta, _snapshot = _trust_run_fixture(
+        tmp_path,
+        monkeypatch,
+        run_id=run_id,
+    )
+    claims = [
+        {
+            "claim": "escaped event key remains exactly once",
+            "grade": "strong",
+            "evidence": "publish-before-ack replay",
+        }
+    ]
+    original_publish = trust._publish_trust_event
+    published_once = False
+
+    def publish_then_crash(event):
+        nonlocal published_once
+        result = original_publish(event)
+        if not published_once:
+            published_once = True
+            raise OSError("crash after publish before acknowledgement")
+        return result
+
+    monkeypatch.setattr(trust, "_publish_trust_event", publish_then_crash)
+    with pytest.raises(OSError, match="before acknowledgement"):
+        trust.note_verdict(
+            repo=repo,
+            journal=journal,
+            sha=sha,
+            verdict="pass-with-gaps",
+            run_id=run_id,
+            claims=claims,
+        )
+    outbox_path = trust._trust_outbox_path(run_id)
+    assert outbox_path.is_file()
+    monkeypatch.setattr(trust, "_publish_trust_event", original_publish)
+
+    recovered = trust.note_verdict(
+        repo=repo,
+        journal=journal,
+        sha=sha,
+        verdict="pass-with-gaps",
+        run_id=run_id,
+        claims=claims,
+    )
+
+    assert not outbox_path.exists()
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "crafted" / "control_plane" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if json.loads(line).get("kind") == "settlement.changed"
+    ]
+    assert len(events) == 1
+    assert events[0]["run_id"] == run_id
+    assert events[0]["payload"]["event_key"] == (
+        f"{run_id}:1:{recovered['trust_receipt']['receipt_id']}"
+    )
+
+
+def test_publish_must_be_exactly_observable_before_outbox_acknowledgement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "run-post-publish-verification"
+    repo, sha, journal, _meta, _snapshot = _trust_run_fixture(
+        tmp_path,
+        monkeypatch,
+        run_id=run_id,
+    )
+    claims = [
+        {
+            "claim": "publish is verified before ack",
+            "grade": "strong",
+            "evidence": "empty publisher leaves prepared outbox",
+        }
+    ]
+    original_publish = trust._publish_trust_event
+    monkeypatch.setattr(trust, "_publish_trust_event", lambda _event: {})
+
+    with pytest.raises(OSError, match="event durability verification failed"):
+        trust.note_verdict(
+            repo=repo,
+            journal=journal,
+            sha=sha,
+            verdict="pass-with-gaps",
+            run_id=run_id,
+            claims=claims,
+        )
+
+    outbox_path = trust._trust_outbox_path(run_id)
+    outbox = json.loads(outbox_path.read_text(encoding="utf-8"))
+    assert not outbox.get("published_event_key")
+    event_path = tmp_path / "crafted" / "control_plane" / "events.jsonl"
+    assert not event_path.exists()
+
+    monkeypatch.setattr(trust, "_publish_trust_event", original_publish)
+    report = trust.recover_pending_trust_settlements()
+
+    assert report.ok
+    assert [item.run_id for item in report.recovered] == [run_id]
+    assert not outbox_path.exists()
+    events = [
+        json.loads(line)
+        for line in event_path.read_text(encoding="utf-8").splitlines()
+        if json.loads(line).get("kind") == "settlement.changed"
+    ]
+    assert len(events) == 1
+
+
+def test_acknowledged_outbox_republishes_event_missing_from_retention_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "run-acknowledged-event-pruned"
+    repo, sha, journal, _meta, _snapshot = _trust_run_fixture(
+        tmp_path,
+        monkeypatch,
+        run_id=run_id,
+    )
+    claims = [
+        {
+            "claim": "acknowledgement never outranks retained event truth",
+            "grade": "strong",
+            "evidence": "missing acknowledged event is republished",
+        }
+    ]
+
+    def stop_after_ack(transition: str) -> None:
+        if transition == "event":
+            raise OSError("stop after event acknowledgement")
+
+    monkeypatch.setattr(trust, "_after_trust_transition", stop_after_ack)
+    with pytest.raises(OSError, match="after event acknowledgement"):
+        trust.note_verdict(
+            repo=repo,
+            journal=journal,
+            sha=sha,
+            verdict="pass-with-gaps",
+            run_id=run_id,
+            claims=claims,
+        )
+
+    outbox_path = trust._trust_outbox_path(run_id)
+    acknowledged = json.loads(outbox_path.read_text(encoding="utf-8"))
+    event_key = acknowledged["published_event_key"]
+    assert event_key
+    event_path = tmp_path / "crafted" / "control_plane" / "events.jsonl"
+    retained = [
+        raw
+        for raw in event_path.read_text(encoding="utf-8").splitlines()
+        if json.loads(raw).get("kind") != "settlement.changed"
+    ]
+    event_path.write_text("\n".join(retained) + "\n", encoding="utf-8")
+    monkeypatch.setattr(trust, "_after_trust_transition", lambda _name: None)
+
+    report = trust.recover_pending_trust_settlements()
+
+    assert report.ok
+    assert [item.run_id for item in report.recovered] == [run_id]
+    assert not outbox_path.exists()
+    events = [
+        json.loads(line)
+        for line in event_path.read_text(encoding="utf-8").splitlines()
+        if json.loads(line).get("kind") == "settlement.changed"
+    ]
+    assert len(events) == 1
+    assert events[0]["payload"]["event_key"] == event_key
 
 
 def test_trust_missing_snapshot_recovers_full_meta_projection(
@@ -899,6 +1214,233 @@ def test_journal_write_all_completes_repeated_short_writes(
     trust._append_jsonl(journal, {"record": "complete"})
 
     assert trust._read_journal(journal) == [{"record": "complete"}]
+
+
+def test_hard_exit_during_prepared_append_repairs_only_exact_torn_prefix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "run-torn-prepared-append"
+    repo, sha, journal, meta_path, snapshot_path = _trust_run_fixture(
+        tmp_path,
+        monkeypatch,
+        run_id=run_id,
+    )
+    claims = [
+        {
+            "claim": "repair exact torn append",
+            "grade": "strong",
+            "evidence": "hard os._exit inside journal write",
+        }
+    ]
+    exit_code = 81
+    pid = os.fork()
+    if pid == 0:  # pragma: no branch - the child never returns to pytest
+        real_write = trust._journal_write
+
+        def write_prefix_then_exit(descriptor: int, data: bytes) -> int:
+            prefix_size = max(1, len(data) // 2)
+            real_write(descriptor, data[:prefix_size])
+            os.fsync(descriptor)
+            os._exit(exit_code)
+
+        trust._journal_write = write_prefix_then_exit
+        trust.note_verdict(
+            repo=repo,
+            journal=journal,
+            sha=sha,
+            verdict="pass-with-gaps",
+            run_id=run_id,
+            claims=claims,
+        )
+        os._exit(97)
+    _wait_for_child(pid, expected_exit=exit_code)
+
+    outbox_path = trust._trust_outbox_path(run_id)
+    prepared = json.loads(outbox_path.read_text(encoding="utf-8"))
+    expected_entry = prepared["journal_entry"]
+    expected_receipt = prepared["trust_receipt"]
+    torn = journal.read_bytes()
+    expected_encoded = (
+        json.dumps(expected_entry, sort_keys=True, ensure_ascii=False) + "\n"
+    ).encode("utf-8")
+    assert torn
+    assert not torn.endswith(b"\n")
+    assert expected_encoded.startswith(torn)
+
+    report = _fresh_process_recovery_report(tmp_path / "torn-recovery-report.json")
+
+    assert report["ok"] is True
+    assert report["errors"] == []
+    assert report["recovered"] == [
+        {
+            "run_id": run_id,
+            "receipt_id": expected_receipt["receipt_id"],
+            "settlement_revision": 1,
+        }
+    ]
+    assert trust._read_journal(journal) == [expected_entry]
+    assert not outbox_path.exists()
+    for path in (meta_path, snapshot_path):
+        projection = json.loads(path.read_text(encoding="utf-8"))
+        assert projection["trust_receipt"] == expected_receipt
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "crafted" / "control_plane" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if json.loads(line).get("kind") == "settlement.changed"
+    ]
+    assert len(events) == 1
+    assert events[0]["payload"]["trust_receipt"] == expected_receipt
+
+
+@pytest.mark.parametrize(
+    "foreign_tail",
+    [
+        b"not-json\n",
+        b'{"record":"complete-foreign"}',
+        b'{"record":',
+    ],
+    ids=["complete-corrupt", "complete-unterminated", "foreign-partial"],
+)
+def test_recovery_refuses_corrupt_or_foreign_journal_tail_without_deleting_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    foreign_tail: bytes,
+) -> None:
+    run_id = "run-refuse-foreign-tail"
+    repo, sha, journal, meta_path, snapshot_path = _trust_run_fixture(
+        tmp_path,
+        monkeypatch,
+        run_id=run_id,
+    )
+
+    def stop_after_outbox(transition: str) -> None:
+        if transition == "outbox":
+            raise OSError("stop after prepared outbox")
+
+    monkeypatch.setattr(trust, "_after_trust_transition", stop_after_outbox)
+    with pytest.raises(OSError, match="stop after prepared outbox"):
+        trust.note_verdict(
+            repo=repo,
+            journal=journal,
+            sha=sha,
+            verdict="pass-with-gaps",
+            run_id=run_id,
+            claims=[
+                {
+                    "claim": "foreign tail is never ours to erase",
+                    "grade": "strong",
+                    "evidence": "fail-closed recovery report",
+                }
+            ],
+        )
+    outbox_path = trust._trust_outbox_path(run_id)
+    journal.write_bytes(foreign_tail)
+    journal.chmod(0o600)
+    monkeypatch.setattr(trust, "_after_trust_transition", lambda _name: None)
+
+    report = trust.recover_pending_trust_settlements()
+
+    assert report.scanned == 1
+    assert report.recovered == ()
+    assert len(report.errors) == 1
+    assert report.errors[0].run_id == run_id
+    assert report.errors[0].retryable is False
+    assert journal.read_bytes() == foreign_tail
+    assert outbox_path.is_file()
+    assert "trust_receipt" not in json.loads(meta_path.read_text(encoding="utf-8"))
+    assert "trust_receipt" not in json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert not (tmp_path / "crafted" / "control_plane" / "events.jsonl").exists()
+
+
+def test_recovery_sweep_is_bounded_and_reports_non_authority_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    crafted_home = tmp_path / "crafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
+    outbox_dir = trust._trust_outbox_dir()
+    outbox_dir.mkdir(parents=True)
+    (outbox_dir / "foreign-one.json").write_text("{}", encoding="utf-8")
+    (outbox_dir / "foreign-two.json").write_text("{}", encoding="utf-8")
+
+    report = trust.recover_pending_trust_settlements(limit=1)
+
+    assert report.scanned == 1
+    assert report.truncated is True
+    assert report.recovered == ()
+    assert len(report.errors) == 1
+    assert "filename invalid" in report.errors[0].message
+    assert report.ok is False
+
+
+def test_recovery_sweep_refuses_symlinked_outbox_without_touching_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    crafted_home = tmp_path / "crafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
+    outbox_dir = trust._trust_outbox_dir()
+    outbox_dir.mkdir(parents=True)
+    victim = tmp_path / "victim.json"
+    victim.write_text('{"application":"unrelated"}\n', encoding="utf-8")
+    victim.chmod(0o600)
+    symlink = outbox_dir / f"{'a' * 64}.json"
+    symlink.symlink_to(victim)
+
+    report = trust.recover_pending_trust_settlements()
+
+    assert report.scanned == 1
+    assert report.recovered == ()
+    assert len(report.errors) == 1
+    assert report.errors[0].error_type == "OSError"
+    assert victim.read_text(encoding="utf-8") == '{"application":"unrelated"}\n'
+    assert symlink.is_symlink()
+
+
+def test_note_refuses_symlinked_outbox_directory_before_prepared_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "run-symlinked-outbox-dir"
+    repo, sha, journal, meta_path, snapshot_path = _trust_run_fixture(
+        tmp_path,
+        monkeypatch,
+        run_id=run_id,
+    )
+    outbox_dir = trust._trust_outbox_dir()
+    victim = tmp_path / "foreign-outbox-dir"
+    victim.mkdir()
+    outbox_dir.symlink_to(victim, target_is_directory=True)
+
+    with pytest.raises(PermissionError, match="not canonical"):
+        trust.note_verdict(
+            repo=repo,
+            journal=journal,
+            sha=sha,
+            verdict="pass-with-gaps",
+            run_id=run_id,
+            claims=[
+                {
+                    "claim": "prepared authority stays in its exact directory",
+                    "grade": "strong",
+                    "evidence": "symlink target remains untouched",
+                }
+            ],
+        )
+
+    assert list(victim.iterdir()) == []
+    assert not journal.exists()
+    assert "trust_receipt" not in json.loads(meta_path.read_text(encoding="utf-8"))
+    assert "trust_receipt" not in json.loads(snapshot_path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("limit", [0, trust.TRUST_RECOVERY_MAX_LIMIT + 1])
+def test_recovery_sweep_rejects_unbounded_limits(limit: int) -> None:
+    with pytest.raises(ValueError, match="recovery limit"):
+        trust.recover_pending_trust_settlements(limit=limit)
 
 
 def test_guardian_resume_authority_is_exact_and_legacy_is_terminal(
