@@ -21,6 +21,19 @@ import pytest
 from scripts import vetcoders_install as installer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+_RUNTIME_LOADED_SERVICE_HOME = installer._runtime_loaded_service_home
+
+
+@pytest.fixture(autouse=True)
+def _isolate_fixed_runtime_label(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Transaction tests never inspect or mutate the operator's live label."""
+
+    monkeypatch.setattr(
+        installer,
+        "_canonical_operator_home",
+        lambda: Path.home().resolve(strict=False),
+    )
+    monkeypatch.setattr(installer, "_runtime_loaded_service_home", lambda: None)
 
 
 def _write_executable(path: Path, body: str) -> None:
@@ -619,6 +632,461 @@ environment = {{
                 "",
             ),
         )
+
+
+def test_loaded_runtime_home_is_attributed_from_launchd_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shared_home = tmp_path / "owned" / ".vibecrafted"
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        installer,
+        "_runtime_launchctl",
+        lambda *_arguments: subprocess.CompletedProcess(
+            ["launchctl", "print"],
+            0,
+            (
+                "environment = {\n"
+                f"    VIBECRAFTED_HOME => {shared_home}\n"
+                "}\n"
+            ),
+            "",
+        ),
+    )
+
+    assert _RUNTIME_LOADED_SERVICE_HOME() == shared_home.resolve(strict=False)
+
+
+def test_loaded_runtime_home_without_attribution_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        installer,
+        "_runtime_launchctl",
+        lambda *_arguments: subprocess.CompletedProcess(
+            ["launchctl", "print"],
+            0,
+            "environment = {\n    HOME => /tmp/operator\n}\n",
+            "",
+        ),
+    )
+
+    with pytest.raises(OSError, match="no attributable VIBECRAFTED_HOME"):
+        _RUNTIME_LOADED_SERVICE_HOME()
+
+
+def test_loaded_runtime_home_accepts_exact_launchctl_missing_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        installer,
+        "_runtime_launchctl",
+        lambda *_arguments: subprocess.CompletedProcess(
+            ["launchctl", "print"],
+            113,
+            "",
+            (
+                "Bad request.\n"
+                f'Could not find service "{installer._RUNTIME_SERVICE_LABEL}" '
+                "in domain for user gui: 501\n"
+            ),
+        ),
+    )
+
+    assert _RUNTIME_LOADED_SERVICE_HOME() is None
+
+
+def test_loaded_runtime_home_rejects_non_absence_launchctl_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        installer,
+        "_runtime_launchctl",
+        lambda *_arguments: subprocess.CompletedProcess(
+            ["launchctl", "print"],
+            5,
+            "",
+            "permission denied",
+        ),
+    )
+
+    with pytest.raises(OSError, match="ownership query failed.*permission denied"):
+        _RUNTIME_LOADED_SERVICE_HOME()
+
+
+def test_bootout_never_hides_loaded_job_when_owned_plist_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        installer,
+        "_runtime_launchctl",
+        lambda *_arguments: subprocess.CompletedProcess(
+            ["launchctl", "print"],
+            0,
+            "loaded job\n",
+            "",
+        ),
+    )
+    monkeypatch.setattr(
+        installer,
+        "_assert_runtime_launchd_job_owned",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError("loaded runtime service has no readable owned LaunchAgent plist")
+        ),
+    )
+
+    with pytest.raises(OSError, match="no readable owned LaunchAgent plist"):
+        installer._bootout_owned_runtime_launchd_job(tmp_path / ".vibecrafted")
+
+
+def test_bootout_rejects_ambiguous_launchctl_observation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        installer,
+        "_runtime_launchctl",
+        lambda *_arguments: subprocess.CompletedProcess(
+            ["launchctl", "print"],
+            5,
+            "",
+            "permission denied",
+        ),
+    )
+
+    with pytest.raises(OSError, match="ownership query failed.*permission denied"):
+        installer._bootout_owned_runtime_launchd_job(tmp_path / ".vibecrafted")
+
+
+def test_bootout_rejects_ambiguous_postcondition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observations = iter(
+        (
+            subprocess.CompletedProcess(["launchctl", "print"], 0, "loaded\n", ""),
+            subprocess.CompletedProcess(
+                ["launchctl", "print"],
+                5,
+                "",
+                "permission denied",
+            ),
+        )
+    )
+
+    def launchctl(*arguments: str) -> subprocess.CompletedProcess[str]:
+        if arguments[0] == "bootout":
+            return subprocess.CompletedProcess(list(arguments), 0, "", "")
+        return next(observations)
+
+    monkeypatch.setattr(installer, "_runtime_launchctl", launchctl)
+    monkeypatch.setattr(
+        installer,
+        "_assert_runtime_launchd_job_owned",
+        lambda *_args, **_kwargs: True,
+    )
+
+    with pytest.raises(OSError, match="ownership query failed.*permission denied"):
+        installer._bootout_owned_runtime_launchd_job(tmp_path / ".vibecrafted")
+
+
+def test_same_home_loaded_label_counts_as_runtime_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shared_home = tmp_path / ".vibecrafted"
+    monkeypatch.setattr(
+        installer,
+        "_runtime_loaded_service_home",
+        lambda: shared_home.resolve(strict=False),
+    )
+
+    assert installer._runtime_service_has_evidence(shared_home) is True
+
+
+def test_foreign_loaded_label_refuses_managed_policy_before_gate_or_child(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "alternate-home"
+    shared_home = home / ".vibecrafted"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    old_target = tools / "vibecrafted-generation-old"
+    current = tools / "vibecrafted-current"
+    child_marker = tmp_path / "child-ran"
+    launchd_mutations: list[bool] = []
+    _write_valid_runtime_generation(old_target)
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.symlink_to(old_target.name)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(shared_home))
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        installer,
+        "_runtime_loaded_service_home",
+        lambda: tmp_path / "operator-home" / ".vibecrafted",
+    )
+    monkeypatch.setattr(
+        installer,
+        "_set_runtime_launchd_disabled",
+        lambda disabled: launchd_mutations.append(disabled),
+    )
+
+    result = installer.run_with_tools_install_lease(
+        shared_home,
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; import sys; Path(sys.argv[1]).touch()",
+            str(child_marker),
+        ],
+        service_policy="ensure",
+    )
+    captured = capfd.readouterr()
+
+    assert result == 126
+    assert "fixed-label runtime service belongs to foreign home" in captured.err
+    assert launchd_mutations == []
+    assert not child_marker.exists()
+    assert current.resolve() == old_target.resolve()
+
+
+def test_alternate_home_requires_explicit_isolated_service_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "alternate-home"
+    shared_home = home / ".vibecrafted"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    child_marker = tmp_path / "child-ran"
+    launchd_mutations: list[bool] = []
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(shared_home))
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        installer,
+        "_canonical_operator_home",
+        lambda: tmp_path / "canonical-operator-home",
+    )
+    monkeypatch.setattr(
+        installer,
+        "_runtime_loaded_service_home",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("alternate HOME reached the global runtime label")
+        ),
+    )
+    monkeypatch.setattr(
+        installer,
+        "_set_runtime_launchd_disabled",
+        lambda disabled: launchd_mutations.append(disabled),
+    )
+
+    result = installer.run_with_tools_install_lease(
+        shared_home,
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; import sys; Path(sys.argv[1]).touch()",
+            str(child_marker),
+        ],
+        service_policy="preserve",
+        require_tools_handoff=False,
+    )
+    captured = capfd.readouterr()
+
+    assert result == 126
+    assert "managed runtime service requires the canonical operator HOME" in (
+        captured.err
+    )
+    assert "Use service policy 'isolated'" in captured.err
+    assert launchd_mutations == []
+    assert not child_marker.exists()
+
+
+def test_preserve_policy_always_closes_managed_darwin_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    shared_home = home / ".vibecrafted"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    child_marker = tmp_path / "child-ran"
+    disabled_events: list[bool] = []
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(shared_home))
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    monkeypatch.setattr(installer, "_runtime_loaded_service_home", lambda: None)
+    monkeypatch.setattr(installer, "_runtime_service_snapshot", lambda _home: None)
+    monkeypatch.setattr(
+        installer,
+        "_runtime_launchd_disabled_state",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        installer,
+        "_set_runtime_launchd_disabled",
+        lambda disabled: disabled_events.append(disabled),
+    )
+    monkeypatch.setattr(
+        installer,
+        "_bootout_owned_runtime_launchd_job",
+        lambda _home: False,
+    )
+
+    result = installer.run_with_tools_install_lease(
+        shared_home,
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; import sys; Path(sys.argv[1]).touch()",
+            str(child_marker),
+        ],
+        service_policy="preserve",
+        require_tools_handoff=False,
+    )
+
+    assert result == 0
+    assert child_marker.is_file()
+    assert disabled_events == [True, False]
+
+
+def test_isolated_policy_publishes_without_runtime_service_observation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "sandbox-home"
+    shared_home = home / ".vibecrafted"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    source = tmp_path / "source"
+    current = tools / "vibecrafted-current"
+    _write_complete_source(
+        source,
+        helper='printf "isolated helper\\n"\n',
+        launcher='#!/usr/bin/env bash\nprintf "isolated launcher\\n"\n',
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(shared_home))
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("isolated policy reached runtime service state")
+
+    for name in (
+        "_canonical_operator_home",
+        "_runtime_loaded_service_home",
+        "_runtime_service_snapshot",
+        "_capture_runtime_launch_agent_backup",
+        "_bootout_owned_runtime_launchd_job",
+        "_runtime_launchd_disabled_state",
+        "_set_runtime_launchd_disabled",
+    ):
+        monkeypatch.setattr(installer, name, unexpected)
+
+    child = (
+        "from pathlib import Path; import sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import vetcoders_install as v\n"
+        "v.refresh_current_tools(Path(sys.argv[2]), Path(sys.argv[3]), mirror=True)\n"
+    )
+    result = installer.run_with_tools_install_lease(
+        shared_home,
+        [
+            sys.executable,
+            "-c",
+            child,
+            str(REPO_ROOT / "scripts"),
+            str(source),
+            str(shared_home),
+        ],
+        service_policy="isolated",
+    )
+
+    assert result == 0
+    assert current.is_symlink()
+    assert (current / "runtime" / "shell" / "vetcoders.sh").read_text(
+        encoding="utf-8"
+    ) == 'printf "isolated helper\\n"\n'
+
+
+def test_isolated_policy_rolls_back_without_runtime_service_observation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "sandbox-home"
+    shared_home = home / ".vibecrafted"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    source = tmp_path / "source"
+    old_target = tools / "vibecrafted-generation-old"
+    current = tools / "vibecrafted-current"
+    _write_complete_source(
+        source,
+        helper='printf "replacement helper\\n"\n',
+        launcher='#!/usr/bin/env bash\nprintf "replacement launcher\\n"\n',
+    )
+    _write_valid_runtime_generation(old_target)
+    (old_target / "proof.txt").write_text("old runtime\n", encoding="utf-8")
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.symlink_to(old_target.name)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(shared_home))
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("isolated rollback reached runtime service state")
+
+    for name in (
+        "_canonical_operator_home",
+        "_runtime_loaded_service_home",
+        "_runtime_service_snapshot",
+        "_capture_runtime_launch_agent_backup",
+        "_bootout_owned_runtime_launchd_job",
+        "_runtime_launchd_disabled_state",
+        "_set_runtime_launchd_disabled",
+    ):
+        monkeypatch.setattr(installer, name, unexpected)
+    monkeypatch.setattr(
+        installer,
+        "_complete_current_tools_handoff_locked",
+        lambda _shared_home: (_ for _ in ()).throw(OSError("seal failed")),
+    )
+
+    child = (
+        "from pathlib import Path; import sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import vetcoders_install as v\n"
+        "v.refresh_current_tools(Path(sys.argv[2]), Path(sys.argv[3]), mirror=True)\n"
+    )
+    result = installer.run_with_tools_install_lease(
+        shared_home,
+        [
+            sys.executable,
+            "-c",
+            child,
+            str(REPO_ROOT / "scripts"),
+            str(source),
+            str(shared_home),
+        ],
+        service_policy="isolated",
+    )
+    captured = capfd.readouterr()
+
+    assert result == 126
+    assert "seal failed" in captured.err
+    assert current.resolve() == old_target.resolve()
+    assert (current / "proof.txt").read_text(encoding="utf-8") == "old runtime\n"
 
 
 @pytest.mark.parametrize(
@@ -1554,7 +2022,7 @@ def test_inactive_service_activation_failure_restores_exact_dormant_plist(
             str(source),
             str(shared_home),
         ],
-        ensure_service=True,
+        service_policy="ensure",
     )
 
     assert result == 126
@@ -1669,7 +2137,7 @@ def test_successful_explicit_service_install_repairs_retained_disabled_gate(
             str(source),
             str(shared_home),
         ],
-        ensure_service=True,
+        service_policy="ensure",
     )
 
     assert result == 0
@@ -1678,6 +2146,228 @@ def test_successful_explicit_service_install_repairs_retained_disabled_gate(
     handoff = installer._read_tools_handoff(shared_home)
     assert handoff is not None and handoff["state"] == "complete"
     assert gate_state["disabled"] is False
+
+
+def test_service_activation_waits_for_exact_managed_pair_health(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    shared_home = home / ".vibecrafted"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    current = tools / "vibecrafted-current"
+    launcher = home / ".local" / "bin" / "vibecrafted"
+    current.parent.mkdir(parents=True)
+    _write_runtime_launch_agent(home, shared_home, launcher)
+    stopped = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=False,
+        supervisor_live=False,
+        supervisor_verified=False,
+        supervisor_service_managed=False,
+        build_current=False,
+        pair_healthy=False,
+        supervisor_pid=None,
+    )
+    healthy = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=True,
+        supervisor_live=True,
+        supervisor_verified=True,
+        supervisor_service_managed=True,
+        build_current=True,
+        pair_healthy=True,
+        supervisor_pid=8181,
+    )
+    observations: list[
+        tuple[Path, installer._RuntimeServiceStatus, str] | OSError
+    ] = [
+        (launcher, stopped, "stopped"),
+        installer._RuntimeServiceTransition("supervisor is starting"),
+        (launcher, stopped, "stopped"),
+        (launcher, healthy, "running"),
+    ]
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(shared_home))
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+
+    def snapshot(_shared_home: Path):
+        observation = observations.pop(0)
+        if isinstance(observation, OSError):
+            raise observation
+        return observation
+
+    monkeypatch.setattr(installer, "_runtime_service_snapshot", snapshot)
+    monkeypatch.setattr(
+        installer,
+        "_run_runtime_service_command",
+        lambda _launcher, _shared_home, *arguments: subprocess.CompletedProcess(
+            list(arguments),
+            0,
+            "",
+            "",
+        ),
+    )
+    monkeypatch.setattr(installer.time, "sleep", lambda _seconds: None)
+
+    with installer._tools_install_lease(
+        current,
+        operation="test-bounded-service-activation",
+    ) as descriptor, installer._inherited_tools_install_lease(descriptor):
+        installer.activate_runtime_service_after_install(shared_home)
+
+    assert observations == []
+
+
+def test_service_activation_does_not_retry_invalid_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    shared_home = home / ".vibecrafted"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    current = tools / "vibecrafted-current"
+    launcher = home / ".local" / "bin" / "vibecrafted"
+    current.parent.mkdir(parents=True)
+    _write_runtime_launch_agent(home, shared_home, launcher)
+    stopped = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=False,
+        supervisor_live=False,
+        supervisor_verified=False,
+        supervisor_service_managed=False,
+        build_current=False,
+        pair_healthy=False,
+        supervisor_pid=None,
+    )
+    observations: list[
+        tuple[Path, installer._RuntimeServiceStatus, str] | OSError
+    ] = [
+        (launcher, stopped, "stopped"),
+        OSError("invalid service identity"),
+        (launcher, stopped, "stopped"),
+    ]
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(shared_home))
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+
+    def snapshot(_shared_home: Path):
+        observation = observations.pop(0)
+        if isinstance(observation, OSError):
+            raise observation
+        return observation
+
+    monkeypatch.setattr(installer, "_runtime_service_snapshot", snapshot)
+    monkeypatch.setattr(
+        installer,
+        "_run_runtime_service_command",
+        lambda _launcher, _shared_home, *arguments: subprocess.CompletedProcess(
+            list(arguments),
+            0,
+            "",
+            "",
+        ),
+    )
+
+    with installer._tools_install_lease(
+        current,
+        operation="test-invalid-service-activation",
+    ) as descriptor, installer._inherited_tools_install_lease(
+        descriptor
+    ), pytest.raises(
+        OSError,
+        match="invalid service identity",
+    ):
+        installer.activate_runtime_service_after_install(shared_home)
+
+    assert len(observations) == 1
+
+
+def test_healthy_runtime_snapshot_uses_one_correlated_service_observation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = tmp_path / "vibecrafted"
+    calls: list[tuple[str, ...]] = []
+    payload = {
+        "installed": True,
+        "loaded": True,
+        "supervisor_live": True,
+        "supervisor_verified": True,
+        "supervisor_service_managed": True,
+        "build_current": True,
+        "pair_healthy": True,
+        "supervisor_pid": 8181,
+    }
+    monkeypatch.setattr(
+        installer,
+        "_runtime_service_launcher",
+        lambda _shared_home: launcher,
+    )
+
+    def service_command(
+        _launcher: Path,
+        _shared_home: Path,
+        *arguments: str,
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(arguments)
+        return subprocess.CompletedProcess(
+            list(arguments),
+            0,
+            json.dumps(payload) + "\n",
+            "",
+        )
+
+    monkeypatch.setattr(installer, "_run_runtime_service_command", service_command)
+
+    snapshot = installer._runtime_service_snapshot(tmp_path / ".vibecrafted")
+
+    assert snapshot is not None
+    assert snapshot[1].healthy is True
+    assert snapshot[2] == "running"
+    assert calls == [("service", "status", "--json")]
+
+
+def test_runtime_service_probe_honors_transaction_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    shared_home = home / ".vibecrafted"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    current = tools / "vibecrafted-current"
+    launcher = tmp_path / "slow-launcher"
+    _write_executable(
+        launcher,
+        f"#!{sys.executable}\nimport time\ntime.sleep(5)\n",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(shared_home))
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
+
+    with installer._tools_install_lease(
+        current,
+        operation="test-service-probe-deadline",
+    ) as descriptor, installer._inherited_tools_install_lease(descriptor):
+        token = installer._RUNTIME_SERVICE_COMMAND_DEADLINE.set(
+            time.monotonic() + 0.1
+        )
+        started = time.monotonic()
+        try:
+            with pytest.raises(subprocess.TimeoutExpired):
+                installer._run_runtime_service_command(
+                    launcher,
+                    shared_home,
+                    "service",
+                    "status",
+                    "--json",
+                )
+        finally:
+            installer._RUNTIME_SERVICE_COMMAND_DEADLINE.reset(token)
+
+    assert time.monotonic() - started < 1
 
 
 def test_activation_rejects_healthy_service_with_stale_endpoint_arguments(
@@ -1930,7 +2620,7 @@ def test_operator_interrupt_during_activation_rolls_back_full_transaction(
                 str(shared_home),
                 str(server_bin),
             ],
-            ensure_service=True,
+            service_policy="ensure",
             runtime_payload_paths=(server_bin,),
         )
 
@@ -3155,7 +3845,7 @@ def test_non_darwin_ensure_service_rolls_back_without_macos_snapshot(
             str(source),
             str(shared_home),
         ],
-        ensure_service=True,
+        service_policy="ensure",
     )
 
     assert result == 126
@@ -3551,6 +4241,45 @@ def test_operator_interrupt_contains_owned_installer_child_process_group(
     assert not completed.exists()
 
 
+def test_install_child_allows_bounded_natural_descendant_drain(
+    tmp_path: Path,
+) -> None:
+    grandchild_ready = tmp_path / "grandchild-ready"
+    child = (
+        "from pathlib import Path; import subprocess, sys, time\n"
+        "ready = Path(sys.argv[1])\n"
+        "code = (\n"
+        "    'from pathlib import Path; import sys, time\\n'\n"
+        "    'Path(sys.argv[1]).write_text(\"ready\\\\n\", encoding=\"utf-8\")\\n'\n"
+        "    'time.sleep(0.25)\\n'\n"
+        ")\n"
+        "subprocess.Popen([sys.executable, '-c', code, str(ready)])\n"
+        "deadline = time.monotonic() + 2\n"
+        "while not ready.exists():\n"
+        "    if time.monotonic() >= deadline:\n"
+        "        raise SystemExit(70)\n"
+        "    time.sleep(0.01)\n"
+    )
+
+    class OwnedFence:
+        def assert_owned(self) -> None:
+            return None
+
+    descriptor = os.open("/dev/null", os.O_RDONLY)
+    try:
+        result = installer._run_install_child_with_lifecycle_guard(
+            [sys.executable, "-c", child, str(grandchild_ready)],
+            descriptor=descriptor,
+            environment=os.environ.copy(),
+            lifecycle_guard=OwnedFence(),
+        )
+    finally:
+        os.close(descriptor)
+
+    assert result == 0
+    assert grandchild_ready.is_file()
+
+
 def test_fence_loss_kills_sigterm_ignoring_installer_grandchild(
     tmp_path: Path,
 ) -> None:
@@ -3576,7 +4305,7 @@ def test_fence_loss_kills_sigterm_ignoring_installer_grandchild(
 
     descriptor = os.open("/dev/null", os.O_RDONLY)
     try:
-        with pytest.raises(OSError, match="fence lost"):
+        with pytest.raises(OSError, match=r"fence (?:was )?lost"):
             installer._run_install_child_with_lifecycle_guard(
                 [sys.executable, "-c", child, str(grandchild_ready)],
                 descriptor=descriptor,
@@ -3710,7 +4439,10 @@ def test_generation_gc_preserves_live_recovery_and_interrupted_receipt_targets(
     assert invalid.is_dir()
 
 
-@pytest.mark.parametrize("failure_point", ["stage", "stamp", "rename", "publish"])
+@pytest.mark.parametrize(
+    "failure_point",
+    ["stage", "stamp", "vc-frame", "rename", "publish"],
+)
 def test_runtime_generation_failure_keeps_old_pointer_live(
     tmp_path: Path, monkeypatch, failure_point: str
 ) -> None:
@@ -3727,6 +4459,14 @@ def test_runtime_generation_failure_keeps_old_pointer_live(
             installer,
             "stamp_install_version",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("stamp failed")),
+        )
+    elif failure_point == "vc-frame":
+        monkeypatch.setattr(
+            installer,
+            "_materialize_vc_frame_generation",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                OSError("vc-frame materialization failed")
+            ),
         )
     elif failure_point == "rename":
         original_rename = Path.rename
@@ -3766,14 +4506,30 @@ def test_runtime_generation_pointer_swap_never_removes_current(
 ) -> None:
     source, old_target, current = _runtime_pointer_fixture(tmp_path)
     original_replace = installer.os.replace
-    observations: list[tuple[bool, bool]] = []
+    observations: list[tuple[bool, bool, bool]] = []
 
     def observed_replace(source_path, destination_path) -> None:
         destination = Path(destination_path)
         if destination == current:
             before = current.is_symlink() and current.resolve() == old_target.resolve()
+            raw_target = Path(os.readlink(source_path))
+            if not raw_target.is_absolute():
+                raw_target = Path(source_path).parent / raw_target
+            materialized_before_publish = (
+                raw_target.resolve()
+                / "runtime"
+                / "generated"
+                / "vc-frame"
+                / "config.kdl"
+            ).is_file()
             original_replace(source_path, destination_path)
-            observations.append((before, current.is_symlink() and current.exists()))
+            observations.append(
+                (
+                    before,
+                    current.is_symlink() and current.exists(),
+                    materialized_before_publish,
+                )
+            )
             return
         original_replace(source_path, destination_path)
 
@@ -3786,7 +4542,7 @@ def test_runtime_generation_pointer_swap_never_removes_current(
         install_version="9.9.9+gtest",
     )
 
-    assert observations == [(True, True)]
+    assert observations == [(True, True, True)]
     assert current.resolve() == generation.resolve()
     assert current.resolve() != old_target.resolve()
     assert (current / "scripts" / "vibecrafted").is_file()
@@ -3866,6 +4622,219 @@ def test_runtime_generation_handoff_rolls_back_and_completes(
     assert current.resolve() == completed_target
 
 
+def test_first_runtime_generation_handoff_rolls_back_to_absent_pointer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    current = tools / "vibecrafted-current"
+    source = tmp_path / "source"
+    _write_complete_source(
+        source,
+        helper='printf "new helper\\n"\n',
+        launcher='#!/usr/bin/env bash\nprintf "new launcher\\n"\n',
+    )
+    monkeypatch.setenv("HOME", str(home))
+
+    installer.sync_control_plane_tree(
+        source,
+        current,
+        mirror=True,
+        install_version="9.9.9+gfirst",
+    )
+    published = current.resolve()
+    receipt = installer._read_tools_handoff(home)
+    assert receipt is not None
+    assert receipt["old_target"] == ""
+
+    assert installer.rollback_current_tools(home) is True
+
+    assert not current.exists()
+    assert not current.is_symlink()
+    assert published.is_dir()
+    receipt = installer._read_tools_handoff(home)
+    assert receipt is not None
+    assert receipt["state"] == "rolled-back"
+
+
+def test_existing_target_rollback_retry_completes_prepared_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source, old_target, current = _runtime_pointer_fixture(tmp_path)
+    home = tmp_path / "home"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    tools.parent.mkdir(parents=True)
+    current.parent.rename(tools)
+    current = tools / "vibecrafted-current"
+    old_target = tools / old_target.name
+    monkeypatch.setenv("HOME", str(home))
+
+    installer.sync_control_plane_tree(
+        source,
+        current,
+        mirror=True,
+        install_version="9.9.9+gretry",
+    )
+    installer._atomic_symlink(old_target, current)
+    receipt = installer._read_tools_handoff(home)
+    assert receipt is not None
+    assert receipt["state"] == "prepared"
+
+    assert installer.rollback_current_tools(home) is False
+
+    receipt = installer._read_tools_handoff(home)
+    assert receipt is not None
+    assert receipt["state"] == "rolled-back"
+    assert current.resolve() == old_target.resolve()
+
+
+def test_first_install_receipt_failure_never_republishes_failed_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    current = tools / "vibecrafted-current"
+    source = tmp_path / "source"
+    _write_complete_source(
+        source,
+        helper='printf "new helper\\n"\n',
+        launcher='#!/usr/bin/env bash\nprintf "new launcher\\n"\n',
+    )
+    monkeypatch.setenv("HOME", str(home))
+    installer.sync_control_plane_tree(
+        source,
+        current,
+        mirror=True,
+        install_version="9.9.9+greceipt-fault",
+    )
+    published = current.resolve()
+    real_atomic_json = installer._atomic_json_file
+
+    def fail_after_receipt_replace(path: Path, payload: dict[str, object]) -> None:
+        real_atomic_json(path, payload)
+        if payload.get("state") == "rolled-back":
+            raise OSError("injected post-receipt fsync ambiguity")
+
+    monkeypatch.setattr(
+        installer,
+        "_atomic_json_file",
+        fail_after_receipt_replace,
+    )
+
+    with pytest.raises(OSError, match="injected post-receipt"):
+        installer.rollback_current_tools(home)
+
+    assert not current.exists()
+    assert not current.is_symlink()
+    assert published.is_dir()
+    receipt = installer._read_tools_handoff(home)
+    assert receipt is not None
+    assert receipt["state"] == "rolled-back"
+
+
+def test_darwin_first_install_rollback_fences_with_new_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    shared_home = home / ".vibecrafted"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    current = tools / "vibecrafted-current"
+    source = tmp_path / "source"
+    _write_complete_source(
+        source,
+        helper='printf "new helper\\n"\n',
+        launcher='#!/usr/bin/env bash\nprintf "new launcher\\n"\n',
+        service_lock_contract=True,
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(shared_home))
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
+    installer.sync_control_plane_tree(
+        source,
+        current,
+        mirror=True,
+        install_version="9.9.9+gfirst-darwin",
+    )
+    published = current.resolve()
+    quiescent = installer._RuntimeServiceStatus(
+        installed=False,
+        loaded=False,
+        supervisor_live=False,
+        supervisor_verified=False,
+        supervisor_service_managed=False,
+        build_current=False,
+        pair_healthy=False,
+        supervisor_pid=None,
+    )
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    _mock_runtime_launchd_gate(monkeypatch)
+    monkeypatch.setattr(
+        installer,
+        "_runtime_service_snapshot",
+        lambda _shared_home: (
+            published / "scripts" / "vibecrafted",
+            quiescent,
+            "stopped",
+        ),
+    )
+    monkeypatch.setattr(
+        installer,
+        "_bootout_owned_runtime_launchd_job",
+        lambda _shared_home: False,
+    )
+    fenced_generations: list[Path] = []
+
+    class FenceGuard:
+        def assert_owned(self) -> None:
+            return None
+
+    @contextmanager
+    def lifecycle_fence(_shared_home: Path, *, deck: Path | None = None):
+        assert deck is not None
+        fenced_generations.append(deck)
+        yield FenceGuard()
+
+    @contextmanager
+    def supervisor_fence(_shared_home: Path, *, required: bool):
+        assert required is True
+        yield
+
+    monkeypatch.setattr(
+        installer,
+        "_runtime_lifecycle_handoff_fence",
+        lifecycle_fence,
+    )
+    monkeypatch.setattr(
+        installer,
+        "_runtime_supervisor_handoff_fence",
+        supervisor_fence,
+    )
+
+    with installer._tools_install_lease(
+        current,
+        operation="test-first-install-rollback",
+    ) as descriptor:
+        monkeypatch.setenv(installer._TOOLS_INSTALL_LEASE_ENV, str(descriptor))
+        assert installer.rollback_runtime_install(
+            shared_home,
+            service_was_active=False,
+            service_activation_attempted=True,
+        )
+
+    assert fenced_generations == [
+        published / "scripts" / "vibecrafted",
+    ]
+    assert not current.exists()
+    assert not current.is_symlink()
+    receipt = installer._read_tools_handoff(shared_home)
+    assert receipt is not None
+    assert receipt["state"] == "rolled-back"
+
+
 def test_completed_handoff_is_not_rolled_back_after_next_stage_failure(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -3931,6 +4900,45 @@ def test_portable_runtime_pointer_discards_stale_generation_handoff(
     assert not installer._tools_handoff_file(home).exists()
     assert installer.complete_current_tools_handoff(home) is False
     assert installer.rollback_current_tools(home) is False
+
+
+def test_inherited_install_publishes_generation_when_current_is_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    current = tools / "vibecrafted-current"
+    source = tmp_path / "extracted-source"
+    _write_complete_source(
+        source,
+        helper='printf "portable helper\\n"\n',
+        launcher='#!/usr/bin/env bash\nprintf "portable launcher\\n"\n',
+    )
+    current.parent.mkdir(parents=True)
+    current.symlink_to(source)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
+
+    with installer._tools_install_lease(
+        current,
+        operation="test-root-bootstrap",
+    ) as descriptor, installer._inherited_tools_install_lease(descriptor):
+        refreshed = installer.refresh_current_tools(
+            source,
+            home / ".vibecrafted",
+            mirror=True,
+        )
+
+    assert refreshed == current
+    generation = current.resolve()
+    assert generation != source.resolve()
+    assert generation.name.startswith("vibecrafted-generation-")
+    receipt = installer._read_tools_handoff(home / ".vibecrafted")
+    assert receipt is not None
+    assert receipt["state"] == "prepared"
+    assert Path(receipt["old_target"]).resolve() == source.resolve()
+    assert Path(receipt["new_target"]).resolve() == generation
 
 
 def test_runtime_generation_refuses_legacy_real_directory_without_mutation(

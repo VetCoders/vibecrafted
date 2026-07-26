@@ -267,6 +267,45 @@ def _vc_frame_delivery_findings(
         checkout = vc_frame_config_source()
     except FileNotFoundError:
         pass
+    use_repo = prefer_repo_vc_frame()
+    generated = current / "runtime" / "generated" / "vc-frame"
+    materialized_paths = (
+        generated / "config.kdl",
+        generated / "layouts",
+        generated / "themes",
+    )
+    materialized = all(
+        path.is_file() if path.suffix else path.is_dir()
+        for path in materialized_paths
+    )
+    if use_repo:
+        findings.append(
+            _Finding(
+                "ok",
+                "vc-frame:runtime",
+                "dev-checkout channel does not require a published config generation",
+            )
+        )
+        view_repair = "`vibecrafted config install --prefer-repo`"
+    elif materialized:
+        findings.append(
+            _Finding(
+                "ok",
+                "vc-frame:runtime",
+                f"pre-materialized config present under {generated}",
+            )
+        )
+        view_repair = "`vibecrafted config install`"
+    else:
+        findings.append(
+            _Finding(
+                "fail",
+                "vc-frame:runtime",
+                f"published runtime has no complete pre-materialized config "
+                f"under {generated} — run `vibecrafted update`",
+            )
+        )
+        view_repair = "`vibecrafted update`"
 
     channels: list[str] = []
     for name in ("config.kdl", "layouts", "themes"):
@@ -278,7 +317,7 @@ def _vc_frame_delivery_findings(
                 _Finding(
                     "fail",
                     "vc-frame:view",
-                    f"{path} is a dangling symlink — run `vibecrafted config install`",
+                    f"{path} is a dangling symlink — run {view_repair}",
                 )
             )
         elif ch == "STALE-FILE":
@@ -287,7 +326,7 @@ def _vc_frame_delivery_findings(
                     "fail",
                     "vc-frame:view",
                     f"{path} is a regular file shadowing the store view — "
-                    f"run `vibecrafted config install` (backs up as .stale.*)",
+                    f"run {view_repair} (backs up as .stale.* when wiring)",
                 )
             )
         elif ch == "missing":
@@ -295,7 +334,7 @@ def _vc_frame_delivery_findings(
                 _Finding(
                     "warn",
                     "vc-frame:view",
-                    f"{path} missing — run `vibecrafted config install`",
+                    f"{path} missing — run {view_repair}",
                 )
             )
         elif ch == "foreign":
@@ -382,13 +421,20 @@ def _vc_frame_delivery_findings(
         ):
             unresolved.append(f"{kdl_file.name}:pbcopy")
     if unresolved:
+        remediation = (
+            "dev checkout is intentionally raw; install the referenced host "
+            "commands or unset VIBECRAFTED_PREFER_REPO_VC_FRAME and run "
+            "`vibecrafted update`"
+            if use_repo
+            else "republish host-adapted config via `vibecrafted update`"
+        )
         findings.append(
             _Finding(
                 "warn",
                 "vc-frame:pane-shell",
                 f"unresolved host commands for shell={shell!r}, "
                 f"clipboard={clipboard or 'internal'}: {', '.join(unresolved)}; "
-                "stage via config install",
+                f"{remediation}",
             )
         )
     else:
@@ -409,7 +455,7 @@ def _vc_frame_delivery_findings(
                 "fail",
                 "frontier:zombies",
                 f"{len(zombies)} dangling link(s) under {froot} — "
-                f"re-run install-frontier-config.sh or config install",
+                f"re-run install-frontier-config.sh or `vibecrafted update`",
             )
         )
     else:
@@ -421,7 +467,7 @@ def _vc_frame_delivery_findings(
             )
         )
 
-    if prefer_repo_vc_frame():
+    if use_repo:
         findings.append(
             _Finding(
                 "ok",

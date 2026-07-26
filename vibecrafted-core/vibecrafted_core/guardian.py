@@ -32,6 +32,7 @@ import fcntl
 import hashlib
 import heapq
 import hmac
+import ipaddress
 import json
 import logging
 import math
@@ -67,6 +68,8 @@ from .settlement import (
 from .settlement_history import SettlementHistoryPublisher
 
 LOGGER = logging.getLogger(__name__)
+_DIRECT_URL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_DEFAULT_URL_OPENER = urllib.request.build_opener()
 
 GUARDIAN_STATE_SCHEMA = "vibecrafted.guardian-state.v2"
 GUARDIAN_STATE_SCHEMA_V1 = "vibecrafted.guardian-state.v1"
@@ -646,6 +649,25 @@ ReadyCallback = Callable[[], None]
 GuardEnforcer = Callable[..., object]
 NativeResumer = Callable[..., Mapping[str, object]]
 CursorParser = Callable[[str], CursorToken | None]
+
+
+def _guardian_urlopen(
+    request: str | urllib.request.Request,
+    *,
+    timeout: float,
+) -> Any:
+    """Bypass ambient proxies only for the guardian's loopback control plane."""
+    raw_url = request.full_url if isinstance(request, urllib.request.Request) else request
+    hostname = urllib.parse.urlsplit(raw_url).hostname
+    is_loopback = hostname == "localhost"
+    if hostname and not is_loopback:
+        try:
+            is_loopback = ipaddress.ip_address(hostname).is_loopback
+        except ValueError:
+            pass
+    if is_loopback:
+        return _DIRECT_URL_OPENER.open(request, timeout=timeout)
+    return _DEFAULT_URL_OPENER.open(request, timeout=timeout)
 
 
 def _ignore_triage_schedule(_run_id: str) -> bool:
@@ -2439,7 +2461,7 @@ class GuardianRecoveryAdapter:
         self,
         *,
         server_url: str,
-        opener: UrlOpener = urllib.request.urlopen,
+        opener: UrlOpener = _guardian_urlopen,
         timeout: float = 5.0,
         guard_enforcer: GuardEnforcer = _default_guard_enforcer,
         native_resumer: NativeResumer = _default_native_resumer,
@@ -2667,7 +2689,7 @@ class GuardianWorker:
         notifier: Notifier = notify_operator,
         reconciler: Reconciler = fail_closed_reconcile,
         resume: ResumeCallback | None = None,
-        opener: UrlOpener = urllib.request.urlopen,
+        opener: UrlOpener = _guardian_urlopen,
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
         replay_heartbeats: int = DEFAULT_REPLAY_HEARTBEATS,
         ready_callback: ReadyCallback | None = None,

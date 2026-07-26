@@ -10,6 +10,8 @@ SOURCE   := $(CURDIR)
 BRANCH   ?= main
 VERSION_FILE := VERSION
 RUNTIME ?= none
+INSTALL_SERVER_SERVICE_POLICY ?= ensure
+INSTALL_TOOLS_SERVICE_POLICY ?= preserve
 INSTALLER_CACHE_HOME ?= $(if $(XDG_CACHE_HOME),$(XDG_CACHE_HOME),$(HOME)/.cache)
 INSTALLER_HOST_TAG := $(shell uname -s | tr '[:upper:]' '[:lower:]')-$(shell uname -m)
 UV_PROJECT_ENVIRONMENT ?= $(INSTALLER_CACHE_HOME)/vibecrafted/venvs/installer-$(INSTALLER_HOST_TAG)
@@ -143,7 +145,7 @@ install:
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "runtime tools" -- bash scripts/install-runtime.sh --runtime "$(RUNTIME)" --yes
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "app binaries" -- bash -e -c 'make --no-print-directory install-vendored-binaries; make --no-print-directory install-app-binaries'
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "skills and launchers" -- $(MAKE) --no-print-directory install-bundle-tools
-	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "vc-frame config" -- bash -e -c 'stable_root="$$($(PYTHON) -c '\''import sys; sys.path.insert(0, "$(SOURCE)/vibecrafted-core"); from vibecrafted_core.runtime_paths import vibecrafted_tools_home; print(vibecrafted_tools_home() / "vibecrafted-current")'\'')"; PYTHONPATH="$$stable_root/vibecrafted-core" $(PYTHON) -c "from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config, ensure_zshrc; print(stage_vc_frame_config().render(), end=\"\"); print(ensure_zshrc())"'
+	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "vc-frame config" -- bash -e -c 'export PATH="$$HOME/.local/bin:$$PATH"; stable_root="$$($(PYTHON) -c '\''import sys; sys.path.insert(0, "$(SOURCE)/scripts"); from runtime_paths import vibecrafted_tools_home; print(vibecrafted_tools_home() / "vibecrafted-current")'\'')"; tool_python="$$(uv tool dir)/vibecrafted/bin/python"; test -x "$$tool_python"; PYTHONPATH="$$stable_root/vibecrafted-core" "$$tool_python" -c "from vibecrafted_core.vc_frame_delivery import wire_vc_frame_config, ensure_zshrc; print(wire_vc_frame_config().render(), end=\"\"); print(ensure_zshrc())"'
 	@printf "\nVibecrafted is ready.\n\nStart here:\n  vc-start\n\nHealth:\n  vibecrafted doctor\n\nLog:\n  ~/.vibecrafted/install.log\n"
 
 # `make install` calls `install-python-tools`; it was an empty .PHONY name
@@ -160,6 +162,7 @@ install-bundle-tools:
 else
 install-bundle-tools:
 	@set -eu; \
+	case "$(INSTALL_SERVER_SERVICE_POLICY)" in preserve|ensure|isolated) ;; *) echo "[server] INSTALL_SERVER_SERVICE_POLICY must be preserve, ensure, or isolated" >&2; exit 2 ;; esac; \
 	payload=0; \
 	if command -v cargo >/dev/null 2>&1; then \
 		$(MAKE) --no-print-directory build-server-release; \
@@ -167,7 +170,7 @@ install-bundle-tools:
 	else \
 		echo "[server] cargo not found — preserving the installed server payload" >&2; \
 	fi; \
-	VIBECRAFTED_INSTALL_SERVER_PAYLOAD="$$payload" VIBECRAFTED_INSTALL_SERVER_BIN_DIR="$(BIN_DIR)" VIBECRAFTED_INSTALL_SERVER_SITE_ROOT="$(SERVER_INSTALL_SITE_ROOT)" $(PYTHON) -c 'import os, sys; from pathlib import Path; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; bin_dir = Path(os.environ["VIBECRAFTED_INSTALL_SERVER_BIN_DIR"]); payload = (bin_dir / "$(SERVER_BIN)", bin_dir / "$(SERVER_COMPAT_BIN)", Path(os.environ["VIBECRAFTED_INSTALL_SERVER_SITE_ROOT"])) if os.environ.get("VIBECRAFTED_INSTALL_SERVER_PAYLOAD") == "1" else (); raise SystemExit(v.run_with_tools_install_lease(v.vibecrafted_home(), sys.argv[1:], ensure_service=True, runtime_payload_paths=payload))' "$(MAKE)" --no-print-directory install-tools-held INSTALL_BUNDLE=1 INSTALL_SERVER_PAYLOAD="$$payload"
+	VIBECRAFTED_INSTALL_SERVICE_POLICY="$(INSTALL_SERVER_SERVICE_POLICY)" VIBECRAFTED_INSTALL_SERVER_PAYLOAD="$$payload" VIBECRAFTED_INSTALL_SERVER_BIN_DIR="$(BIN_DIR)" VIBECRAFTED_INSTALL_SERVER_SITE_ROOT="$(SERVER_INSTALL_SITE_ROOT)" $(PYTHON) -c 'import os, sys; from pathlib import Path; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; bin_dir = Path(os.environ["VIBECRAFTED_INSTALL_SERVER_BIN_DIR"]); payload = (bin_dir / "$(SERVER_BIN)", bin_dir / "$(SERVER_COMPAT_BIN)", Path(os.environ["VIBECRAFTED_INSTALL_SERVER_SITE_ROOT"])) if os.environ.get("VIBECRAFTED_INSTALL_SERVER_PAYLOAD") == "1" else (); service_policy = os.environ["VIBECRAFTED_INSTALL_SERVICE_POLICY"]; raise SystemExit(v.run_with_tools_install_lease(v.vibecrafted_home(), sys.argv[1:], service_policy=service_policy, runtime_payload_paths=payload))' "$(MAKE)" --no-print-directory install-tools-held INSTALL_BUNDLE=1 INSTALL_SERVER_PAYLOAD="$$payload"
 endif
 
 # De-fragile contract: the uv-tool editable source is the STABLE runtime home
@@ -184,7 +187,7 @@ install-tools:
 	@printf '%s\n' '[install-tools] dry-run: acquire lease and run install-tools-held'
 else
 install-tools:
-	@$(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; raise SystemExit(v.run_with_tools_install_lease(v.vibecrafted_home(), sys.argv[1:]))' "$(MAKE)" --no-print-directory install-tools-held
+	@VIBECRAFTED_INSTALL_SERVICE_POLICY="$(INSTALL_TOOLS_SERVICE_POLICY)" $(PYTHON) -c 'import os, sys; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; raise SystemExit(v.run_with_tools_install_lease(v.vibecrafted_home(), sys.argv[1:], service_policy=os.environ["VIBECRAFTED_INSTALL_SERVICE_POLICY"]))' "$(MAKE)" --no-print-directory install-tools-held
 endif
 
 # Internal continuation. The outer target waits for this submake while retaining
@@ -203,7 +206,7 @@ install-tools-held:
 		curl -LsSf https://astral.sh/uv/install.sh | sh; \
 	fi; \
 	export PATH="$$HOME/.local/bin:$$PATH"; \
-	stable_root="$$($(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/vibecrafted-core"); from vibecrafted_core.runtime_paths import vibecrafted_tools_home; print(vibecrafted_tools_home() / "vibecrafted-current")')"; \
+	stable_root="$$($(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/scripts"); from runtime_paths import vibecrafted_tools_home; print(vibecrafted_tools_home() / "vibecrafted-current")')"; \
 	if [ "$(INSTALL_BUNDLE)" = "1" ]; then \
 		$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --compact --non-interactive --mirror; \
 	else \

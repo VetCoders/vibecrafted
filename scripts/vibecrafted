@@ -1288,6 +1288,7 @@ import datetime as dt
 import errno
 import fcntl
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -1298,7 +1299,6 @@ import struct
 import subprocess
 import sys
 import time
-import urllib.request
 from pathlib import Path
 
 IDENTITY_SCHEMA = "vibecrafted.managed-process.v1"
@@ -1621,8 +1621,7 @@ def darwin_arguments(
             if item_end < 0:
                 fail(f"cannot parse Darwin environment for {pid}", 4)
             if item_end == position:
-                position += 1
-                continue
+                break
             environment.append(os.fsdecode(raw[position:item_end]))
             position = item_end + 1
         prefix = "VIBECRAFTED_PROCESS_NONCE="
@@ -2254,15 +2253,51 @@ elif operation == "status-read":
             payload.get("port", default_port),
         )
         print(f"{host}\t{port}")
-elif operation == "health":
+elif operation in {"health", "health-wait"}:
     host, port = validate_endpoint(args[0], args[1])
-    request = urllib.request.Request(
-        f"{origin(host, port)}/api/health",
-        headers={"Accept": "application/json"},
-    )
-    with urllib.request.urlopen(request, timeout=1.0) as response:
-        if getattr(response, "status", 200) != 200:
-            fail("server health endpoint did not return HTTP 200", 1)
+
+    def probe_health(timeout: float) -> None:
+        connection = http.client.HTTPConnection(host, port, timeout=timeout)
+        try:
+            connection.request(
+                "GET",
+                "/api/health",
+                headers={"Accept": "application/json"},
+            )
+            response = connection.getresponse()
+            if response.status != 200:
+                raise OSError(
+                    f"server health endpoint returned HTTP {response.status}"
+                )
+            response.read(1024)
+        finally:
+            connection.close()
+
+    if operation == "health":
+        probe_health(1.0)
+    else:
+        pid = int(args[2])
+        timeout = float(args[3])
+        if pid <= 1 or not 0 < timeout <= 60:
+            fail("invalid bounded server health wait", 2)
+        deadline = time.monotonic() + timeout
+        last_error = "health endpoint has not answered"
+        while True:
+            if not process_alive(pid):
+                fail(f"server process {pid} exited before health readiness", 3)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                fail(
+                    f"server health readiness timed out after {timeout:g}s "
+                    f"(last probe: {last_error})",
+                    1,
+                )
+            try:
+                probe_health(min(1.0, remaining))
+                break
+            except (OSError, TimeoutError, http.client.HTTPException) as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+            time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
 elif operation == "port-free":
     host, port = validate_endpoint(args[0], args[1])
     with socket.socket() as probe:
@@ -3475,47 +3510,41 @@ cmd_server() {
       fi
 
       # 5. Wait for health
-      local timeout=15
-      local elapsed=0
       local healthy=0
-      while [[ $elapsed -lt 30 ]]; do
-        local current_state
-        if ! kill -0 "$server_pid" 2>/dev/null; then
+      local current_state
+      local health_error="$runtime_dir/server.health-error.log"
+      if _server_python health-wait "$host" "$port" "$server_pid" "15" \
+        > /dev/null 2> "$health_error"; then
+        current_state="$(_managed_pid_state "$pid_file" "server")"
+        if [[ "$current_state" == "foreign" ]] && \
+          _capture_managed_identity server "$server_pid" "$server_nonce" \
+            "$server_bin" "$server_bin" \
+            > /dev/null 2> "$identity_error"; then
+          rm -f "$identity_error"
           current_state="$(_managed_pid_state "$pid_file" "server")"
-          printf "%b✗%b Server process died immediately. Check log at %s/server.log\n" "$_red" "$_reset" "$runtime_dir" >&2
-          if [[ "$current_state" == "stale" || "$current_state" == "invalid" ]]; then
-            _stop_managed_process server Server >/dev/null || true
+        fi
+        if [[ "$current_state" != "live" ]]; then
+          printf "%b✗%b Server became healthy but its managed identity could not be verified.\n" \
+            "$_red" "$_reset" >&2
+          if _stop_launch_owned_process \
+            server Server "$server_pid" "$server_launcher_pid" "$server_nonce"; then
+            _server_python update-status "$status_file" "failed" "none"
+          else
+            _server_python update-status "$status_file" "failed" "$server_pid"
           fi
-          _server_python update-status "$status_file" "failed" "none"
           return 1
         fi
-        if _server_healthcheck "$host" "$port" >/dev/null 2>&1; then
-          current_state="$(_managed_pid_state "$pid_file" "server")"
-          if [[ "$current_state" == "foreign" ]] && \
-            _capture_managed_identity server "$server_pid" "$server_nonce" \
-              "$server_bin" "$server_bin" \
-              > /dev/null 2> "$identity_error"; then
-            rm -f "$identity_error"
-            current_state="$(_managed_pid_state "$pid_file" "server")"
-          fi
-          if [[ "$current_state" != "live" ]]; then
-            printf "%b✗%b Server became healthy but its managed identity could not be verified.\n" \
-              "$_red" "$_reset" >&2
-            if _stop_launch_owned_process \
-              server Server "$server_pid" "$server_launcher_pid" "$server_nonce"; then
-              _server_python update-status "$status_file" "failed" "none"
-            else
-              _server_python update-status "$status_file" "failed" "$server_pid"
-            fi
-            return 1
-          fi
-          rm -f "$server_witness_file"
-          healthy=1
-          break
+        rm -f "$server_witness_file" "$health_error"
+        healthy=1
+      elif ! kill -0 "$server_pid" 2>/dev/null; then
+        current_state="$(_managed_pid_state "$pid_file" "server")"
+        printf "%b✗%b Server process died immediately. Check log at %s/server.log\n" "$_red" "$_reset" "$runtime_dir" >&2
+        if [[ "$current_state" == "stale" || "$current_state" == "invalid" ]]; then
+          _stop_managed_process server Server >/dev/null || true
         fi
-        sleep 0.5
-        elapsed=$((elapsed + 1))
-      done
+        _server_python update-status "$status_file" "failed" "none"
+        return 1
+      fi
 
       if [[ $healthy -eq 1 ]]; then
         printf "%b✓%b Server is up and healthy at %s\n" \
@@ -3532,8 +3561,11 @@ cmd_server() {
         fi
         return 0
       else
-        printf "%b✗%b Server started but failed health check at %s/api/health after %s seconds.\n" \
-          "$_red" "$_reset" "$(_server_origin "$host" "$port")" "$timeout" >&2
+        local health_detail=""
+        health_detail="$(_pid_file_value "$health_error" 2>/dev/null || true)"
+        printf "%b✗%b Server started but failed health check at %s/api/health after 15 seconds%s.\n" \
+          "$_red" "$_reset" "$(_server_origin "$host" "$port")" \
+          "${health_detail:+: $health_detail}" >&2
         if _stop_managed_process server Server; then
           _server_python update-status "$status_file" "failed" "none"
         elif [[ -f "$server_witness_file" ]] && \

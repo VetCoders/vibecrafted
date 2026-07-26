@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -133,7 +134,19 @@ def _expected_operator_session(run_id: str | None = None) -> str:
     base = (
         re.sub(r"[^a-z0-9]+", "-", REPO_ROOT.name.lower()).strip("-") or "vibecrafted"
     )
-    return f"{base}-{run_id}" if run_id else base
+    full_name = f"{base}-{run_id}" if run_id else base
+    if len(full_name) <= 24:
+        return full_name
+    digest = hashlib.sha256(full_name.encode()).hexdigest()[:4]
+    if run_id:
+        prefix_length = 24 - len(run_id) - len(digest) - 2
+        if prefix_length > 0:
+            prefix = full_name[:prefix_length].rstrip("-") or digest[:1]
+            compact = f"{prefix}-{digest}-{run_id}"
+            if len(compact) <= 24:
+                return compact
+    prefix = full_name[: 24 - len(digest) - 1].rstrip("-") or digest[:1]
+    return f"{prefix}-{digest}"[:24]
 
 
 def _org_repo() -> str:
@@ -709,15 +722,16 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
     payload = capture_file.read_text(encoding="utf-8").splitlines()
     # One marbles run owns a dedicated host session. Its first surface is a
     # fresh marbles tab, never a pane in the operator's active session.
+    expected_session = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
     assert payload[:4] == [
         "--session",
-        "vibecrafted-marb-014520",
+        expected_session,
         "action",
         "new-tab",
     ]
     assert "--name" in payload
     assert "marbles" in " ".join(payload) or "marb-014520" in payload
-    assert "vibecrafted-marb-014520" in payload or "marb-014520" in payload
+    assert expected_session in payload
 
 
 def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
@@ -767,7 +781,8 @@ def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
     assert result.stderr == ""
     payload = capture_file.read_text(encoding="utf-8")
     # Bundled vc-frame must create the tab in the dedicated marbles host.
-    assert "--session\nvibecrafted-marb-014520\naction\nnew-tab\n" in payload
+    expected_session = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+    assert f"--session\n{expected_session}\naction\nnew-tab\n" in payload
     assert result.stdout.endswith(f"PATH={os.defpath}\n")
 
 

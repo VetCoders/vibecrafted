@@ -187,6 +187,11 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
         (dst / "payload.txt").write_text("validated\n", encoding="utf-8")
 
     monkeypatch.setattr(installer, "stage_distribution_payload", fake_stage)
+    monkeypatch.setattr(
+        installer,
+        "_materialize_vc_frame_generation",
+        lambda runtime_root: seen.update(materialized=runtime_root),
+    )
 
     installer.sync_control_plane_tree(source, destination, mirror=True)
 
@@ -194,6 +199,7 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
     assert seen["destination"] != destination
     assert Path(seen["destination"]).parent == destination.parent
     assert seen["mirror"] is True
+    assert seen["materialized"] == seen["destination"]
     assert (destination / "payload.txt").read_text(encoding="utf-8") == "validated\n"
     source_text = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
         encoding="utf-8"
@@ -229,8 +235,17 @@ def test_make_install_stages_vc_frame_from_published_runtime() -> None:
     ]
 
     assert 'PYTHONPATH="$$stable_root/vibecrafted-core"' in install_block
+    assert '"$$tool_python" -c' in install_block
+    assert 'from runtime_paths import vibecrafted_tools_home' in install_block
+    assert install_block.index('export PATH="$$HOME/.local/bin:$$PATH"') < (
+        install_block.index("uv tool dir")
+    )
     assert 'PYTHONPATH="$(SOURCE)/vibecrafted-core"' not in install_block
-    assert "from vibecrafted_core.vc_frame_delivery import" in install_block
+    assert (
+        "from vibecrafted_core.vc_frame_delivery import "
+        "wire_vc_frame_config, ensure_zshrc"
+    ) in install_block
+    assert "stage_vc_frame_config" not in install_block
     assert "vc-frame config delivery skipped" not in install_block
     assert install_block.index("skills and launchers") < install_block.index(
         "vc-frame config"
@@ -689,6 +704,10 @@ def test_make_install_verifies_server_supervisor_entrypoint() -> None:
     assert "$$stable_root/vibecrafted-core" in install_tools_block
     assert "uv tool uninstall" not in install_tools_block
     assert "run_with_tools_install_lease" in install_tools_block
+    assert "INSTALL_TOOLS_SERVICE_POLICY ?= preserve" in text
+    assert 'service_policy=os.environ["VIBECRAFTED_INSTALL_SERVICE_POLICY"]' in (
+        install_tools_block
+    )
     assert "install-bundle-tools:" in text
     assert "install-tools-held" in install_tools_block
     assert "VIBECRAFTED_INSTALL_LEASE_FD" in install_tools_block
@@ -747,7 +766,8 @@ def test_make_install_enables_service_after_server_payload() -> None:
     assert held_block.index("install-server-payload") > held_block.index(
         "uv tool install --force --reinstall"
     )
-    assert "ensure_service=True" in text
+    assert "INSTALL_SERVER_SERVICE_POLICY ?= ensure" in text
+    assert "service_policy=service_policy" in text
     assert 'if [ "$$(uname -s)" != "Darwin" ]' in service_block
     assert 'export PATH="$(BIN_DIR):$$PATH"' in service_block
     assert "command -v vibecrafted" in service_block

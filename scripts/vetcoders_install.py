@@ -29,6 +29,7 @@ import math
 import os
 import plistlib
 import re
+import runpy
 import select
 import shutil
 import signal
@@ -43,7 +44,7 @@ from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 try:
     _distribution_manifest = importlib.import_module("distribution_manifest")
@@ -2629,6 +2630,7 @@ _TOOLS_INSTALL_LEASE_DEFAULT_SECONDS = 180.0
 _TOOLS_GENERATIONS_TO_KEEP = 3
 _RUNTIME_SERVICE_LABEL = "io.vetcoders.vibecrafted.server"
 _RUNTIME_SERVICE_COMMAND_TIMEOUT_SECONDS = 45.0
+_RUNTIME_SERVICE_ACTIVATION_TIMEOUT_SECONDS = 30.0
 _SERVICE_LIFECYCLE_LOCK_MARKER = (
     b"readonly VIBECRAFTED_SERVICE_LIFECYCLE_LOCK_CONTRACT=1"
 )
@@ -2636,6 +2638,14 @@ _RUNTIME_LIFECYCLE_ENV: ContextVar[dict[str, str] | None] = ContextVar(
     "runtime_lifecycle_environment",
     default=None,
 )
+_RUNTIME_SERVICE_COMMAND_DEADLINE: ContextVar[float | None] = ContextVar(
+    "runtime_service_command_deadline",
+    default=None,
+)
+
+
+class _RuntimeServiceTransition(OSError):
+    """A structurally valid service snapshot that may still converge."""
 
 
 @dataclass(frozen=True)
@@ -2910,6 +2920,64 @@ def _require_inherited_tools_install_lease(shared_home: Path) -> int:
     return descriptor
 
 
+def _runtime_launchctl_job_is_absent(
+    result: subprocess.CompletedProcess[str],
+) -> bool:
+    if result.returncode == 0:
+        return False
+    detail = result.stderr.strip() or result.stdout.strip()
+    if (
+        result.returncode == 113
+        and f'Could not find service "{_RUNTIME_SERVICE_LABEL}"' in detail
+    ):
+        return True
+    raise OSError(
+        "fixed-label runtime service ownership query failed "
+        f"({detail or f'exit={result.returncode}'})"
+    )
+
+
+def _runtime_loaded_service_home() -> Path | None:
+    if sys.platform != "darwin":
+        return None
+    result = _runtime_launchctl("print", _runtime_launch_target())
+    if _runtime_launchctl_job_is_absent(result):
+        return None
+    raw_home = _runtime_launchctl_print_value(
+        result.stdout,
+        "VIBECRAFTED_HOME",
+        separator="=>",
+        section="environment",
+    )
+    if not raw_home:
+        raise OSError(
+            "loaded fixed-label runtime service has no attributable "
+            "VIBECRAFTED_HOME"
+        )
+    return Path(raw_home).expanduser().resolve(strict=False)
+
+
+def _canonical_operator_home() -> Path:
+    if sys.platform != "darwin":
+        return Path.home().resolve(strict=False)
+    import pwd
+
+    return Path(pwd.getpwuid(os.getuid()).pw_dir).resolve(strict=False)
+
+
+def _assert_runtime_loaded_service_owner(shared_home: Path) -> Path | None:
+    loaded_home = _runtime_loaded_service_home()
+    if (
+        loaded_home is not None
+        and loaded_home != shared_home.resolve(strict=False)
+    ):
+        raise OSError(
+            "fixed-label runtime service belongs to foreign home "
+            f"{loaded_home}; expected {shared_home.resolve(strict=False)}"
+        )
+    return loaded_home
+
+
 def _runtime_service_has_evidence(shared_home: Path) -> bool:
     runtime_dir = shared_home / "server"
     evidence = (
@@ -2922,25 +2990,8 @@ def _runtime_service_has_evidence(shared_home: Path) -> bool:
     )
     if any(path.exists() or path.is_symlink() for path in evidence):
         return True
-    launchctl = Path("/bin/launchctl")
-    if not launchctl.is_file():
-        return False
-    result = subprocess.run(
-        [
-            str(launchctl),
-            "print",
-            f"gui/{os.getuid()}/{_RUNTIME_SERVICE_LABEL}",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=15,
-        env={
-            "HOME": str(Path.home()),
-            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
-        },
-    )
-    return result.returncode == 0
+    loaded_home = _runtime_loaded_service_home()
+    return loaded_home == shared_home.resolve(strict=False)
 
 
 def _runtime_launchctl(
@@ -3258,22 +3309,21 @@ def _assert_runtime_launchd_job_owned(
 
 
 def _bootout_owned_runtime_launchd_job(shared_home: Path) -> bool:
-    plist_path = _runtime_launch_agent_path()
-    if not plist_path.exists() and not plist_path.is_symlink():
-        return False
     observed = _runtime_launchctl("print", _runtime_launch_target())
-    if observed.returncode != 0:
+    if _runtime_launchctl_job_is_absent(observed):
         return False
     _assert_runtime_launchd_job_owned(shared_home, result=observed)
     result = _runtime_launchctl("bootout", _runtime_launch_target())
     if result.returncode != 0:
         still_loaded = _runtime_launchctl("print", _runtime_launch_target())
-        if still_loaded.returncode == 0:
-            raise OSError(
-                "verified runtime launchd job raced the install fence and could "
-                f"not be unloaded ({result.stderr.strip() or result.returncode})"
-            )
-    if _runtime_launchctl("print", _runtime_launch_target()).returncode == 0:
+        if _runtime_launchctl_job_is_absent(still_loaded):
+            return True
+        raise OSError(
+            "verified runtime launchd job raced the install fence and could "
+            f"not be unloaded ({result.stderr.strip() or result.returncode})"
+        )
+    final_observation = _runtime_launchctl("print", _runtime_launch_target())
+    if not _runtime_launchctl_job_is_absent(final_observation):
         raise OSError("verified runtime launchd job remains loaded after bootout")
     return True
 
@@ -3478,12 +3528,19 @@ def _run_runtime_service_command(
     *arguments: str,
 ) -> subprocess.CompletedProcess[str]:
     descriptor = _require_inherited_tools_install_lease(shared_home)
+    timeout_seconds = _RUNTIME_SERVICE_COMMAND_TIMEOUT_SECONDS
+    deadline = _RUNTIME_SERVICE_COMMAND_DEADLINE.get()
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("runtime service observation deadline expired")
+        timeout_seconds = min(timeout_seconds, remaining)
     return subprocess.run(
         [str(launcher), "server", *arguments],
         check=False,
         capture_output=True,
         text=True,
-        timeout=_RUNTIME_SERVICE_COMMAND_TIMEOUT_SECONDS,
+        timeout=timeout_seconds,
         env=_runtime_service_environment(launcher, shared_home),
         pass_fds=(descriptor,),
     )
@@ -3532,7 +3589,13 @@ def _decode_runtime_service_status(
         supervisor_pid=supervisor_pid,
     )
     expected_returncode = 0 if status.healthy else 1 if status.quiescent else None
-    if expected_returncode is None or result.returncode != expected_returncode:
+    if expected_returncode is None:
+        detail = result.stderr.strip() or f"exit={result.returncode}"
+        raise _RuntimeServiceTransition(
+            "runtime service identity is uncertain while transition is in progress "
+            f"({detail})"
+        )
+    if result.returncode != expected_returncode:
         detail = result.stderr.strip() or f"exit={result.returncode}"
         raise OSError(
             "runtime service identity is uncertain; refusing pre-swap mutation "
@@ -3584,10 +3647,14 @@ def _runtime_service_snapshot(
             "--json",
         )
     )
+    # service_status JSON already proves the managed supervisor and exact
+    # server/guardian pair from one snapshot.  A second text probe would compose
+    # two different moments and can manufacture disagreement across a launchd
+    # restart.
+    if status.healthy:
+        return launcher, status, "running"
     pair_state = _runtime_service_pair_state(launcher, shared_home)
-    if (status.healthy and pair_state != "running") or (
-        status.quiescent and pair_state != "stopped"
-    ):
+    if pair_state != "stopped":
         raise OSError(
             "runtime service and server/guardian observations disagree; "
             "refusing install handoff"
@@ -3767,11 +3834,41 @@ def activate_runtime_service_after_install(
             or f"exit={result.returncode}"
         )
         raise OSError(f"new runtime service activation failed ({detail})")
-    active = _runtime_service_snapshot(shared_home)
-    if active is None or not active[1].healthy or active[2] != "running":
-        raise OSError(
-            "new runtime service activation did not prove a healthy managed pair"
-        )
+    deadline = time.monotonic() + _RUNTIME_SERVICE_ACTIVATION_TIMEOUT_SECONDS
+    last_observation = "no post-install service observation"
+    while True:
+        deadline_token = _RUNTIME_SERVICE_COMMAND_DEADLINE.set(deadline)
+        try:
+            try:
+                active = _runtime_service_snapshot(shared_home)
+            finally:
+                _RUNTIME_SERVICE_COMMAND_DEADLINE.reset(deadline_token)
+        except (
+            _RuntimeServiceTransition,
+            subprocess.TimeoutExpired,
+            TimeoutError,
+        ) as exc:
+            last_observation = str(exc)
+        else:
+            if active is not None and active[1].healthy and active[2] == "running":
+                break
+            if active is None:
+                raise OSError(
+                    "current runtime launcher disappeared during service activation"
+                )
+            status = active[1]
+            last_observation = (
+                f"installed={status.installed}, loaded={status.loaded}, "
+                f"supervisor_live={status.supervisor_live}, "
+                f"pair_healthy={status.pair_healthy}, pair={active[2]}"
+            )
+        if time.monotonic() >= deadline:
+            raise OSError(
+                "new runtime service activation did not prove a healthy managed "
+                f"pair within {_RUNTIME_SERVICE_ACTIVATION_TIMEOUT_SECONDS:g}s "
+                f"(last observation: {last_observation})"
+            )
+        time.sleep(0.2)
     installed = _capture_runtime_launch_agent_backup(shared_home)
     if installed.service_arguments != expected_service_arguments:
         raise OSError(
@@ -3789,6 +3886,7 @@ def rollback_runtime_install(
     payload_backup: _RuntimePayloadBackup | None = None,
     launchd_gate: _RuntimeLaunchdMutationGate | None = None,
     restore_tools_pointer: bool = True,
+    manage_runtime_service: bool = True,
 ) -> bool:
     """Quiesce the new service, restore the pointer, and revive the old service.
 
@@ -3797,7 +3895,8 @@ def rollback_runtime_install(
     than reviving the old generation underneath a process we cannot prove.
     """
     _require_inherited_tools_install_lease(shared_home)
-    darwin_service_attempted = sys.platform == "darwin" and service_activation_attempted
+    darwin_service = sys.platform == "darwin" and manage_runtime_service
+    darwin_service_attempted = darwin_service and service_activation_attempted
     gate_context = (
         _RuntimeLaunchdMutationGate(
             required=darwin_service_attempted
@@ -3837,19 +3936,23 @@ def rollback_runtime_install(
                     "activated runtime service is uncertain; refusing pointer rollback"
                 )
 
-        if sys.platform == "darwin":
+        if darwin_service:
             if lifecycle_deck is None:
                 handoff = _read_tools_handoff(shared_home)
-                old_target = (
-                    Path(handoff["old_target"])
-                    if handoff is not None and handoff["old_target"]
-                    else None
-                )
-                if old_target is None:
+                if handoff is None or handoff["state"] != "prepared":
                     raise OSError(
-                        "runtime rollback has no exact old lifecycle generation"
+                        "runtime rollback has no exact lifecycle generation handoff"
                     )
-                lifecycle_deck = _runtime_lifecycle_deck_for_generation(old_target)
+                lifecycle_target_raw = (
+                    handoff["old_target"] or handoff["new_target"]
+                )
+                if not lifecycle_target_raw:
+                    raise OSError(
+                        "runtime rollback has no exact lifecycle generation"
+                    )
+                lifecycle_deck = _runtime_lifecycle_deck_for_generation(
+                    Path(lifecycle_target_raw)
+                )
             with _runtime_lifecycle_handoff_fence(
                 shared_home,
                 deck=lifecycle_deck,
@@ -4628,10 +4731,12 @@ def _terminate_installer_child_process_group(
             os.killpg(process_group, 0)
         except ProcessLookupError:
             return False
-        except PermissionError as exc:
-            raise OSError(
-                "installer child process group is no longer signalable by its owner"
-            ) from exc
+        except PermissionError:
+            # Darwin can transiently report EPERM while a killed, reparented
+            # descendant is still a zombie in the otherwise-owned group.
+            # Keep waiting for ESRCH; the bounded timeout below still refuses
+            # to call containment complete while an unsignalable group remains.
+            return True
         return True
 
     def wait_for_group_exit(timeout_seconds: float) -> bool:
@@ -4678,14 +4783,22 @@ def _run_install_child_with_lifecycle_guard(
             lifecycle_guard.assert_owned()
             time.sleep(0.05)
         lifecycle_guard.assert_owned()
-        try:
-            os.killpg(process.pid, 0)
-        except ProcessLookupError:
-            pass
-        else:
-            raise OSError(
-                "installer child exited while same-group descendants remained"
-            )
+        # Build/install helpers can outlive their parent for a few scheduling
+        # ticks while flushing caches or reaping children.  Give the isolated
+        # installer group a bounded natural drain before treating survivors as
+        # a failed transaction and containing that group.
+        drain_deadline = time.monotonic() + 5.0
+        while True:
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                break
+            if time.monotonic() >= drain_deadline:
+                raise OSError(
+                    "installer child exited while same-group descendants remained"
+                )
+            lifecycle_guard.assert_owned()
+            time.sleep(0.05)
     except BaseException as fence_exc:
         try:
             _terminate_installer_child_process_group(process)
@@ -4702,7 +4815,7 @@ def run_with_tools_install_lease(
     shared_home: Path,
     argv: Sequence[str],
     *,
-    ensure_service: bool = False,
+    service_policy: Literal["preserve", "ensure", "isolated"] = "preserve",
     runtime_payload_paths: Sequence[Path] = (),
     require_tools_handoff: bool = True,
 ) -> int:
@@ -4711,6 +4824,20 @@ def run_with_tools_install_lease(
         raise ValueError("tools install lease requires a command")
     current_link = _current_tools_link(shared_home)
     try:
+        if service_policy not in {"preserve", "ensure", "isolated"}:
+            raise ValueError(f"unknown runtime service policy: {service_policy!r}")
+        ensure_service = service_policy == "ensure"
+        manage_runtime_service = service_policy != "isolated"
+        darwin_service = sys.platform == "darwin" and manage_runtime_service
+        if darwin_service:
+            configured_home = Path.home().resolve(strict=False)
+            canonical_home = _canonical_operator_home()
+            if configured_home != canonical_home:
+                raise OSError(
+                    "managed runtime service requires the canonical operator HOME "
+                    f"{canonical_home}; got {configured_home}. Use service policy "
+                    "'isolated' for alternate HOME installs"
+                )
         with _tools_install_lease(
             current_link,
             operation="publish-uv-service-reconcile",
@@ -4728,7 +4855,8 @@ def run_with_tools_install_lease(
                 launchd_gate_required = False
                 legacy_service_lock_contract = True
                 legacy_quiescence_proven = True
-                if sys.platform == "darwin":
+                if darwin_service:
+                    _assert_runtime_loaded_service_owner(shared_home)
                     try:
                         current_link.lstat()
                     except FileNotFoundError:
@@ -4745,21 +4873,10 @@ def run_with_tools_install_lease(
                                 "current runtime generation is not a symlink pointer"
                             )
                         lifecycle_deck = _runtime_lifecycle_deck(shared_home)
-                    snapshot_hint = (
-                        None
-                        if lifecycle_deck is not None
-                        else _runtime_service_snapshot(shared_home)
-                    )
-                    launch_agent_present = (
-                        _runtime_launch_agent_path().exists()
-                        or _runtime_launch_agent_path().is_symlink()
-                    )
-                    launchd_gate_required = (
-                        ensure_service
-                        or lifecycle_deck is not None
-                        or snapshot_hint is not None
-                        or launch_agent_present
-                    )
+                    # Every managed Darwin transaction closes the fixed-label
+                    # namespace. `preserve` still publishes code that a raced
+                    # service install could resolve, so a no-op gate is unsafe.
+                    launchd_gate_required = True
                     legacy_service_lock_contract = (
                         lifecycle_deck is None
                         or _runtime_deck_has_service_lifecycle_lock(lifecycle_deck)
@@ -4769,8 +4886,16 @@ def run_with_tools_install_lease(
                 child_returncode = 0
                 child_rollback_restored = False
                 gate = _RuntimeLaunchdMutationGate(required=launchd_gate_required)
+                if darwin_service:
+                    # Re-attribute immediately before the first possible
+                    # fixed-label mutation. The installer lease serializes all
+                    # supported managed writers; a foreign owner fails closed.
+                    _assert_runtime_loaded_service_owner(shared_home)
                 with gate:
-                    if sys.platform == "darwin":
+                    if darwin_service:
+                        # Re-check after entering the gate so a raced owner is
+                        # caught before any payload child can publish.
+                        _assert_runtime_loaded_service_owner(shared_home)
                         # Capture exact bytes or exact absence while bootstrap
                         # is fenced, even when no launcher currently answers.
                         launch_agent_backup = _capture_runtime_launch_agent_backup(
@@ -4845,11 +4970,12 @@ def run_with_tools_install_lease(
                                 # implementation before publication can only
                                 # leave a disabled job behind. Remove it only
                                 # after proving the exact owned-path contract.
-                                try:
-                                    _bootout_owned_runtime_launchd_job(shared_home)
-                                except (OSError, subprocess.SubprocessError):
-                                    gate.retain_disabled()
-                                    raise
+                                if darwin_service:
+                                    try:
+                                        _bootout_owned_runtime_launchd_job(shared_home)
+                                    except (OSError, subprocess.SubprocessError):
+                                        gate.retain_disabled()
+                                        raise
                                 environment = os.environ.copy()
                                 child_returncode = (
                                     _run_install_child_with_lifecycle_guard(
@@ -4860,14 +4986,15 @@ def run_with_tools_install_lease(
                                     )
                                 )
                                 lifecycle_guard.assert_owned()
-                                try:
-                                    _bootout_owned_runtime_launchd_job(shared_home)
-                                except (OSError, subprocess.SubprocessError):
-                                    # A loaded/foreign job means quiescence is
-                                    # unproved. Never move the pointer backwards
-                                    # under it; contain the label instead.
-                                    gate.retain_disabled()
-                                    raise
+                                if darwin_service:
+                                    try:
+                                        _bootout_owned_runtime_launchd_job(shared_home)
+                                    except (OSError, subprocess.SubprocessError):
+                                        # A loaded/foreign job means quiescence is
+                                        # unproved. Never move the pointer backwards
+                                        # under it; contain the label instead.
+                                        gate.retain_disabled()
+                                        raise
 
                                 if child_returncode != 0:
                                     if lifecycle_deck is not None:
@@ -4914,6 +5041,7 @@ def run_with_tools_install_lease(
                                 payload_backup=payload_backup,
                                 launchd_gate=gate,
                                 restore_tools_pointer=require_tools_handoff,
+                                manage_runtime_service=manage_runtime_service,
                             )
                         except (
                             OSError,
@@ -4943,9 +5071,7 @@ def run_with_tools_install_lease(
                         ) from exc
 
                     if child_returncode != 0:
-                        if sys.platform == "darwin" and not (
-                            legacy_service_lock_contract
-                        ):
+                        if darwin_service and not legacy_service_lock_contract:
                             gate.retain_disabled()
                             _discard_runtime_payload_backup(payload_backup)
                             print(
@@ -4983,13 +5109,13 @@ def run_with_tools_install_lease(
                         )
                         return child_returncode
 
-                    activation_attempted = sys.platform == "darwin" and (
+                    activation_attempted = darwin_service and (
                         service_was_active or ensure_service
                     )
                     handoff_target_to_seal: Path | None = None
                     try:
                         publication_boundary: datetime | None = None
-                        if sys.platform == "darwin":
+                        if darwin_service:
                             if require_tools_handoff:
                                 published_deck = _runtime_lifecycle_deck(shared_home)
                                 if not _runtime_deck_has_service_lifecycle_lock(
@@ -5022,8 +5148,7 @@ def run_with_tools_install_lease(
                         ) as activation_guard:
                             activation_guard.assert_owned()
                             if (
-                                sys.platform == "darwin"
-                                and not legacy_service_lock_contract
+                                darwin_service and not legacy_service_lock_contract
                             ):
                                 try:
                                     if publication_boundary is None:
@@ -5132,6 +5257,7 @@ def run_with_tools_install_lease(
                                 payload_backup=payload_backup,
                                 launchd_gate=gate,
                                 restore_tools_pointer=require_tools_handoff,
+                                manage_runtime_service=manage_runtime_service,
                             )
                         except BaseException as rollback_exc:
                             gate.retain_disabled()
@@ -5139,7 +5265,9 @@ def run_with_tools_install_lease(
                                 raise
                             raise OSError(
                                 "current runtime activation failed and safe rollback "
-                                f"was refused: {rollback_exc}"
+                                "was refused; "
+                                f"activation failure: {exc}; "
+                                f"rollback refusal: {rollback_exc}"
                             ) from exc
                         if safe_to_reactivate:
                             gate.allow_original_state_restore()
@@ -5148,7 +5276,15 @@ def run_with_tools_install_lease(
                         _discard_runtime_payload_backup(payload_backup)
                         if not isinstance(exc, Exception):
                             raise
-                        if not safe_to_reactivate:
+                        if not manage_runtime_service:
+                            detail = (
+                                "previous runtime generation was restored; "
+                                "isolated service state was untouched"
+                                if restored
+                                else "runtime pointer was unchanged; isolated "
+                                "service state was untouched"
+                            )
+                        elif not safe_to_reactivate:
                             detail = (
                                 "previous runtime generation was restored; pre-lock "
                                 "service remains disabled"
@@ -5164,7 +5300,7 @@ def run_with_tools_install_lease(
                                 "unchanged"
                             )
                         raise OSError(
-                            f"current runtime activation failed; {detail}"
+                            f"runtime handoff failed ({exc}); {detail}"
                         ) from exc
 
                     _discard_runtime_payload_backup(payload_backup)
@@ -5236,6 +5372,14 @@ def _atomic_json_file(path: Path, payload: dict[str, Any]) -> None:
         finally:
             os.close(descriptor)
         os.replace(temporary, path)
+        directory = os.open(
+            path.parent,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+        )
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     finally:
         if temporary.exists() or temporary.is_symlink():
             temporary.unlink()
@@ -6688,6 +6832,49 @@ def sync_control_plane_tree(
         )
 
 
+def _materialize_vc_frame_generation(runtime_root: Path) -> None:
+    """Build host-adapted vc-frame assets before a runtime can be published."""
+    module_path = (
+        runtime_root / "vibecrafted-core" / "vibecrafted_core" / "vc_frame_staging.py"
+    )
+    source = runtime_root / "config" / "vc-frame"
+    destination = runtime_root / "runtime" / "generated" / "vc-frame"
+    if not module_path.is_file():
+        raise OSError(
+            f"candidate runtime has no vc-frame staging implementation: {module_path}"
+        )
+    namespace = runpy.run_path(
+        str(module_path),
+        run_name="_vibecrafted_vc_frame_staging",
+    )
+    resolve_pane_shell = namespace.get("resolve_pane_shell")
+    resolve_clipboard_command = namespace.get("resolve_clipboard_command")
+    materialize = namespace.get("materialize_vc_frame_config")
+    if not all(
+        callable(value)
+        for value in (resolve_pane_shell, resolve_clipboard_command, materialize)
+    ):
+        raise OSError(f"candidate vc-frame staging API is incomplete: {module_path}")
+    pane_shell = resolve_pane_shell()
+    clipboard_command = resolve_clipboard_command()
+    materialize(
+        source,
+        destination,
+        pane_shell=pane_shell,
+        clipboard_command=clipboard_command,
+    )
+    required = (
+        destination / "config.kdl",
+        destination / "layouts",
+        destination / "themes",
+    )
+    if not required[0].is_file() or any(not path.is_dir() for path in required[1:]):
+        raise OSError(
+            f"candidate runtime has incomplete materialized vc-frame config: "
+            f"{destination}"
+        )
+
+
 def _sync_control_plane_tree_locked(
     src: Path,
     dst: Path,
@@ -6737,6 +6924,7 @@ def _sync_control_plane_tree_locked(
         stage_distribution_payload(src, staging, mirror=True)
         if install_version:
             stamp_install_version(staging, install_version)
+        _materialize_vc_frame_generation(staging)
         staging.rename(generation)
         handoff = {
             "schema": _TOOLS_HANDOFF_SCHEMA,
@@ -6788,7 +6976,7 @@ def _prune_tools_generations_locked(
         if resolved.parent != tools_dir or not _is_framework_source_root(resolved):
             continue
         try:
-            modified = candidate.stat(follow_symlinks=False).st_mtime_ns
+            modified = os.stat(candidate, follow_symlinks=False).st_mtime_ns
         except OSError:
             continue
         generations.append((modified, candidate.name, resolved))
@@ -6828,23 +7016,62 @@ def _rollback_current_tools_locked(shared_home: Path) -> bool:
     if payload is None or payload["state"] != "prepared":
         return False
     old_raw = payload["old_target"]
-    if not old_raw:
-        return False
-    old_target = Path(old_raw)
     new_target = Path(payload["new_target"])
     current_link = _current_tools_link(shared_home)
     current_target = _symlink_target(current_link)
-    if current_target == old_target.resolve(strict=False):
-        return False
+    if old_raw:
+        old_target = Path(old_raw)
+        if current_target == old_target.resolve(strict=False):
+            payload["state"] = "rolled-back"
+            payload["rolled_back_at"] = datetime.now(timezone.utc).isoformat()
+            _atomic_json_file(_tools_handoff_file(shared_home), payload)
+            return False
+    else:
+        old_target = None
+        if current_target is None and not (
+            current_link.exists() or current_link.is_symlink()
+        ):
+            payload["state"] = "rolled-back"
+            payload["rolled_back_at"] = datetime.now(timezone.utc).isoformat()
+            _atomic_json_file(_tools_handoff_file(shared_home), payload)
+            return False
     if current_target != new_target.resolve(strict=False):
         raise OSError(
             "refusing runtime rollback because vibecrafted-current no longer "
             "matches the pending handoff"
         )
-    _atomic_symlink(old_target, current_link)
+    if old_target is not None:
+        _atomic_symlink(old_target, current_link)
+    else:
+        quarantine = current_link.parent / (
+            f".{current_link.name}.rollback-{os.getpid()}-{os.urandom(6).hex()}"
+        )
+        os.replace(current_link, quarantine)
+        if _symlink_target(quarantine) != new_target.resolve(strict=False):
+            os.replace(quarantine, current_link)
+            raise OSError(
+                "runtime pointer changed while rolling back the first generation"
+            )
     payload["state"] = "rolled-back"
     payload["rolled_back_at"] = datetime.now(timezone.utc).isoformat()
     _atomic_json_file(_tools_handoff_file(shared_home), payload)
+    if old_target is None:
+        try:
+            quarantine.unlink(missing_ok=True)
+            directory = os.open(
+                current_link.parent,
+                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+            )
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        except OSError as exc:
+            print(
+                "[install-tools] warning: first-install rollback is committed "
+                f"but quarantine cleanup needs retry: {exc}",
+                file=sys.stderr,
+            )
     return True
 
 
@@ -6949,7 +7176,8 @@ def refresh_current_tools(
             current_target = current_link.resolve(strict=False)
         except OSError:
             current_target = None
-        if current_target == repo_root:
+        inherited_transaction = bool(os.environ.get(_TOOLS_INSTALL_LEASE_ENV))
+        if current_target == repo_root and not inherited_transaction:
             # Dev/portable: tools link points at the checkout. Do NOT write
             # +gSHA into the live git tree (would dirty VERSION files).
             # Display still uses get_install_version() at banner time.

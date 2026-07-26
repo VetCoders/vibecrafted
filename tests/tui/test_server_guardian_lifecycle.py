@@ -332,12 +332,14 @@ print(json.dumps({"executable": executable, "argv": argv, "nonce": nonce}))
 
 def test_server_healthcheck_uses_constant_time_endpoint() -> None:
     launcher = LAUNCHER.read_text(encoding="utf-8")
-    health_block = launcher.split('elif operation == "health":', 1)[1].split(
-        'elif operation == "port-free":', 1
-    )[0]
+    health_block = launcher.split(
+        'elif operation in {"health", "health-wait"}:', 1
+    )[1].split('elif operation == "port-free":', 1)[0]
 
     assert "/api/health" in health_block
     assert "/api/control/state" not in health_block
+    assert "http.client.HTTPConnection" in health_block
+    assert "urllib.request" not in health_block
 
 
 def test_darwin_procargs_parser_preserves_unicode_and_omitted_environment() -> None:
@@ -360,6 +362,23 @@ def test_darwin_procargs_parser_preserves_unicode_and_omitted_environment() -> N
     )
     assert omitted_environment.returncode == 0, omitted_environment.stderr
     assert json.loads(omitted_environment.stdout)["nonce"] is None
+
+
+def test_darwin_procargs_parser_stops_at_environment_terminator() -> None:
+    hidden_nonce = "a" * 64
+    payload = _darwin_procargs_payload(
+        ["/bin/probe"],
+        environment=[
+            "VISIBLE=value",
+            "",
+            f"VIBECRAFTED_PROCESS_NONCE={hidden_nonce}",
+        ],
+    )
+
+    result = _parse_synthetic_darwin_arguments(payload)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["nonce"] is None
 
 
 @pytest.mark.parametrize(

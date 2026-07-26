@@ -6,7 +6,13 @@ from argparse import Namespace
 from pathlib import Path
 
 from vibecrafted_core.doctor import _vc_frame_delivery_findings
+from vibecrafted_core.frontier_assets import vc_frame_config_source
 from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config
+from vibecrafted_core.vc_frame_staging import (
+    materialize_vc_frame_config,
+    resolve_clipboard_command,
+    resolve_pane_shell,
+)
 
 from scripts import vetcoders_install as installer
 
@@ -1155,6 +1161,12 @@ def _seed_complete_vibecrafted_runtime(tools: Path) -> Path:
     (runtime / "vibecrafted-core").mkdir(parents=True)
     (runtime / "runtime" / "scripts").mkdir(parents=True)
     (runtime / "Makefile").write_text("install:\n", encoding="utf-8")
+    materialize_vc_frame_config(
+        vc_frame_config_source(),
+        runtime / "runtime" / "generated" / "vc-frame",
+        pane_shell=resolve_pane_shell(),
+        clipboard_command=resolve_clipboard_command(),
+    )
     current = tools / "vibecrafted-current"
     current.parent.mkdir(parents=True, exist_ok=True)
     current.symlink_to(runtime.name)
@@ -1176,6 +1188,34 @@ def test_vc_frame_delivery_healthy_store_view_ok(tmp_path, monkeypatch):
     assert "fail" not in view, findings
 
 
+def test_vc_frame_delivery_dev_checkout_does_not_require_runtime_generation(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", "1")
+    stage_vc_frame_config(
+        home=home,
+        tools_home=tools,
+        version="dev",
+        prefer_repo=True,
+    )
+
+    findings = _vc_frame_delivery_findings(home=home, tools_home=tools)
+
+    assert not any(
+        finding.level == "fail" and finding.component == "vc-frame:runtime"
+        for finding in findings
+    )
+    assert any(
+        finding.component == "vc-frame:channel"
+        and "dev-checkout preferred" in finding.message
+        for finding in findings
+    )
+
+
 def test_vc_frame_delivery_stale_file_fails_view(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
@@ -1191,7 +1231,7 @@ def test_vc_frame_delivery_stale_file_fails_view(tmp_path, monkeypatch):
         f for f in findings if f.component == "vc-frame:view" and f.level == "fail"
     ]
     assert fails
-    assert any("config install" in f.message for f in fails)
+    assert any("vibecrafted update" in f.message for f in fails)
 
 
 def test_vc_frame_delivery_dangling_frontier_fails(tmp_path, monkeypatch):

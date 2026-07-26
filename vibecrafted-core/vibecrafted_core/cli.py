@@ -146,12 +146,12 @@ def _build_parser() -> argparse.ArgumentParser:
     capabilities.add_argument("--json", action="store_true")
     config = sub.add_parser(
         "config",
-        help="install/wire packaged vc-frame config into the tools store and ~/.config/vc-frame",
+        help="wire pre-materialized vc-frame config into ~/.config/vc-frame",
     )
     config_sub = config.add_subparsers(dest="config_action")
     config_install = config_sub.add_parser(
         "install",
-        help="stage package config → tools store + wire ~/.config/vc-frame view",
+        help="wire current runtime config → ~/.config/vc-frame (full install materializes it)",
     )
     config_install.add_argument(
         "--dry-run",
@@ -788,7 +788,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 0
     if args.command == "config":
-        from .vc_frame_delivery import ensure_zshrc, stage_vc_frame_config
+        from .vc_frame_delivery import ensure_zshrc, wire_vc_frame_config
 
         action = getattr(args, "config_action", None)
         if action == "ensure-zshrc":
@@ -802,7 +802,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        plan = stage_vc_frame_config(
+        plan = wire_vc_frame_config(
             dry_run=bool(getattr(args, "dry_run", False)),
             force=bool(getattr(args, "force", False)),
             prefer_repo=True if getattr(args, "prefer_repo", False) else None,

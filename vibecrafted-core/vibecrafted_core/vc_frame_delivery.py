@@ -1,9 +1,11 @@
-"""Stage package vc-frame config into the tools store and wire ~/.config/vc-frame.
+"""Materialize package vc-frame config and wire ~/.config/vc-frame.
 
 Delivery contract (plan vcframe-config-delivery):
 - Source: ``vc_frame_config_source()`` (wheel package data or checkout).
-- Stage: copy into the complete runtime already selected by
-  ``tools/vibecrafted-current/runtime/generated/vc-frame/``.
+- Install: materialize host-adapted config inside an unpublished generation.
+- Wire: point user views through
+  ``tools/vibecrafted-current/runtime/generated/vc-frame/`` without mutating
+  the published generation.
 - Ownership: config delivery never creates or flips the runtime-owned
   ``vibecrafted-current`` symlink.
 - View: ``$XDG_CONFIG_HOME/vc-frame/{config.kdl,layouts,themes}`` → store-current
@@ -15,21 +17,21 @@ Delivery contract (plan vcframe-config-delivery):
 from __future__ import annotations
 
 import os
-import re
-import shutil
-import stat
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import vc_frame_staging as _vc_frame_staging
 from .frontier_assets import vc_frame_config_source
 from .runtime_paths import vibecrafted_tools_home, xdg_config_home
+from .vc_frame_staging import (
+    resolve_clipboard_command,
+    resolve_pane_shell,
+)
 
-_PANE_ZSH_RE = re.compile(r'command="zsh"')
-_DEFAULT_ZSH_RE = re.compile(r'default_shell\s+"zsh"')
-_EXEC_ZSH_RE = re.compile(r"exec\s+(?:/bin/)?zsh\s+-l")
-_COPY_PBCOPY_RE = re.compile(r'copy_command\s+"pbcopy"')
-_PBCOPY_STDIN_RE = re.compile(r"\bpbcopy(?=\s*<)")
+substitute_host_commands = _vc_frame_staging.substitute_host_commands
+substitute_pane_shell = _vc_frame_staging.substitute_pane_shell
+
 _FENCE_BEGIN = "# >>> vibecrafted >>>"
 _FENCE_END = "# <<< vibecrafted <<<"
 
@@ -95,61 +97,6 @@ def tools_current_path(tools_home: Path | None = None) -> Path:
     return base / "vibecrafted-current"
 
 
-def resolve_pane_shell(path_env: str | None = None) -> str:
-    """First available: zsh → $SHELL basename → bash."""
-    path = path_env if path_env is not None else os.environ.get("PATH", "")
-    if shutil.which("zsh", path=path):
-        return "zsh"
-    shell = os.environ.get("SHELL", "")
-    if shell:
-        base = Path(shell).name
-        if base and shutil.which(base, path=path):
-            return base
-    if shutil.which("bash", path=path):
-        return "bash"
-    return "sh"
-
-
-def resolve_clipboard_command(path_env: str | None = None) -> str | None:
-    """Return the first host clipboard command available on PATH."""
-    path = path_env if path_env is not None else os.environ.get("PATH", "")
-    for executable, command in (
-        ("pbcopy", "pbcopy"),
-        ("wl-copy", "wl-copy"),
-        ("xclip", "xclip -selection clipboard"),
-        ("xsel", "xsel --clipboard --input"),
-    ):
-        if shutil.which(executable, path=path):
-            return command
-    return None
-
-
-def substitute_host_commands(
-    kdl_text: str, shell: str, clipboard_command: str | None
-) -> str:
-    """Adapt every shipped shell and clipboard entrypoint to the current host."""
-    text = kdl_text
-    if shell != "zsh":
-        text = _PANE_ZSH_RE.sub(f'command="{shell}"', text)
-        text = _DEFAULT_ZSH_RE.sub(f'default_shell "{shell}"', text)
-        text = _EXEC_ZSH_RE.sub(f"exec {shell} -l", text)
-    if clipboard_command != "pbcopy":
-        if clipboard_command:
-            text = _COPY_PBCOPY_RE.sub(f'copy_command "{clipboard_command}"', text)
-            text = _PBCOPY_STDIN_RE.sub(clipboard_command, text)
-        else:
-            text = _COPY_PBCOPY_RE.sub(
-                "// copy_command omitted: no host clipboard command", text
-            )
-            text = _PBCOPY_STDIN_RE.sub("cat >/dev/null", text)
-    return text
-
-
-def substitute_pane_shell(kdl_text: str, shell: str) -> str:
-    """Backward-compatible shell-only adapter used by existing callers."""
-    return substitute_host_commands(kdl_text, shell, "pbcopy")
-
-
 def classify_view_path(
     path: Path,
     *,
@@ -187,42 +134,6 @@ def _timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
 
-def _copy_tree_with_shell(
-    source: Path,
-    dest: Path,
-    pane_shell: str,
-    clipboard_command: str | None,
-    *,
-    dry_run: bool,
-    actions: list[WireAction],
-) -> None:
-    actions.append(WireAction("stage", str(dest), f"from {source}"))
-    if dry_run:
-        return
-    if dest.exists():
-        shutil.rmtree(dest)
-    dest.mkdir(parents=True, exist_ok=True)
-    for root, dirs, files in os.walk(source):
-        rel = Path(root).relative_to(source)
-        out_dir = dest / rel
-        out_dir.mkdir(parents=True, exist_ok=True)
-        for name in files:
-            src_f = Path(root) / name
-            dst_f = out_dir / name
-            if name.endswith(".kdl"):
-                text = src_f.read_text(encoding="utf-8")
-                dst_f.write_text(
-                    substitute_host_commands(text, pane_shell, clipboard_command),
-                    encoding="utf-8",
-                )
-            else:
-                shutil.copy2(src_f, dst_f)
-            # preserve exec bit for auto-theme.sh
-            if name.endswith(".sh"):
-                mode = dst_f.stat().st_mode
-                dst_f.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-
 def _complete_runtime_root(current: Path, *, dry_run: bool) -> Path:
     """Resolve the single runtime owner and refuse config-only substitutes."""
     if dry_run and not (current.exists() or current.is_symlink()):
@@ -248,6 +159,41 @@ def _complete_runtime_root(current: Path, *, dry_run: bool) -> Path:
             + ", ".join(missing)
         )
     return runtime_root
+
+
+def _require_materialized_config(runtime_root: Path, *, dry_run: bool) -> Path:
+    generated = runtime_root / "runtime" / "generated" / "vc-frame"
+    if dry_run and not runtime_root.exists():
+        return generated
+    required = (
+        generated / "config.kdl",
+        generated / "layouts",
+        generated / "themes",
+    )
+    missing = [
+        str(path.relative_to(runtime_root))
+        for path in required
+        if not (path.is_file() if path.suffix else path.is_dir())
+    ]
+    if missing:
+        raise RuntimeError(
+            f"published runtime at {runtime_root} has no complete pre-materialized "
+            "vc-frame config; reinstall the full distribution; missing: "
+            + ", ".join(missing)
+        )
+    return generated
+
+
+def _atomic_view_symlink(target: Path, view_path: Path) -> None:
+    view_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = view_path.parent / (
+        f".{view_path.name}.vibecrafted-{os.getpid()}-{os.urandom(6).hex()}"
+    )
+    temporary.symlink_to(target)
+    try:
+        os.replace(temporary, view_path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _wire_one(
@@ -279,30 +225,32 @@ def _wire_one(
         )
         return
 
+    backup: Path | None = None
     if view_path.is_symlink() and channel == "DANGLING":
         actions.append(WireAction("remove", str(view_path), "dangling"))
-        if not dry_run:
-            view_path.unlink(missing_ok=True)
     elif channel == "STALE-FILE" or (view_path.exists() and not view_path.is_symlink()):
-        backup = Path(f"{view_path}.stale.{_timestamp()}")
+        backup = Path(
+            f"{view_path}.stale.{_timestamp()}-{os.getpid()}-{os.urandom(4).hex()}"
+        )
         actions.append(WireAction("backup", str(view_path), f"-> {backup.name}"))
         if not dry_run:
             view_path.rename(backup)
     elif view_path.is_symlink() and force:
         actions.append(WireAction("remove", str(view_path), "force rewire"))
-        if not dry_run:
-            view_path.unlink()
 
     actions.append(WireAction("link", str(view_path), f"-> {target}"))
     if dry_run:
         return
-    view_path.parent.mkdir(parents=True, exist_ok=True)
-    if view_path.exists() or view_path.is_symlink():
-        if view_path.is_dir() and not view_path.is_symlink():
-            shutil.rmtree(view_path)
-        else:
-            view_path.unlink(missing_ok=True)
-    view_path.symlink_to(target)
+    try:
+        _atomic_view_symlink(target, view_path)
+    except BaseException:
+        if (
+            backup is not None
+            and backup.exists()
+            and not (view_path.exists() or view_path.is_symlink())
+        ):
+            backup.rename(view_path)
+        raise
 
 
 def plan_delivery(
@@ -345,13 +293,13 @@ def plan_delivery(
     # generated tree would then delete the source before it can be copied.
     staged_cfg = runtime_root / "runtime" / "generated" / "vc-frame"
     if not use_repo:
-        _copy_tree_with_shell(
-            source,
-            staged_cfg,
-            pane_shell,
-            clipboard_command,
-            dry_run=dry_run,
-            actions=plan.actions,
+        _require_materialized_config(runtime_root, dry_run=dry_run)
+        plan.actions.append(
+            WireAction(
+                "note",
+                str(staged_cfg),
+                "pre-materialized before runtime publication",
+            )
         )
         plan.actions.append(
             WireAction(
@@ -405,8 +353,8 @@ def stage_vc_frame_config(
     prefer_repo: bool | None = None,
     path_env: str | None = None,
 ) -> DeliveryPlan:
-    """Plan then apply (unless dry_run). Returns the plan with actions taken."""
-    plan = plan_delivery(
+    """Compatibility entrypoint: wire views without mutating the live runtime."""
+    return plan_delivery(
         home=home,
         tools_home=tools_home,
         version=version,
@@ -415,7 +363,28 @@ def stage_vc_frame_config(
         prefer_repo=prefer_repo,
         path_env=path_env,
     )
-    return plan
+
+
+def wire_vc_frame_config(
+    *,
+    home: Path | None = None,
+    tools_home: Path | None = None,
+    version: str | None = None,
+    dry_run: bool = False,
+    force: bool = False,
+    prefer_repo: bool | None = None,
+    path_env: str | None = None,
+) -> DeliveryPlan:
+    """Wire user views without changing the published runtime generation."""
+    return plan_delivery(
+        home=home,
+        tools_home=tools_home,
+        version=version,
+        dry_run=dry_run,
+        force=force,
+        prefer_repo=prefer_repo,
+        path_env=path_env,
+    )
 
 
 # ---------------------------------------------------------------------------

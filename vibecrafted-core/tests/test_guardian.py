@@ -105,6 +105,45 @@ class QueueOpener:
         return outcome
 
 
+def test_guardian_bypasses_ambient_proxy_only_for_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, float]] = []
+    direct_result = object()
+    proxy_result = object()
+
+    def direct_open(request, *, timeout: float):
+        calls.append(("direct", request.full_url, timeout))
+        return direct_result
+
+    def proxy_open(request, *, timeout: float):
+        calls.append(("proxy", request.full_url, timeout))
+        return proxy_result
+
+    monkeypatch.setattr(guardian_module._DIRECT_URL_OPENER, "open", direct_open)
+    monkeypatch.setattr(guardian_module._DEFAULT_URL_OPENER, "open", proxy_open)
+
+    loopback = guardian_module._guardian_urlopen(
+        guardian_module.urllib.request.Request(
+            "http://127.0.0.1:3024/api/control/events"
+        ),
+        timeout=1.5,
+    )
+    remote = guardian_module._guardian_urlopen(
+        guardian_module.urllib.request.Request(
+            "https://control.example.test/api/control/events"
+        ),
+        timeout=2.5,
+    )
+
+    assert loopback is direct_result
+    assert remote is proxy_result
+    assert calls == [
+        ("direct", "http://127.0.0.1:3024/api/control/events", 1.5),
+        ("proxy", "https://control.example.test/api/control/events", 2.5),
+    ]
+
+
 def settlement_data(
     run_id: str,
     revision: int,

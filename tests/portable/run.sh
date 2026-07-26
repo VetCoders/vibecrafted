@@ -104,6 +104,10 @@ if command -v zsh >/dev/null 2>&1; then
 fi
 
 workspace="$(mktemp -d)"
+# macOS reports TMPDIR through the compatibility /var symlink.  Canonicalize
+# the sandbox root before it becomes HOME so the installer's no-follow payload
+# transaction proves a physical path instead of correctly rejecting /var.
+workspace="$(cd "$workspace" && pwd -P)"
 cleanup_workspace() {
   local status=$?
   rm -rf "$workspace" 2>/dev/null || {
@@ -129,7 +133,9 @@ tar -czf "$bootstrap_archive" \
   --exclude='output' \
   --exclude='*.png' \
   -C "$repo_root" .
-if ! HOME="$bootstrap_home" XDG_CONFIG_HOME="$bootstrap_config_dir" VIBECRAFTED_HOME="$bootstrap_home/.vibecrafted" \
+# The portable sandbox shares the operator's launchd user domain. Install the
+# complete payload without claiming or mutating the host's fixed service label.
+if ! HOME="$bootstrap_home" XDG_CONFIG_HOME="$bootstrap_config_dir" VIBECRAFTED_HOME="$bootstrap_home/.vibecrafted" INSTALL_SERVER_SERVICE_POLICY=isolated \
   bash "$repo_root/install.sh" --archive-file "$bootstrap_archive"; then
   print_installer_logs "$bootstrap_home"
   die "root install.sh bootstrap failed"
@@ -159,7 +165,7 @@ HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
 # granular installer, so create the shim here too — otherwise the launcher
 # symlink dangles and the resume smoke below cannot exec it.
 log "stage python launcher tools (uv-tool shim)"
-HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
+HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" INSTALL_TOOLS_SERVICE_POLICY=isolated \
   make --no-print-directory -C "$repo_root" install-python-tools
 
 require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"

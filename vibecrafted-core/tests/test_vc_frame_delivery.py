@@ -7,14 +7,27 @@ import shutil
 from pathlib import Path
 
 import pytest
+from vibecrafted_core.frontier_assets import vc_frame_config_source
 from vibecrafted_core.vc_frame_delivery import (
     classify_view_path,
     stage_vc_frame_config,
     substitute_pane_shell,
+    wire_vc_frame_config,
+)
+from vibecrafted_core.vc_frame_staging import (
+    materialize_vc_frame_config,
+    resolve_clipboard_command,
+    resolve_pane_shell,
 )
 
 
-def _seed_complete_runtime(tools: Path) -> Path:
+def _seed_complete_runtime(
+    tools: Path,
+    *,
+    path_env: str | None = None,
+    with_config: bool = True,
+    publish: bool = True,
+) -> Path:
     runtime = tools / "vibecrafted-full"
     (runtime / "vibecrafted-core").mkdir(parents=True)
     (runtime / "runtime" / "scripts").mkdir(parents=True)
@@ -22,9 +35,17 @@ def _seed_complete_runtime(tools: Path) -> Path:
     (runtime / "runtime" / "scripts" / "codex_spawn.sh").write_text(
         "#!/usr/bin/env bash\n", encoding="utf-8"
     )
-    current = tools / "vibecrafted-current"
-    current.parent.mkdir(parents=True, exist_ok=True)
-    current.symlink_to(runtime)
+    if with_config:
+        materialize_vc_frame_config(
+            vc_frame_config_source(),
+            runtime / "runtime" / "generated" / "vc-frame",
+            pane_shell=resolve_pane_shell(path_env),
+            clipboard_command=resolve_clipboard_command(path_env),
+        )
+    if publish:
+        current = tools / "vibecrafted-current"
+        current.parent.mkdir(parents=True, exist_ok=True)
+        current.symlink_to(runtime)
     return runtime
 
 
@@ -75,13 +96,117 @@ def test_stage_wires_view_through_current(tmp_path: Path, monkeypatch) -> None:
     assert (current / "runtime" / "generated" / "vc-frame" / "config.kdl").exists()
 
 
-def test_stage_keeps_mirrored_runtime_source_distinct_from_generated_view(
+def test_wire_only_requires_pre_materialized_runtime(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    _seed_complete_runtime(tools, with_config=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+
+    with pytest.raises(RuntimeError, match="pre-materialized"):
+        wire_vc_frame_config(home=home, tools_home=tools, prefer_repo=False)
+
+    assert not (home / ".config" / "vc-frame").exists()
+
+
+def test_wire_only_never_mutates_published_generation(
     tmp_path: Path, monkeypatch
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
     tools = home / ".local" / "share" / "vibecrafted" / "tools"
     runtime = _seed_complete_runtime(tools)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    stage_vc_frame_config(home=home, tools_home=tools, prefer_repo=False)
+    generated = runtime / "runtime" / "generated" / "vc-frame"
+    before = {
+        path.relative_to(generated): (
+            "link"
+            if path.is_symlink()
+            else "dir"
+            if path.is_dir()
+            else path.read_bytes()
+        )
+        for path in sorted(generated.rglob("*"))
+    }
+    replace_observations: list[bool] = []
+    original_replace = os.replace
+
+    def observed_replace(source, destination) -> None:
+        destination_path = Path(destination)
+        if destination_path.parent == home / ".config" / "vc-frame":
+            replace_observations.append(
+                destination_path.exists() or destination_path.is_symlink()
+            )
+        original_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", observed_replace)
+    wire_vc_frame_config(
+        home=home,
+        tools_home=tools,
+        prefer_repo=False,
+        force=True,
+    )
+
+    after = {
+        path.relative_to(generated): (
+            "link"
+            if path.is_symlink()
+            else "dir"
+            if path.is_dir()
+            else path.read_bytes()
+        )
+        for path in sorted(generated.rglob("*"))
+    }
+    assert after == before
+    assert replace_observations
+    assert all(replace_observations)
+
+
+def test_wire_failure_restores_displaced_user_view(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    _seed_complete_runtime(tools)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    stage_vc_frame_config(home=home, tools_home=tools, prefer_repo=False)
+    view = home / ".config" / "vc-frame" / "config.kdl"
+    view.unlink()
+    view.write_text("operator config\n", encoding="utf-8")
+    original_replace = os.replace
+
+    def fail_view_publish(source, destination) -> None:
+        if Path(destination) == view:
+            raise OSError("injected view publish failure")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", fail_view_publish)
+
+    with pytest.raises(OSError, match="injected view publish failure"):
+        wire_vc_frame_config(
+            home=home,
+            tools_home=tools,
+            prefer_repo=False,
+            force=True,
+        )
+
+    assert view.is_file()
+    assert not view.is_symlink()
+    assert view.read_text(encoding="utf-8") == "operator config\n"
+
+
+def test_stage_keeps_mirrored_runtime_source_distinct_from_generated_view(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    runtime = _seed_complete_runtime(tools, with_config=False, publish=False)
     source = runtime / "config" / "vc-frame"
     (source / "layouts").mkdir(parents=True)
     (source / "themes").mkdir()
@@ -96,6 +221,15 @@ def test_stage_keeps_mirrored_runtime_source_distinct_from_generated_view(
         lambda: source,
     )
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    materialize_vc_frame_config(
+        source,
+        runtime / "runtime" / "generated" / "vc-frame",
+        pane_shell="sh",
+        clipboard_command=None,
+    )
+    current = tools / "vibecrafted-current"
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.symlink_to(runtime)
 
     stage_vc_frame_config(
         home=home,
@@ -165,6 +299,36 @@ def test_regular_file_collision_gets_stale_backup(tmp_path: Path, monkeypatch) -
     assert backups, plan.render()
     assert "choinka" in backups[0].read_text(encoding="utf-8")
     assert "choinka" not in (view / "config.kdl").resolve().read_text(encoding="utf-8")
+
+
+def test_same_second_rewires_never_overwrite_operator_backups(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    _seed_complete_runtime(tools)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setattr(
+        "vibecrafted_core.vc_frame_delivery._timestamp",
+        lambda: "20260726_120000",
+    )
+    view = home / ".config" / "vc-frame"
+    view.mkdir(parents=True)
+    config = view / "config.kdl"
+
+    config.write_text("first operator config\n", encoding="utf-8")
+    stage_vc_frame_config(home=home, tools_home=tools, prefer_repo=False)
+    config.unlink()
+    config.write_text("second operator config\n", encoding="utf-8")
+    stage_vc_frame_config(home=home, tools_home=tools, prefer_repo=False)
+
+    backups = sorted(view.glob("config.kdl.stale.20260726_120000-*"))
+    assert len(backups) == 2
+    assert {path.read_text(encoding="utf-8") for path in backups} == {
+        "first operator config\n",
+        "second operator config\n",
+    }
 
 
 def test_foreign_symlink_is_preserved_without_force(
@@ -296,7 +460,6 @@ def test_pane_shell_substitution_on_stage_without_zsh(
     home = tmp_path / "home"
     home.mkdir()
     tools = home / ".local" / "share" / "vibecrafted" / "tools"
-    runtime = _seed_complete_runtime(tools)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
     # PATH without zsh or a clipboard helper: expose only bash.
@@ -305,6 +468,7 @@ def test_pane_shell_substitution_on_stage_without_zsh(
     bash = shutil.which("bash")
     assert bash is not None
     (fake_bin / "bash").symlink_to(bash)
+    runtime = _seed_complete_runtime(tools, path_env=str(fake_bin))
     plan = stage_vc_frame_config(
         home=home,
         tools_home=tools,

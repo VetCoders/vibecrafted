@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -44,7 +45,19 @@ def _expected_operator_session(run_id: str | None = None) -> str:
     base = (
         re.sub(r"[^a-z0-9]+", "-", REPO_ROOT.name.lower()).strip("-") or "vibecrafted"
     )
-    return f"{base}-{run_id}" if run_id else base
+    full_name = f"{base}-{run_id}" if run_id else base
+    if len(full_name) <= 24:
+        return full_name
+    digest = hashlib.sha256(full_name.encode()).hexdigest()[:4]
+    if run_id:
+        prefix_length = 24 - len(run_id) - len(digest) - 2
+        if prefix_length > 0:
+            prefix = full_name[:prefix_length].rstrip("-") or digest[:1]
+            compact = f"{prefix}-{digest}-{run_id}"
+            if len(compact) <= 24:
+                return compact
+    prefix = full_name[: 24 - len(digest) - 1].rstrip("-") or digest[:1]
+    return f"{prefix}-{digest}"[:24]
 
 
 def test_dashboard_layouts_resolve_helpers_from_home_store_first() -> None:

@@ -5,8 +5,8 @@ usage() {
   cat <<'EOF_USAGE'
 Usage: install.sh [--gui] [--yes] [--runtime <horse>] [--ref <branch>] [--archive-url <url> | --archive-file <path>] [--tools-dir <dir>] [make-target]
 
-Bootstrap a local 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. source snapshot into $HOME/.local/share/vibecrafted/tools and then
-run a local staged install path from that copy.
+Verify a local 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. source snapshot, then run the transactional installer
+from that private candidate. The installer publishes into $HOME/.local/share/vibecrafted/tools.
 
 Use `--gui` when you want the browser-based guided installer.
 Use `--yes` to skip the attended bootstrap confirmation prompt.
@@ -269,10 +269,6 @@ enforce_runtime_root_contract() {
   return 0
 }
 
-sanitize_ref() {
-  printf '%s' "$1" | tr '/:@ ' '----' | tr -cd '[:alnum:]._-' 
-}
-
 bootstrap_next_step() {
   if [[ "$target" == "vibecrafted" && "$use_gui" == "1" ]]; then
     printf '%s\n' "launch the guided installer UI"
@@ -307,8 +303,8 @@ prompt_attended_consent() {
 
   {
     printf '\n'
-    printf '⚒ 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. → %s\n' "$staged_dir"
-    printf '  %s · stage · %s\n' "$source_description" "$next_step"
+    printf '⚒ 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. → %s\n' "$current_link"
+    printf '  %s · verify · transact · %s\n' "$source_description" "$next_step"
   } > /dev/tty
 
   while true; do
@@ -491,9 +487,6 @@ else
   [[ -f "$archive_file" ]] || die "Archive file not found: $archive_file"
 fi
 
-safe_ref="$(sanitize_ref "$ref")"
-[[ -n "$safe_ref" ]] || safe_ref="current"
-staged_dir="$tools_dir/vibecrafted-$safe_ref"
 current_link="$tools_dir/vibecrafted-current"
 
 prompt_attended_consent
@@ -501,10 +494,21 @@ prompt_attended_consent
 mkdir -p "$tools_dir"
 
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/vibecrafted-bootstrap.XXXXXX")"
+# ShellCheck cannot see function names registered indirectly through `trap`.
+# shellcheck disable=SC2329
 cleanup() {
   rm -rf "$tmpdir"
 }
 trap cleanup EXIT
+
+# Candidate commands must return through this shell so the EXIT trap can remove
+# the private verified payload. Publication is owned by install-bundle-tools
+# under the installer lease; the bootstrap itself never writes `current`.
+run_candidate_command() {
+  local status=0
+  "$@" || status=$?
+  exit "$status"
+}
 
 extract_root="$tmpdir/extract"
 mkdir -p "$extract_root"
@@ -564,44 +568,41 @@ source_dir=""
 if [[ -f "$extract_root/Makefile" && -d "$extract_root/scripts" ]]; then
   source_dir="$extract_root"
 else
-  candidate_dir="$(find "$extract_root" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-  if [[ -n "${candidate_dir:-}" && -f "$candidate_dir/Makefile" && -d "$candidate_dir/scripts" ]]; then
-    source_dir="$candidate_dir"
+  extracted_candidate_dir="$(find "$extract_root" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+  if [[ -n "${extracted_candidate_dir:-}" && -f "$extracted_candidate_dir/Makefile" && -d "$extracted_candidate_dir/scripts" ]]; then
+    source_dir="$extracted_candidate_dir"
   fi
 fi
 [[ -n "$source_dir" ]] || die "Could not find extracted source directory"
 
-incoming_dir="$tools_dir/.incoming-$safe_ref-$$"
+candidate_root="$tmpdir/candidate"
 manifest_helper="$source_dir/scripts/distribution_manifest.py"
 [[ -f "$manifest_helper" ]] || die "Distribution manifest missing: $manifest_helper"
 
-rm -rf "$incoming_dir"
 python3 "$manifest_helper" stage \
   --source "$source_dir" \
-  --destination "$incoming_dir" \
+  --destination "$candidate_root" \
   --mirror >/dev/null
-rm -rf "$staged_dir"
-mv "$incoming_dir" "$staged_dir"
-ln -sfn "$staged_dir" "$current_link"
 
-# Read canonical VERSION file from the staged source tree for the post-install banner.
+# Read canonical VERSION file from the verified candidate for the post-install banner.
 # The repo ships VERSION at the root; fall back to 'unknown' if absent (e.g. custom tarballs).
 _installed_version=""
-if [[ -f "$staged_dir/VERSION" ]]; then
-  _installed_version="$(tr -d '[:space:]' < "$staged_dir/VERSION" 2>/dev/null || true)"
+if [[ -f "$candidate_root/VERSION" ]]; then
+  _installed_version="$(tr -d '[:space:]' < "$candidate_root/VERSION" 2>/dev/null || true)"
 fi
 [[ -n "$_installed_version" ]] || _installed_version="unknown"
 
-# Section truth line: what just became true, in one calm line.
-info "✓ Staged vibecrafted $_installed_version → $current_link"
+# Section truth line: the payload is verified, but publication has not happened
+# yet. The installer owns that transition under its cross-process lease.
+info "✓ Verified vibecrafted $_installed_version candidate; transactional install is next"
 
 post_install_banner() {
-  # The default view already told the staging truth in one line; the full
+  # The default view already told the candidate truth in one line; the full
   # banner is detail and lives behind VERBOSE=1.
   [[ "${VERBOSE:-0}" == "1" ]] || return 0
   printf '\n'
   info "---------------------------------------------------------------"
-  info " Staged: vibecrafted $_installed_version"
+  info " Candidate: vibecrafted $_installed_version"
   info " Channel:   tarball"
   info ""
   info " Update:  vibecrafted update"
@@ -610,20 +611,19 @@ post_install_banner() {
 }
 
 if [[ "$target" == "vibecrafted" && "$use_gui" == "1" ]]; then
-  gui_installer="$current_link/scripts/installer_gui.py"
+  gui_installer="$candidate_root/scripts/installer_gui.py"
   [[ -f "$gui_installer" ]] || die "Guided installer not found: $gui_installer"
   post_install_banner
   info "▸ Launching the guided installer (browser UI)…"
-  vinfo "  python3 $gui_installer --source $current_link"
+  vinfo "  python3 $gui_installer --source $candidate_root"
   export VIBECRAFTED_RUNTIME="$runtime"
-  exec python3 "$gui_installer" --source "$current_link"
+  run_candidate_command python3 "$gui_installer" --source "$candidate_root"
 fi
 
 if [[ "$target" == "vibecrafted" ]] && ! is_interactive_session; then
   # Non-TTY public installs use the same automation lane as local source
-  # installs. Keep the old bootstrap/staging work above, then hand off to the
-  # manifest-owned installer so stdout remains compact and the detail lands in
-  # the installer log.
+  # installs. Hand the private verified candidate to the manifest-owned
+  # installer; it publishes under the installer lease.
   for _p in "$HOME/.local/bin" "${tools_dir}/node/bin"; do
     case ":${PATH}:" in
       *":${_p}:"*) ;;
@@ -632,17 +632,17 @@ if [[ "$target" == "vibecrafted" ]] && ! is_interactive_session; then
   done
 
   export VIBECRAFTED_RUNTIME="$runtime"
-  exec make --no-print-directory -C "$current_link" install-auto RUNTIME="$runtime"
+  run_candidate_command make --no-print-directory -C "$candidate_root" install-auto RUNTIME="$runtime"
 fi
 
 # Interactive terminal session: default target is the built-in
-# vetcoders-installer sequential runner, executed out of the staged repo's
+# vetcoders-installer sequential runner, executed out of the candidate's
 # own scripts/installer/ sub-package via `uv run --project`. The browser
 # GUI is opt-in via `--gui` (handled above). Other make targets still fall
 # through to the Makefile.
 if [[ "$target" == "vibecrafted" ]]; then
-  manifest="$current_link/install.toml"
-  installer_dir="$current_link/scripts/installer"
+  manifest="$candidate_root/install.toml"
+  installer_dir="$candidate_root/scripts/installer"
   [[ -f "$manifest" ]] || die "Install manifest not found: $manifest"
   [[ -d "$installer_dir" ]] || die "Built-in installer package not found: $installer_dir"
 
@@ -669,11 +669,11 @@ if [[ "$target" == "vibecrafted" ]]; then
   info "▸ Opening the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. installer…"
   vinfo "  uv run --project $installer_dir vetcoders-installer $manifest"
   export VIBECRAFTED_RUNTIME="$runtime"
-  exec uv run --project "$installer_dir" --quiet vetcoders-installer "$manifest"
+  run_candidate_command uv run --project "$installer_dir" --quiet vetcoders-installer "$manifest"
 fi
 
 post_install_banner
 info "▸ Running make ${target}…"
-vinfo "  make --no-print-directory -C $current_link $target"
+vinfo "  make --no-print-directory -C $candidate_root $target"
 
-exec make --no-print-directory -C "$current_link" "$target"
+run_candidate_command make --no-print-directory -C "$candidate_root" "$target"
