@@ -372,7 +372,7 @@ def test_vc_marbles_preserves_prompt_as_single_argument_inside_vc_frame(
         crafted_home
         / "artifacts"
         / _org_repo()
-        / datetime.now(timezone.utc).strftime("%Y_%m%d")
+        / datetime.now().astimezone().strftime("%Y_%m%d")
         / "tmp"
     )
 
@@ -510,7 +510,7 @@ def test_vc_marbles_preserves_prompt_as_single_argument_in_operator_session(
         crafted_home
         / "artifacts"
         / _org_repo()
-        / datetime.now(timezone.utc).strftime("%Y_%m%d")
+        / datetime.now().astimezone().strftime("%Y_%m%d")
         / "tmp"
     )
 

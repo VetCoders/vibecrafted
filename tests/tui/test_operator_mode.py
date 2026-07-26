@@ -6,7 +6,7 @@ import os
 import re
 import shutil
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -799,7 +799,7 @@ def test_marbles_manual_spawn_emits_probe_without_l1_transcript_tail(
         / ".vibecrafted"
         / "artifacts"
         / _org_repo()
-        / datetime.now(timezone.utc).strftime("%Y_%m%d")
+        / datetime.now().astimezone().strftime("%Y_%m%d")
         / "marbles"
         / "reports"
     )
