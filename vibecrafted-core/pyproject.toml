@@ -4,7 +4,9 @@ version = "3.6.0"
 description = "Core Python library for Vibecrafted runtime and synthesis surfaces."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "PyYAML>=6.0,<7",
+]
 
 [project.scripts]
 vibecrafted = "vibecrafted_core.cli:main"
