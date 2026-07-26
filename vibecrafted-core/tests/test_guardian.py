@@ -7,6 +7,7 @@ import stat
 import subprocess
 import urllib.error
 from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -2666,3 +2667,111 @@ def test_numeric_legacy_stream_is_notification_only_after_caught_up(
     assert state.baseline_complete is True
     assert state.degraded is True
     assert state.highwater["legacy-live"].reason == "legacy_notification_only"
+
+
+def test_main_recovers_trust_outbox_under_lock_before_sse_attach(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    order: list[str] = []
+
+    @contextmanager
+    def fake_lock(_path: Path) -> Iterator[None]:
+        order.append("lock")
+        yield
+
+    class StubWorker:
+        server_url = "http://127.0.0.1:3024"
+
+        def run_forever(self, *, backoff: object) -> None:
+            assert backoff is not None
+            order.append("attach")
+
+    monkeypatch.setattr(
+        guardian_module,
+        "GuardianState",
+        SimpleNamespace(load=lambda _path: object()),
+    )
+    monkeypatch.setattr(
+        guardian_module,
+        "GuardianRecoveryAdapter",
+        lambda **_kwargs: SimpleNamespace(
+            reconcile=lambda _event: None,
+            resume=lambda _event, _key: None,
+        ),
+    )
+    monkeypatch.setattr(
+        guardian_module,
+        "GuardianWorker",
+        lambda **_kwargs: StubWorker(),
+    )
+    monkeypatch.setattr(
+        guardian_module,
+        "BoundedBackoff",
+        lambda *_args: object(),
+    )
+    monkeypatch.setattr(guardian_module, "single_instance_lock", fake_lock)
+    monkeypatch.setattr(
+        guardian_module,
+        "_recover_pending_trust_before_attach",
+        lambda: order.append("recover"),
+    )
+
+    result = guardian_module.main(
+        [
+            "--state",
+            str(tmp_path / "state.json"),
+            "--lock",
+            str(tmp_path / "guardian.lock"),
+            "--no-desktop",
+        ]
+    )
+
+    assert result == 0
+    assert order == ["lock", "recover", "attach"]
+
+
+def test_trust_recovery_sweep_reports_success_and_preserved_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from vibecrafted_core import trust as trust_module
+
+    report = SimpleNamespace(
+        scanned=2,
+        recovered=(
+            SimpleNamespace(
+                run_id="run-recovered",
+                settlement_revision=4,
+                receipt_id="a" * 64,
+            ),
+        ),
+        errors=(
+            SimpleNamespace(
+                run_id="run-corrupt",
+                outbox_path="/private/outbox.json",
+                error_type="ValueError",
+                message="outbox remains durable",
+            ),
+        ),
+        truncated=True,
+        ok=False,
+    )
+    monkeypatch.setattr(
+        trust_module,
+        "recover_pending_trust_settlements",
+        lambda: report,
+    )
+
+    with caplog.at_level(logging.INFO, logger="vibecrafted_core.guardian"):
+        guardian_module._recover_pending_trust_before_attach()
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "recovered pending trust settlement run-recovered r4" in m for m in messages
+    )
+    assert any(
+        "pending trust settlement recovery failed for run-corrupt" in m
+        for m in messages
+    )
+    assert any("recovery hit its bounded limit after 2 outboxes" in m for m in messages)

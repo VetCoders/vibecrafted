@@ -2799,6 +2799,40 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _recover_pending_trust_before_attach() -> None:
+    """Run one bounded trust outbox sweep before accepting live SSE work."""
+
+    from .trust import recover_pending_trust_settlements
+
+    report = recover_pending_trust_settlements()
+    for recovered in report.recovered:
+        LOGGER.info(
+            "recovered pending trust settlement %s r%s (%s)",
+            recovered.run_id,
+            recovered.settlement_revision,
+            recovered.receipt_id,
+        )
+    for error in report.errors:
+        LOGGER.critical(
+            "pending trust settlement recovery failed for %s (%s): %s",
+            error.run_id or error.outbox_path,
+            error.error_type,
+            error.message,
+        )
+    if report.truncated:
+        LOGGER.critical(
+            "pending trust settlement recovery hit its bounded limit after "
+            "%s outboxes; remaining outboxes stay durable for the next start",
+            report.scanned,
+        )
+    if report.ok:
+        LOGGER.info(
+            "pending trust settlement recovery complete: scanned=%s recovered=%s",
+            report.scanned,
+            len(report.recovered),
+        )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -2847,6 +2881,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         with single_instance_lock(args.lock):
             try:
+                _recover_pending_trust_before_attach()
                 LOGGER.info(
                     "guardian attaching to %s/api/control/events; "
                     "guarded native recovery adapter active",
