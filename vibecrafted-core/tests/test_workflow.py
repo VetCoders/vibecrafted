@@ -1403,36 +1403,65 @@ def _native_resume_parent(
         claim_digest=claim_digest,
     )
     receipt_payload = receipt.to_payload()
-    run = {
+    settled_at = "2026-07-26T00:00:00+00:00"
+    settlement_reason = f"trust_pass_with_gaps:{receipt.commit_sha}"
+    settlement_projection = {
         "run_id": run_id,
+        "root": receipt.repo_root,
+        "repo_root": receipt.repo_root,
+        "commit_sha": receipt.commit_sha,
+        "settlement_tui": receipt.settlement_tui,
+        "settlement_verdict": receipt.settlement_verdict,
+        "settlement_reason": settlement_reason,
+        "settlement_at": settled_at,
+        "settlement_source": "trust",
+        "settlement_revision": receipt.settlement_revision,
+        "settlement_waived": False,
+        "settlement_claim_digest": receipt.claim_digest,
+        "settlement": {
+            "verdict": receipt.settlement_verdict,
+            "reason": settlement_reason,
+            "settled_at": settled_at,
+            "source": "trust",
+            "claim_digest": receipt.claim_digest,
+            "waived": False,
+            "tui": receipt.settlement_tui,
+            "await_rc": None,
+            "await_outcome": "",
+        },
+        "trust_receipt": receipt_payload,
+    }
+    run = {
+        **settlement_projection,
+        "settlement": dict(settlement_projection["settlement"]),
         "state": "failed",
         "agent": agent,
         "skill": "implement",
-        "root": str(tmp_path),
         "exit_code": 9,
         "worker_alive": False,
         "recovery_required": True,
-        "settlement_tui": "n",
-        "settlement_verdict": "needs_attention",
-        "settlement_source": "trust",
-        "settlement_revision": 7,
-        "settlement_claim_digest": claim_digest,
-        "trust_receipt": receipt_payload,
     }
     run.update(run_fields or {})
+    for top_level, nested in (
+        ("settlement_verdict", "verdict"),
+        ("settlement_reason", "reason"),
+        ("settlement_at", "settled_at"),
+        ("settlement_source", "source"),
+        ("settlement_claim_digest", "claim_digest"),
+        ("settlement_waived", "waived"),
+        ("settlement_tui", "tui"),
+        ("await_rc", "await_rc"),
+        ("await_outcome", "await_outcome"),
+    ):
+        if run_fields is not None and top_level in run_fields:
+            run["settlement"][nested] = run_fields[top_level]
     meta = {
-        "run_id": run_id,
+        **settlement_projection,
+        "settlement": dict(settlement_projection["settlement"]),
         "agent": agent,
         "agent_session_id": f"{agent}-native-id",
         "runtime_session_id": "runtime-parent-id",
         "attempt": 1,
-        "root": str(tmp_path),
-        "settlement_tui": "n",
-        "settlement_verdict": "needs_attention",
-        "settlement_source": "trust",
-        "settlement_revision": 7,
-        "settlement_claim_digest": claim_digest,
-        "trust_receipt": receipt_payload,
     }
     meta.update(meta_fields or {})
     run_dir = home / "control_plane" / "runtime_runs" / run_id
@@ -1444,7 +1473,7 @@ def _native_resume_parent(
         json.dumps(
             {
                 "schema": trust.TRUST_JOURNAL_SCHEMA_V2,
-                "recorded_at": "2026-07-26T00:00:00+00:00",
+                "recorded_at": settled_at,
                 "repo_root": str(tmp_path.resolve()),
                 "sha": "a" * 40,
                 "author_name": "Codex",

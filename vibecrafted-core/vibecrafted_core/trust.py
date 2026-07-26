@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
 import fcntl
 import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -45,6 +47,11 @@ VERDICT_TO_SETTLEMENT = {
 }
 TRUST_JOURNAL_SCHEMA_V2 = "vibecrafted.trust-journal.v2"
 TRUST_OUTBOX_SCHEMA = "vibecrafted.trust-settlement-outbox.v1"
+
+
+class TrustJournalRetryable(RuntimeError):
+    """The journal is temporarily busy or has an in-flight partial tail."""
+
 
 # Subject: [<agent>/<runtime>] <type>(optional scope): <subject>
 _SUBJECT_RE = re.compile(
@@ -597,12 +604,50 @@ def recommend_verdict_from_inspect(inspect: Mapping[str, Any]) -> str:
 
 
 def _read_journal(path: Path) -> list[dict[str, Any]]:
-    if not path.is_file():
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except FileNotFoundError:
         return []
+    locked = False
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError(errno.EINVAL, f"trust journal is not a regular file: {path}")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            locked = True
+        except OSError as exc:
+            if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK}:
+                raise
+            raise TrustJournalRetryable(f"trust journal is busy: {path}") from exc
+
+        chunks: list[bytes] = []
+        while True:
+            try:
+                chunk = os.read(descriptor, 64 * 1024)
+            except InterruptedError:
+                continue
+            if not chunk:
+                break
+            chunks.append(chunk)
+        raw_journal = b"".join(chunks)
+    finally:
+        if locked:
+            with contextlib.suppress(OSError):
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+    if raw_journal and not raw_journal.endswith(b"\n"):
+        raise TrustJournalRetryable(f"trust journal has a partial tail: {path}")
+    try:
+        journal_text = raw_journal.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"invalid journal encoding at {path}") from exc
     records: list[dict[str, Any]] = []
-    for line_number, raw in enumerate(
-        path.read_text(encoding="utf-8").splitlines(), start=1
-    ):
+    for line_number, raw in enumerate(journal_text.splitlines(), start=1):
         if not raw.strip():
             continue
         try:
@@ -615,28 +660,63 @@ def _read_journal(path: Path) -> list[dict[str, Any]]:
     return records
 
 
+def _journal_write(descriptor: int, data: bytes) -> int:
+    """Indirection for deterministic short-write and error-injection tests."""
+
+    return os.write(descriptor, data)
+
+
+def _write_all(descriptor: int, data: bytes) -> None:
+    offset = 0
+    while offset < len(data):
+        try:
+            written = _journal_write(descriptor, data[offset:])
+        except InterruptedError:
+            continue
+        if written <= 0 or written > len(data) - offset:
+            raise OSError(
+                errno.EIO,
+                f"invalid journal write progress: {written}/{len(data) - offset}",
+            )
+        offset += written
+
+
 def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     encoded = (
         json.dumps(dict(payload), sort_keys=True, ensure_ascii=False) + "\n"
     ).encode("utf-8")
-    existed = path.exists()
-    flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
+    flags = os.O_APPEND | os.O_CREAT | os.O_RDWR
     flags |= getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(path, flags, 0o600)
+    locked = False
     try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError(errno.EINVAL, f"trust journal is not a regular file: {path}")
         fcntl.flock(descriptor, fcntl.LOCK_EX)
-        written = os.write(descriptor, encoded)
-        if written != len(encoded):
-            raise OSError(f"short append to {path}: {written}/{len(encoded)} bytes")
-        os.fsync(descriptor)
+        locked = True
+        pre_append_offset = os.lseek(descriptor, 0, os.SEEK_END)
+        try:
+            _write_all(descriptor, encoded)
+            os.fsync(descriptor)
+        except BaseException:
+            try:
+                os.ftruncate(descriptor, pre_append_offset)
+                os.fsync(descriptor)
+            except OSError as rollback_error:
+                raise OSError(
+                    errno.EIO,
+                    f"trust journal append rollback failed for {path}",
+                ) from rollback_error
+            raise
     finally:
-        with contextlib.suppress(OSError):
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        if locked:
+            with contextlib.suppress(OSError):
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
         os.close(descriptor)
-    if not existed:
-        control_plane._fsync_directory_durable(path.parent)
+    control_plane._fsync_directory_durable(path.parent)
 
 
 # ISO-ish timestamps from control-plane run meta (started_at / created_at).
@@ -785,10 +865,42 @@ def _trust_projection_fields(
 ) -> dict[str, Any]:
     return {
         **settlement.to_payload(),
+        "run_id": receipt.run_id,
+        "root": receipt.repo_root,
+        "repo_root": receipt.repo_root,
+        "commit_sha": receipt.commit_sha,
         "settlement": _nested_settlement(settlement),
         "settlement_revision": receipt.settlement_revision,
         "trust_receipt": receipt.to_payload(),
     }
+
+
+def _validate_projection_identity(
+    payload: Mapping[str, Any],
+    *,
+    label: str,
+    repo_root: Path,
+    run_id: str,
+    commit_sha: str,
+) -> None:
+    projected_run_id = str(payload.get("run_id") or "").strip()
+    if projected_run_id and projected_run_id != run_id:
+        raise ValueError(f"trust settlement {label} run_id mismatch")
+    expected_root = str(repo_root)
+    for field_name in ("root", "repo_root"):
+        value = str(payload.get(field_name) or "").strip()
+        if value:
+            try:
+                canonical = str(Path(value).resolve())
+            except OSError as exc:
+                raise ValueError(
+                    f"trust settlement {label} {field_name} invalid"
+                ) from exc
+            if canonical != expected_root:
+                raise ValueError(f"trust settlement {label} {field_name} mismatch")
+    projected_commit = str(payload.get("commit_sha") or "").strip()
+    if projected_commit and projected_commit != commit_sha:
+        raise ValueError(f"trust settlement {label} commit_sha mismatch")
 
 
 def _remove_durable(path: Path) -> None:
@@ -822,14 +934,79 @@ def _projection_matches_receipt(
         projected = TrustReceiptV1.from_payload(raw)
     except (TypeError, ValueError):
         return False
-    return (
-        projected == receipt
-        and payload.get("settlement_revision") == receipt.settlement_revision
-        and str(payload.get("settlement_verdict") or "") == receipt.settlement_verdict
-        and str(payload.get("settlement_tui") or "") == receipt.settlement_tui
-        and str(payload.get("settlement_source") or "") == "trust"
-        and str(payload.get("settlement_claim_digest") or "") == receipt.claim_digest
+    if projected != receipt:
+        return False
+    expected = {
+        "run_id": receipt.run_id,
+        "repo_root": receipt.repo_root,
+        "commit_sha": receipt.commit_sha,
+        "settlement_revision": receipt.settlement_revision,
+        "settlement_verdict": receipt.settlement_verdict,
+        "settlement_tui": receipt.settlement_tui,
+        "settlement_source": "trust",
+        "settlement_claim_digest": receipt.claim_digest,
+        "settlement_reason": (
+            f"trust_{receipt.trust_verdict.replace('-', '_')}:{receipt.commit_sha}"
+        ),
+        "settlement_waived": False,
+    }
+    if any(payload.get(key) != value for key, value in expected.items()):
+        return False
+    root = str(payload.get("root") or "").strip()
+    repo_root = str(payload.get("repo_root") or "").strip()
+    if not root or not repo_root:
+        return False
+    try:
+        if str(Path(root).resolve()) != receipt.repo_root:
+            return False
+        if str(Path(repo_root).resolve()) != receipt.repo_root:
+            return False
+    except OSError:
+        return False
+    settled_at = str(payload.get("settlement_at") or "")
+    if not settled_at or payload.get("await_rc") is not None:
+        return False
+    if str(payload.get("await_outcome") or "") or str(
+        payload.get("await_settled_at") or ""
+    ):
+        return False
+    nested = payload.get("settlement")
+    return isinstance(nested, Mapping) and dict(nested) == {
+        "verdict": receipt.settlement_verdict,
+        "reason": expected["settlement_reason"],
+        "settled_at": settled_at,
+        "source": "trust",
+        "claim_digest": receipt.claim_digest,
+        "waived": False,
+        "tui": receipt.settlement_tui,
+        "await_rc": None,
+        "await_outcome": "",
+    }
+
+
+def _projection_matches_plan(
+    payload: Mapping[str, Any],
+    *,
+    receipt: TrustReceiptV1,
+    fields: Mapping[str, Any],
+) -> bool:
+    return _projection_matches_receipt(payload, receipt) and all(
+        payload.get(key) == value for key, value in fields.items()
     )
+
+
+def _projection_fields_for_receipt(
+    fields: Mapping[str, Any],
+    receipt: TrustReceiptV1,
+) -> dict[str, Any]:
+    """Normalize the 4a9 v1 outbox plan with newly required live identity."""
+
+    normalized = dict(fields)
+    normalized.setdefault("run_id", receipt.run_id)
+    normalized.setdefault("root", receipt.repo_root)
+    normalized.setdefault("repo_root", receipt.repo_root)
+    normalized.setdefault("commit_sha", receipt.commit_sha)
+    return normalized
 
 
 def _can_complete_projection(
@@ -837,8 +1014,15 @@ def _can_complete_projection(
     *,
     receipt: TrustReceiptV1,
     previous_revision: int,
+    fields: Mapping[str, Any] | None = None,
 ) -> bool:
-    if _projection_matches_receipt(payload, receipt):
+    if fields is not None and _projection_matches_plan(
+        payload,
+        receipt=receipt,
+        fields=fields,
+    ):
+        return True
+    if fields is None and _projection_matches_receipt(payload, receipt):
         return True
     prior = payload.get("trust_receipt")
     if prior not in (None, {}):
@@ -848,6 +1032,13 @@ def _can_complete_projection(
             prior_receipt = TrustReceiptV1.from_payload(prior)
         except (TypeError, ValueError):
             return False
+        if prior_receipt == receipt:
+            if fields is None:
+                return True
+            return all(
+                key not in payload or payload.get(key) == value
+                for key, value in fields.items()
+            )
         if prior_receipt.settlement_revision > previous_revision:
             return False
     revision = payload.get("settlement_revision")
@@ -862,12 +1053,61 @@ def _publish_trust_event(event: SettlementEventV2) -> dict[str, Any]:
     return emit_settlement_event(event)
 
 
+def _after_trust_transition(_transition: str) -> None:
+    """Crash-injection seam after one durable trust transaction transition."""
+
+
+def _trust_event_exists(event: SettlementEventV2) -> bool:
+    """Find an exact prior publish across retained active and archived segments."""
+
+    expected = event.to_payload()
+    encoded_key = event.event_key.encode("utf-8")
+    matches = False
+    with control_plane._event_lock(exclusive=False):
+        paths = [control_plane.event_stream_path()]
+        archive_dir = control_plane._events_archive_dir()
+        if archive_dir.is_dir():
+            paths.extend(archive_dir.glob("events-*.jsonl"))
+        for path in paths:
+            try:
+                handle = path.open("rb")
+            except FileNotFoundError:
+                continue
+            with handle:
+                for raw in handle:
+                    if encoded_key not in raw:
+                        continue
+                    try:
+                        candidate = json.loads(raw)
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        continue
+                    if not isinstance(candidate, Mapping):
+                        continue
+                    payload = candidate.get("payload")
+                    if not isinstance(payload, Mapping):
+                        continue
+                    if payload.get("event_key") != event.event_key:
+                        continue
+                    if (
+                        candidate.get("kind") != "settlement.changed"
+                        or str(candidate.get("run_id") or "") != event.run_id
+                        or dict(payload) != expected
+                    ):
+                        raise ValueError(
+                            f"trust settlement event key collision: {event.event_key}"
+                        )
+                    matches = True
+                    os.fsync(handle.fileno())
+    return matches
+
+
 def _recover_trust_outbox(
     *,
     run_id: str,
     outbox_path: Path,
+    expected_journal: Path,
 ) -> dict[str, Any] | None:
-    """Finish one journal-committed trust transaction with the same receipt."""
+    """Finish one prepared trust transaction with the same exact receipt."""
 
     if not outbox_path.exists():
         return None
@@ -888,50 +1128,150 @@ def _recover_trust_outbox(
         raise TypeError("trust settlement outbox journal entry missing")
     receipt = TrustReceiptV1.from_payload(receipt_payload)
     event = SettlementEventV2.from_payload(event_payload)
-    if event.trust_receipt != receipt:
+    if (
+        receipt.run_id != run_id
+        or event.trust_receipt != receipt
+        or dict(event_payload) != event.to_payload()
+    ):
         raise ValueError("trust settlement outbox event receipt mismatch")
     journal = Path(str(outbox.get("journal") or "")).expanduser()
     if not journal.is_absolute():
         raise ValueError("trust settlement outbox journal path invalid")
-    journal_entry = _journal_entry_for_receipt(journal, receipt.receipt_id)
-    if journal_entry != dict(entry_payload):
-        raise ValueError("trust settlement journal receipt missing or mismatched")
+    expected_journal_path = expected_journal.expanduser().resolve()
+    if journal.resolve() != expected_journal_path:
+        raise ValueError("trust settlement outbox journal path mismatch")
+    journal = expected_journal_path
     previous_revision = outbox.get("previous_revision")
     if type(previous_revision) is not int or previous_revision < 0:
         raise ValueError("trust settlement outbox previous revision invalid")
+    if receipt.settlement_revision != previous_revision + 1:
+        raise ValueError("trust settlement outbox revision plan mismatch")
     meta_path = Path(str(outbox.get("meta_path") or "")).expanduser()
     snapshot_path = Path(str(outbox.get("snapshot_path") or "")).expanduser()
     if not meta_path.is_absolute() or not snapshot_path.is_absolute():
         raise ValueError("trust settlement outbox projection path invalid")
-    fields = outbox.get("projection_fields")
-    if not isinstance(fields, Mapping):
+    resolved = control_plane.resolve_run(run_id)
+    if resolved.meta is None:
+        raise ValueError("trust settlement recovery run meta missing")
+    expected_meta_path = resolved.meta.resolve()
+    expected_snapshot_path = (
+        control_plane.run_snapshot_dir() / f"{run_id}.json"
+    ).resolve()
+    if meta_path.resolve() != expected_meta_path:
+        raise ValueError("trust settlement outbox meta path mismatch")
+    if snapshot_path.resolve() != expected_snapshot_path:
+        raise ValueError("trust settlement outbox snapshot path mismatch")
+    meta_path = expected_meta_path
+    snapshot_path = expected_snapshot_path
+    raw_fields = outbox.get("projection_fields")
+    if not isinstance(raw_fields, Mapping):
         raise TypeError("trust settlement outbox projection fields missing")
+    fields = _projection_fields_for_receipt(raw_fields, receipt)
+    terminal = VERDICT_TO_SETTLEMENT.get(receipt.trust_verdict)
+    if terminal is None or terminal.value != receipt.settlement_verdict:
+        raise ValueError("trust settlement outbox verdict plan mismatch")
+    expected_fields = _trust_projection_fields(
+        Settlement(
+            verdict=terminal,
+            reason=event.reason,
+            settled_at=event.settled_at,
+            source=event.source,
+            claim_digest=event.claim_digest,
+            waived=event.waived,
+        ),
+        receipt,
+    )
+    if fields != expected_fields:
+        raise ValueError("trust settlement outbox projection plan mismatch")
+    claims = entry_payload.get("claims")
+    journal_bindings = {
+        "schema": TRUST_JOURNAL_SCHEMA_V2,
+        "repo_root": receipt.repo_root,
+        "run_id": receipt.run_id,
+        "sha": receipt.commit_sha,
+        "verdict": receipt.trust_verdict,
+        "settlement_tui": receipt.settlement_tui,
+        "claim_digest": receipt.claim_digest,
+        "trust_receipt": receipt.to_payload(),
+        "recorded_at": event.settled_at,
+    }
+    if any(entry_payload.get(key) != value for key, value in journal_bindings.items()):
+        raise ValueError("trust settlement outbox journal plan mismatch")
+    if not isinstance(claims, list) or not all(
+        isinstance(claim, Mapping) for claim in claims
+    ):
+        raise TypeError("trust settlement outbox claims invalid")
+    if _claims_digest(claims) != receipt.claim_digest:
+        raise ValueError("trust settlement outbox claims digest mismatch")
+    if (
+        fields.get("settlement_at") != event.settled_at
+        or fields.get("settlement_reason") != event.reason
+        or fields.get("settlement_source") != event.source
+        or fields.get("settlement_claim_digest") != event.claim_digest
+        or fields.get("settlement_waived") != event.waived
+    ):
+        raise ValueError("trust settlement outbox event plan mismatch")
 
     meta = control_plane._read_json(meta_path)
+    if not meta:
+        raise ValueError("trust settlement recovery meta projection missing")
     snapshot = control_plane._read_json(snapshot_path)
+    if not snapshot:
+        snapshot = dict(meta)
+        snapshot["run_id"] = run_id
     for label, payload in (("meta", meta), ("snapshot", snapshot)):
+        _validate_projection_identity(
+            payload,
+            label=label,
+            repo_root=Path(receipt.repo_root),
+            run_id=receipt.run_id,
+            commit_sha=receipt.commit_sha,
+        )
         if not _can_complete_projection(
             payload,
             receipt=receipt,
             previous_revision=previous_revision,
+            fields=fields,
         ):
             raise ValueError(f"trust settlement recovery {label} projection diverged")
 
-    if not _projection_matches_receipt(meta, receipt):
+    journal_entry = _journal_entry_for_receipt(journal, receipt.receipt_id)
+    if journal_entry is None:
+        _append_jsonl(journal, entry_payload)
+        journal_entry = _journal_entry_for_receipt(journal, receipt.receipt_id)
+    if journal_entry != dict(entry_payload):
+        raise ValueError("trust settlement journal receipt missing or mismatched")
+    _after_trust_transition("journal")
+
+    if not _projection_matches_plan(meta, receipt=receipt, fields=fields):
         meta.update(dict(fields))
         control_plane._write_json_durable(meta_path, meta)
-    if not _projection_matches_receipt(snapshot, receipt):
+        _after_trust_transition("meta")
+    if not _projection_matches_plan(snapshot, receipt=receipt, fields=fields):
         snapshot.update(dict(fields))
-        snapshot.setdefault("run_id", run_id)
         control_plane._write_json_durable(snapshot_path, snapshot)
+        _after_trust_transition("snapshot")
 
-    if not _projection_matches_receipt(
-        control_plane._read_json(meta_path), receipt
-    ) or not _projection_matches_receipt(
-        control_plane._read_json(snapshot_path), receipt
+    if not _projection_matches_plan(
+        control_plane._read_json(meta_path),
+        receipt=receipt,
+        fields=fields,
+    ) or not _projection_matches_plan(
+        control_plane._read_json(snapshot_path),
+        receipt=receipt,
+        fields=fields,
     ):
         raise OSError("trust settlement projection durability verification failed")
-    _publish_trust_event(event)
+    published_event_key = str(outbox.get("published_event_key") or "")
+    if published_event_key and published_event_key != event.event_key:
+        raise ValueError("trust settlement outbox published event mismatch")
+    if not published_event_key:
+        if not _trust_event_exists(event):
+            _publish_trust_event(event)
+        acknowledged = dict(outbox)
+        acknowledged["published_event_key"] = event.event_key
+        control_plane._write_json_durable(outbox_path, acknowledged)
+        _after_trust_transition("event")
     _remove_durable(outbox_path)
     return dict(entry_payload)
 
@@ -948,8 +1288,13 @@ def _persist_trust_settlement(
 ) -> dict[str, Any]:
     if not run_id or Path(run_id).name != run_id or run_id in {".", ".."}:
         raise ValueError(f"invalid run id: {run_id!r}")
+    journal = journal.expanduser()
     outbox_path = _trust_outbox_path(run_id)
-    recovered = _recover_trust_outbox(run_id=run_id, outbox_path=outbox_path)
+    recovered = _recover_trust_outbox(
+        run_id=run_id,
+        outbox_path=outbox_path,
+        expected_journal=journal,
+    )
     if recovered is not None:
         expected_digest = _claims_digest(claims)
         recovered_receipt = recovered.get("trust_receipt")
@@ -977,6 +1322,14 @@ def _persist_trust_settlement(
     if not snapshot:
         snapshot = dict(meta)
         snapshot["run_id"] = run_id
+    for label, payload in (("meta", meta), ("snapshot", snapshot)):
+        _validate_projection_identity(
+            payload,
+            label=label,
+            repo_root=repo_root,
+            run_id=run_id,
+            commit_sha=sha,
+        )
     revisions = [
         value
         for value in (
@@ -1024,9 +1377,8 @@ def _persist_trust_settlement(
         receipt=receipt,
     )
 
-    # Authority ordering: journal is the human/audit fact; the outbox is the
-    # crash receipt; projections become visible next; the notification is last.
-    _append_jsonl(journal, journal_entry)
+    # The prepared outbox is durable before the first irreversible side effect.
+    # Recovery replays this exact plan: journal, projections, then notification.
     outbox = {
         "schema": TRUST_OUTBOX_SCHEMA,
         "run_id": run_id,
@@ -1040,20 +1392,15 @@ def _persist_trust_settlement(
         "event": event.to_payload(),
     }
     control_plane._write_json_durable(outbox_path, outbox)
-    meta.update(fields)
-    snapshot.update(fields)
-    snapshot.setdefault("run_id", run_id)
-    control_plane._write_json_durable(resolved.meta, meta)
-    control_plane._write_json_durable(snapshot_path, snapshot)
-    if not _projection_matches_receipt(
-        control_plane._read_json(resolved.meta), receipt
-    ) or not _projection_matches_receipt(
-        control_plane._read_json(snapshot_path), receipt
-    ):
-        raise OSError("trust settlement projection durability verification failed")
-    _publish_trust_event(event)
-    _remove_durable(outbox_path)
-    return journal_entry
+    _after_trust_transition("outbox")
+    persisted = _recover_trust_outbox(
+        run_id=run_id,
+        outbox_path=outbox_path,
+        expected_journal=journal,
+    )
+    if persisted is None:
+        raise OSError("trust settlement outbox disappeared before recovery")
+    return persisted
 
 
 def note_verdict(

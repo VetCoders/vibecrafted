@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
+import os
 import subprocess
 import textwrap
 import threading
@@ -379,7 +381,7 @@ def _trust_run_fixture(
     return repo, sha, tmp_path / "journal.jsonl", meta, snapshot
 
 
-def test_trust_transaction_orders_journal_outbox_projection_then_event(
+def test_trust_transaction_orders_outbox_journal_projection_then_event(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -421,10 +423,114 @@ def test_trust_transaction_orders_journal_outbox_projection_then_event(
         claims=[{"claim": "order", "grade": "strong", "evidence": "fsync"}],
     )
 
-    assert order.index("journal") < order.index("outbox")
-    assert order.index("outbox") < order.index("meta")
+    assert order.index("outbox") < order.index("journal")
+    assert order.index("journal") < order.index("meta")
     assert order.index("meta") < order.index("snapshot")
     assert order.index("snapshot") < order.index("event")
+
+
+@pytest.mark.parametrize(
+    "transition",
+    ["outbox", "journal", "meta", "snapshot", "event"],
+)
+def test_trust_recovery_after_every_durable_transition_is_exactly_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    transition: str,
+) -> None:
+    run_id = f"run-stop-{transition}"
+    repo, sha, journal, meta_path, snapshot_path = _trust_run_fixture(
+        tmp_path,
+        monkeypatch,
+        run_id=run_id,
+    )
+    claims = [
+        {
+            "claim": f"recover after {transition}",
+            "grade": "strong",
+            "evidence": "deterministic crash seam",
+        }
+    ]
+    crashed = False
+
+    def stop_after(durable_transition: str) -> None:
+        nonlocal crashed
+        if durable_transition == transition and not crashed:
+            crashed = True
+            raise OSError(f"stop after {transition}")
+
+    monkeypatch.setattr(trust, "_after_trust_transition", stop_after)
+    with pytest.raises(OSError, match=f"stop after {transition}"):
+        trust.note_verdict(
+            repo=repo,
+            journal=journal,
+            sha=sha,
+            verdict="pass-with-gaps",
+            run_id=run_id,
+            claims=claims,
+        )
+
+    outbox_path = trust._trust_outbox_path(run_id)
+    assert outbox_path.is_file()
+    prepared = json.loads(outbox_path.read_text(encoding="utf-8"))
+    receipt_id = prepared["trust_receipt"]["receipt_id"]
+    revision = prepared["trust_receipt"]["settlement_revision"]
+    assert revision == 1
+
+    journal_records = trust._read_journal(journal)
+    assert len(journal_records) == (0 if transition == "outbox" else 1)
+    meta_before = json.loads(meta_path.read_text(encoding="utf-8"))
+    snapshot_before = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    if transition in {"meta", "snapshot", "event"}:
+        assert meta_before["trust_receipt"]["receipt_id"] == receipt_id
+    else:
+        assert "trust_receipt" not in meta_before
+    if transition in {"snapshot", "event"}:
+        assert snapshot_before["trust_receipt"]["receipt_id"] == receipt_id
+    else:
+        assert "trust_receipt" not in snapshot_before
+
+    stream = tmp_path / "crafted" / "control_plane" / "events.jsonl"
+    before_events = (
+        [
+            json.loads(line)
+            for line in stream.read_text(encoding="utf-8").splitlines()
+            if json.loads(line).get("kind") == "settlement.changed"
+        ]
+        if stream.is_file()
+        else []
+    )
+    assert len(before_events) == (1 if transition == "event" else 0)
+    if transition == "event":
+        assert prepared["published_event_key"] == (f"{run_id}:{revision}:{receipt_id}")
+
+    monkeypatch.setattr(trust, "_after_trust_transition", lambda _transition: None)
+    recovered = trust.note_verdict(
+        repo=repo,
+        journal=journal,
+        sha=sha,
+        verdict="pass-with-gaps",
+        run_id=run_id,
+        claims=claims,
+    )
+
+    assert recovered["trust_receipt"]["receipt_id"] == receipt_id
+    assert recovered["trust_receipt"]["settlement_revision"] == revision
+    assert not outbox_path.exists()
+    assert trust._read_journal(journal) == [recovered]
+    for path in (meta_path, snapshot_path):
+        projection = json.loads(path.read_text(encoding="utf-8"))
+        assert projection["trust_receipt"]["receipt_id"] == receipt_id
+        assert projection["settlement_revision"] == revision
+    after_events = [
+        json.loads(line)
+        for line in stream.read_text(encoding="utf-8").splitlines()
+        if json.loads(line).get("kind") == "settlement.changed"
+    ]
+    assert len(after_events) == 1
+    assert after_events[0]["payload"]["event_key"] == (
+        f"{run_id}:{revision}:{receipt_id}"
+    )
 
 
 def test_trust_crash_after_projection_recovers_same_receipt_and_event(
@@ -481,6 +587,318 @@ def test_trust_crash_after_projection_recovers_same_receipt_and_event(
     assert [event["payload"]["trust_receipt"]["receipt_id"] for event in events] == [
         receipt_id
     ]
+
+
+def test_trust_missing_snapshot_recovers_full_meta_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, sha, journal, meta_path, snapshot_path = _trust_run_fixture(
+        tmp_path,
+        monkeypatch,
+        run_id="run-missing-snapshot",
+    )
+    snapshot_path.unlink()
+
+    entry = trust.note_verdict(
+        repo=repo,
+        journal=journal,
+        sha=sha,
+        verdict="pass-with-gaps",
+        run_id="run-missing-snapshot",
+        claims=[
+            {
+                "claim": "snapshot materialization",
+                "grade": "strong",
+                "evidence": "fresh runtime meta",
+            }
+        ],
+    )
+
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert snapshot["state"] == "failed"
+    assert snapshot["agent"] == "codex"
+    assert snapshot["skill"] == "implement"
+    assert snapshot["exit_code"] == 9
+    assert snapshot["trust_receipt"] == entry["trust_receipt"]
+    assert snapshot["trust_receipt"] == meta["trust_receipt"]
+
+
+def test_trust_recovery_refuses_nonexact_journal_before_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, sha, journal, meta_path, snapshot_path = _trust_run_fixture(
+        tmp_path,
+        monkeypatch,
+        run_id="run-journal-conflict",
+    )
+    monkeypatch.setattr(
+        trust,
+        "_after_trust_transition",
+        lambda transition: (
+            (_ for _ in ()).throw(OSError("stop after outbox"))
+            if transition == "outbox"
+            else None
+        ),
+    )
+    claims = [
+        {
+            "claim": "exact journal authority",
+            "grade": "strong",
+            "evidence": "conflicting same-receipt record",
+        }
+    ]
+    with pytest.raises(OSError, match="stop after outbox"):
+        trust.note_verdict(
+            repo=repo,
+            journal=journal,
+            sha=sha,
+            verdict="pass-with-gaps",
+            run_id="run-journal-conflict",
+            claims=claims,
+        )
+    outbox = json.loads(
+        trust._trust_outbox_path("run-journal-conflict").read_text(encoding="utf-8")
+    )
+    conflicting = dict(outbox["journal_entry"])
+    conflicting["verdict"] = "block"
+    trust._append_jsonl(journal, conflicting)
+    monkeypatch.setattr(trust, "_after_trust_transition", lambda _transition: None)
+
+    with pytest.raises(
+        ValueError,
+        match="journal receipt missing or mismatched",
+    ):
+        trust.note_verdict(
+            repo=repo,
+            journal=journal,
+            sha=sha,
+            verdict="pass-with-gaps",
+            run_id="run-journal-conflict",
+            claims=claims,
+        )
+
+    assert "trust_receipt" not in json.loads(meta_path.read_text(encoding="utf-8"))
+    assert "trust_receipt" not in json.loads(snapshot_path.read_text(encoding="utf-8"))
+    event_stream = tmp_path / "crafted" / "control_plane" / "events.jsonl"
+    assert not event_stream.exists()
+
+
+@pytest.mark.parametrize(
+    ("path_field", "error"),
+    [
+        ("journal", "journal path mismatch"),
+        ("meta_path", "meta path mismatch"),
+        ("snapshot_path", "snapshot path mismatch"),
+    ],
+)
+def test_trust_recovery_refuses_outbox_path_redirection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    path_field: str,
+    error: str,
+) -> None:
+    run_id = f"run-path-{path_field}"
+    repo, sha, journal, meta_path, snapshot_path = _trust_run_fixture(
+        tmp_path,
+        monkeypatch,
+        run_id=run_id,
+    )
+    crashed = False
+
+    def stop_after_outbox(transition: str) -> None:
+        nonlocal crashed
+        if transition == "outbox" and not crashed:
+            crashed = True
+            raise OSError("stop after outbox")
+
+    monkeypatch.setattr(trust, "_after_trust_transition", stop_after_outbox)
+    claims = [{"claim": "path binding", "grade": "strong", "evidence": path_field}]
+    with pytest.raises(OSError, match="stop after outbox"):
+        trust.note_verdict(
+            repo=repo,
+            journal=journal,
+            sha=sha,
+            verdict="pass-with-gaps",
+            run_id=run_id,
+            claims=claims,
+        )
+
+    outbox_path = trust._trust_outbox_path(run_id)
+    outbox = json.loads(outbox_path.read_text(encoding="utf-8"))
+    victim = tmp_path / f"victim-{path_field}.json"
+    victim.write_text(json.dumps({"application": "unrelated"}), encoding="utf-8")
+    outbox[path_field] = str(victim.resolve())
+    outbox_path.write_text(json.dumps(outbox), encoding="utf-8")
+    monkeypatch.setattr(trust, "_after_trust_transition", lambda _transition: None)
+
+    with pytest.raises(ValueError, match=error):
+        trust.note_verdict(
+            repo=repo,
+            journal=journal,
+            sha=sha,
+            verdict="pass-with-gaps",
+            run_id=run_id,
+            claims=claims,
+        )
+
+    assert json.loads(victim.read_text(encoding="utf-8")) == {
+        "application": "unrelated"
+    }
+    assert "trust_receipt" not in json.loads(meta_path.read_text(encoding="utf-8"))
+    assert "trust_receipt" not in json.loads(snapshot_path.read_text(encoding="utf-8"))
+
+
+def test_trust_recovery_upgrades_pending_4a9_v1_projection_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, sha, journal, meta_path, snapshot_path = _trust_run_fixture(
+        tmp_path,
+        monkeypatch,
+        run_id="run-v1-upgrade",
+    )
+    crashed = False
+
+    def stop_after_outbox(transition: str) -> None:
+        nonlocal crashed
+        if transition == "outbox" and not crashed:
+            crashed = True
+            raise OSError("stop after outbox")
+
+    monkeypatch.setattr(trust, "_after_trust_transition", stop_after_outbox)
+    claims = [{"claim": "v1 upgrade", "grade": "strong", "evidence": "4a9 plan"}]
+    with pytest.raises(OSError, match="stop after outbox"):
+        trust.note_verdict(
+            repo=repo,
+            journal=journal,
+            sha=sha,
+            verdict="pass-with-gaps",
+            run_id="run-v1-upgrade",
+            claims=claims,
+        )
+
+    outbox_path = trust._trust_outbox_path("run-v1-upgrade")
+    outbox = json.loads(outbox_path.read_text(encoding="utf-8"))
+    for key in ("run_id", "root", "repo_root", "commit_sha"):
+        outbox["projection_fields"].pop(key)
+    outbox_path.write_text(json.dumps(outbox), encoding="utf-8")
+    monkeypatch.setattr(trust, "_after_trust_transition", lambda _transition: None)
+
+    recovered = trust.note_verdict(
+        repo=repo,
+        journal=journal,
+        sha=sha,
+        verdict="pass-with-gaps",
+        run_id="run-v1-upgrade",
+        claims=claims,
+    )
+
+    assert recovered["trust_receipt"]["settlement_revision"] == 1
+    for path in (meta_path, snapshot_path):
+        projection = json.loads(path.read_text(encoding="utf-8"))
+        assert projection["run_id"] == "run-v1-upgrade"
+        assert projection["root"] == str(repo.resolve())
+        assert projection["repo_root"] == str(repo.resolve())
+        assert projection["commit_sha"] == sha
+
+
+def test_journal_reader_reports_concurrent_partial_append_as_retryable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    journal = tmp_path / "journal.jsonl"
+    trust._append_jsonl(journal, {"record": "before"})
+    first_chunk_written = threading.Event()
+    release_writer = threading.Event()
+    writer_errors: list[BaseException] = []
+    real_write = trust._journal_write
+    calls = 0
+
+    def paused_short_write(descriptor: int, data: bytes) -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            split = max(1, len(data) // 2)
+            written = real_write(descriptor, data[:split])
+            first_chunk_written.set()
+            assert release_writer.wait(timeout=5)
+            return written
+        return real_write(descriptor, data)
+
+    monkeypatch.setattr(trust, "_journal_write", paused_short_write)
+
+    def append_unrelated() -> None:
+        try:
+            trust._append_jsonl(journal, {"record": "unrelated"})
+        except (OSError, AssertionError) as exc:  # pragma: no cover
+            writer_errors.append(exc)
+
+    writer = threading.Thread(target=append_unrelated)
+    writer.start()
+    assert first_chunk_written.wait(timeout=5)
+    with pytest.raises(trust.TrustJournalRetryable, match="busy"):
+        trust._read_journal(journal)
+    release_writer.set()
+    writer.join(timeout=5)
+
+    assert writer.is_alive() is False
+    assert writer_errors == []
+    assert trust._read_journal(journal) == [
+        {"record": "before"},
+        {"record": "unrelated"},
+    ]
+
+
+def test_journal_reader_reports_unterminated_tail_as_retryable(tmp_path: Path) -> None:
+    journal = tmp_path / "journal.jsonl"
+    journal.write_bytes(b'{"record":"partial"')
+
+    with pytest.raises(trust.TrustJournalRetryable, match="partial tail"):
+        trust._read_journal(journal)
+
+
+def test_journal_write_error_after_short_write_rolls_back_exact_tail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    journal = tmp_path / "journal.jsonl"
+    trust._append_jsonl(journal, {"record": "stable"})
+    before = journal.read_bytes()
+    real_write = trust._journal_write
+    calls = 0
+
+    def short_then_error(descriptor: int, data: bytes) -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return real_write(descriptor, data[:7])
+        raise OSError("injected journal write failure")
+
+    monkeypatch.setattr(trust, "_journal_write", short_then_error)
+    with pytest.raises(OSError, match="injected journal write failure"):
+        trust._append_jsonl(journal, {"record": "must-not-tear"})
+
+    assert journal.read_bytes() == before
+    assert trust._read_journal(journal) == [{"record": "stable"}]
+
+
+def test_journal_write_all_completes_repeated_short_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    journal = tmp_path / "journal.jsonl"
+    real_write = trust._journal_write
+
+    def always_short(descriptor: int, data: bytes) -> int:
+        return real_write(descriptor, data[: max(1, len(data) // 3)])
+
+    monkeypatch.setattr(trust, "_journal_write", always_short)
+    trust._append_jsonl(journal, {"record": "complete"})
+
+    assert trust._read_journal(journal) == [{"record": "complete"}]
 
 
 def test_guardian_resume_authority_is_exact_and_legacy_is_terminal(
@@ -554,6 +972,88 @@ def test_guardian_resume_authority_is_exact_and_legacy_is_terminal(
     assert denied_legacy.allowed is False
     assert denied_legacy.reason == "legacy_trust_record_not_resume_authority"
     assert denied_legacy.terminal is True
+
+
+@pytest.mark.parametrize("field", ["run_id", "root", "repo_root", "commit_sha"])
+@pytest.mark.parametrize("target", ["meta", "projection"])
+def test_guardian_resume_denies_live_top_level_authority_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    target: str,
+) -> None:
+    repo, sha, journal, meta_path, snapshot_path = _trust_run_fixture(
+        tmp_path,
+        monkeypatch,
+        run_id="run-live-mismatch",
+    )
+    entry = trust.note_verdict(
+        repo=repo,
+        journal=journal,
+        sha=sha,
+        verdict="pass-with-gaps",
+        run_id="run-live-mismatch",
+        claims=[{"claim": "resume", "grade": "strong", "evidence": "live fields"}],
+    )
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    projection = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    mutated = meta if target == "meta" else projection
+    mutated[field] = (
+        str((tmp_path / "different-repo").resolve())
+        if field in {"root", "repo_root"}
+        else ("different-run" if field == "run_id" else "f" * 40)
+    )
+
+    decision = guard.authorize_guardian_resume(
+        run_id="run-live-mismatch",
+        repo=repo,
+        journal=journal,
+        meta=meta,
+        projection=projection,
+        expected_receipt_id=entry["trust_receipt"]["receipt_id"],
+    )
+
+    assert decision.allowed is False
+    assert decision.retryable is False
+    assert decision.reason == f"{target}_{field}_mismatch"
+
+
+def test_guardian_resume_treats_busy_journal_as_retryable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, sha, journal, meta_path, snapshot_path = _trust_run_fixture(
+        tmp_path,
+        monkeypatch,
+        run_id="run-busy-journal",
+    )
+    entry = trust.note_verdict(
+        repo=repo,
+        journal=journal,
+        sha=sha,
+        verdict="pass-with-gaps",
+        run_id="run-busy-journal",
+        claims=[{"claim": "resume", "grade": "strong", "evidence": "busy journal"}],
+    )
+    descriptor = os.open(journal, os.O_RDWR)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        decision = guard.authorize_guardian_resume(
+            run_id="run-busy-journal",
+            repo=repo,
+            journal=journal,
+            meta=json.loads(meta_path.read_text(encoding="utf-8")),
+            projection=json.loads(snapshot_path.read_text(encoding="utf-8")),
+            expected_receipt_id=entry["trust_receipt"]["receipt_id"],
+        )
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+    assert decision.allowed is False
+    assert decision.reason == "trust_journal_busy"
+    assert decision.retryable is True
+    assert decision.terminal is False
 
 
 def test_enumerate_skips_commits_already_in_append_only_journal(

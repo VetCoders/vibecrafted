@@ -169,6 +169,8 @@ def _journal_receipt(
         receipt = TrustReceiptV1.from_payload(raw)
     except (TypeError, ValueError) as exc:
         return None, str(exc)
+    if not str(record.get("recorded_at") or "").strip():
+        return None, "trust_journal_recorded_at_missing"
     claims = record.get("claims")
     if not isinstance(claims, list) or not all(
         isinstance(item, Mapping) for item in claims
@@ -203,22 +205,57 @@ def _projection_receipt_mismatch(
     receipt: TrustReceiptV1,
     *,
     label: str,
+    recorded_at: str,
 ) -> str:
     raw = payload.get("trust_receipt")
     if not isinstance(raw, Mapping):
         return f"{label}_trust_receipt_missing"
     if dict(raw) != receipt.to_payload():
         return f"{label}_trust_receipt_mismatch"
+    expected_reason = (
+        f"trust_{receipt.trust_verdict.replace('-', '_')}:{receipt.commit_sha}"
+    )
     expected = {
+        "run_id": receipt.run_id,
+        "repo_root": receipt.repo_root,
+        "commit_sha": receipt.commit_sha,
         "settlement_revision": receipt.settlement_revision,
         "settlement_verdict": receipt.settlement_verdict,
+        "settlement_reason": expected_reason,
+        "settlement_at": recorded_at,
         "settlement_tui": receipt.settlement_tui,
         "settlement_source": "trust",
         "settlement_claim_digest": receipt.claim_digest,
+        "settlement_waived": False,
     }
     for field_name, value in expected.items():
         if payload.get(field_name) != value:
             return f"{label}_{field_name}_mismatch"
+    for field_name in ("root", "repo_root"):
+        if _canonical_root(payload.get(field_name)) != receipt.repo_root:
+            return f"{label}_{field_name}_mismatch"
+    if payload.get("await_rc") is not None:
+        return f"{label}_await_rc_mismatch"
+    if str(payload.get("await_outcome") or ""):
+        return f"{label}_await_outcome_mismatch"
+    if str(payload.get("await_settled_at") or ""):
+        return f"{label}_await_settled_at_mismatch"
+    nested = payload.get("settlement")
+    if not isinstance(nested, Mapping):
+        return f"{label}_settlement_missing"
+    expected_nested = {
+        "verdict": receipt.settlement_verdict,
+        "reason": expected_reason,
+        "settled_at": recorded_at,
+        "source": "trust",
+        "claim_digest": receipt.claim_digest,
+        "waived": False,
+        "tui": receipt.settlement_tui,
+        "await_rc": None,
+        "await_outcome": "",
+    }
+    if dict(nested) != expected_nested:
+        return f"{label}_settlement_mismatch"
     return ""
 
 
@@ -245,11 +282,25 @@ def _outbox_projection_lag(
 ) -> bool:
     """True only for the pre-receipt projection an exact pending outbox can heal."""
 
-    return _outbox_has_receipt(run_id, receipt.receipt_id) and (
-        trust._can_complete_projection(
+    outbox = control_plane._read_json(trust._trust_outbox_path(run_id))
+    raw = outbox.get("trust_receipt")
+    fields = outbox.get("projection_fields")
+    if not isinstance(raw, Mapping) or not isinstance(fields, Mapping):
+        return False
+    try:
+        outbox_receipt = TrustReceiptV1.from_payload(raw)
+    except (TypeError, ValueError):
+        return False
+    normalized_fields = trust._projection_fields_for_receipt(fields, outbox_receipt)
+    return (
+        outbox.get("schema") == trust.TRUST_OUTBOX_SCHEMA
+        and str(outbox.get("run_id") or "") == run_id
+        and outbox_receipt == receipt
+        and trust._can_complete_projection(
             payload,
             receipt=receipt,
             previous_revision=receipt.settlement_revision - 1,
+            fields=normalized_fields,
         )
     )
 
@@ -295,6 +346,15 @@ def authorize_guardian_resume(
         )
     try:
         records = trust._read_journal(resolved_journal)
+    except trust.TrustJournalRetryable as exc:
+        return _guardian_resume_decision(
+            allowed=False,
+            reason="trust_journal_busy",
+            journal=resolved_journal,
+            receipt_id=expected,
+            retryable=True,
+            detail=f"{type(exc).__name__}: {exc}",
+        )
     except (OSError, TypeError, ValueError) as exc:
         return _guardian_resume_decision(
             allowed=False,
@@ -382,16 +442,7 @@ def authorize_guardian_resume(
             journal=resolved_journal,
             receipt_id=receipt.receipt_id,
         )
-    roots = [
-        value
-        for value in (
-            repo,
-            live_meta.get("root"),
-            live_projection.get("root"),
-        )
-        if str(value or "").strip()
-    ]
-    if not roots or any(_canonical_root(value) != receipt.repo_root for value in roots):
+    if repo is not None and _canonical_root(repo) != receipt.repo_root:
         return _guardian_resume_decision(
             allowed=False,
             reason="trust_receipt_repo_root_mismatch",
@@ -399,7 +450,12 @@ def authorize_guardian_resume(
             receipt_id=receipt.receipt_id,
         )
     for label, payload in (("meta", live_meta), ("projection", live_projection)):
-        mismatch = _projection_receipt_mismatch(payload, receipt, label=label)
+        mismatch = _projection_receipt_mismatch(
+            payload,
+            receipt,
+            label=label,
+            recorded_at=str(record.get("recorded_at") or ""),
+        )
         if mismatch:
             retryable = _outbox_projection_lag(target, receipt, payload)
             return _guardian_resume_decision(
