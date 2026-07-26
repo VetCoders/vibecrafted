@@ -2002,7 +2002,64 @@ def retry_run(
     if not target:
         raise ValueError("run_id is required")
 
-    run = lookup_run(target)
+    preliminary_run = lookup_run(target)
+    preliminary_resume_root = target
+    if preliminary_run is not None:
+        preliminary_meta = _native_resume_meta(target, preliminary_run)
+        preliminary_resume_root = _native_resume_root(
+            target,
+            preliminary_meta,
+            preliminary_run,
+        )
+
+    # Manual retry and Guardian-native resume must serialize on the same parent
+    # and lineage boundary. Acquire the complete ordered set once; nesting a
+    # second parent lock below this point would deadlock cross-process flock.
+    with run_mutation_locks(
+        control_plane_home(),
+        run_id=target,
+        resume_root=preliminary_resume_root,
+    ):
+        run = lookup_run(target)
+        if run is not None:
+            locked_meta = _native_resume_meta(target, run)
+            locked_resume_root = _native_resume_root(target, locked_meta, run)
+            if locked_resume_root != preliminary_resume_root:
+                payload = {
+                    "accepted": False,
+                    "reason": "retry_lineage_changed",
+                    "retryable": False,
+                    "terminal": True,
+                }
+                append_event(
+                    kind="audit:retry",
+                    run_id=target,
+                    message="retry rejected: resume lineage changed",
+                    payload=payload,
+                )
+                return {
+                    "accepted": False,
+                    "run_id": target,
+                    **payload,
+                    "run": run,
+                }
+        return _retry_run_locked(
+            target,
+            source_dir,
+            env=env,
+            run=run,
+        )
+
+
+def _retry_run_locked(
+    target: str,
+    source_dir: str | Path,
+    *,
+    env: dict[str, str] | None,
+    run: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Retry after the caller acquired the parent and resume-lineage locks."""
+
     if run is None:
         append_event(
             kind="audit:retry",
@@ -2027,6 +2084,34 @@ def retry_run(
             "accepted": False,
             "run_id": target,
             "reason": "run_not_terminal",
+            "run": run,
+        }
+
+    settlement_tui, settlement_verdict, settlement_source = _native_resume_settlement(
+        run
+    )
+    if (
+        run.get("recovery_required") is True
+        and settlement_tui == "n"
+        and settlement_verdict == "needs_attention"
+        and settlement_source == "trust"
+    ):
+        rejection = {
+            "accepted": False,
+            "reason": "recovery_owned_by_guardian",
+            "retryable": False,
+            "terminal": True,
+        }
+        append_event(
+            kind="audit:retry",
+            run_id=target,
+            message="retry rejected: recovery owned by Guardian",
+            payload=rejection,
+        )
+        return {
+            "accepted": False,
+            "run_id": target,
+            **rejection,
             "run": run,
         }
 
@@ -2092,6 +2177,9 @@ DEFAULT_NATIVE_RESUME_PROMPT = (
     "the required handoff report."
 )
 NATIVE_RESUME_IDEMPOTENCY_SCHEMA = "vibecrafted.native-resume-idempotency.v1"
+NATIVE_RESUME_IDEMPOTENCY_STATES = frozenset(
+    {"reserved", "dispatched", "launch_failed"}
+)
 NATIVE_RESUME_IDEMPOTENCY_MAX_LENGTH = 512
 NATIVE_RESUME_AUTOMATIC_ATTEMPT_BUDGET = 1
 _MISSING_NATIVE_IDENTITIES = {"", "pending", "none", "null", "unknown"}
@@ -2432,6 +2520,9 @@ def _read_native_resume_idempotency_record(
         raise ValueError(
             f"idempotency record missing fields {','.join(missing)}: {path}"
         )
+    state = payload.get("state")
+    if not isinstance(state, str) or state not in NATIVE_RESUME_IDEMPOTENCY_STATES:
+        raise ValueError(f"invalid idempotency record state {state!r}: {path}")
     return payload
 
 
@@ -2453,23 +2544,19 @@ def _new_native_resume_lease() -> tuple[str, int]:
     return ensure_session_id(), os.getpid()
 
 
-def _native_resume_owner_alive(record: dict[str, Any]) -> bool:
+def _native_resume_owner_active_here(record: dict[str, Any]) -> bool:
+    """Return whether this process still owns the in-memory launch lease.
+
+    Cross-process ownership is established only by the ordered filesystem
+    locks. A PID in a durable receipt is diagnostic metadata, never authority:
+    it may already identify an unrelated process after PID reuse.
+    """
+
     token = str(record.get("owner_token") or "")
-    owner_pid = _coerce_positive_int(record.get("owner_pid"), 0) or 0
-    if not token or not owner_pid:
+    if not token:
         return False
-    if owner_pid == os.getpid():
-        with _ACTIVE_NATIVE_RESUME_LEASES_LOCK:
-            return token in _ACTIVE_NATIVE_RESUME_LEASES
-    try:
-        os.kill(owner_pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
+    with _ACTIVE_NATIVE_RESUME_LEASES_LOCK:
+        return token in _ACTIVE_NATIVE_RESUME_LEASES
 
 
 def _activate_native_resume_lease(token: str) -> None:
@@ -2518,6 +2605,14 @@ def _claim_native_resume_idempotency(
                 atomic_write_json(budget_path, budget)
                 break
     if budget:
+        budget_state = budget.get("state")
+        if (
+            not isinstance(budget_state, str)
+            or budget_state not in NATIVE_RESUME_IDEMPOTENCY_STATES
+        ):
+            raise ValueError(
+                f"invalid automatic resume ledger state {budget_state!r}: {budget_path}"
+            )
         if (
             str(budget.get("idempotency_key") or "") != key
             or str(budget.get("parent_run_id") or "") != parent_run_id
@@ -2595,7 +2690,7 @@ def _take_over_native_resume_idempotency(
     key: str,
     record: dict[str, Any],
 ) -> dict[str, Any]:
-    """CAS one dead reservation to a new owner without changing launch identity."""
+    """CAS one exclusively locked reservation without changing launch identity."""
 
     registry = _native_resume_idempotency_registry()
     path = _native_resume_idempotency_path(registry, key)
@@ -2605,8 +2700,6 @@ def _take_over_native_resume_idempotency(
     expected_generation = int(record.get("lease_generation") or 0)
     if int(current.get("lease_generation") or 0) != expected_generation:
         raise ValueError("idempotency lease changed before takeover")
-    if _native_resume_owner_alive(current):
-        return current
     token, owner_pid = _new_native_resume_lease()
     current["owner_token"] = token
     current["owner_pid"] = owner_pid
@@ -2645,6 +2738,8 @@ def _update_native_resume_idempotency(
     owner_token: str = "",
     release_owner: bool = False,
 ) -> dict[str, Any]:
+    if state not in NATIVE_RESUME_IDEMPOTENCY_STATES:
+        raise ValueError(f"invalid idempotency record state: {state!r}")
     registry = _native_resume_idempotency_registry()
     path = _native_resume_idempotency_path(registry, key)
     record = _read_native_resume_idempotency_record(path, key)
@@ -2826,6 +2921,8 @@ def native_resume_run(
     *,
     prompt: str = "",
     expected_agent: str = "",
+    expected_agent_session_id: str = "",
+    expected_settlement_revision: int | None = None,
     env: dict[str, str] | None = None,
     idempotency_key: str = "",
 ) -> dict[str, Any]:
@@ -2835,13 +2932,36 @@ def native_resume_run(
     only a terminal trust ``n`` with a dead worker, explicit native identity,
     recovery requirement, and stable settlement revision may launch. A keyed
     call is an automatic Guardian attempt (one per lineage); an unkeyed call is
-    a separate explicit manual attempt.
+    a separate explicit manual attempt. Guardian callers may pin the event's
+    provider-session identity and settlement revision; both are revalidated
+    against live state while the run mutation locks are held.
     """
 
     target = str(run_id or "").strip()
     if not target:
         raise ValueError("run_id is required")
     requested_agent = str(expected_agent or "").strip().lower()
+    raw_expected_agent_session = str(expected_agent_session_id or "").strip()
+    requested_agent_session = _explicit_native_identity(raw_expected_agent_session)
+    if raw_expected_agent_session and not requested_agent_session:
+        return _native_resume_rejection(
+            target,
+            "invalid_expected_agent_session_id",
+        )
+    requested_settlement_revision: int | None = None
+    if expected_settlement_revision is not None:
+        if (
+            type(expected_settlement_revision) is not int
+            or expected_settlement_revision <= 0
+        ):
+            return _native_resume_rejection(
+                target,
+                "invalid_expected_settlement_revision",
+            )
+        requested_settlement_revision = expected_settlement_revision
+    requires_locked_expectation = bool(
+        requested_agent_session or requested_settlement_revision is not None
+    )
     try:
         resume_idempotency_key = _normalize_native_resume_idempotency_key(
             idempotency_key
@@ -2891,10 +3011,10 @@ def native_resume_run(
             existing_child = lookup_run(
                 str(existing_idempotency.get("child_run_id") or "")
             )
-            if (
+            if not requires_locked_expectation and (
                 existing_state == "dispatched"
                 or _native_resume_child_was_dispatched(existing_child)
-                or _native_resume_owner_alive(existing_idempotency)
+                or _native_resume_owner_active_here(existing_idempotency)
             ):
                 recorded_agent = str(existing_idempotency.get("agent") or "").lower()
                 return _native_resume_idempotency_result(
@@ -3003,7 +3123,7 @@ def native_resume_run(
         )
 
     preliminary_resume_root = _native_resume_root(target, parent_meta, run)
-    expected_revision = settlement_revision
+    cas_revision = settlement_revision
     if existing_idempotency is not None:
         recorded_revision = existing_idempotency.get("settlement_revision")
         if type(recorded_revision) is not int or recorded_revision <= 0:
@@ -3013,7 +3133,7 @@ def native_resume_run(
                 run=run,
                 idempotency_key=resume_idempotency_key,
             )
-        expected_revision = recorded_revision
+        cas_revision = recorded_revision
 
     with run_mutation_locks(
         control_plane_home(),
@@ -3048,12 +3168,37 @@ def native_resume_run(
                 run=locked_run,
                 idempotency_key=resume_idempotency_key,
             )
-        if locked_revision != expected_revision:
+        if requested_agent_session and locked_agent_session != requested_agent_session:
+            return _native_resume_rejection(
+                target,
+                "expected_agent_session_mismatch",
+                run=locked_run,
+                detail=(
+                    f"expected={requested_agent_session} "
+                    f"current={locked_agent_session or 'unknown'}"
+                ),
+                idempotency_key=resume_idempotency_key,
+            )
+        if (
+            requested_settlement_revision is not None
+            and locked_revision != requested_settlement_revision
+        ):
+            return _native_resume_rejection(
+                target,
+                "expected_settlement_revision_mismatch",
+                run=locked_run,
+                detail=(
+                    f"expected={requested_settlement_revision} "
+                    f"current={locked_revision}"
+                ),
+                idempotency_key=resume_idempotency_key,
+            )
+        if locked_revision != cas_revision:
             return _native_resume_rejection(
                 target,
                 "settlement_revision_changed",
                 run=locked_run,
-                detail=f"expected={expected_revision} current={locked_revision}",
+                detail=f"expected={cas_revision} current={locked_revision}",
                 idempotency_key=resume_idempotency_key,
             )
         if locked_agent != agent or locked_agent_session != agent_session_id:
@@ -3135,11 +3280,10 @@ def native_resume_run(
             if not created:
                 child = lookup_run(str(idempotency_record.get("child_run_id") or ""))
                 idempotency_state = str(idempotency_record.get("state") or "reserved")
-                if (
-                    idempotency_state not in {"reserved", "launch_failed"}
-                    or _native_resume_child_was_dispatched(child)
-                    or _native_resume_owner_alive(idempotency_record)
-                ):
+                if idempotency_state not in {
+                    "reserved",
+                    "launch_failed",
+                } or _native_resume_child_was_dispatched(child):
                     return _native_resume_idempotency_result(
                         target=target,
                         agent=agent,
@@ -3152,18 +3296,6 @@ def native_resume_run(
                     key=resume_idempotency_key,
                     record=idempotency_record,
                 )
-                if (
-                    _native_resume_owner_alive(idempotency_record)
-                    and int(idempotency_record.get("owner_pid") or 0) != os.getpid()
-                ):
-                    return _native_resume_idempotency_result(
-                        target=target,
-                        agent=agent,
-                        requested_agent=requested_agent,
-                        key=resume_idempotency_key,
-                        record=idempotency_record,
-                        run=locked_run,
-                    )
             child_run_id = str(idempotency_record["child_run_id"])
             resume_root = str(idempotency_record["resume_root"])
             attempt = int(idempotency_record["attempt"])

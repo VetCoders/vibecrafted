@@ -1467,6 +1467,8 @@ def test_native_resume_creates_new_tracked_monotonic_attempts(
         source_dir=tmp_path,
         prompt="continue safely",
         expected_agent="codex",
+        expected_agent_session_id="codex-native-id",
+        expected_settlement_revision=7,
     )
     second = workflow.native_resume_run(
         run_id,
@@ -1486,9 +1488,9 @@ def test_native_resume_creates_new_tracked_monotonic_attempts(
     assert launches[0]["worker_command_override"] == [
         "/verified/bin/codex",
         "exec",
+        "resume",
         "--json",
         "--dangerously-bypass-approvals-and-sandbox",
-        "resume",
         "codex-native-id",
         "-",
     ]
@@ -1629,6 +1631,8 @@ def test_native_resume_idempotency_replay_returns_same_child_without_relaunch(
     replay = workflow.native_resume_run(
         run_id,
         source_dir=tmp_path,
+        expected_agent_session_id="codex-native-id",
+        expected_settlement_revision=7,
         idempotency_key=key,
     )
     monkeypatch.setattr(workflow, "lookup_run", lambda _target: None)
@@ -1918,6 +1922,191 @@ def test_native_resume_dead_owner_takes_over_pre_spawn_reservation_exactly(
     assert receipt["lease_generation"] == 2
 
 
+def test_native_resume_reserved_receipt_ignores_unrelated_live_owner_pid(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    key = f"settlement:{run_id}:live-pid-reuse"
+    env = _native_resume_claim_env(tmp_path, key=key, parent=run_id)
+    env["NATIVE_RESUME_TEST_CRASH"] = "1"
+    crashed = subprocess.run(
+        [sys.executable, "-c", _NATIVE_RESUME_CLAIM_SCRIPT],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert crashed.returncode == 91
+    reserved = json.loads(crashed.stdout)["record"]
+
+    unrelated_live_pid = os.getppid()
+    os.kill(unrelated_live_pid, 0)
+    registry = workflow._native_resume_idempotency_registry()
+    receipt_path = workflow._native_resume_idempotency_path(registry, key)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["owner_token"] = "stale-owner-token"
+    receipt["owner_pid"] = unrelated_live_pid
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    budget_path = workflow._native_resume_automatic_budget_path(run_id)
+    budget = json.loads(budget_path.read_text(encoding="utf-8"))
+    budget["owner_token"] = receipt["owner_token"]
+    budget["owner_pid"] = unrelated_live_pid
+    budget_path.write_text(json.dumps(budget), encoding="utf-8")
+
+    monkeypatch.setattr(
+        workflow,
+        "reserve_run_id",
+        lambda _skill: (_ for _ in ()).throw(
+            AssertionError("takeover must preserve the reserved child identity")
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launches: list[str] = []
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda spec, *_args, **_kwargs: (
+            launches.append(spec.run_id)
+            or {"accepted": True, "run_id": spec.run_id, "status": "launching"}
+        ),
+    )
+
+    result = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        expected_agent="codex",
+        idempotency_key=key,
+    )
+
+    assert result["accepted"] is True
+    assert result["resume_run_id"] == reserved["child_run_id"]
+    assert result["runtime_session_id"] == reserved["runtime_session_id"]
+    assert launches == [reserved["child_run_id"]]
+    final_receipt = workflow._lookup_native_resume_idempotency(key)
+    assert final_receipt is not None
+    assert final_receipt["lease_generation"] == reserved["lease_generation"] + 1
+
+
+def test_native_resume_unknown_receipt_state_is_terminal_before_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    key = f"settlement:{run_id}:unknown-state"
+    registry = workflow._native_resume_idempotency_registry()
+    receipt_path = workflow._native_resume_idempotency_path(registry, key)
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "schema": workflow.NATIVE_RESUME_IDEMPOTENCY_SCHEMA,
+                "idempotency_key": key,
+                "parent_run_id": run_id,
+                "agent": "codex",
+                "agent_session_id": "codex-native-id",
+                "parent_runtime_session_id": "runtime-parent-id",
+                "child_run_id": "rsme-invalid-state",
+                "runtime_session_id": "runtime-invalid-state",
+                "resume_root": run_id,
+                "attempt": 2,
+                "settlement_revision": 7,
+                "state": "corrupt_future_state",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        workflow,
+        "lookup_run",
+        lambda _target: (_ for _ in ()).throw(
+            AssertionError("invalid receipt must fail before run lookup")
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda _agent: (_ for _ in ()).throw(
+            AssertionError("invalid receipt must fail before provider probe")
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("invalid receipt must never launch")
+        ),
+    )
+
+    results = [
+        workflow.native_resume_run(
+            run_id,
+            source_dir=tmp_path,
+            idempotency_key=key,
+        )
+        for _ in range(2)
+    ]
+
+    for result in results:
+        assert result["accepted"] is False
+        assert result["reason"] == "idempotency_record_invalid"
+        assert result["retryable"] is False
+        assert result["terminal"] is True
+        assert "corrupt_future_state" in result["detail"]
+
+
+def test_native_resume_unknown_ledger_state_is_terminal_without_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    key = f"settlement:{run_id}:unknown-ledger-state"
+    budget_path = workflow._native_resume_automatic_budget_path(run_id)
+    budget_path.write_text(
+        json.dumps({"state": "corrupt_future_state"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("invalid automatic ledger must never launch")
+        ),
+    )
+
+    result = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=key,
+    )
+
+    assert result["accepted"] is False
+    assert result["reason"] == "idempotency_claim_failed"
+    assert result["retryable"] is False
+    assert result["terminal"] is True
+    assert "corrupt_future_state" in result["detail"]
+
+
 def test_native_resume_claim_is_atomic_across_processes(
     tmp_path: Path,
 ) -> None:
@@ -2091,6 +2280,135 @@ def test_native_resume_revision_cas_rejects_probe_window_change(
     assert result["terminal"] is True
 
 
+@pytest.mark.parametrize(
+    ("changed_identity", "reason", "detail"),
+    [
+        (
+            "agent_session",
+            "expected_agent_session_mismatch",
+            "expected=codex-native-id current=codex-replaced-id",
+        ),
+        (
+            "settlement_revision",
+            "expected_settlement_revision_mismatch",
+            "expected=7 current=8",
+        ),
+    ],
+)
+def test_native_resume_guardian_snapshot_rejects_probe_window_change(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    changed_identity: str,
+    reason: str,
+    detail: str,
+) -> None:
+    run_id, parent = _native_resume_parent(monkeypatch, tmp_path)
+    key = f"settlement:{run_id}:guardian-snapshot"
+    live_revision = 7
+
+    def lookup(target: str) -> dict[str, Any] | None:
+        if target != run_id:
+            return None
+        current = dict(parent)
+        current["settlement_revision"] = live_revision
+        return current
+
+    def change_snapshot_during_probe(agent: str) -> SimpleNamespace:
+        nonlocal live_revision
+        if changed_identity == "agent_session":
+            meta_path = (
+                tmp_path
+                / "home"
+                / "control_plane"
+                / "runtime_runs"
+                / run_id
+                / "meta.json"
+            )
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta["agent_session_id"] = "codex-replaced-id"
+            meta_path.write_text(json.dumps(meta), encoding="utf-8")
+        else:
+            live_revision = 8
+        return SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        )
+
+    monkeypatch.setattr(workflow, "lookup_run", lookup)
+    monkeypatch.setattr(workflow, "probe_provider", change_snapshot_during_probe)
+    launches: list[str] = []
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda spec, *_args, **_kwargs: (
+            launches.append(spec.run_id) or {"accepted": True, "run_id": spec.run_id}
+        ),
+    )
+
+    result = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        expected_agent_session_id="codex-native-id",
+        expected_settlement_revision=7,
+        idempotency_key=key,
+    )
+
+    assert result["accepted"] is False
+    assert result["reason"] == reason
+    assert result["detail"] == detail
+    assert result["retryable"] is False
+    assert result["terminal"] is True
+    assert launches == []
+    assert workflow._lookup_native_resume_idempotency(key) is None
+
+
+@pytest.mark.parametrize(
+    ("expectation", "reason"),
+    [
+        (
+            {"expected_agent_session_id": "pending"},
+            "invalid_expected_agent_session_id",
+        ),
+        (
+            {"expected_settlement_revision": 0},
+            "invalid_expected_settlement_revision",
+        ),
+        (
+            {"expected_settlement_revision": True},
+            "invalid_expected_settlement_revision",
+        ),
+    ],
+)
+def test_native_resume_rejects_invalid_guardian_expectations_before_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    expectation: dict[str, Any],
+    reason: str,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        workflow,
+        "lookup_run",
+        lambda _target: (_ for _ in ()).throw(
+            AssertionError("invalid Guardian expectation must fail before lookup")
+        ),
+    )
+
+    result = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        **expectation,
+    )
+
+    assert result["accepted"] is False
+    assert result["reason"] == reason
+    assert result["retryable"] is False
+    assert result["terminal"] is True
+
+
 def test_native_resume_holds_parent_mutation_lock_until_launch_handoff(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -2138,6 +2456,65 @@ def test_native_resume_holds_parent_mutation_lock_until_launch_handoff(
     assert resumed["accepted"] is True
     assert blocked["accepted"] is False
     assert blocked["reason"] == "run_terminal"
+
+
+def test_retry_run_waits_for_guardian_and_refuses_second_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        workflow,
+        "reserve_run_id",
+        lambda _skill: "rsme-guardian-owned",
+    )
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launch_started = threading.Event()
+    release_launch = threading.Event()
+    launches: list[str] = []
+
+    def slow_launch(
+        spec: workflow.WorkflowLaunchSpec,
+        _source_dir: str | Path,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        launches.append(spec.run_id)
+        launch_started.set()
+        assert release_launch.wait(timeout=5)
+        return {"accepted": True, "run_id": spec.run_id}
+
+    monkeypatch.setattr(workflow, "launch_workflow", slow_launch)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        resume_future = executor.submit(
+            workflow.native_resume_run,
+            run_id,
+            tmp_path,
+            idempotency_key=f"settlement:{run_id}:guardian-owner",
+        )
+        assert launch_started.wait(timeout=5)
+        retry_future = executor.submit(workflow.retry_run, run_id, tmp_path)
+        time.sleep(0.05)
+        assert retry_future.done() is False
+        release_launch.set()
+        resumed = resume_future.result(timeout=5)
+        retried = retry_future.result(timeout=5)
+
+    assert resumed["accepted"] is True
+    assert retried["accepted"] is False
+    assert retried["reason"] == "recovery_owned_by_guardian"
+    assert retried["retryable"] is False
+    assert retried["terminal"] is True
+    assert launches == ["rsme-guardian-owned"]
 
 
 @pytest.mark.parametrize(
