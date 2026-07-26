@@ -59,6 +59,15 @@ def _wait_for_text(path: Path, expected: str, timeout: float = 5.0) -> None:
     )
 
 
+def _wait_for_path(path: Path, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.is_file():
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"{path} did not appear within {timeout} seconds")
+
+
 def _run_launcher(
     env: dict[str, str], *args: str, check: bool = False
 ) -> subprocess.CompletedProcess[str]:
@@ -141,6 +150,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 signal.signal(signal.SIGTERM, stop)
 signal.signal(signal.SIGINT, stop)
 record("server-start")
+start_delay = float(os.environ.get("SERVER_START_DELAY", "0"))
+if start_delay > 0:
+    record(f"server-delay {start_delay:g}")
+    time.sleep(start_delay)
 http.server.ThreadingHTTPServer((host, int(raw_port)), Handler).serve_forever()
 """,
     )
@@ -467,6 +480,166 @@ def test_concurrent_server_starts_create_exactly_one_managed_pair(
 
     stopped = _run_launcher(env, "server", "stop")
     assert stopped.returncode == 0, stopped.stderr
+
+
+def test_stale_lifecycle_lock_is_quarantined_once_under_parallel_recovery(
+    isolated_server_runtime: tuple[dict[str, str], Path, Path],
+) -> None:
+    env, state_dir, lifecycle_log = isolated_server_runtime
+    port = _free_port()
+    delayed_env = env.copy()
+    delayed_env["SERVER_START_DELAY"] = "30"
+    argv = [
+        str(LAUNCHER),
+        "server",
+        "start",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+    ]
+    crashed_launcher = subprocess.Popen(
+        argv,
+        cwd=REPO_ROOT,
+        env=delayed_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    original_server_pid: int | None = None
+    try:
+        owner_path = state_dir / "lifecycle.lock" / "owner.json"
+        identity_path = state_dir / "server.identity.json"
+        _wait_for_path(owner_path)
+        _wait_for_path(identity_path)
+        original_owner = owner_path.read_bytes()
+        owner_payload = json.loads(original_owner)
+        owner_pid = int(owner_payload["pid"])
+        original_server_pid = int(
+            (state_dir / "server.pid").read_text(encoding="utf-8")
+        )
+        assert owner_payload["schema"] == "vibecrafted.server-lifecycle-lock.v1"
+        assert len(owner_payload["nonce"]) == 64
+        assert owner_payload["process"]
+        assert _process_alive(owner_pid)
+        assert _process_alive(original_server_pid)
+
+        os.kill(owner_pid, signal.SIGKILL)
+        crashed_launcher.wait(timeout=5)
+        _wait_until_dead(owner_pid)
+        assert _process_alive(original_server_pid)
+
+        contenders = [
+            subprocess.Popen(
+                argv,
+                cwd=REPO_ROOT,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            for _ in range(2)
+        ]
+        results = [
+            (*contender.communicate(timeout=20), contender.returncode)
+            for contender in contenders
+        ]
+
+        for stdout, stderr, returncode in results:
+            assert returncode == 0, stderr
+        combined = "".join(stdout for stdout, _, _ in results)
+        assert combined.count("Recovered stale server lifecycle lock") == 1
+        assert combined.count("Server is up and healthy") == 1
+        assert combined.count("Server is already running") == 1
+
+        quarantines = list(state_dir.glob("lifecycle.lock.stale.*"))
+        assert len(quarantines) == 1
+        assert (quarantines[0] / "owner.json").read_bytes() == original_owner
+        assert (state_dir / "lifecycle.recovery.lock").is_file()
+        assert not (state_dir / "lifecycle.lock").exists()
+
+        final_server_pid = int((state_dir / "server.pid").read_text(encoding="utf-8"))
+        final_guardian_pid = int(
+            (state_dir / "guardian.pid").read_text(encoding="utf-8")
+        )
+        assert final_server_pid != original_server_pid
+        assert _process_alive(final_server_pid)
+        assert _process_alive(final_guardian_pid)
+        _wait_until_dead(original_server_pid)
+        lifecycle_lines = lifecycle_log.read_text(encoding="utf-8").splitlines()
+        assert sum(line.startswith("guardian-start ") for line in lifecycle_lines) == 1
+
+        stopped = _run_launcher(env, "server", "stop")
+        assert stopped.returncode == 0, stopped.stderr
+        _wait_until_dead(final_guardian_pid)
+        _wait_until_dead(final_server_pid)
+    finally:
+        if crashed_launcher.poll() is None:
+            crashed_launcher.kill()
+            crashed_launcher.wait(timeout=5)
+        if original_server_pid is not None and _process_alive(original_server_pid):
+            os.kill(original_server_pid, signal.SIGKILL)
+            _wait_until_dead(original_server_pid)
+
+
+def test_lifecycle_lock_recovery_refuses_invalid_and_unverified_owners(
+    isolated_server_runtime: tuple[dict[str, str], Path, Path],
+) -> None:
+    env, state_dir, _ = isolated_server_runtime
+    lock_dir = state_dir / "lifecycle.lock"
+    owner_path = lock_dir / "owner.json"
+    lock_dir.mkdir(parents=True)
+    invalid_owner = b'{"schema":"wrong"}\n'
+    owner_path.write_bytes(invalid_owner)
+
+    invalid = _run_launcher(
+        env,
+        "server",
+        "start",
+        "--port",
+        str(_free_port()),
+    )
+
+    assert invalid.returncode == 75
+    assert "invalid owner evidence" in invalid.stderr
+    assert owner_path.read_bytes() == invalid_owner
+    assert not (state_dir / "lifecycle.recovery.lock").exists()
+    assert not (state_dir / "server.pid").exists()
+
+    shutil.rmtree(lock_dir)
+    lock_dir.mkdir()
+    unverified_owner = {
+        "schema": "vibecrafted.server-lifecycle-lock.v1",
+        "pid": os.getpid(),
+        "nonce": "a" * 64,
+        "acquired_at": "2026-07-26T00:00:00+00:00",
+        "process": {
+            "start_token": "proc:1",
+            "command": {"kind": "argv", "value": ["decoy"]},
+            "executable": sys.executable,
+            "executable_sha256": None,
+            "process_nonce": None,
+        },
+    }
+    owner_path.write_text(
+        json.dumps(unverified_owner, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    unverified = _run_launcher(
+        env,
+        "server",
+        "start",
+        "--port",
+        str(_free_port()),
+    )
+
+    assert unverified.returncode == 75
+    assert "unverified" in unverified.stderr
+    assert json.loads(owner_path.read_text(encoding="utf-8")) == unverified_owner
+    assert _process_alive(os.getpid())
+    assert not (state_dir / "lifecycle.recovery.lock").exists()
+    assert not (state_dir / "server.pid").exists()
 
 
 def test_short_lived_guardian_fails_readiness_and_rolls_back_server(

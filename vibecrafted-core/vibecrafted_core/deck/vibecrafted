@@ -1225,11 +1225,13 @@ _server_python() {
 from __future__ import annotations
 
 import datetime as dt
+import fcntl
 import hashlib
 import json
 import os
 import re
 import socket
+import stat
 import subprocess
 import sys
 import urllib.request
@@ -1310,8 +1312,10 @@ def sha256_file(path: Path) -> str:
 def process_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
-    except (ProcessLookupError, PermissionError):
+    except ProcessLookupError:
         return False
+    except PermissionError:
+        return True
     return True
 
 
@@ -1436,6 +1440,163 @@ def verify_identity(path: Path, pid: int, role: str) -> dict[str, object]:
     if current != payload["process"]:
         fail(f"managed identity changed for {role} PID {pid}", 4)
     return payload
+
+
+def validate_lock_owner(payload: dict[str, object]) -> tuple[int, str]:
+    process = payload.get("process")
+    if (
+        set(payload) != {"schema", "pid", "nonce", "acquired_at", "process"}
+        or payload.get("schema") != LOCK_SCHEMA
+        or not isinstance(payload.get("pid"), int)
+        or isinstance(payload.get("pid"), bool)
+        or int(payload["pid"]) <= 1
+        or not isinstance(payload.get("nonce"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", str(payload["nonce"])) is None
+        or not isinstance(payload.get("acquired_at"), str)
+        or not isinstance(process, dict)
+        or set(process)
+        != {
+            "start_token",
+            "command",
+            "executable",
+            "executable_sha256",
+            "process_nonce",
+        }
+    ):
+        fail("invalid lifecycle lock owner", 5)
+
+    try:
+        acquired_at = dt.datetime.fromisoformat(str(payload["acquired_at"]))
+    except ValueError:
+        fail("invalid lifecycle lock acquisition timestamp", 5)
+    if acquired_at.tzinfo is None:
+        fail("lifecycle lock acquisition timestamp has no timezone", 5)
+
+    command = process.get("command")
+    command_valid = False
+    if isinstance(command, dict) and set(command) == {"kind", "value"}:
+        if command.get("kind") == "argv":
+            argv = command.get("value")
+            command_valid = (
+                isinstance(argv, list)
+                and bool(argv)
+                and all(isinstance(item, str) for item in argv)
+            )
+        elif command.get("kind") == "command_line":
+            command_valid = (
+                isinstance(command.get("value"), str)
+                and bool(command.get("value"))
+            )
+    executable_sha256 = process.get("executable_sha256")
+    process_nonce = process.get("process_nonce")
+    if (
+        not isinstance(process.get("start_token"), str)
+        or re.fullmatch(r"(?:proc|ps):.+", str(process["start_token"])) is None
+        or not command_valid
+        or not isinstance(process.get("executable"), str)
+        or not process.get("executable")
+        or (
+            executable_sha256 is not None
+            and (
+                not isinstance(executable_sha256, str)
+                or re.fullmatch(r"[0-9a-f]{64}", executable_sha256) is None
+            )
+        )
+        or (
+            process_nonce is not None
+            and (
+                not isinstance(process_nonce, str)
+                or re.fullmatch(r"[0-9a-f]{64}", process_nonce) is None
+            )
+        )
+    ):
+        fail("invalid lifecycle lock process identity", 5)
+    return int(payload["pid"]), str(payload["nonce"])
+
+
+def read_lock_owner(path: Path) -> dict[str, object]:
+    try:
+        lock_stat = path.parent.lstat()
+    except OSError as exc:
+        fail(f"cannot inspect lifecycle lock directory {path.parent}: {exc}", 5)
+    if not stat.S_ISDIR(lock_stat.st_mode) or lock_stat.st_uid != os.getuid():
+        fail("lifecycle lock directory is not an owned regular directory", 5)
+
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        fail(f"cannot open lifecycle lock owner {path}: {exc}", 5)
+    try:
+        opened_stat = os.fstat(descriptor)
+        visible_stat = path.lstat()
+        if (
+            not stat.S_ISREG(opened_stat.st_mode)
+            or opened_stat.st_uid != os.getuid()
+            or opened_stat.st_nlink != 1
+            or (opened_stat.st_dev, opened_stat.st_ino)
+            != (visible_stat.st_dev, visible_stat.st_ino)
+        ):
+            fail("lifecycle lock owner is not a stable owned regular file", 5)
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            descriptor = -1
+            try:
+                payload = json.load(handle)
+            except (OSError, json.JSONDecodeError) as exc:
+                fail(f"invalid lifecycle lock owner JSON at {path}: {exc}", 5)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if not isinstance(payload, dict):
+        fail("lifecycle lock owner JSON is not an object", 5)
+    validate_lock_owner(payload)
+    return payload
+
+
+def lock_owner_digest(payload: dict[str, object]) -> str:
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def open_lifecycle_recovery_guard(path: Path) -> int:
+    flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except OSError as exc:
+        fail(f"cannot open lifecycle recovery guard {path}: {exc}", 75)
+    try:
+        opened_stat = os.fstat(descriptor)
+        visible_stat = path.lstat()
+        if (
+            not stat.S_ISREG(opened_stat.st_mode)
+            or opened_stat.st_uid != os.getuid()
+            or opened_stat.st_nlink != 1
+            or (opened_stat.st_dev, opened_stat.st_ino)
+            != (visible_stat.st_dev, visible_stat.st_ino)
+        ):
+            fail(
+                "lifecycle recovery guard is not a stable owned regular file",
+                75,
+            )
+        os.fchmod(descriptor, 0o600)
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 operation = sys.argv[1] if len(sys.argv) > 1 else ""
@@ -1595,26 +1756,109 @@ elif operation == "lock-owner-write":
 elif operation == "lock-state":
     path = Path(args[0])
     try:
-        payload = read_json(path)
-        pid = int(payload.get("pid", 0))
-        if (
-            payload.get("schema") != LOCK_SCHEMA
-            or not isinstance(payload.get("nonce"), str)
-            or not payload.get("nonce")
-            or not isinstance(payload.get("process"), dict)
-        ):
-            fail("invalid lifecycle lock owner", 5)
+        payload = read_lock_owner(path)
+        pid, nonce = validate_lock_owner(payload)
         if not process_alive(pid):
-            print(f"stale:{pid}")
-        elif process_snapshot(pid) != payload["process"]:
-            print(f"unverified:{pid}")
+            print(f"stale:{pid}:{nonce}:{lock_owner_digest(payload)}")
         else:
-            print(f"live:{pid}")
+            try:
+                current_process = process_snapshot(pid)
+            except SystemExit:
+                if not process_alive(pid):
+                    print(
+                        f"stale:{pid}:{nonce}:{lock_owner_digest(payload)}"
+                    )
+                else:
+                    print(f"unverified:{pid}")
+            else:
+                if current_process != payload["process"]:
+                    print(f"unverified:{pid}")
+                else:
+                    print(f"live:{pid}")
     except SystemExit as exc:
         if exc.code == 5:
             print("invalid")
         else:
             raise
+elif operation == "lock-reclaim":
+    lock_dir = Path(args[0])
+    owner_path = lock_dir / "owner.json"
+    expected_pid = int(args[1])
+    expected_nonce = args[2]
+    expected_digest = args[3]
+    if (
+        expected_pid <= 1
+        or re.fullmatch(r"[0-9a-f]{64}", expected_nonce) is None
+        or re.fullmatch(r"[0-9a-f]{64}", expected_digest) is None
+    ):
+        fail("invalid expected lifecycle lock identity", 75)
+
+    guard_path = lock_dir.parent / "lifecycle.recovery.lock"
+    guard_descriptor = open_lifecycle_recovery_guard(guard_path)
+    try:
+        fcntl.flock(guard_descriptor, fcntl.LOCK_EX)
+        opened_guard = os.fstat(guard_descriptor)
+        visible_guard = guard_path.lstat()
+        if (opened_guard.st_dev, opened_guard.st_ino) != (
+            visible_guard.st_dev,
+            visible_guard.st_ino,
+        ):
+            fail("lifecycle recovery guard changed while locked", 75)
+
+        try:
+            lock_dir.lstat()
+        except FileNotFoundError:
+            print("changed")
+            raise SystemExit(0)
+        try:
+            owner_path.lstat()
+        except FileNotFoundError:
+            print("changed")
+            raise SystemExit(0)
+
+        payload = read_lock_owner(owner_path)
+        pid, nonce = validate_lock_owner(payload)
+        digest = lock_owner_digest(payload)
+        if (
+            pid != expected_pid
+            or nonce != expected_nonce
+            or digest != expected_digest
+        ):
+            print("changed")
+            raise SystemExit(0)
+        if process_alive(pid):
+            try:
+                current_process = process_snapshot(pid)
+            except SystemExit:
+                fail(
+                    "lifecycle lock owner is live but cannot be verified; "
+                    "refusing recovery",
+                    75,
+                )
+            if current_process == payload["process"]:
+                fail("lifecycle lock owner became live; refusing recovery", 75)
+            fail(
+                "lifecycle lock points at an unverified live process; "
+                "refusing recovery",
+                75,
+            )
+
+        timestamp = (
+            dt.datetime.now(dt.timezone.utc)
+            .strftime("%Y%m%dT%H%M%S%fZ")
+        )
+        quarantine = lock_dir.with_name(
+            "lifecycle.lock.stale."
+            f"{timestamp}.{pid}.{nonce[:12]}.{os.urandom(16).hex()}"
+        )
+        if os.path.lexists(quarantine):
+            fail("lifecycle lock quarantine collision", 75)
+        os.rename(lock_dir, quarantine)
+        fsync_directory(quarantine)
+        fsync_directory(lock_dir.parent)
+        print(f"reclaimed:{quarantine}")
+    finally:
+        os.close(guard_descriptor)
 elif operation == "lock-owned":
     payload = read_json(Path(args[0]))
     if (
@@ -1821,6 +2065,7 @@ _stop_managed_process() {
 
 _acquire_server_lifecycle_lock() {
   local runtime_dir lock_dir owner_file state attempts=0 invalid_attempts=0
+  local state_kind stale_pid stale_nonce stale_digest reclaim_result
   runtime_dir="$(_server_runtime_dir)"
   lock_dir="$runtime_dir/lifecycle.lock"
   owner_file="$lock_dir/owner.json"
@@ -1854,7 +2099,33 @@ _acquire_server_lifecycle_lock() {
           return 75
         fi
         ;;
-      stale:*|unverified:*)
+      stale:*)
+        IFS=':' read -r state_kind stale_pid stale_nonce stale_digest <<< "$state"
+        if [[ "$state_kind" != "stale" || ! "$stale_pid" =~ ^[0-9]+$ || \
+          ! "$stale_nonce" =~ ^[0-9a-f]{64}$ || \
+          ! "$stale_digest" =~ ^[0-9a-f]{64}$ ]]; then
+          printf "%b✗%b Server lifecycle lock has malformed stale owner evidence at %s; refusing mutation.\n" \
+            "$_red" "$_reset" "$owner_file" >&2
+          return 75
+        fi
+        if reclaim_result="$(_server_python lock-reclaim \
+          "$lock_dir" "$stale_pid" "$stale_nonce" "$stale_digest")"; then
+          if [[ "$reclaim_result" == reclaimed:* ]]; then
+            printf "Recovered stale server lifecycle lock; retained owner evidence at %s.\n" \
+              "${reclaim_result#reclaimed:}"
+          elif [[ "$reclaim_result" != "changed" ]]; then
+            printf "%b✗%b Lifecycle lock recovery returned an invalid result; refusing mutation.\n" \
+              "$_red" "$_reset" >&2
+            return 75
+          fi
+          invalid_attempts=0
+        else
+          printf "%b✗%b Could not safely recover stale server lifecycle lock; owner evidence retained at %s.\n" \
+            "$_red" "$_reset" "$owner_file" >&2
+          return 75
+        fi
+        ;;
+      unverified:*)
         printf "%b✗%b Server lifecycle lock is %s; owner evidence retained at %s.\n" \
           "$_red" "$_reset" "$state" "$owner_file" >&2
         return 75
