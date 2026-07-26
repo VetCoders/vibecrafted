@@ -1199,6 +1199,80 @@ def _launchctl_loaded() -> bool:
     return _launchctl(["print", _launch_target()]).returncode == 0
 
 
+def _launchctl_print_value(
+    payload: str,
+    key: str,
+    *,
+    separator: str,
+    section: str | None = None,
+) -> str | None:
+    prefix = f"{key} {separator} "
+    in_section = section is None
+    for raw_line in payload.splitlines():
+        line = raw_line.strip()
+        if not in_section:
+            if line == f"{section} = {{":
+                in_section = True
+            continue
+        if section is not None and line == "}":
+            return None
+        if line.startswith(prefix):
+            value = line.removeprefix(prefix)
+            return value or None
+    return None
+
+
+def _launchctl_job_owns_paths(paths: SupervisorPaths) -> bool:
+    result = _launchctl(["print", _launch_target()])
+    if result.returncode != 0:
+        return False
+    actual_values = {
+        "plist": _launchctl_print_value(result.stdout, "path", separator="="),
+        "program": _launchctl_print_value(result.stdout, "program", separator="="),
+        "supervisor": _launchctl_print_value(
+            result.stdout,
+            "VIBECRAFTED_SERVER_SUPERVISOR_PATH",
+            separator="=>",
+            section="environment",
+        ),
+        "home": _launchctl_print_value(
+            result.stdout,
+            "VIBECRAFTED_HOME",
+            separator="=>",
+            section="environment",
+        ),
+        "runtime_home": _launchctl_print_value(
+            result.stdout,
+            "VIBECRAFTED_RUNTIME_HOME",
+            separator="=>",
+            section="environment",
+        ),
+        "operator_home": _launchctl_print_value(
+            result.stdout,
+            "HOME",
+            separator="=>",
+            section="environment",
+        ),
+    }
+    if any(value is None for value in actual_values.values()):
+        return False
+    try:
+        actual_paths = {
+            key: _absolute_path(Path(value))
+            for key, value in actual_values.items()
+            if value is not None
+        }
+    except (OSError, SupervisorError):
+        return False
+    return (
+        actual_paths["plist"] == paths.launch_agent_file
+        and actual_paths["program"] == actual_paths["supervisor"]
+        and actual_paths["home"] == paths.home
+        and actual_paths["runtime_home"] == paths.runtime_home
+        and actual_paths["operator_home"] == paths.operator_home
+    )
+
+
 def _require_macos_service() -> None:
     if sys.platform != "darwin":
         raise SupervisorError(
@@ -1536,19 +1610,12 @@ def uninstall_service(config: SupervisorConfig) -> bool:
 
 
 def _launchd_owns_pair(paths: SupervisorPaths) -> bool:
-    installed = False
     if paths.launch_agent_file.exists() or paths.launch_agent_file.is_symlink():
         _validate_owned_regular_file(
             paths.launch_agent_file,
             allow_symlink=False,
         )
-        installed = True
-    default_home = (paths.operator_home / ".vibecrafted").resolve(strict=False)
-    return (
-        sys.platform == "darwin"
-        and (installed or paths.home == default_home)
-        and _launchctl_loaded()
-    )
+    return sys.platform == "darwin" and _launchctl_job_owns_paths(paths)
 
 
 def manual_stop_guard(paths: SupervisorPaths) -> None:

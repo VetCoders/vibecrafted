@@ -61,6 +61,40 @@ def _managed_probe(
     )
 
 
+def _launchctl_job_snapshot(
+    config: supervisor.SupervisorConfig,
+    *,
+    plist: Path | None = None,
+    program: Path | None = None,
+    supervisor_path: Path | None = None,
+    home: Path | None = None,
+    runtime_home: Path | None = None,
+    operator_home: Path | None = None,
+) -> str:
+    identity = supervisor._installed_service_identity(config.paths)
+    assert identity is not None
+    loaded_program = program or identity.executable
+    environment_program = supervisor_path or identity.executable
+    return f"""gui/{os.getuid()}/{supervisor.LAUNCH_AGENT_LABEL} = {{
+    path = {plist or config.paths.launch_agent_file}
+    type = LaunchAgent
+    state = running
+
+    program = {loaded_program}
+    inherited environment = {{
+        HOME => /ignored/inherited/home
+    }}
+    environment = {{
+        VIBECRAFTED_SERVER_SUPERVISOR_PATH => {environment_program}
+        VIBECRAFTED_HOME => {home or config.paths.home}
+        VIBECRAFTED_RUNTIME_HOME => {runtime_home or config.paths.runtime_home}
+        HOME => {operator_home or config.paths.operator_home}
+        XPC_SERVICE_NAME => {supervisor.LAUNCH_AGENT_LABEL}
+    }}
+}}
+"""
+
+
 def test_plistlib_renderer_preserves_metacharacters_without_xml_injection(
     tmp_path: Path,
 ) -> None:
@@ -845,7 +879,16 @@ def test_manual_stop_guard_refuses_loaded_service(
     config = _config(tmp_path, launcher)
     supervisor.install_service(config, supervisor_binary=supervisor_binary)
     monkeypatch.setattr(supervisor.sys, "platform", "darwin")
-    monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: True)
+    monkeypatch.setattr(
+        supervisor,
+        "_launchctl",
+        lambda args: subprocess.CompletedProcess(
+            args,
+            0,
+            _launchctl_job_snapshot(config),
+            "",
+        ),
+    )
     monkeypatch.setattr(
         supervisor,
         "probe_supervisor",
@@ -858,6 +901,68 @@ def test_manual_stop_guard_refuses_loaded_service(
     ) as failure:
         supervisor.manual_stop_guard(config.paths)
     assert failure.value.exit_code == supervisor.EX_TEMPFAIL
+
+
+def test_launchd_ownership_matches_the_loaded_job_runtime_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    config = _config(tmp_path, launcher)
+    supervisor.install_service(config, supervisor_binary=supervisor_binary)
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        supervisor,
+        "_launchctl",
+        lambda args: subprocess.CompletedProcess(
+            args,
+            0,
+            _launchctl_job_snapshot(config),
+            "",
+        ),
+    )
+
+    assert supervisor._launchd_owns_pair(config.paths)
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    ["plist", "program", "supervisor_path", "home", "runtime_home", "operator_home"],
+)
+def test_launchd_ownership_rejects_a_fixed_label_loaded_for_other_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mismatch: str,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    config = _config(tmp_path, launcher)
+    supervisor.install_service(config, supervisor_binary=supervisor_binary)
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    foreign = (tmp_path / "foreign" / mismatch).resolve()
+    output = _launchctl_job_snapshot(
+        config,
+        plist=foreign if mismatch == "plist" else None,
+        program=foreign if mismatch == "program" else None,
+        supervisor_path=foreign if mismatch == "supervisor_path" else None,
+        home=foreign if mismatch == "home" else None,
+        runtime_home=foreign if mismatch == "runtime_home" else None,
+        operator_home=foreign if mismatch == "operator_home" else None,
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "_launchctl",
+        lambda args: subprocess.CompletedProcess(args, 0, output, ""),
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "probe_supervisor",
+        lambda _paths: supervisor.SupervisorProbe(False, False, None, None),
+    )
+
+    assert not supervisor._launchd_owns_pair(config.paths)
+    supervisor.manual_stop_guard(config.paths)
 
 
 def test_manual_stop_holds_common_lease_against_concurrent_supervisor(
@@ -875,8 +980,13 @@ printf stopped > {str(marker)!r}
     config = _config(tmp_path, launcher)
     monkeypatch.setenv("VIBECRAFTED_TEST_SERVER_STOP_DELAY", "0.4")
     result: list[str] = []
+
+    def run_manual_stop() -> None:
+        supervisor.manual_stop(config)
+        result.append("stopped")
+
     worker = threading.Thread(
-        target=lambda: (supervisor.manual_stop(config), result.append("stopped")),
+        target=run_manual_stop,
         daemon=True,
     )
     worker.start()
@@ -915,6 +1025,13 @@ def test_manual_stop_repairs_launchd_reactivation_during_cleanup(
 
     def fake_launchctl(args: list[str]) -> subprocess.CompletedProcess[str]:
         nonlocal loaded
+        if args[0] == "print":
+            return subprocess.CompletedProcess(
+                args,
+                0 if loaded else 113,
+                _launchctl_job_snapshot(config) if loaded else "",
+                "",
+            )
         launchctl_calls.append(list(args))
         if args[0] == "bootout":
             loaded = False
@@ -928,7 +1045,6 @@ def test_manual_stop_repairs_launchd_reactivation_during_cleanup(
         loaded = True
         return subprocess.CompletedProcess(argv, 0, "", "")
 
-    monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: loaded)
     monkeypatch.setattr(supervisor, "_launchctl", fake_launchctl)
     monkeypatch.setattr(supervisor.subprocess, "run", fake_run)
 
