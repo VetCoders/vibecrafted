@@ -68,6 +68,25 @@ assert_not_contains() {
   fi
 }
 
+assert_no_perception_watcher() {
+  local root="$1"
+  python3 - "$root" <<'PY' || die "Detached perception watcher escaped the portable sandbox: $root"
+import subprocess
+import sys
+
+root = sys.argv[1]
+needle = f"loct watch --dev {root}"
+result = subprocess.run(
+    ["ps", "-axo", "command="],
+    check=True,
+    capture_output=True,
+    text=True,
+)
+if any(line.strip().endswith(needle) for line in result.stdout.splitlines()):
+    raise SystemExit(1)
+PY
+}
+
 print_installer_logs() {
   local home="$1"
   local log_dir="$home/.vibecrafted/logs/installer"
@@ -125,6 +144,11 @@ work_repo="$workspace/workrepo"
 fake_bin="$home_dir/.local/bin"
 bootstrap_archive="$workspace/vibecrafted-bootstrap.tar.gz"
 mkdir -p "$bootstrap_home" "$bootstrap_config_dir" "$home_dir" "$config_dir" "$work_repo" "$fake_bin"
+
+# Product spawns intentionally detach one perception watcher per durable repo.
+# This test repo is ephemeral and deleted by the EXIT trap, so keep that
+# orthogonal daemon disabled here; perception lifecycle has its own core suite.
+export VIBECRAFTED_PERCEPTION_WATCH=0
 
 log "bootstrap smoke via root install.sh"
 tar -czf "$bootstrap_archive" \
@@ -396,6 +420,7 @@ require_file "$skill_meta"
 jq -e '.skill_code == "marb"' "$skill_meta" >/dev/null || die "skill helper did not wire skill_code"
 jq -e '.run_id | startswith("marb-")' "$skill_meta" >/dev/null || die "skill helper did not wire run_id"
 jq -e '.liveness == "terminal"' "$skill_meta" >/dev/null || die "skill helper did not finish with terminal liveness"
+assert_no_perception_watcher "$work_repo"
 
 # If zsh is available, also smoke test zsh loading via compat symlink
 if command -v zsh >/dev/null 2>&1; then
