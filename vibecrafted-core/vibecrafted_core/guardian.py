@@ -851,9 +851,12 @@ class GuardianState:
     pending: dict[SettlementKey, PendingRecord] = field(default_factory=dict)
     degraded: bool = False
     recovered_from_backup: bool = False
+    state_generation: int = 0
 
     def __post_init__(self) -> None:
         self.cursor = _validate_cursor(self.cursor)
+        if type(self.state_generation) is not int or self.state_generation < 0:
+            raise GuardianStateError("guardian state generation must be non-negative")
         if type(self.baseline_complete) is not bool:
             raise GuardianStateError("baseline_complete must be boolean")
         if (
@@ -930,15 +933,33 @@ class GuardianState:
         recovered_from_backup: bool = False,
     ) -> GuardianState:
         document = _strict_json_loads(encoded)
-        if not isinstance(document, dict) or set(document) != {
-            "schema",
-            "cursor",
-            "baseline_complete",
-            "highwater",
-            "pending",
-            "checksum",
+        if not isinstance(document, dict) or frozenset(document) not in {
+            frozenset(
+                {
+                    "schema",
+                    "cursor",
+                    "baseline_complete",
+                    "highwater",
+                    "pending",
+                    "checksum",
+                }
+            ),
+            frozenset(
+                {
+                    "schema",
+                    "state_generation",
+                    "cursor",
+                    "baseline_complete",
+                    "highwater",
+                    "pending",
+                    "checksum",
+                }
+            ),
         }:
             raise GuardianStateError("guardian v2 document fields are not canonical")
+        state_generation = document.get("state_generation", 0)
+        if type(state_generation) is not int or state_generation < 0:
+            raise GuardianStateError("guardian state generation must be non-negative")
         checksum = document.get("checksum")
         if (
             not isinstance(checksum, str)
@@ -1012,6 +1033,7 @@ class GuardianState:
             highwater=highwater,
             pending=pending,
             recovered_from_backup=recovered_from_backup,
+            state_generation=state_generation,
         )
 
     @classmethod
@@ -1101,6 +1123,7 @@ class GuardianState:
         """Load a verified primary/backup or enter a side-effect-free baseline."""
 
         found_state = False
+        candidates: list[tuple[GuardianState, bytes, bool]] = []
         for candidate, is_backup in (
             (path, False),
             (path.with_name(f"{path.name}.bak"), True),
@@ -1120,14 +1143,18 @@ class GuardianState:
                 parsed = _strict_json_loads(encoded)
                 schema = parsed.get("schema") if isinstance(parsed, dict) else None
                 if schema == GUARDIAN_STATE_SCHEMA:
-                    state = cls._from_v2_document(
-                        path,
-                        encoded,
-                        recovered_from_backup=is_backup,
+                    candidates.append(
+                        (
+                            cls._from_v2_document(
+                                path,
+                                encoded,
+                                recovered_from_backup=is_backup,
+                            ),
+                            encoded,
+                            is_backup,
+                        )
                     )
-                    if is_backup:
-                        LOGGER.warning("guardian recovered verified backup state")
-                    return state
+                    continue
                 if schema == GUARDIAN_STATE_SCHEMA_V1:
                     return cls._migrate_v1(path, encoded)
                 raise GuardianStateError("guardian state schema is unsupported")
@@ -1135,11 +1162,44 @@ class GuardianState:
                 LOGGER.error(
                     "guardian state candidate rejected (%s): %s", candidate, exc
                 )
+        if candidates:
+            newest_generation = max(
+                state.state_generation for state, _encoded, _backup in candidates
+            )
+            newest = [
+                candidate
+                for candidate in candidates
+                if candidate[0].state_generation == newest_generation
+            ]
+            canonical_documents = {
+                _canonical_json(_strict_json_loads(encoded))
+                for _state, encoded, _backup in newest
+            }
+            if len(canonical_documents) != 1:
+                LOGGER.critical(
+                    "guardian state candidates diverge at generation %s; "
+                    "entering a fresh side-effect-free baseline",
+                    newest_generation,
+                )
+                return cls(path=path, degraded=True)
+            selected = next(
+                (candidate for candidate in newest if not candidate[2]),
+                newest[0],
+            )
+            state, _encoded, is_backup = selected
+            state.recovered_from_backup = is_backup
+            if is_backup:
+                LOGGER.warning(
+                    "guardian recovered verified backup state generation %s",
+                    state.state_generation,
+                )
+            return state
         return cls(path=path, degraded=found_state)
 
     @staticmethod
     def _body(
         *,
+        state_generation: int,
         cursor: CursorToken,
         baseline_complete: bool,
         highwater: Mapping[str, CompletionRecord],
@@ -1147,6 +1207,7 @@ class GuardianState:
     ) -> dict[str, object]:
         return {
             "schema": GUARDIAN_STATE_SCHEMA,
+            "state_generation": state_generation,
             "cursor": cursor,
             "baseline_complete": baseline_complete,
             "highwater": [
@@ -1166,6 +1227,7 @@ class GuardianState:
         highwater: Mapping[str, CompletionRecord],
         pending: Mapping[SettlementKey, PendingRecord],
     ) -> None:
+        next_generation = self.state_generation + 1
         GuardianState(
             path=self.path,
             cursor=cursor,
@@ -1174,8 +1236,10 @@ class GuardianState:
             pending=dict(pending),
             degraded=self.degraded,
             recovered_from_backup=self.recovered_from_backup,
+            state_generation=next_generation,
         )
         body = self._body(
+            state_generation=next_generation,
             cursor=_validate_cursor(cursor),
             baseline_complete=baseline_complete,
             highwater=highwater,
@@ -1188,6 +1252,16 @@ class GuardianState:
                 f"guardian state exceeds {MAX_STATE_BYTES} bytes"
             )
         _atomic_private_write(self.backup_path, encoded)
+        # The loader treats the highest verified generation as authoritative,
+        # including a backup that landed before a primary-write crash. Move the
+        # live object to that same snapshot immediately so a caught OSError
+        # cannot overwrite durable pending work with a different same/next
+        # generation assembled from stale in-memory fields.
+        self.state_generation = next_generation
+        self.cursor = _validate_cursor(cursor)
+        self.baseline_complete = baseline_complete
+        self.highwater = dict(highwater)
+        self.pending = dict(pending)
         _atomic_private_write(self.path, encoded)
 
     def persist(self) -> None:
@@ -1491,16 +1565,20 @@ class GuardianState:
             )
             for key, record in self.pending.items()
         }
+        # Gap revocation is a live safety boundary, not merely a persistence
+        # update. Poison the in-memory authority before the first write so a
+        # full storage failure cannot let this process carry old resume rights
+        # across the following caught-up control frame.
+        self.cursor = cursor
+        self.baseline_complete = False
+        self.pending = pending
+        self.degraded = True
         self._persist_snapshot(
             cursor=cursor,
             baseline_complete=False,
             highwater=self.highwater,
             pending=pending,
         )
-        self.cursor = cursor
-        self.baseline_complete = False
-        self.pending = pending
-        self.degraded = True
 
     def complete_baseline(
         self,
@@ -1515,18 +1593,39 @@ class GuardianState:
             raise GuardianStateError(
                 "authoritative baseline requires an opaque v2 cursor"
             )
+        pending = self.pending
+        if not authoritative:
+            pending = {
+                key: PendingRecord(
+                    event=record.event,
+                    stream_cursor=record.stream_cursor,
+                    resume_authorized=False,
+                    notification_done=record.notification_done,
+                    attempts=record.attempts,
+                    next_retry=record.next_retry,
+                    last_reason=record.last_reason,
+                    outcome=record.outcome,
+                )
+                for key, record in self.pending.items()
+            }
         opened = not self.baseline_complete or self.degraded
-        if not opened and self.cursor == cursor and self.degraded is not authoritative:
+        if (
+            not opened
+            and self.cursor == cursor
+            and self.degraded is not authoritative
+            and pending == self.pending
+        ):
             return False
         self._persist_snapshot(
             cursor=cursor,
             baseline_complete=True,
             highwater=self.highwater,
-            pending=self.pending,
+            pending=pending,
         )
         self.cursor = cursor
         self.baseline_complete = True
         self.degraded = not authoritative
+        self.pending = pending
         return opened
 
 
@@ -1787,10 +1886,21 @@ class RecoveryContext:
     receipt_id: str
 
 
-def _default_guard_enforcer(**kwargs: object) -> object:
+def _default_guard_enforcer(
+    *,
+    repo: Path | None = None,
+    journal: Path | None = None,
+    sha: str = "",
+    skill: str = "",
+) -> object:
     from .guard import enforce_continuation
 
-    return enforce_continuation(**kwargs)
+    return enforce_continuation(
+        repo=repo,
+        journal=journal,
+        sha=sha,
+        skill=skill,
+    )
 
 
 def _default_native_resumer(
@@ -2044,18 +2154,21 @@ class GuardianRecoveryAdapter:
         context = self._contexts.get(event.key)
         if context is None:
             raise RuntimeError(f"resume context missing for {event.idempotency_key}")
-        result = self.native_resumer(
-            event.run_id,
-            source_dir=context.root,
-            expected_agent=context.agent,
-            expected_agent_session_id=context.agent_session_id,
-            expected_settlement_revision=context.settlement_revision,
-            expected_receipt_id=context.receipt_id,
-            idempotency_key=idempotency_key,
-        )
-        if result.get("accepted") is True:
+        try:
+            return self.native_resumer(
+                event.run_id,
+                source_dir=context.root,
+                expected_agent=context.agent,
+                expected_agent_session_id=context.agent_session_id,
+                expected_settlement_revision=context.settlement_revision,
+                expected_receipt_id=context.receipt_id,
+                idempotency_key=idempotency_key,
+            )
+        finally:
+            # A context is a one-call capability, never a retry cache. Every
+            # retry must re-fetch server truth and re-run vc-guard before the
+            # native boundary can be reached again.
             self._contexts.pop(event.key, None)
-        return result
 
 
 def _parse_action_result(value: object) -> ActionResult | None:
@@ -2163,17 +2276,8 @@ class GuardianWorker:
         """Consume one SSE connection until the server disconnects."""
 
         stats = ConnectionStats()
-        for pending in self.state.pending_records(
-            now=self.clock(),
-            limit=self.pending_pass_limit,
-        ):
-            stats.claimed += 1
-            if self._attempt_record_safely(pending):
-                stats.completed_actions += 1
-            else:
-                stats.action_failures += 1
-
         latest_cursor: CursorToken | None = None
+        connection_caught_up = False
         try:
             response = self.opener(self._request(), timeout=self.connect_timeout)
             with contextlib.closing(response):
@@ -2188,6 +2292,11 @@ class GuardianWorker:
                 ):
                     if isinstance(item, SSEStreamBoundary):
                         latest_cursor = item.cursor
+                        if self.state.baseline_complete:
+                            # A boundary is orientation, not authority. Persisting
+                            # its target before the following gap/caught-up control
+                            # could skip the very gap that must revoke old pending.
+                            continue
                         try:
                             self.state.checkpoint(item.cursor)
                         except (OSError, GuardianStateError):
@@ -2234,6 +2343,8 @@ class GuardianWorker:
                                         else "legacy notification-only"
                                     ),
                                 )
+                            connection_caught_up = True
+                            self._drain_due_pending(stats)
                         except (OSError, GuardianStateError):
                             LOGGER.exception(
                                 "guardian could not persist caught-up receipt %s",
@@ -2303,6 +2414,8 @@ class GuardianWorker:
                         )
                         continue
                     record = self.state.pending.get(event.key)
+                    if not connection_caught_up:
+                        continue
                     if record is not None and self._attempt_record_safely(record):
                         stats.completed_actions += 1
                     else:
@@ -2311,7 +2424,11 @@ class GuardianWorker:
         finally:
             # Settlement claims and controls persist their own cursor. This
             # final checkpoint covers non-settlement traffic once per socket.
-            if self.state.baseline_complete and latest_cursor is not None:
+            if (
+                self.state.baseline_complete
+                and connection_caught_up
+                and latest_cursor is not None
+            ):
                 try:
                     self.state.checkpoint(latest_cursor)
                 except (OSError, GuardianStateError):
@@ -2319,6 +2436,19 @@ class GuardianWorker:
                         "guardian could not persist final SSE cursor %s",
                         latest_cursor,
                     )
+
+    def _drain_due_pending(self, stats: ConnectionStats) -> None:
+        """Advance due outbox records only behind this connection's SSE barrier."""
+
+        for pending in self.state.pending_records(
+            now=self.clock(),
+            limit=self.pending_pass_limit,
+        ):
+            stats.claimed += 1
+            if self._attempt_record_safely(pending):
+                stats.completed_actions += 1
+            else:
+                stats.action_failures += 1
 
     def _retry_record(self, record: PendingRecord, reason: str) -> bool:
         """Persist bounded retry state; return true only on terminal exhaustion."""

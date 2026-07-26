@@ -422,6 +422,7 @@ def test_caught_up_opens_gate_then_f_n_x_are_exactly_once(
         FakeResponse(
             [
                 *boundary(historical),
+                *caught_up(historical),
                 *frame(v2_cursor(200), settlement_data("run-f", 1, "f")),
                 *frame(
                     v2_cursor(300),
@@ -534,6 +535,7 @@ def test_disconnect_before_caught_up_keeps_suppressing_after_reconnect(
         FakeResponse(
             [
                 *boundary(old_cursor),
+                *caught_up(old_cursor),
                 *frame(v2_cursor(180), settlement_data("new", 1, "n")),
             ]
         ),
@@ -592,6 +594,7 @@ def test_generation_boundary_keeps_revision_dedupe(
                     v2_cursor(0, generation=1),
                     reason="generation_change",
                 ),
+                *caught_up(v2_cursor(0, generation=1)),
                 *frame(
                     v2_cursor(120, generation=1),
                     settlement_data(
@@ -653,6 +656,7 @@ def test_non_settlement_and_malformed_frames_only_advance_cursor(
     opener = QueueOpener(
         FakeResponse(
             [
+                *caught_up(0),
                 *frame(10, non_settlement),
                 *frame(20, "{not-json"),
                 *frame(30, settlement_data("run-a", 1, "n", verdict="failed")),
@@ -763,7 +767,7 @@ def test_pending_action_survives_kill_window_and_is_recovered_once(
         state=recovered,
         notifier=notifications.append,
         reconciler=reconcile,
-        opener=QueueOpener(FakeResponse([])),
+        opener=QueueOpener(FakeResponse(caught_up(v2_cursor(44)))),
     )
 
     worker.consume_connection()
@@ -781,16 +785,19 @@ def test_pending_action_survives_kill_window_and_is_recovered_once(
         notifier=duplicate_notifications.append,
         opener=QueueOpener(
             FakeResponse(
-                frame(
-                    v2_cursor(88),
-                    settlement_data(
-                        "run-pending",
-                        2,
-                        "n",
-                        source="trust",
-                        repo_root=tmp_path,
+                [
+                    *caught_up(completed.cursor),
+                    *frame(
+                        v2_cursor(88),
+                        settlement_data(
+                            "run-pending",
+                            2,
+                            "n",
+                            source="trust",
+                            repo_root=tmp_path,
+                        ),
                     ),
-                )
+                ]
             )
         ),
     )
@@ -809,18 +816,21 @@ def test_resume_failure_stays_pending_and_retries_with_same_key(
     )
     opener = QueueOpener(
         FakeResponse(
-            frame(
-                v2_cursor(50),
-                settlement_data(
-                    "run-retry",
-                    1,
-                    "n",
-                    source="trust",
-                    repo_root=tmp_path,
+            [
+                *caught_up(v2_cursor(0)),
+                *frame(
+                    v2_cursor(50),
+                    settlement_data(
+                        "run-retry",
+                        1,
+                        "n",
+                        source="trust",
+                        repo_root=tmp_path,
+                    ),
                 ),
-            )
+            ]
         ),
-        FakeResponse([]),
+        FakeResponse(caught_up(v2_cursor(50))),
     )
     resume_keys: list[str] = []
     now = [0.0]
@@ -934,6 +944,7 @@ def test_recovery_adapter_accepts_once_and_deduplicates_replayed_revision(
         opener=QueueOpener(
             FakeResponse(
                 [
+                    *caught_up(v2_cursor(0)),
                     *frame(
                         v2_cursor(70),
                         settlement_data(
@@ -991,6 +1002,93 @@ def test_recovery_adapter_accepts_once_and_deduplicates_replayed_revision(
     ]
     assert state.pending == {}
     assert state.processed == [("run-native", 7)]
+
+
+def test_recovery_contexts_are_single_call_capabilities(
+    tmp_path: Path,
+) -> None:
+    terminal_events = [
+        settlement_event(
+            f"terminal-context-{index}",
+            1,
+            "n",
+            source="trust",
+            repo_root=tmp_path,
+        )
+        for index in range(64)
+    ]
+    terminal = GuardianRecoveryAdapter(
+        server_url="http://127.0.0.1:3024",
+        opener=QueueOpener(
+            *[
+                FakeJSONResponse(resumable_projection(event, tmp_path))
+                for event in terminal_events
+            ]
+        ),
+        guard_enforcer=lambda **_kwargs: SimpleNamespace(allowed=True),
+        native_resumer=lambda *_args, **_kwargs: action_result(
+            accepted=False,
+            retryable=False,
+            terminal=True,
+            reason="expected_agent_session_mismatch",
+        ),
+    )
+
+    for event in terminal_events:
+        assert terminal.reconcile(event).request_resume is True
+        result = terminal.resume(event, event.idempotency_key)
+        assert result["terminal"] is True
+
+    assert terminal._contexts == {}
+
+    retry_event = settlement_event(
+        "retryable-context",
+        1,
+        "n",
+        source="trust",
+        repo_root=tmp_path,
+    )
+    retryable = GuardianRecoveryAdapter(
+        server_url="http://127.0.0.1:3024",
+        opener=QueueOpener(
+            FakeJSONResponse(resumable_projection(retry_event, tmp_path))
+        ),
+        guard_enforcer=lambda **_kwargs: SimpleNamespace(allowed=True),
+        native_resumer=lambda *_args, **_kwargs: action_result(
+            accepted=False,
+            retryable=True,
+            terminal=False,
+            reason="provider_temporarily_unavailable",
+        ),
+    )
+
+    assert retryable.reconcile(retry_event).request_resume is True
+    retryable.resume(retry_event, retry_event.idempotency_key)
+    assert retryable._contexts == {}
+
+    exception_event = settlement_event(
+        "exception-context",
+        1,
+        "n",
+        source="trust",
+        repo_root=tmp_path,
+    )
+
+    def fail_resume(*_args: object, **_kwargs: object) -> Mapping[str, object]:
+        raise OSError("provider launch failed")
+
+    exceptional = GuardianRecoveryAdapter(
+        server_url="http://127.0.0.1:3024",
+        opener=QueueOpener(
+            FakeJSONResponse(resumable_projection(exception_event, tmp_path))
+        ),
+        guard_enforcer=lambda **_kwargs: SimpleNamespace(allowed=True),
+        native_resumer=fail_resume,
+    )
+    assert exceptional.reconcile(exception_event).request_resume is True
+    with pytest.raises(OSError, match="provider launch failed"):
+        exceptional.resume(exception_event, exception_event.idempotency_key)
+    assert exceptional._contexts == {}
 
 
 @pytest.mark.parametrize(
@@ -1209,16 +1307,19 @@ def test_recovery_truth_or_guard_error_keeps_event_pending(
         resume=recovery.resume,
         opener=QueueOpener(
             FakeResponse(
-                frame(
-                    v2_cursor(50),
-                    settlement_data(
-                        event.run_id,
-                        1,
-                        "n",
-                        source=event.source,
-                        repo_root=tmp_path,
+                [
+                    *caught_up(v2_cursor(0)),
+                    *frame(
+                        v2_cursor(50),
+                        settlement_data(
+                            event.run_id,
+                            1,
+                            "n",
+                            source=event.source,
+                            repo_root=tmp_path,
+                        ),
                     ),
-                )
+                ]
             )
         ),
     )
@@ -1589,11 +1690,12 @@ def test_retryable_pending_does_not_starve_f_x_and_notifies_once(
         opener=QueueOpener(
             FakeResponse(
                 [
+                    *caught_up(v2_cursor(10)),
                     *frame(v2_cursor(20), settlement_data("run-f", 1, "f")),
                     *frame(v2_cursor(30), settlement_data("run-x", 1, "x")),
                 ]
             ),
-            FakeResponse([]),
+            FakeResponse(caught_up(v2_cursor(30))),
         ),
         clock=lambda: now[0],
         pending_pass_limit=1,
@@ -1644,16 +1746,19 @@ def test_terminal_resume_rejection_completes_without_retry(tmp_path: Path) -> No
         ),
         opener=QueueOpener(
             FakeResponse(
-                frame(
-                    v2_cursor(10),
-                    settlement_data(
-                        "run-terminal",
-                        1,
-                        "n",
-                        source="trust",
-                        repo_root=tmp_path,
+                [
+                    *caught_up(v2_cursor(0)),
+                    *frame(
+                        v2_cursor(10),
+                        settlement_data(
+                            "run-terminal",
+                            1,
+                            "n",
+                            source="trust",
+                            repo_root=tmp_path,
+                        ),
                     ),
-                )
+                ]
             )
         ),
     )
@@ -1690,18 +1795,21 @@ def test_invalid_action_result_exhausts_bounded_retry(
         resume=lambda _event, _key: {"accepted": False},
         opener=QueueOpener(
             FakeResponse(
-                frame(
-                    v2_cursor(10),
-                    settlement_data(
-                        "run-invalid",
-                        1,
-                        "n",
-                        source="trust",
-                        repo_root=tmp_path,
+                [
+                    *caught_up(v2_cursor(0)),
+                    *frame(
+                        v2_cursor(10),
+                        settlement_data(
+                            "run-invalid",
+                            1,
+                            "n",
+                            source="trust",
+                            repo_root=tmp_path,
+                        ),
                     ),
-                )
+                ]
             ),
-            FakeResponse([]),
+            FakeResponse(caught_up(v2_cursor(10))),
         ),
         clock=lambda: now[0],
     )
@@ -1741,8 +1849,10 @@ def test_notifier_failure_is_durable_and_not_silently_completed(
         state=state,
         notifier=notifier,
         opener=QueueOpener(
-            FakeResponse(frame(10, settlement_data("run-notify", 1, "f"))),
-            FakeResponse([]),
+            FakeResponse(
+                [*caught_up(0), *frame(10, settlement_data("run-notify", 1, "f"))]
+            ),
+            FakeResponse(caught_up(10)),
         ),
         clock=lambda: now[0],
     )
@@ -1793,6 +1903,88 @@ def test_v2_checksum_backup_and_private_modes(tmp_path: Path) -> None:
     assert recovered.recovered_from_backup is True
     assert recovered.cursor == 17
     assert recovered.processed == [("run-a", 3)]
+
+
+def test_newer_backup_generation_wins_after_primary_write_crash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "guardian" / "state.json"
+    state = GuardianState(
+        path=path,
+        cursor=v2_cursor(0),
+        baseline_complete=True,
+    )
+    state.persist()
+    assert state.state_generation == 1
+    event = settlement_event(
+        "crash-window",
+        1,
+        "n",
+        source="trust",
+        repo_root=tmp_path,
+    )
+    real_write = guardian_module._atomic_private_write
+    calls = [0]
+
+    def crash_before_primary(target: Path, payload: bytes) -> None:
+        calls[0] += 1
+        if calls[0] == 2:
+            raise OSError("simulated crash before primary replacement")
+        real_write(target, payload)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            guardian_module,
+            "_atomic_private_write",
+            crash_before_primary,
+        )
+        with pytest.raises(OSError, match="simulated crash"):
+            state.claim(v2_cursor(10), event)
+
+    primary = json.loads(path.read_text(encoding="utf-8"))
+    backup = json.loads(state.backup_path.read_text(encoding="utf-8"))
+    assert primary["state_generation"] == 1
+    assert backup["state_generation"] == 2
+    assert state.state_generation == 2
+    assert list(state.pending) == [event.key]
+    crash_recovered = GuardianState.load(path)
+    assert crash_recovered.recovered_from_backup is True
+    assert crash_recovered.state_generation == 2
+    assert list(crash_recovered.pending) == [event.key]
+
+    state.checkpoint(v2_cursor(20))
+
+    recovered = GuardianState.load(path)
+    assert recovered.recovered_from_backup is False
+    assert recovered.state_generation == 3
+    assert recovered.cursor == v2_cursor(20)
+    assert list(recovered.pending) == [event.key]
+
+
+def test_equal_generation_divergence_enters_safe_fresh_baseline(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "guardian" / "state.json"
+    common: dict[str, object] = {
+        "schema": guardian_module.GUARDIAN_STATE_SCHEMA,
+        "state_generation": 7,
+        "baseline_complete": True,
+        "highwater": [],
+        "pending": [],
+    }
+    write_checked_v2(path, {**common, "cursor": v2_cursor(10)})
+    write_checked_v2(
+        path.with_name(f"{path.name}.bak"),
+        {**common, "cursor": v2_cursor(20)},
+    )
+
+    recovered = GuardianState.load(path)
+
+    assert recovered.degraded is True
+    assert recovered.baseline_complete is False
+    assert recovered.cursor == 0
+    assert recovered.pending == {}
 
 
 def test_semantically_invalid_checked_state_enters_fresh_safe_baseline(
@@ -2051,16 +2243,19 @@ def test_same_agent_wrong_session_is_terminal_and_never_launches(
         resume=recovery.resume,
         opener=QueueOpener(
             FakeResponse(
-                frame(
-                    v2_cursor(50),
-                    settlement_data(
-                        event.run_id,
-                        event.revision,
-                        event.tui,
-                        source=event.source,
-                        repo_root=tmp_path,
+                [
+                    *caught_up(v2_cursor(0)),
+                    *frame(
+                        v2_cursor(50),
+                        settlement_data(
+                            event.run_id,
+                            event.revision,
+                            event.tui,
+                            source=event.source,
+                            repo_root=tmp_path,
+                        ),
                     ),
-                )
+                ]
             )
         ),
     )
@@ -2247,6 +2442,182 @@ def test_stream_gap_revokes_pending_authority_until_fresh_caught_up(
     ]
     assert resume_calls == ["settlement:live-after-gap:1"]
     assert state.highwater["pending-before-gap"].reason == "legacy_notification_only"
+
+
+def test_due_pending_waits_for_current_stream_barrier_before_gap(
+    tmp_path: Path,
+) -> None:
+    old_cursor = v2_cursor(50)
+    resumed_at = v2_cursor(100, generation=2)
+    event = settlement_event(
+        "due-before-gap",
+        1,
+        "n",
+        source="trust",
+        repo_root=tmp_path,
+    )
+    state = GuardianState(
+        path=tmp_path / "state.json",
+        cursor=old_cursor,
+        baseline_complete=True,
+    )
+    assert state.claim(v2_cursor(60), event)
+    order: list[str] = []
+
+    response = FakeResponse(
+        [
+            *boundary(old_cursor),
+            *stream_gap(requested=old_cursor, resumed_at=resumed_at),
+        ]
+    )
+
+    def open_stream(_request: Any, *, timeout: float) -> FakeResponse:
+        assert timeout > 0
+        order.append("open_sse")
+        return response
+
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=state,
+        notifier=lambda _notice: order.append("notify"),
+        reconciler=lambda _event: (
+            order.append("reconcile") or ReconcileDecision(request_resume=True)
+        ),
+        resume=lambda _event, _key: (
+            order.append("resume")
+            or action_result(
+                accepted=True,
+                retryable=False,
+                terminal=True,
+                reason="accepted",
+            )
+        ),
+        opener=open_stream,
+        clock=lambda: 0.0,
+    )
+
+    worker.consume_connection()
+
+    assert order == ["open_sse"]
+    assert state.baseline_complete is False
+    assert state.degraded is True
+    assert state.pending[event.key].resume_authorized is False
+
+
+def test_gap_write_failure_poison_is_live_before_fresh_caught_up(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_cursor = v2_cursor(50)
+    resumed_at = v2_cursor(100, generation=2)
+    event = settlement_event(
+        "gap-write-failure",
+        1,
+        "n",
+        source="trust",
+        repo_root=tmp_path,
+    )
+    state = GuardianState(
+        path=tmp_path / "state.json",
+        cursor=old_cursor,
+        baseline_complete=True,
+    )
+    assert state.claim(v2_cursor(60), event)
+    real_write = guardian_module._atomic_private_write
+    calls = [0]
+
+    def fail_first_write(target: Path, payload: bytes) -> None:
+        calls[0] += 1
+        if calls[0] == 1:
+            raise OSError("gap state unavailable")
+        real_write(target, payload)
+
+    resume_calls: list[str] = []
+    notifications: list[tuple[str, int]] = []
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=state,
+        notifier=lambda notice: notifications.append(notice.event.key),
+        reconciler=lambda _event: ReconcileDecision(request_resume=True),
+        resume=lambda _event, key: (
+            resume_calls.append(key)
+            or action_result(
+                accepted=True,
+                retryable=False,
+                terminal=True,
+                reason="accepted",
+            )
+        ),
+        opener=QueueOpener(
+            FakeResponse(
+                [
+                    *boundary(old_cursor),
+                    *stream_gap(requested=old_cursor, resumed_at=resumed_at),
+                    *caught_up(resumed_at),
+                ]
+            )
+        ),
+        clock=lambda: 0.0,
+    )
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(
+            guardian_module,
+            "_atomic_private_write",
+            fail_first_write,
+        )
+        worker.consume_connection()
+
+    assert calls[0] > 1
+    assert resume_calls == []
+    assert notifications == [event.key]
+    assert state.pending == {}
+    assert state.highwater[event.run_id].reason == "legacy_notification_only"
+
+
+def test_boundary_disconnect_cannot_advance_authoritative_pending_cursor(
+    tmp_path: Path,
+) -> None:
+    old_cursor = v2_cursor(50)
+    next_generation = v2_cursor(0, generation=2)
+    event = settlement_event(
+        "pending-at-boundary",
+        1,
+        "n",
+        source="trust",
+        repo_root=tmp_path,
+    )
+    state = GuardianState(
+        path=tmp_path / "state.json",
+        cursor=old_cursor,
+        baseline_complete=True,
+    )
+    assert state.claim(v2_cursor(60), event)
+    notifications: list[GuardianNotification] = []
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=state,
+        notifier=notifications.append,
+        reconciler=lambda _event: ReconcileDecision(request_resume=True),
+        resume=lambda _event, _key: pytest.fail("resume crossed an unproved boundary"),
+        opener=QueueOpener(
+            FakeResponse(
+                boundary(
+                    state.cursor,
+                    next_generation,
+                    reason="generation_change",
+                )
+            )
+        ),
+        clock=lambda: 0.0,
+    )
+
+    worker.consume_connection()
+
+    assert state.cursor == v2_cursor(60)
+    assert state.baseline_complete is True
+    assert state.pending[event.key].resume_authorized is True
+    assert notifications == []
 
 
 def test_numeric_legacy_stream_is_notification_only_after_caught_up(
