@@ -13,6 +13,7 @@ from vibecrafted_core.lifecycle_runner import (
     LifecycleRunner,
     LifecycleRunSpec,
     LifecycleSupervisor,
+    record_stage_worker_completion,
 )
 from vibecrafted_core.workflows.model import WorkflowManifest, WorkflowStage
 
@@ -21,6 +22,50 @@ from .lifecycle_schema_assertions import (
     assert_worker_report_frontmatter_matches_packaged_schema,
     packaged_lifecycle_schema,
 )
+
+
+def _init_read_stage_repo(root: Path) -> Path:
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    tracked = root / "tracked.txt"
+    tracked.write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=root, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=VC Test",
+            "-c",
+            "user.email=vc@example.test",
+            "commit",
+            "-m",
+            "initial",
+        ],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+    return tracked
+
+
+def _write_read_stage_report(path: Path, *, run_id: str, code_mutation: str) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "---",
+                f"run_id: {run_id}",
+                "agent: codex",
+                "skill: dou",
+                "status: completed",
+                "claim_status: completed",
+                f"code_mutation: {code_mutation}",
+                "---",
+                "",
+                "READ stage evidence.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_lifecycle_runner_honors_reserved_parent_run_id(
@@ -635,6 +680,8 @@ def test_lifecycle_runner_injects_context_atlas_into_stage_prompt(
         in prompts[0]
     )
     assert "Allowed artifacts: reports, cache, run_state, transcripts" in prompts[0]
+    assert "code_mutation: false" in prompts[0]
+    assert "code_mutation: true" in prompts[0]
     digest = claim_digest_for_text("audit readiness")
     assert f"mission claim digest: {digest}" in prompts[0]
     assert f"claim_digest: {digest}" in prompts[0]
@@ -779,34 +826,20 @@ def test_read_stage_detects_mutation_to_preexisting_dirty_file(
         "vibecrafted_core.lifecycle_runner.load_context_atlas",
         lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
     )
-    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-    tracked = tmp_path / "tracked.txt"
-    tracked.write_text("base\n", encoding="utf-8")
-    subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, check=True)
-    subprocess.run(
-        [
-            "git",
-            "-c",
-            "user.name=VC Test",
-            "-c",
-            "user.email=vc@example.test",
-            "commit",
-            "-m",
-            "initial",
-        ],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
-    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    tracked = _init_read_stage_repo(repo)
     tracked.write_text("base\ndirty before read\n", encoding="utf-8")
+    report = tmp_path / "dou.md"
 
     def fake_launcher(_spec, _source_dir):
         with tracked.open("a", encoding="utf-8") as handle:
             handle.write("mutated by read stage\n")
+        _write_read_stage_report(report, run_id="dou-run", code_mutation="true")
         return {
             "accepted": True,
             "run_id": "dou-run",
-            "report": str(tmp_path / "dou.md"),
+            "report": str(report),
         }
 
     def fake_awaiter(payload):
@@ -819,7 +852,7 @@ def test_read_stage_detects_mutation_to_preexisting_dirty_file(
                 workflow_id="vc-dou",
                 agent="codex",
                 prompt="audit readiness",
-                root=str(tmp_path),
+                root=str(repo),
                 await_stages=True,
             )
         )
@@ -828,6 +861,192 @@ def test_read_stage_detects_mutation_to_preexisting_dirty_file(
     assert state["status"] == "failed"
     assert state["stages"][0]["read_phase_violation"] is True
     assert state["stages"][0]["changed_files"] == ["tracked.txt"]
+    assert state["stages"][0]["read_phase_evidence"] == {
+        "repo_delta": "observed",
+        "observed_paths": ["tracked.txt"],
+        "worker_claim": "mutated",
+        "declared_value": "true",
+        "attribution": "worker_self_attested",
+        "hard_violation": True,
+    }
+
+
+@pytest.mark.parametrize(
+    (
+        "code_mutation",
+        "concurrent_delta",
+        "expected_status",
+        "worker_claim",
+        "attribution",
+        "hard_violation",
+    ),
+    (
+        (
+            "false",
+            True,
+            "completed",
+            "no_mutation",
+            "unattributed_living_tree",
+            False,
+        ),
+        (
+            "",
+            True,
+            "completed",
+            "undeclared",
+            "unattributed_living_tree",
+            False,
+        ),
+        ("true", False, "failed", "mutated", "worker_self_attested", True),
+        ("perhaps", False, "failed", "invalid", "none_observed", True),
+    ),
+)
+def test_read_stage_attribution_uses_worker_claim_not_global_delta(
+    monkeypatch,
+    tmp_path: Path,
+    code_mutation: str,
+    concurrent_delta: bool,
+    expected_status: str,
+    worker_claim: str,
+    attribution: str,
+    hard_violation: bool,
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner._maybe_seal_awaited_stage",
+        lambda **_kwargs: None,
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    tracked = _init_read_stage_repo(repo)
+    report = tmp_path / "dou.md"
+
+    def fake_launcher(_spec, _source_dir):
+        _write_read_stage_report(
+            report, run_id="dou-attribution", code_mutation=code_mutation
+        )
+        return {
+            "accepted": True,
+            "run_id": "dou-attribution",
+            "report": str(report),
+        }
+
+    def fake_awaiter(payload):
+        if concurrent_delta:
+            tracked.write_text("base\nconcurrent actor\n", encoding="utf-8")
+        return {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+        }
+
+    state = asyncio.run(
+        LifecycleRunner(launcher=fake_launcher, awaiter=fake_awaiter).run(
+            LifecycleRunSpec(
+                workflow_id="vc-dou",
+                agent="codex",
+                prompt="audit living tree attribution",
+                root=str(repo),
+                await_stages=True,
+            )
+        )
+    )
+
+    stage = state["stages"][0]
+    assert state["status"] == expected_status
+    assert stage["changed_files"] == (["tracked.txt"] if concurrent_delta else [])
+    assert stage["attributed_changed_files"] == []
+    assert stage["read_phase_violation"] is hard_violation
+    assert stage["read_phase_evidence"] == {
+        "repo_delta": "observed" if concurrent_delta else "none",
+        "observed_paths": ["tracked.txt"] if concurrent_delta else [],
+        "worker_claim": worker_claim,
+        "declared_value": code_mutation,
+        "attribution": attribution,
+        "hard_violation": hard_violation,
+    }
+
+
+@pytest.mark.parametrize(
+    ("code_mutation", "concurrent_delta", "expected_status", "attribution"),
+    (
+        ("false", True, "launching", "unattributed_living_tree"),
+        ("true", False, "failed", "worker_self_attested"),
+    ),
+)
+def test_default_no_await_read_stage_uses_worker_claim_for_attribution(
+    monkeypatch,
+    tmp_path: Path,
+    code_mutation: str,
+    concurrent_delta: bool,
+    expected_status: str,
+    attribution: str,
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner._maybe_seal_awaited_stage",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "vibecrafted_core.control_plane.sync_state",
+        lambda _run_id: {"recent_runs": []},
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    tracked = _init_read_stage_repo(repo)
+    report = tmp_path / "dou-no-await.md"
+    stage_run_id = "dou-no-await"
+
+    def fake_launcher(_spec, _source_dir):
+        _write_read_stage_report(
+            report, run_id=stage_run_id, code_mutation=code_mutation
+        )
+        return {
+            "accepted": True,
+            "run_id": stage_run_id,
+            "report": str(report),
+        }
+
+    state = asyncio.run(
+        LifecycleRunner(launcher=fake_launcher).run(
+            LifecycleRunSpec(
+                workflow_id="vc-dou",
+                agent="codex",
+                prompt="default no-await living tree attribution",
+                root=str(repo),
+            )
+        )
+    )
+    if concurrent_delta:
+        tracked.write_text("base\nconcurrent actor\n", encoding="utf-8")
+
+    assert record_stage_worker_completion(
+        state["state_path"],
+        stage_run_id,
+        {
+            "run_id": stage_run_id,
+            "state": "report_validated",
+            "exit_code": 0,
+            "artifact_ok": True,
+            "report": str(report),
+        },
+    )
+    reloaded = json.loads(Path(state["state_path"]).read_text(encoding="utf-8"))
+    stage = reloaded["stages"][0]
+    assert reloaded["status"] == expected_status
+    assert stage["changed_files"] == (["tracked.txt"] if concurrent_delta else [])
+    assert stage["attributed_changed_files"] == []
+    assert stage["read_phase_evidence"]["attribution"] == attribution
+    assert stage["read_phase_evidence"]["hard_violation"] is (code_mutation == "true")
 
 
 def test_lifecycle_runner_records_commits_created_during_stage(

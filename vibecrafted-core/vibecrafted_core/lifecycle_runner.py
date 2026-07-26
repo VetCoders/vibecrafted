@@ -19,6 +19,7 @@ from .lifecycle_delivery import (
     claim_digest_for_text,
     try_grant_lifecycle_stage_seal,
 )
+from .report_contract import parse_report_path
 from .workflow import (
     SUPPORTED_AGENTS,
     WorkflowLaunchSpec,
@@ -150,7 +151,13 @@ def _maybe_seal_awaited_stage(
         baseline_head=str(record.get("commit_before") or ""),
         final_head=str(record.get("commit_after") or ""),
         scoped_dirty_paths=tuple(
-            str(item) for item in record.get("changed_files") or ()
+            str(item)
+            for item in (
+                record.get("attributed_changed_files")
+                if record.get("phase") == "read"
+                else record.get("changed_files")
+            )
+            or ()
         ),
         baseline_status_lines=tuple(
             str(item) for item in record.get("git_before") or ()
@@ -163,11 +170,15 @@ def _capture_stage_completion(
     await_result: dict[str, Any],
     repo_root: Path,
 ) -> bool:
-    """Attach terminal worker truth and return whether a READ stage mutated.
+    """Attach terminal worker truth and return a READ-stage hard violation.
 
     Both lifecycle modes must derive provenance the same way.  The synchronous
     runner used to own this block exclusively, which made the default
     launch-and-return dispatcher path structurally unable to reach proof/seal.
+
+    Repository delta is an observation, not worker attribution: another actor
+    may move the shared Living Tree while a READ worker runs.  The worker's
+    ``code_mutation`` report claim is the attribution source.
     """
     record["await"] = await_result
     record["status"] = "completed" if await_result.get("artifact_ok") else "failed"
@@ -195,10 +206,73 @@ def _capture_stage_completion(
         str(record.get("commit_before") or ""),
         str(record.get("commit_after") or ""),
     )
-    read_violation = record.get("phase") == "read" and bool(record["changed_files"])
-    if read_violation:
-        record["read_phase_violation"] = True
-    return read_violation
+    if record.get("phase") != "read":
+        return False
+
+    evidence = _read_phase_evidence(record, await_result, record["changed_files"])
+    record["read_phase_evidence"] = evidence
+    record["attributed_changed_files"] = (
+        list(record["changed_files"])
+        if evidence["attribution"] == "worker_self_attested"
+        else []
+    )
+    record["read_phase_violation"] = bool(evidence["hard_violation"])
+    return bool(evidence["hard_violation"])
+
+
+def _read_phase_evidence(
+    record: dict[str, Any],
+    await_result: dict[str, Any],
+    observed_paths: list[str],
+) -> dict[str, Any]:
+    launch_value = record.get("launch")
+    launch = launch_value if isinstance(launch_value, dict) else {}
+    report_path = str(await_result.get("report") or launch.get("report") or "").strip()
+    raw_claim = ""
+    if report_path:
+        raw_claim = str(
+            parse_report_path(report_path).fields.get("code_mutation") or ""
+        ).strip()
+    normalized = raw_claim.lower()
+    if not normalized:
+        worker_claim = "undeclared"
+    elif normalized in {"0", "false", "no", "off"}:
+        worker_claim = "no_mutation"
+    elif normalized in {"1", "true", "yes", "on"}:
+        worker_claim = "mutated"
+    else:
+        worker_claim = "invalid"
+
+    if worker_claim == "mutated":
+        attribution = "worker_self_attested"
+    elif observed_paths:
+        attribution = "unattributed_living_tree"
+    else:
+        attribution = "none_observed"
+
+    return {
+        "repo_delta": "observed" if observed_paths else "none",
+        "observed_paths": list(observed_paths),
+        "worker_claim": worker_claim,
+        "declared_value": raw_claim,
+        "attribution": attribution,
+        "hard_violation": worker_claim in {"mutated", "invalid"},
+    }
+
+
+def _read_phase_violation_error(record: dict[str, Any]) -> str:
+    evidence_value = record.get("read_phase_evidence")
+    evidence = evidence_value if isinstance(evidence_value, dict) else {}
+    claim = str(evidence.get("worker_claim") or "invalid")
+    if claim == "mutated":
+        detail = "self-attested code_mutation: true"
+    else:
+        raw = str(evidence.get("declared_value") or "<empty>")
+        detail = f"reported invalid code_mutation: {raw}"
+    observed = [str(path) for path in evidence.get("observed_paths") or []]
+    if observed:
+        detail += "; repository delta observed: " + ", ".join(observed)
+    return f"READ stage {record.get('id')} {detail}"
 
 
 @dataclass(frozen=True)
@@ -802,9 +876,7 @@ class LifecycleRunner:
                 }
             if read_violation:
                 state["status"] = "failed"
-                state["error"] = f"READ stage {stage.id} changed files: " + ", ".join(
-                    record["changed_files"]
-                )
+                state["error"] = _read_phase_violation_error(record)
                 break
             # Delivery kernel: only after report validation and after the
             # stage's actual commit/worktree provenance is captured. Never
@@ -973,6 +1045,10 @@ Fallback/audit stage: {stage.fallback_stage or stage.audit_after or "none"}
 READ phase rule:
 - Do not modify code during READ phases.
 - Reports, cache, and run artifacts are allowed.
+- Declare `code_mutation: false` in the report YAML frontmatter when you stayed
+  read-only; declare `code_mutation: true` if you changed code at any point,
+  even if you later restored the tree. Missing is recorded as undeclared;
+  malformed values are a hard contract violation.
 
 WRITE phase rule:
 - Code changes are allowed, but changed files must be reported.
@@ -1259,6 +1335,8 @@ def record_stage_worker_completion(
         "git_snapshot_after",
         "changed_files",
         "new_commits",
+        "read_phase_evidence",
+        "attributed_changed_files",
         "read_phase_violation",
         "lifecycle_seal",
         "worker_exit",
@@ -1303,10 +1381,7 @@ def record_stage_worker_completion(
         latest["lifecycle_seal"] = seal_result.to_payload()
     if read_violation:
         latest["status"] = "failed"
-        latest["error"] = (
-            f"READ stage {latest_record.get('id')} changed files: "
-            + ", ".join(latest_record.get("changed_files") or [])
-        )
+        latest["error"] = _read_phase_violation_error(latest_record)
 
     try:
         write_lifecycle_state(path, latest)
