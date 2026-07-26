@@ -43,9 +43,10 @@ from .settlement import (
     persist_await_verdict,
     persist_settlement_to_meta,
     prepare_settlement_event,
-    settlement_from_payload,
     settle_payload,
+    settlement_from_payload,
 )
+from .settlement_history import advance_run_settlement_history
 
 ACTIVE_STATES = {
     "created",
@@ -431,6 +432,13 @@ def _write_run_snapshot(
         nested = payload.get("settlement")
         if revision is not None and isinstance(nested, dict):
             nested["revision"] = revision
+        history = advance_run_settlement_history(
+            current,
+            payload,
+            event.to_payload() if event is not None else None,
+        )
+        if history is not None:
+            payload["settlement_history"] = history
 
         settlement = settlement_from_payload(payload)
         runtime_meta = _runtime_run_dir(run_id) / "meta.json"

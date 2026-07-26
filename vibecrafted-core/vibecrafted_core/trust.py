@@ -38,6 +38,10 @@ from .settlement import (
     emit_settlement_event,
     tui_key_for,
 )
+from .settlement_history import (
+    RunSettlementHistory,
+    advance_run_settlement_history,
+)
 
 TRUST_VERDICTS = ("pass", "pass-with-gaps", "block")
 EVIDENCE_GRADES = ("strong", "medium", "weak")
@@ -1555,6 +1559,15 @@ def _recover_trust_outbox(
         ),
         receipt,
     )
+    raw_history = fields.get("settlement_history")
+    if raw_history is not None:
+        history = RunSettlementHistory.from_payload(raw_history)
+        if (
+            history.latest_revision != receipt.settlement_revision
+            or history.latest_tui != receipt.settlement_tui
+        ):
+            raise ValueError("trust settlement outbox history plan mismatch")
+        expected_fields["settlement_history"] = history.to_payload()
     if fields != expected_fields:
         raise ValueError("trust settlement outbox projection plan mismatch")
     claims = entry_payload.get("claims")
@@ -1884,6 +1897,16 @@ def _persist_trust_settlement(
         settlement=settlement,
         receipt=receipt,
     )
+    current_projection = dict(snapshot)
+    current_projection.update(fields)
+    history = advance_run_settlement_history(
+        snapshot,
+        current_projection,
+        event.to_payload(),
+    )
+    if history is None:
+        raise ValueError("trust settlement history plan missing")
+    fields["settlement_history"] = history
 
     # The prepared outbox is durable before the first irreversible side effect.
     # Recovery replays this exact plan: journal, projections, then notification.

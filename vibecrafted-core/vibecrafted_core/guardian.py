@@ -64,6 +64,7 @@ from .settlement import (
     SettlementEventV2,
     TrustReceiptV1,
 )
+from .settlement_history import SettlementHistoryPublisher
 
 LOGGER = logging.getLogger(__name__)
 
@@ -639,6 +640,7 @@ Notifier = Callable[[GuardianNotification], None]
 Reconciler = Callable[[SettlementRevision], ReconcileDecision]
 ResumeCallback = Callable[[SettlementRevision, str], object]
 TriageScheduler = Callable[[str], bool]
+HistoryPublisher = Callable[[], object]
 UrlOpener = Callable[..., Any]
 ReadyCallback = Callable[[], None]
 GuardEnforcer = Callable[..., object]
@@ -648,6 +650,10 @@ CursorParser = Callable[[str], CursorToken | None]
 
 def _ignore_triage_schedule(_run_id: str) -> bool:
     return True
+
+
+def _ignore_history_publish() -> None:
+    return None
 
 
 @dataclass(frozen=True)
@@ -2667,6 +2673,7 @@ class GuardianWorker:
         ready_callback: ReadyCallback | None = None,
         pending_pass_limit: int = DEFAULT_PENDING_PASS_LIMIT,
         triage_scheduler: TriageScheduler = _ignore_triage_schedule,
+        history_publisher: HistoryPublisher = _ignore_history_publish,
         clock: Callable[[], float] = time.time,
         cursor_parser: CursorParser = _parse_event_cursor,
         control_parser: ControlParser | None = parse_stream_control,
@@ -2688,10 +2695,19 @@ class GuardianWorker:
         self.ready_callback = ready_callback
         self.pending_pass_limit = pending_pass_limit
         self.triage_scheduler = triage_scheduler
+        self.history_publisher = history_publisher
         self.clock = clock
         self.cursor_parser = cursor_parser
         self.control_parser = control_parser
         self._ready_announced = False
+
+    def _publish_history_safely(self) -> None:
+        """Refresh the rail projection without owning or blocking settlement."""
+
+        try:
+            self.history_publisher()
+        except Exception:
+            LOGGER.exception("guardian settlement-history publication failed")
 
     def _request(self) -> urllib.request.Request:
         # A fresh numeric zero is not sent: omitting it lets a v2 server choose
@@ -2760,6 +2776,7 @@ class GuardianWorker:
 
                     if isinstance(item, SSEStreamGap):
                         latest_cursor = item.cursor
+                        self._publish_history_safely()
                         try:
                             self.state.reset_for_gap(
                                 item.cursor,
@@ -2780,6 +2797,7 @@ class GuardianWorker:
 
                     if isinstance(item, SSEStreamCaughtUp):
                         latest_cursor = item.cursor
+                        self._publish_history_safely()
                         try:
                             if self.state.complete_baseline(
                                 item.cursor,
@@ -2840,6 +2858,10 @@ class GuardianWorker:
                             )
                         continue
 
+                    # Projection publication is deliberately independent of the
+                    # terminal-triage queue. Queue pressure may pause this SSE
+                    # cursor, but it must never freeze the operator's f/x/n rail.
+                    self._publish_history_safely()
                     try:
                         triage_scheduled = self.triage_scheduler(event.run_id)
                     except Exception:
@@ -3373,6 +3395,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             server_url=args.server_url,
             timeout=args.recovery_timeout,
         )
+        settlement_history = SettlementHistoryPublisher()
         worker = GuardianWorker(
             server_url=args.server_url,
             state=state,
@@ -3383,6 +3406,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             replay_heartbeats=args.replay_heartbeats,
             ready_callback=ready_callback,
             triage_scheduler=_schedule_terminal_triage_run,
+            history_publisher=settlement_history.request_refresh,
         )
         backoff = BoundedBackoff(args.backoff_initial, args.backoff_max)
     except ValueError as exc:
@@ -3393,6 +3417,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             try:
                 _recover_pending_trust_before_attach()
                 _schedule_triage_startup_sweep()
+                settlement_history.start_periodic_refresh()
                 LOGGER.info(
                     "guardian attaching to %s/api/control/events; "
                     "guarded native recovery adapter active",
@@ -3400,6 +3425,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 worker.run_forever(backoff=backoff)
             finally:
+                settlement_history.stop_periodic_refresh()
                 if args.ready_file is not None and args.ready_nonce is not None:
                     remove_ready_receipt_if_owned(
                         args.ready_file,

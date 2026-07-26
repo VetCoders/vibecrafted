@@ -1334,6 +1334,91 @@ def test_unscheduled_triage_preserves_stream_cursor_for_replay(
     assert "was not durably queued" in caplog.text
 
 
+def test_settlement_history_publish_runs_before_a_blocked_triage_queue(
+    tmp_path: Path,
+) -> None:
+    state = GuardianState(
+        path=tmp_path / "guardian-state.json",
+        cursor=v2_cursor(0),
+        baseline_complete=True,
+    )
+    order: list[str] = []
+
+    def publish() -> None:
+        order.append("publish")
+
+    def schedule(_run_id: str) -> bool:
+        order.append("triage")
+        assert order[-2] == "publish"
+        return False
+
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=state,
+        notifier=lambda _notification: None,
+        triage_scheduler=schedule,
+        history_publisher=publish,
+        opener=QueueOpener(
+            FakeResponse(
+                [
+                    *caught_up(v2_cursor(0)),
+                    *frame(
+                        v2_cursor(1),
+                        settlement_data("run-publish", 1, "f"),
+                    ),
+                ]
+            )
+        ),
+    )
+
+    stats = worker.consume_connection()
+
+    assert stats.action_failures == 1
+    assert order == ["publish", "publish", "triage"]
+
+
+def test_settlement_history_publish_failure_never_blocks_triage(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    state = GuardianState(
+        path=tmp_path / "guardian-state.json",
+        cursor=v2_cursor(0),
+        baseline_complete=True,
+    )
+    scheduled: list[str] = []
+
+    def publish() -> None:
+        raise OSError("vc-frame unavailable")
+
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=state,
+        notifier=lambda _notification: None,
+        reconciler=lambda _event: ReconcileDecision(request_resume=False),
+        triage_scheduler=lambda run_id: not scheduled.append(run_id),
+        history_publisher=publish,
+        opener=QueueOpener(
+            FakeResponse(
+                [
+                    *caught_up(v2_cursor(0)),
+                    *frame(
+                        v2_cursor(1),
+                        settlement_data("run-publish-failure", 1, "f"),
+                    ),
+                ]
+            )
+        ),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="vibecrafted_core.guardian"):
+        stats = worker.consume_connection()
+
+    assert stats.completed_actions == 1
+    assert scheduled == ["run-publish-failure"]
+    assert "settlement-history publication failed" in caplog.text
+
+
 def _register_terminal_triage_daemon_cleanup(
     request: pytest.FixtureRequest,
     *,
@@ -3134,6 +3219,18 @@ def test_main_recovers_trust_outbox_under_lock_before_sse_attach(
             assert backoff is not None
             order.append("attach")
 
+    class StubSettlementHistoryPublisher:
+        def request_refresh(self) -> bool:
+            return True
+
+        def start_periodic_refresh(self) -> bool:
+            order.append("history-start")
+            return True
+
+        def stop_periodic_refresh(self) -> bool:
+            order.append("history-stop")
+            return True
+
     monkeypatch.setattr(
         guardian_module,
         "GuardianState",
@@ -3156,6 +3253,11 @@ def test_main_recovers_trust_outbox_under_lock_before_sse_attach(
         guardian_module,
         "BoundedBackoff",
         lambda *_args: object(),
+    )
+    monkeypatch.setattr(
+        guardian_module,
+        "SettlementHistoryPublisher",
+        StubSettlementHistoryPublisher,
     )
     monkeypatch.setattr(guardian_module, "single_instance_lock", fake_lock)
     monkeypatch.setattr(
@@ -3180,7 +3282,14 @@ def test_main_recovers_trust_outbox_under_lock_before_sse_attach(
     )
 
     assert result == 0
-    assert order == ["lock", "recover", "triage-recover", "attach"]
+    assert order == [
+        "lock",
+        "recover",
+        "triage-recover",
+        "history-start",
+        "attach",
+        "history-stop",
+    ]
 
 
 def test_trust_recovery_sweep_reports_success_and_preserved_failures(
