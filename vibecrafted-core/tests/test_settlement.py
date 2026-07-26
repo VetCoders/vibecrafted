@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 from vibecrafted_core import control_plane
 from vibecrafted_core.settlement import (
+    SETTLEMENT_EVENT_KIND,
+    SETTLEMENT_EVENT_SCHEMA,
     BareMarkdownError,
     SettlementVerdict,
     board_fxn_counts,
@@ -30,6 +32,19 @@ def _write_meta(home: Path, payload: dict[str, object]) -> Path:
     path = reports / f"{payload['run_id']}.meta.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
+
+
+def _settlement_events(home: Path) -> list[dict[str, object]]:
+    path = home / "control_plane" / "events.jsonl"
+    if not path.is_file():
+        return []
+    return [
+        event
+        for event in (
+            json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+        )
+        if event.get("kind") == SETTLEMENT_EVENT_KIND
+    ]
 
 
 def test_tui_key_mapping() -> None:
@@ -424,6 +439,19 @@ def test_sync_state_writes_settlement_on_terminal(
         },
     )
 
+    emitted_after_snapshot: list[int] = []
+    original_emit = control_plane.emit_settlement_event
+
+    def _assert_snapshot_is_durable(event):
+        path = home / "control_plane" / "runs" / f"{event.run_id}.json"
+        persisted = json.loads(path.read_text(encoding="utf-8"))
+        assert persisted["settlement_revision"] == event.revision
+        emitted_after_snapshot.append(event.revision)
+        return original_emit(event)
+
+    monkeypatch.setattr(
+        control_plane, "emit_settlement_event", _assert_snapshot_is_durable
+    )
     snapshot = control_plane.sync_state()
     run = next(r for r in snapshot["recent_runs"] if r["run_id"] == "work-settle-1")
 
@@ -439,6 +467,29 @@ def test_sync_state_writes_settlement_on_terminal(
     assert "settlement_counts" in snapshot
     assert snapshot["settlement_counts"]["n"] >= 1
     assert snapshot["settlement_counts"]["f"] == 0
+    assert emitted_after_snapshot == [1]
+    assert run["settlement_revision"] == 1
+
+    events = _settlement_events(home)
+    assert len(events) == 1
+    payload = events[0]["payload"]
+    assert payload == {
+        "schema": SETTLEMENT_EVENT_SCHEMA,
+        "run_id": "work-settle-1",
+        "previous": None,
+        "current": {"verdict": "needs_attention", "tui": "n"},
+        "reason": run["settlement_reason"],
+        "source": run["settlement_source"],
+        "settled_at": run["settlement_at"],
+        "claim_digest": run["settlement_claim_digest"],
+        "waived": False,
+        "revision": 1,
+    }
+
+    # A replayed sync adopts the existing revision and emits no duplicate.
+    control_plane.sync_state()
+    assert emitted_after_snapshot == [1]
+    assert len(_settlement_events(home)) == 1
 
 
 def test_sync_state_gc_parks_with_settlement(
@@ -566,6 +617,17 @@ def test_await_persists_verdict(
     assert meta_body["await_outcome"] == "completed"
     assert meta_body["await_rc"] == 0
     assert "await_settled_at" in meta_body
+    events = _settlement_events(home)
+    assert events
+    assert events[-1]["payload"]["source"] == "await"
+    assert events[-1]["payload"]["revision"] >= 1
+    revisions = [event["payload"]["revision"] for event in events]
+    assert revisions == sorted(set(revisions))
+
+    # Re-awaiting unchanged evidence must not create another logical revision.
+    before = len(events)
+    control_plane.await_run(run_id, timeout_seconds=0, interval_seconds=0.05)
+    assert len(_settlement_events(home)) == before
 
 
 def test_persist_await_verdict_standalone(tmp_path: Path) -> None:

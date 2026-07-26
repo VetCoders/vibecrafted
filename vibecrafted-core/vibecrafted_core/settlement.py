@@ -55,20 +55,25 @@ from .run_triage import (
 
 __all__ = [
     "SETTLED_TERMINALS",
+    "SETTLEMENT_EVENT_KIND",
+    "SETTLEMENT_EVENT_SCHEMA",
     "TUI_FAILED",
     "TUI_FINALIZED",
     "TUI_NEEDS_ATTENTION",
     "BareMarkdownError",
     "Settlement",
+    "SettlementEventV1",
     "SettlementVerdict",
     "board_fxn_counts",
     "can_archive",
     "claim_digest_from_payload",
+    "emit_settlement_event",
     "is_untitled_markdown",
     "orphan_markdown_paths",
     "orphan_settlement_payloads",
     "persist_await_verdict",
     "persist_settlement_to_meta",
+    "prepare_settlement_event",
     "require_bound_markdown",
     "settle_payload",
     "settlement_from_payload",
@@ -78,6 +83,8 @@ __all__ = [
 TUI_FINALIZED = "f"
 TUI_FAILED = "x"
 TUI_NEEDS_ATTENTION = "n"
+SETTLEMENT_EVENT_KIND = "settlement.changed"
+SETTLEMENT_EVENT_SCHEMA = "vibecrafted.settlement-event.v1"
 
 # Operator waive must be explicit and traced — never inferred from exit 0.
 _WAIVE_KEYS = ("settlement_waive", "operator_waive", "waive_settlement")
@@ -147,6 +154,46 @@ class Settlement:
             payload["await_outcome"] = self.await_outcome
             payload["await_settled_at"] = self.settled_at
         return payload
+
+
+@dataclass(frozen=True)
+class SettlementEventStateV1:
+    """The compact f/x/n identity carried on either side of a revision."""
+
+    verdict: str
+    tui: str
+
+    def to_payload(self) -> dict[str, str]:
+        return {"verdict": self.verdict, "tui": self.tui}
+
+
+@dataclass(frozen=True)
+class SettlementEventV1:
+    """One durable settlement revision written to the control-plane stream."""
+
+    run_id: str
+    previous: SettlementEventStateV1 | None
+    current: SettlementEventStateV1
+    reason: str
+    source: str
+    settled_at: str
+    claim_digest: str
+    waived: bool
+    revision: int
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema": SETTLEMENT_EVENT_SCHEMA,
+            "run_id": self.run_id,
+            "previous": self.previous.to_payload() if self.previous else None,
+            "current": self.current.to_payload(),
+            "reason": self.reason,
+            "source": self.source,
+            "settled_at": self.settled_at,
+            "claim_digest": self.claim_digest,
+            "waived": self.waived,
+            "revision": self.revision,
+        }
 
 
 def _now_iso() -> str:
@@ -328,6 +375,87 @@ def settlement_from_payload(payload: Mapping[str, Any]) -> Settlement | None:
     )
 
 
+def _settlement_fingerprint(settlement: Settlement) -> tuple[Any, ...]:
+    return (
+        settlement.verdict.value,
+        settlement.tui_key,
+        settlement.reason,
+        settlement.source,
+        settlement.settled_at,
+        settlement.claim_digest,
+        settlement.waived,
+    )
+
+
+def _settlement_event_state(settlement: Settlement) -> SettlementEventStateV1:
+    return SettlementEventStateV1(
+        verdict=settlement.verdict.value,
+        tui=settlement.tui_key,
+    )
+
+
+def prepare_settlement_event(
+    run_id: str,
+    previous_payload: Mapping[str, Any] | None,
+    current_payload: dict[str, Any],
+) -> SettlementEventV1 | None:
+    """Stamp one monotonic revision and describe a real settlement change.
+
+    The caller must persist ``current_payload`` before emitting the returned
+    event. Existing legacy settlements are adopted as revision 1 without a
+    synthetic event; a subsequent real change advances them to revision 2.
+    """
+
+    current = settlement_from_payload(current_payload)
+    previous = settlement_from_payload(previous_payload or {})
+    previous_revision = max(
+        _coerce_int((previous_payload or {}).get("settlement_revision")) or 0,
+        0,
+    )
+    if current is None:
+        if previous_revision:
+            current_payload["settlement_revision"] = previous_revision
+        return None
+
+    if previous is not None and _settlement_fingerprint(previous) == (
+        _settlement_fingerprint(current)
+    ):
+        current_payload["settlement_revision"] = previous_revision or 1
+        return None
+
+    base_revision = previous_revision or (1 if previous is not None else 0)
+    revision = base_revision + 1
+    current_payload["settlement_revision"] = revision
+    return SettlementEventV1(
+        run_id=str(run_id or current_payload.get("run_id") or ""),
+        previous=_settlement_event_state(previous) if previous else None,
+        current=_settlement_event_state(current),
+        reason=current.reason,
+        source=current.source,
+        settled_at=current.settled_at,
+        claim_digest=current.claim_digest,
+        waived=current.waived,
+        revision=revision,
+    )
+
+
+def emit_settlement_event(event: SettlementEventV1) -> dict[str, Any]:
+    """Append a prepared settlement revision after its snapshot is durable."""
+
+    from .events import append_event
+
+    previous = event.previous.verdict if event.previous else "unsettled"
+    return append_event(
+        SETTLEMENT_EVENT_KIND,
+        event.run_id,
+        (
+            f"settlement revision {event.revision}: "
+            f"{previous} -> {event.current.verdict}"
+        ),
+        event.to_payload(),
+    )
+
+
 def _coerce_int(value: Any) -> int | None:
     if value is None or value == "":
         return None
@@ -389,13 +517,19 @@ def settle_payload(
         # ``settled_at`` on every board sync made each pass rewrite every
         # terminal snapshot and emit a spurious "refreshed" event — the event
         # stream grew without bound and the idempotency comparison never held.
-        if (
+        same_resolution = (
             existing is not None
             and existing.verdict is candidate.verdict
             and existing.reason == candidate.reason
-            and existing.source == candidate.source
             and existing.claim_digest == candidate.claim_digest
             and existing.waived == candidate.waived
+        )
+        if same_resolution and (
+            existing.source == candidate.source
+            # A normal board sync is not stronger provenance than the await
+            # finalizer. Keep the durable await source instead of toggling
+            # await -> auto -> await and inventing two revisions per replay.
+            or (existing.source == "await" and candidate.source == "auto")
         ):
             return existing
         return candidate

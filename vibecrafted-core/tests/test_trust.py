@@ -175,7 +175,40 @@ def test_note_appends_claim_evidence_and_projects_settlement(
     assert board_fxn_counts([settled]) == {"f": 0, "x": 0, "n": 1}
     projected = json.loads(snapshot.read_text())
     assert projected["settlement_source"] == "trust"
+    assert projected["settlement_revision"] == 1
     assert board_fxn_counts([projected]) == {"f": 0, "x": 0, "n": 1}
+    settlement_events = [
+        json.loads(line)
+        for line in (crafted_home / "control_plane" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if json.loads(line).get("kind") == "settlement.changed"
+    ]
+    assert len(settlement_events) == 1
+    assert settlement_events[0]["payload"] == {
+        "schema": "vibecrafted.settlement-event.v1",
+        "run_id": "run-trust",
+        "previous": None,
+        "current": {"verdict": "needs_attention", "tui": "n"},
+        "reason": f"trust_pass_with_gaps:{sha}",
+        "source": "trust",
+        "settled_at": entry["recorded_at"],
+        "claim_digest": projected["settlement_claim_digest"],
+        "waived": False,
+        "revision": 1,
+    }
+
+    # The explicit trust snapshot write follows sync_state; it must not publish
+    # a second event for the same revision.
+    trust.control_plane.sync_state(only_run_id="run-trust")
+    replayed = [
+        json.loads(line)
+        for line in (crafted_home / "control_plane" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if json.loads(line).get("kind") == "settlement.changed"
+    ]
+    assert len(replayed) == 1
 
 
 def test_enumerate_skips_commits_already_in_append_only_journal(

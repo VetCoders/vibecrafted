@@ -761,8 +761,20 @@ def _persist_trust_settlement(
         raise OSError(f"failed to persist trust settlement to {resolved.meta}")
     control_plane.sync_state(only_run_id=run_id)
     snapshot = control_plane.run_snapshot_dir() / f"{run_id}.json"
-    if snapshot.is_file() and not persist_settlement_to_meta(snapshot, settlement):
-        raise OSError(f"failed to persist trust settlement to {snapshot}")
+    if snapshot.is_file():
+        previous = control_plane._read_json(snapshot)
+        payload = dict(previous)
+        payload.update(settlement.to_payload())
+        payload["settlement"] = {
+            "verdict": settlement.verdict.value,
+            "reason": settlement.reason,
+            "settled_at": settlement.settled_at,
+            "source": settlement.source,
+            "claim_digest": settlement.claim_digest,
+            "waived": settlement.waived,
+            "tui": settlement.tui_key,
+        }
+        control_plane._write_run_snapshot(snapshot, previous, payload)
     return tui_key_for(terminal)
 
 

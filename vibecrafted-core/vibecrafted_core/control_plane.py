@@ -33,11 +33,14 @@ from .report_contract import (
 )
 from .runtime_paths import vibecrafted_home
 from .settlement import (
+    SETTLEMENT_EVENT_KIND,
     board_fxn_counts,
     can_archive,
+    emit_settlement_event,
     orphan_settlement_payloads,
     persist_await_verdict,
     persist_settlement_to_meta,
+    prepare_settlement_event,
     settle_payload,
 )
 
@@ -276,6 +279,23 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     finally:
         with contextlib.suppress(OSError):
             tmp.unlink()
+
+
+def _write_run_snapshot(
+    path: Path,
+    previous: dict[str, Any] | None,
+    payload: dict[str, Any],
+) -> None:
+    """Atomically persist a run snapshot, then publish its settlement revision."""
+
+    event = prepare_settlement_event(
+        str(payload.get("run_id") or path.stem),
+        previous,
+        payload,
+    )
+    _write_json(path, payload)
+    if event is not None:
+        emit_settlement_event(event)
 
 
 def _read_lines(path: Path) -> list[str]:
@@ -1186,6 +1206,11 @@ def _merge_event_stream(
 
         payload = dict(event.get("payload") or {})
         kind = str(event.get("kind") or "")
+        # Settlement events are a durable notification about a snapshot that
+        # has already been written. Re-projecting them as lifecycle evidence
+        # would resurrect an archived run as active/unknown on the next sync.
+        if kind == SETTLEMENT_EVENT_KIND:
+            continue
         message = str(event.get("message") or "")
         ts = _safe_iso(str(event.get("ts") or ""))
         existing = merged.get(run_id)
@@ -1533,6 +1558,7 @@ def _archive_expired_snapshots() -> None:
         # Settle first (default → needs_attention), then archive only once
         # the settlement axis is present. Live/unreadable runs stay put.
         if not can_archive(payload):
+            previous = dict(payload)
             settlement = settle_payload(payload, source="auto")
             if settlement is not None:
                 payload.update(settlement.to_payload())
@@ -1545,7 +1571,7 @@ def _archive_expired_snapshots() -> None:
                     "waived": settlement.waived,
                     "tui": settlement.tui_key,
                 }
-                _write_json(path, payload)
+                _write_run_snapshot(path, previous, payload)
             if not can_archive(payload):
                 continue
         _archive_snapshot(path)
@@ -1591,6 +1617,7 @@ def drain_settled_snapshots(
                     counts["skipped_live"] += 1
                     continue
                 if not can_archive(payload):
+                    previous = dict(payload)
                     settlement = settle_payload(payload, source="auto")
                     if settlement is None:
                         counts["skipped_live"] += 1
@@ -1605,7 +1632,7 @@ def drain_settled_snapshots(
                         "waived": settlement.waived,
                         "tui": settlement.tui_key,
                     }
-                    _write_json(path, payload)
+                    _write_run_snapshot(path, previous, payload)
                     counts["settled"] += 1
                 age = _snapshot_age_seconds(payload, now)
                 if age is not None and age < keep_seconds:
@@ -1962,6 +1989,7 @@ def _project_run_payload(
             "settlement_tui",
             "settlement_waived",
             "settlement_claim_digest",
+            "settlement_revision",
             "settlement",
             "await_rc",
             "await_outcome",
@@ -2073,7 +2101,7 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
             previous = previous_snapshots.get(run_id)
             payload = _project_run_payload(run_id, status, previous)
             _record_transition(previous, payload)
-            _write_json(_snapshot_path(run_id), payload)
+            _write_run_snapshot(_snapshot_path(run_id), previous, payload)
             payload_runs.append(payload)
         if not scoped:
             # Retained snapshots whose source evidence went quiet (e.g. their
@@ -2508,6 +2536,7 @@ def _finalize_await_result(
         try:
             snapshot = _read_json(snapshot_path)
             if snapshot:
+                previous_snapshot = dict(snapshot)
                 snapshot.update(await_fields)
                 # Re-settle with await evidence so unsealed reports stay n.
                 settlement = settle_payload(snapshot, force=True, source="await")
@@ -2526,7 +2555,7 @@ def _finalize_await_result(
                     }
                     if meta_path is not None:
                         persist_settlement_to_meta(meta_path, settlement)
-                _write_json(snapshot_path, snapshot)
+                _write_run_snapshot(snapshot_path, previous_snapshot, snapshot)
                 last_run = snapshot
         except OSError:
             pass

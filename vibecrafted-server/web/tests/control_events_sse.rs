@@ -156,6 +156,12 @@ fn event_line(run_id: &str, kind: &str, message: &str) -> String {
     )
 }
 
+fn settlement_event_line(run_id: &str, revision: u64) -> String {
+    format!(
+        r#"{{"ts":"2026-07-26T06:00:00+00:00","run_id":"{run_id}","kind":"settlement.changed","message":"settlement revision {revision}","payload":{{"schema":"vibecrafted.settlement-event.v1","run_id":"{run_id}","previous":null,"current":{{"verdict":"needs_attention","tui":"n"}},"reason":"report_without_seal","source":"await","settled_at":"2026-07-26T06:00:00+00:00","claim_digest":"claim-123","waived":false,"revision":{revision}}}}}"#
+    )
+}
+
 /// Parse SSE `id:` fields in order of appearance.
 fn sse_ids(body: &str) -> Vec<String> {
     body.lines()
@@ -215,6 +221,47 @@ async fn sse_streams_appended_event_with_id_and_json_data() {
     assert_eq!(parsed["run_id"], "run-a");
     assert_eq!(parsed["kind"], "spawn");
     assert_eq!(parsed["message"], "started");
+}
+
+#[tokio::test]
+async fn sse_streams_typed_settlement_frame() {
+    let home = TempHome::new("settlement-frame");
+    home.append_event_line(&settlement_event_line("run-settled", 7));
+
+    let response = test_app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/control/events?since=0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("oneshot settlement");
+    let body = collect_sse_until(
+        response.into_body(),
+        |stream| stream.contains("vibecrafted.settlement-event.v1"),
+        Duration::from_secs(3),
+    )
+    .await;
+
+    let data = sse_data_payloads(&body);
+    assert_eq!(data.len(), 1, "expected exactly one typed frame\n{body}");
+    let frame: serde_json::Value = serde_json::from_str(&data[0]).expect("typed data JSON");
+    assert_eq!(frame["kind"], "settlement.changed");
+    assert_eq!(
+        frame["payload"]["schema"],
+        "vibecrafted.settlement-event.v1"
+    );
+    assert_eq!(frame["payload"]["run_id"], "run-settled");
+    assert_eq!(frame["payload"]["previous"], serde_json::Value::Null);
+    assert_eq!(frame["payload"]["current"]["verdict"], "needs_attention");
+    assert_eq!(frame["payload"]["current"]["tui"], "n");
+    assert_eq!(frame["payload"]["source"], "await");
+    assert_eq!(frame["payload"]["revision"], 7);
+    assert!(
+        frame.get("cursor").is_none(),
+        "reader cursor belongs in SSE id, not data: {frame}"
+    );
 }
 
 #[tokio::test]
@@ -283,6 +330,71 @@ async fn sse_reconnect_with_since_cursor_does_not_duplicate_or_skip() {
     assert!(
         !resumed.contains("\"message\":\"one\"") && !resumed.contains("\"message\":\"two\""),
         "must not re-emit earlier events\n{resumed}"
+    );
+}
+
+#[tokio::test]
+async fn sse_reconnect_recovers_when_cursor_is_beyond_rotated_eof() {
+    let home = TempHome::new("rotation-reconnect");
+    let old_line = event_line("run-old", "progress", &"old".repeat(200));
+    home.append_event_line(&old_line);
+
+    let response = test_app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/control/events?since=0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("oneshot old generation");
+    let old_body = collect_sse_until(
+        response.into_body(),
+        |stream| stream.contains("run-old"),
+        Duration::from_secs(3),
+    )
+    .await;
+    let old_cursor = sse_ids(&old_body)
+        .into_iter()
+        .next()
+        .expect("old generation cursor");
+
+    let new_line = settlement_event_line("run-after-rotation", 1);
+    assert!(
+        new_line.len() < old_cursor.parse::<usize>().expect("numeric cursor"),
+        "fixture must put the saved cursor beyond the rotated EOF"
+    );
+    fs::write(home.events_path(), format!("{new_line}\n")).expect("rotate stream");
+
+    let response = test_app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/control/events")
+                .header("Last-Event-ID", &old_cursor)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("oneshot rotated generation");
+    let recovered = collect_sse_until(
+        response.into_body(),
+        |stream| stream.contains("run-after-rotation"),
+        Duration::from_secs(3),
+    )
+    .await;
+
+    let payloads = sse_data_payloads(&recovered);
+    assert_eq!(
+        payloads.len(),
+        1,
+        "rotation recovery duplicated frame\n{recovered}"
+    );
+    let frame: serde_json::Value = serde_json::from_str(&payloads[0]).expect("recovered data JSON");
+    assert_eq!(frame["run_id"], "run-after-rotation");
+    assert_eq!(frame["payload"]["revision"], 1);
+    assert!(
+        !recovered.contains("run-old"),
+        "old generation must not be replayed\n{recovered}"
     );
 }
 
