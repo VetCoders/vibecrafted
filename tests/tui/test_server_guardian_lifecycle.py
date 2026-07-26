@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -137,12 +139,13 @@ while :; do
 done
 """,
     )
+    (bin_dir / "python3").symlink_to(Path(sys.executable).resolve())
 
     env = os.environ.copy()
     env.update(
         {
             "HOME": str(home),
-            "PATH": f"{bin_dir}:{env['PATH']}",
+            "PATH": f"{bin_dir}:/usr/bin:/bin:/usr/sbin:/sbin",
             "VIBECRAFTED_HOME": str(home / ".vibecrafted"),
             "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
             "LIFECYCLE_LOG": str(lifecycle_log),
@@ -239,6 +242,7 @@ def test_server_start_rolls_back_when_guardian_entrypoint_is_missing(
 ) -> None:
     env, state_dir, lifecycle_log = isolated_server_runtime
     (Path(env["HOME"]) / ".local" / "bin" / "vc-guardian").unlink()
+    assert shutil.which("vc-guardian", path=env["PATH"]) is None
     port = _free_port()
 
     result = _run_launcher(env, "server", "start", "--port", str(port))
