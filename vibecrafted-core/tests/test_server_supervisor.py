@@ -533,6 +533,43 @@ def test_truncated_launch_agent_plist_degrades_service_and_runtime_status(
     assert "Supervision: BROKEN" in capsys.readouterr().out
 
 
+def test_runtime_status_ignores_loaded_job_for_different_runtime_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    config = _config(tmp_path, launcher)
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: True)
+    monkeypatch.setattr(
+        supervisor,
+        "_launchctl_job_owns_paths",
+        lambda _paths: False,
+    )
+
+    assert supervisor._runtime_status(config.paths) == 0
+    assert "Supervision: UNSUPERVISED" in capsys.readouterr().out
+
+
+def test_runtime_status_reports_loaded_job_with_missing_plist_as_broken(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    config = _config(tmp_path, launcher)
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        supervisor,
+        "_launchctl_job_owns_paths",
+        lambda _paths: True,
+    )
+
+    assert supervisor._runtime_status(config.paths) == 1
+    assert "Supervision: BROKEN" in capsys.readouterr().out
+
+
 def test_launcher_fingerprint_is_enforced_by_run_and_service_status(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

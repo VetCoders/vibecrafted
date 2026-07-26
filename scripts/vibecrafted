@@ -1282,7 +1282,9 @@ _server_python() {
   python3 - "$@" <<'PY'
 from __future__ import annotations
 
+import ctypes
 import datetime as dt
+import errno
 import fcntl
 import hashlib
 import json
@@ -1291,6 +1293,7 @@ import re
 import shutil
 import socket
 import stat
+import struct
 import subprocess
 import sys
 import time
@@ -1380,6 +1383,293 @@ def process_alive(pid: int) -> bool:
     return True
 
 
+class DarwinProcBSDInfo(ctypes.Structure):
+    _fields_ = [
+        ("pbi_flags", ctypes.c_uint32),
+        ("pbi_status", ctypes.c_uint32),
+        ("pbi_xstatus", ctypes.c_uint32),
+        ("pbi_pid", ctypes.c_uint32),
+        ("pbi_ppid", ctypes.c_uint32),
+        ("pbi_uid", ctypes.c_uint32),
+        ("pbi_gid", ctypes.c_uint32),
+        ("pbi_ruid", ctypes.c_uint32),
+        ("pbi_rgid", ctypes.c_uint32),
+        ("pbi_svuid", ctypes.c_uint32),
+        ("pbi_svgid", ctypes.c_uint32),
+        ("rfu_1", ctypes.c_uint32),
+        ("pbi_comm", ctypes.c_char * 16),
+        ("pbi_name", ctypes.c_char * 32),
+        ("pbi_nfiles", ctypes.c_uint32),
+        ("pbi_pgid", ctypes.c_uint32),
+        ("pbi_pjobc", ctypes.c_uint32),
+        ("e_tdev", ctypes.c_uint32),
+        ("e_tpgid", ctypes.c_uint32),
+        ("pbi_nice", ctypes.c_int32),
+        ("pbi_start_tvsec", ctypes.c_uint64),
+        ("pbi_start_tvusec", ctypes.c_uint64),
+    ]
+
+
+_DARWIN_CTL_KERN = 1
+_DARWIN_KERN_PROCARGS2 = 49
+_DARWIN_MAX_PROCARGS = 16 * 1024 * 1024
+_DARWIN_PROC_BSDINFO_SIZE = 136
+_DARWIN_PROC_FLAG_INEXIT = 0x4
+_DARWIN_PROC_FLAG_LP64 = 0x10
+_DARWIN_PROC_PIDPATHINFO_MAXSIZE = 4096
+_DARWIN_PROC_PIDTBSDINFO = 3
+_DARWIN_STABLE_PROCESS_STATES = frozenset({1, 2, 3, 4})
+_DARWIN_LIBPROC: ctypes.CDLL | None = None
+_DARWIN_LIBC: ctypes.CDLL | None = None
+
+
+def darwin_libraries() -> tuple[ctypes.CDLL, ctypes.CDLL]:
+    global _DARWIN_LIBPROC, _DARWIN_LIBC
+    if sys.platform != "darwin":
+        fail("Darwin process APIs requested on a non-Darwin host", 4)
+    if _DARWIN_LIBPROC is None:
+        try:
+            libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        except OSError as exc:
+            fail(f"cannot load Darwin process API: {exc}", 4)
+        libproc.proc_pidinfo.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        ]
+        libproc.proc_pidinfo.restype = ctypes.c_int
+        libproc.proc_pidpath.argtypes = [
+            ctypes.c_int,
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+        ]
+        libproc.proc_pidpath.restype = ctypes.c_int
+        _DARWIN_LIBPROC = libproc
+    if _DARWIN_LIBC is None:
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.sysctl.argtypes = [
+            ctypes.POINTER(ctypes.c_int),
+            ctypes.c_uint,
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+        ]
+        libc.sysctl.restype = ctypes.c_int
+        _DARWIN_LIBC = libc
+    return _DARWIN_LIBPROC, _DARWIN_LIBC
+
+
+def darwin_bsd_info(pid: int) -> tuple[str, int, int]:
+    libproc, _ = darwin_libraries()
+    info = DarwinProcBSDInfo()
+    if ctypes.sizeof(info) != _DARWIN_PROC_BSDINFO_SIZE:
+        fail("Darwin proc_bsdinfo ABI does not match the supported layout", 4)
+    ctypes.set_errno(0)
+    received_size = libproc.proc_pidinfo(
+        pid,
+        _DARWIN_PROC_PIDTBSDINFO,
+        0,
+        ctypes.byref(info),
+        _DARWIN_PROC_BSDINFO_SIZE,
+    )
+    if received_size != _DARWIN_PROC_BSDINFO_SIZE:
+        fail(
+            f"cannot inspect Darwin process birth identity for {pid} "
+            f"(errno {ctypes.get_errno()})",
+            4,
+        )
+    if (
+        int(info.pbi_pid) != pid
+        or int(info.pbi_status) not in _DARWIN_STABLE_PROCESS_STATES
+        or int(info.pbi_flags) & _DARWIN_PROC_FLAG_INEXIT
+        or int(info.pbi_ppid) <= 0
+        or int(info.pbi_start_tvsec) <= 0
+        or not 0 <= int(info.pbi_start_tvusec) < 1_000_000
+    ):
+        fail(f"invalid Darwin process birth identity for {pid}", 4)
+    return (
+        "darwin:"
+        f"{int(info.pbi_start_tvsec)}:{int(info.pbi_start_tvusec)}",
+        int(info.pbi_ppid),
+        8 if int(info.pbi_flags) & _DARWIN_PROC_FLAG_LP64 else 4,
+    )
+
+
+def darwin_pidpath(pid: int) -> str:
+    libproc, _ = darwin_libraries()
+    buffer = ctypes.create_string_buffer(_DARWIN_PROC_PIDPATHINFO_MAXSIZE)
+    ctypes.set_errno(0)
+    received_size = libproc.proc_pidpath(pid, buffer, len(buffer))
+    if received_size <= 0 or received_size > len(buffer):
+        fail(
+            f"cannot inspect Darwin executable path for {pid} "
+            f"(errno {ctypes.get_errno()})",
+            4,
+        )
+    raw_path = buffer.raw[:received_size].split(b"\0", 1)[0]
+    if not raw_path:
+        fail(f"Darwin executable path is empty for {pid}", 4)
+    executable = os.fsdecode(raw_path)
+    if not os.path.isabs(executable):
+        fail(f"Darwin executable path is not absolute for {pid}", 4)
+    return executable
+
+
+def darwin_procargs_raw(pid: int) -> bytes:
+    _, libc = darwin_libraries()
+    mib = (ctypes.c_int * 3)(
+        _DARWIN_CTL_KERN,
+        _DARWIN_KERN_PROCARGS2,
+        pid,
+    )
+    last_errno = 0
+    for _ in range(3):
+        required_size = ctypes.c_size_t(0)
+        ctypes.set_errno(0)
+        if libc.sysctl(
+            mib,
+            len(mib),
+            None,
+            ctypes.byref(required_size),
+            None,
+            0,
+        ) != 0:
+            fail(
+                f"cannot size Darwin process arguments for {pid} "
+                f"(errno {ctypes.get_errno()})",
+                4,
+            )
+        capacity = int(required_size.value)
+        if not 4 <= capacity <= _DARWIN_MAX_PROCARGS:
+            fail(f"invalid Darwin process argument size for {pid}", 4)
+        buffer = ctypes.create_string_buffer(capacity)
+        received_size = ctypes.c_size_t(capacity)
+        ctypes.set_errno(0)
+        if libc.sysctl(
+            mib,
+            len(mib),
+            buffer,
+            ctypes.byref(received_size),
+            None,
+            0,
+        ) == 0:
+            actual_size = int(received_size.value)
+            if not 4 <= actual_size <= capacity:
+                fail(f"invalid Darwin process argument payload for {pid}", 4)
+            return buffer.raw[:actual_size]
+        last_errno = ctypes.get_errno()
+        if last_errno != errno.ENOMEM:
+            fail(
+                f"cannot inspect Darwin process arguments for {pid} "
+                f"(errno {last_errno})",
+                4,
+            )
+    fail(
+        f"Darwin process arguments kept changing size for {pid} "
+        f"(errno {last_errno})",
+        4,
+    )
+
+
+def darwin_arguments(
+    pid: int,
+    *,
+    include_environment: bool,
+    pointer_size: int,
+) -> tuple[str, list[str], str | None]:
+    if pointer_size not in {4, 8}:
+        fail(f"invalid Darwin process pointer size for {pid}", 4)
+    raw = darwin_procargs_raw(pid)
+    argc = struct.unpack_from("=i", raw)[0]
+    if not 1 <= argc <= 4096:
+        fail(f"invalid Darwin process argument count for {pid}", 4)
+
+    position = struct.calcsize("=i")
+    executable_end = raw.find(b"\0", position)
+    if executable_end < 0 or executable_end == position:
+        fail(f"cannot parse Darwin executable argument for {pid}", 4)
+    executable_argument = os.fsdecode(raw[position:executable_end])
+    position = executable_end + 1
+    string_body_offset = position - struct.calcsize("=i")
+    padding_size = (-string_body_offset) % pointer_size
+    padding_end = position + padding_size
+    if padding_end > len(raw) or any(raw[position:padding_end]):
+        fail(f"invalid Darwin process argument alignment for {pid}", 4)
+    position = padding_end
+
+    argv: list[str] = []
+    for _ in range(argc):
+        argument_end = raw.find(b"\0", position)
+        if argument_end < 0:
+            fail(f"cannot parse Darwin argv for {pid}", 4)
+        argv.append(os.fsdecode(raw[position:argument_end]))
+        position = argument_end + 1
+    if not argv or not argv[0]:
+        fail(f"Darwin argv is empty for {pid}", 4)
+
+    nonce: str | None = None
+    if include_environment:
+        while position < len(raw) and raw[position] == 0:
+            position += 1
+        environment: list[str] = []
+        while position < len(raw):
+            item_end = raw.find(b"\0", position)
+            if item_end < 0:
+                fail(f"cannot parse Darwin environment for {pid}", 4)
+            if item_end == position:
+                position += 1
+                continue
+            environment.append(os.fsdecode(raw[position:item_end]))
+            position = item_end + 1
+        prefix = "VIBECRAFTED_PROCESS_NONCE="
+        nonce_values = [
+            item[len(prefix) :]
+            for item in environment
+            if item.startswith(prefix)
+        ]
+        if nonce_values:
+            if (
+                len(nonce_values) != 1
+                or re.fullmatch(r"[0-9a-f]{64}", nonce_values[0]) is None
+            ):
+                fail(f"ambiguous Darwin process nonce for {pid}", 4)
+            nonce = nonce_values[0]
+    return executable_argument, argv, nonce
+
+
+def darwin_process_record(
+    pid: int,
+    *,
+    include_nonce: bool,
+) -> tuple[str, int, str, list[str], str | None]:
+    first_start, first_parent, first_pointer_size = darwin_bsd_info(pid)
+    first_path = darwin_pidpath(pid)
+    first_executable_argument, first_argv, first_nonce = darwin_arguments(
+        pid,
+        include_environment=include_nonce,
+        pointer_size=first_pointer_size,
+    )
+    second_executable_argument, second_argv, second_nonce = darwin_arguments(
+        pid,
+        include_environment=include_nonce,
+        pointer_size=first_pointer_size,
+    )
+    second_path = darwin_pidpath(pid)
+    second_start, second_parent, second_pointer_size = darwin_bsd_info(pid)
+    if (
+        (first_start, first_parent, first_pointer_size, first_path)
+        != (second_start, second_parent, second_pointer_size, second_path)
+        or first_executable_argument != second_executable_argument
+        or first_argv != second_argv
+        or first_nonce != second_nonce
+    ):
+        fail(f"Darwin process {pid} changed while identity was captured", 4)
+    return first_start, first_parent, first_path, first_argv, first_nonce
+
+
 def process_launch_identity(pid: int) -> dict[str, object]:
     if pid <= 1 or not process_alive(pid):
         fail(f"process {pid} is not live", 3)
@@ -1403,6 +1693,17 @@ def process_launch_identity(pid: int) -> dict[str, object]:
         return {
             "start_token": first_birth[0],
             "parent_pid": first_birth[1],
+            "process_nonce": process_nonce,
+        }
+    if sys.platform == "darwin":
+        audit_process_probe("launch", pid)
+        start_token, parent_pid, _, _, process_nonce = darwin_process_record(
+            pid,
+            include_nonce=True,
+        )
+        return {
+            "start_token": start_token,
+            "parent_pid": parent_pid,
             "process_nonce": process_nonce,
         }
     audit_process_probe("launch", pid)
@@ -1546,6 +1847,9 @@ def process_start_token(pid: int) -> str:
         if closing < 0 or len(fields) <= 19:
             fail(f"cannot parse process start token for {pid}", 4)
         return f"proc:{fields[19]}"
+    if sys.platform == "darwin":
+        start_token, _, _ = darwin_bsd_info(pid)
+        return start_token
     started = ps_value(pid, "lstart")
     if not started:
         fail(f"cannot inspect process start token for {pid}", 4)
@@ -1560,6 +1864,13 @@ def managed_process_nonce(pid: int) -> str | None:
             if item.startswith(prefix):
                 return item[len(prefix) :].decode("ascii", errors="strict")
         return None
+    if sys.platform == "darwin":
+        audit_process_probe("nonce", pid)
+        _, _, _, _, process_nonce = darwin_process_record(
+            pid,
+            include_nonce=True,
+        )
+        return process_nonce
     audit_process_probe("nonce", pid)
     result = subprocess.run(
         ["ps", "eww", "-p", str(pid), "-o", "command="],
@@ -1622,6 +1933,37 @@ def process_snapshot(
             fail(f"cannot fingerprint executable for process {pid}: {exc}", 4)
         if reject_launch_wrappers and is_launch_wrapper(executable):
             fail(f"process {pid} is still a launch wrapper", 4)
+        process_nonce = managed_process_nonce(pid) if include_nonce else None
+        second_start = process_start_token(pid)
+    elif sys.platform == "darwin":
+        audit_process_probe("record", pid)
+        if include_nonce:
+            audit_process_probe("nonce", pid)
+        (
+            first_start,
+            _,
+            executable_raw,
+            argv,
+            process_nonce,
+        ) = darwin_process_record(pid, include_nonce=include_nonce)
+        if reject_launch_wrappers and is_launch_wrapper(executable_raw):
+            fail(f"process {pid} is still a launch wrapper", 4)
+        if not argv or not executable_raw:
+            fail(f"cannot capture command identity for process {pid}", 4)
+        command = {"kind": "argv", "value": argv}
+        executable_path = Path(executable_raw)
+        executable = (
+            str(executable_path.resolve())
+            if executable_path.exists()
+            else executable_raw
+        )
+        try:
+            executable_sha256 = (
+                sha256_file(Path(executable)) if Path(executable).is_file() else None
+            )
+        except OSError as exc:
+            fail(f"cannot fingerprint executable for process {pid}: {exc}", 4)
+        second_start = first_start
     else:
         first_start, executable_raw, command_line = ps_process_record(pid)
         if reject_launch_wrappers and is_launch_wrapper(executable_raw):
@@ -1641,20 +1983,20 @@ def process_snapshot(
             )
         except OSError as exc:
             fail(f"cannot fingerprint executable for process {pid}: {exc}", 4)
-    process_nonce = managed_process_nonce(pid) if include_nonce else None
-    if proc_cmdline.is_file():
-        second_start = process_start_token(pid)
-    elif include_nonce:
-        second_start, second_executable_raw, second_command_line = ps_process_record(
-            pid
-        )
-        if (
-            executable_raw != second_executable_raw
-            or command_line != second_command_line
-        ):
-            fail(f"process {pid} command changed while identity was captured", 4)
-    else:
-        second_start = first_start
+        process_nonce = managed_process_nonce(pid) if include_nonce else None
+        if include_nonce:
+            (
+                second_start,
+                second_executable_raw,
+                second_command_line,
+            ) = ps_process_record(pid)
+            if (
+                executable_raw != second_executable_raw
+                or command_line != second_command_line
+            ):
+                fail(f"process {pid} command changed while identity was captured", 4)
+        else:
+            second_start = first_start
     if first_start != second_start:
         fail(f"process {pid} changed while identity was captured", 4)
     snapshot: dict[str, object] = {
@@ -1774,7 +2116,11 @@ def validate_lock_owner(payload: dict[str, object]) -> tuple[int, str]:
     process_nonce = process.get("process_nonce")
     if (
         not isinstance(process.get("start_token"), str)
-        or re.fullmatch(r"(?:proc|ps):.+", str(process["start_token"])) is None
+        or re.fullmatch(
+            r"(?:darwin|proc|ps):.+",
+            str(process["start_token"]),
+        )
+        is None
         or not command_valid
         or not isinstance(process.get("executable"), str)
         or not process.get("executable")

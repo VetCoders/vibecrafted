@@ -1939,11 +1939,9 @@ def _runtime_status(paths: SupervisorPaths) -> int:
             allow_symlink=False,
         )
         installed = True
-    default_home = (paths.operator_home / ".vibecrafted").resolve(strict=False)
-    loaded = (
-        sys.platform == "darwin"
-        and (installed or paths.home == default_home)
-        and _launchctl_loaded()
+    loaded = sys.platform == "darwin" and (
+        (installed and _launchctl_loaded())
+        or (not installed and _launchctl_job_owns_paths(paths))
     )
     probe = probe_supervisor(paths)
     identity = _installed_service_identity(paths) if installed else None

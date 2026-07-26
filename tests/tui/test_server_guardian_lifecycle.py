@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import time
@@ -239,6 +241,95 @@ def _run_launcher(
     )
 
 
+def _run_server_helper(
+    env: dict[str, str],
+    *args: str,
+) -> subprocess.CompletedProcess[str]:
+    helper_source = _server_helper_source()
+    return subprocess.run(
+        [sys.executable, "-", *args],
+        input=helper_source,
+        check=False,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+
+def _server_helper_source(*, definitions_only: bool = False) -> str:
+    launcher = LAUNCHER.read_text(encoding="utf-8")
+    marker = "_server_python() {\n  python3 - \"$@\" <<'PY'\n"
+    helper_source = launcher.split(marker, 1)[1].split("\nPY\n}", 1)[0]
+    if definitions_only:
+        helper_source = helper_source.split(
+            "\noperation = sys.argv[1]",
+            1,
+        )[0]
+    return helper_source
+
+
+def _run_server_helper_definitions(
+    source_suffix: str,
+    *args: str,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-", *args],
+        input=_server_helper_source(definitions_only=True) + "\n" + source_suffix,
+        check=False,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+
+def _darwin_procargs_payload(
+    argv: list[str],
+    *,
+    environment: list[str] | None = None,
+    pointer_size: int = 8,
+    corrupt_padding: bool = False,
+) -> bytes:
+    encoded = bytearray(b"/bin/probe\0")
+    padding_size = (-len(encoded)) % pointer_size
+    padding = bytearray(b"\0" * padding_size)
+    if corrupt_padding:
+        assert padding
+        padding[0] = 1
+    encoded.extend(padding)
+    for argument in argv:
+        encoded.extend(os.fsencode(argument))
+        encoded.append(0)
+    for item in environment or []:
+        encoded.extend(os.fsencode(item))
+        encoded.append(0)
+    return struct.pack("=i", len(argv)) + bytes(encoded)
+
+
+def _parse_synthetic_darwin_arguments(
+    raw: bytes,
+    *,
+    include_environment: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    return _run_server_helper_definitions(
+        """
+import base64
+raw_payload = base64.b64decode(sys.argv[1])
+darwin_procargs_raw = lambda _pid: raw_payload
+executable, argv, nonce = darwin_arguments(
+    4242,
+    include_environment=sys.argv[2] == "1",
+    pointer_size=8,
+)
+print(json.dumps({"executable": executable, "argv": argv, "nonce": nonce}))
+""",
+        base64.b64encode(raw).decode("ascii"),
+        "1" if include_environment else "0",
+    )
+
+
 def test_server_healthcheck_uses_constant_time_endpoint() -> None:
     launcher = LAUNCHER.read_text(encoding="utf-8")
     health_block = launcher.split('elif operation == "health":', 1)[1].split(
@@ -247,6 +338,142 @@ def test_server_healthcheck_uses_constant_time_endpoint() -> None:
 
     assert "/api/health" in health_block
     assert "/api/control/state" not in health_block
+
+
+def test_darwin_procargs_parser_preserves_unicode_and_omitted_environment() -> None:
+    nonce = "a" * 64
+    with_environment = _parse_synthetic_darwin_arguments(
+        _darwin_procargs_payload(
+            ["python-żółty", "--mode", "pełny"],
+            environment=[f"VIBECRAFTED_PROCESS_NONCE={nonce}"],
+        )
+    )
+    assert with_environment.returncode == 0, with_environment.stderr
+    assert json.loads(with_environment.stdout) == {
+        "executable": "/bin/probe",
+        "argv": ["python-żółty", "--mode", "pełny"],
+        "nonce": nonce,
+    }
+
+    omitted_environment = _parse_synthetic_darwin_arguments(
+        _darwin_procargs_payload(["/bin/probe", "--serve"])
+    )
+    assert omitted_environment.returncode == 0, omitted_environment.stderr
+    assert json.loads(omitted_environment.stdout)["nonce"] is None
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_error"),
+    [
+        (
+            _darwin_procargs_payload(
+                ["/bin/probe"],
+                corrupt_padding=True,
+            ),
+            "invalid Darwin process argument alignment",
+        ),
+        (
+            _darwin_procargs_payload(["/bin/probe"])[:-1],
+            "cannot parse Darwin argv",
+        ),
+        (
+            _darwin_procargs_payload(["", "8"]),
+            "Darwin argv is empty",
+        ),
+        (
+            _darwin_procargs_payload(
+                ["/bin/probe"],
+                environment=[
+                    f"VIBECRAFTED_PROCESS_NONCE={'a' * 64}",
+                    f"VIBECRAFTED_PROCESS_NONCE={'b' * 64}",
+                ],
+            ),
+            "ambiguous Darwin process nonce",
+        ),
+    ],
+    ids=("bad-padding", "truncated", "empty-argv", "duplicate-nonce"),
+)
+def test_darwin_procargs_parser_rejects_ambiguous_payloads(
+    payload: bytes,
+    expected_error: str,
+) -> None:
+    result = _parse_synthetic_darwin_arguments(payload)
+    assert result.returncode == 4
+    assert expected_error in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_error"),
+    [
+        ("short", "cannot inspect Darwin process birth identity"),
+        ("zombie", "invalid Darwin process birth identity"),
+        ("in-exit", "invalid Darwin process birth identity"),
+    ],
+)
+def test_darwin_bsd_info_rejects_short_or_dying_process_records(
+    mode: str,
+    expected_error: str,
+) -> None:
+    result = _run_server_helper_definitions(
+        """
+mode = sys.argv[1]
+class FakeLibproc:
+    def proc_pidinfo(self, pid, _flavor, _arg, buffer, _size):
+        info = ctypes.cast(
+            buffer,
+            ctypes.POINTER(DarwinProcBSDInfo),
+        ).contents
+        info.pbi_pid = pid
+        info.pbi_ppid = 1
+        info.pbi_status = 5 if mode == "zombie" else 2
+        info.pbi_flags = _DARWIN_PROC_FLAG_INEXIT if mode == "in-exit" else 0
+        info.pbi_start_tvsec = 1
+        info.pbi_start_tvusec = 0
+        return _DARWIN_PROC_BSDINFO_SIZE - 1 if mode == "short" else _DARWIN_PROC_BSDINFO_SIZE
+darwin_libraries = lambda: (FakeLibproc(), None)
+print(darwin_bsd_info(4242))
+""",
+        mode,
+    )
+    assert result.returncode == 4
+    assert expected_error in result.stderr
+
+
+def test_darwin_process_record_rejects_argv_mutation_during_capture() -> None:
+    result = _run_server_helper_definitions(
+        """
+darwin_bsd_info = lambda _pid: ("darwin:1:0", 1, 8)
+darwin_pidpath = lambda _pid: "/bin/probe"
+argument_records = iter(
+    [
+        ("/bin/probe", ["/bin/probe", "first"], "a" * 64),
+        ("/bin/probe", ["/bin/probe", "second"], "a" * 64),
+    ]
+)
+darwin_arguments = lambda _pid, **_kwargs: next(argument_records)
+print(darwin_process_record(4242, include_nonce=True))
+"""
+    )
+    assert result.returncode == 4
+    assert "changed while identity was captured" in result.stderr
+
+
+def test_darwin_process_record_rejects_path_mutation_during_capture() -> None:
+    result = _run_server_helper_definitions(
+        """
+darwin_bsd_info = lambda _pid: ("darwin:1:0", 1, 8)
+path_records = iter(["/bin/probe", "/bin/replaced"])
+darwin_pidpath = lambda _pid: next(path_records)
+darwin_arguments = lambda _pid, **_kwargs: (
+    "/bin/probe",
+    ["/bin/probe"],
+    "a" * 64,
+)
+print(darwin_process_record(4242, include_nonce=True))
+"""
+    )
+    assert result.returncode == 4
+    assert "changed while identity was captured" in result.stderr
 
 
 @pytest.fixture
@@ -518,7 +745,7 @@ def test_symlinked_guardian_entrypoint_gets_durable_identity(
 
 @pytest.mark.skipif(
     sys.platform != "darwin",
-    reason="macOS ps is the fallback process identity source",
+    reason="macOS native process identity source",
 )
 def test_macos_identity_reverification_does_not_reread_launch_nonce(
     isolated_server_runtime: tuple[dict[str, str], Path, Path],
@@ -535,6 +762,14 @@ def test_macos_identity_reverification_does_not_reread_launch_nonce(
             f"#!{unicode_python}\n{body}",
             encoding="utf-8",
         )
+    ps_marker = state_dir / "unexpected-ps-invocation"
+    _write_executable(
+        bin_dir / "ps",
+        f"""#!/bin/sh
+printf 'called\\n' >> {str(ps_marker)!r}
+exit 97
+""",
+    )
     audit_path = state_dir / "process-audit.jsonl"
     env["VIBECRAFTED_TEST_PROCESS_AUDIT"] = str(audit_path)
     port = _free_port()
@@ -544,16 +779,18 @@ def test_macos_identity_reverification_does_not_reread_launch_nonce(
     )
 
     assert started.returncode == 0, started.stderr
+    assert not ps_marker.exists()
     for role in ("server", "guardian"):
         identity = json.loads(
             (state_dir / f"{role}.identity.json").read_text(encoding="utf-8")
         )
+        assert identity["process"]["start_token"].startswith("darwin:")
+        assert identity["process"]["command"]["kind"] == "argv"
         assert identity["process"]["process_nonce"] == identity["nonce"]
         assert Path(identity["process"]["executable"]).name not in {"env", "nohup"}
         assert not (state_dir / f"{role}.launch-witness.json").exists()
     ps_calls = [
-        json.loads(line)
-        for line in audit_path.read_text(encoding="utf-8").splitlines()
+        json.loads(line) for line in audit_path.read_text(encoding="utf-8").splitlines()
     ]
     nonce_calls = [call for call in ps_calls if call["kind"] == "nonce"]
     assert all(call["operation"] == "capture-identity" for call in nonce_calls)
@@ -581,11 +818,13 @@ def test_macos_identity_reverification_does_not_reread_launch_nonce(
         ).append(call["kind"])
 
     lock_groups = [
-        kinds for (operation, _, _), kinds in probe_groups.items()
+        kinds
+        for (operation, _, _), kinds in probe_groups.items()
         if operation == "lock-owner-write"
     ]
     witness_groups = [
-        kinds for (operation, _, _), kinds in probe_groups.items()
+        kinds
+        for (operation, _, _), kinds in probe_groups.items()
         if operation == "launch-witness-write"
     ]
     assert lock_groups == [["record"]]
@@ -613,6 +852,37 @@ def test_macos_identity_reverification_does_not_reread_launch_nonce(
             assert len(kinds) <= 4
         assert all(kinds == ["record"] for kinds in verify_groups)
     assert len(ps_calls) <= 175, ps_calls
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="macOS native KERN_PROCARGS2 parser",
+)
+def test_macos_native_procargs_rejects_empty_argv_without_environment_slide(
+    tmp_path: Path,
+) -> None:
+    env = os.environ.copy()
+    env["VIBECRAFTED_PROCESS_NONCE"] = "a" * 64
+    owner_path = tmp_path / "owner.json"
+    child = subprocess.Popen(
+        ["", "8"],
+        executable="/bin/sleep",
+        env=env,
+    )
+    try:
+        result = _run_server_helper(
+            env,
+            "lock-owner-write",
+            str(owner_path),
+            str(child.pid),
+            "b" * 64,
+        )
+        assert result.returncode == 4
+        assert "Darwin argv is empty" in result.stderr
+        assert not owner_path.exists()
+    finally:
+        child.terminate()
+        child.wait(timeout=5)
 
 
 def test_server_delayed_exec_mismatch_cleans_launch_owned_child(
