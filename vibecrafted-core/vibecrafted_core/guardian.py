@@ -6,16 +6,12 @@ performs one exact run-projection read before deciding.  It never tails
 ``events.jsonl``, polls run lists, or starts a vc-frame loop.
 
 On the first attachment, historical frames are checkpointed without side
-effects until the server's ``: ping`` heartbeat proves that the initial drain
-is complete.  Subsequent ``settlement.changed`` revisions move through a
-durable ``pending -> completed`` outbox.  Adapters receive the stable
-``(run_id, settlement_revision)`` key and must make their external effect
-idempotent; after a crash, pending work is retried rather than silently lost.
-
-After the baseline, every network reconnect replays SSE from byte zero.  That
-is intentional: a bare byte offset cannot detect a rotated stream whose new
-file has already grown beyond the old offset.  The durable key ledger makes
-that correctness-first replay side-effect safe.
+effects until the server's typed ``stream.caught-up`` receipt proves that the
+finite baseline drained. Generation-aware ``v2:<epoch>:<generation>:<offset>``
+cursors survive rotation; ``stream.gap`` revokes resume authority and requires
+a fresh baseline. Numeric compatibility streams remain notification-only.
+Subsequent ``settlement.changed`` revisions move through a durable
+``pending -> completed`` outbox whose authority is bound to the v2 cursor.
 
 Resume is deliberately an injected boundary.  The CLI wires the guarded
 server-projection -> ``vc-guard`` -> tracked ``native_resume_run`` adapter;
@@ -32,10 +28,14 @@ import contextlib
 import errno
 import fcntl
 import hashlib
+import hmac
 import json
 import logging
+import math
 import os
+import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -52,15 +52,19 @@ from .runtime_paths import vibecrafted_home
 from .settlement import (
     SETTLEMENT_EVENT_KIND,
     SETTLEMENT_EVENT_SCHEMA,
+    SETTLEMENT_EVENT_SCHEMA_V2,
     TUI_FAILED,
     TUI_FINALIZED,
     TUI_NEEDS_ATTENTION,
+    SettlementEventV2,
+    TrustReceiptV1,
 )
 
 LOGGER = logging.getLogger(__name__)
 
-GUARDIAN_STATE_SCHEMA = "vibecrafted.guardian-state.v1"
-GUARDIAN_DEAD_LETTER_SCHEMA = "vibecrafted.guardian-dead-letter.v1"
+GUARDIAN_STATE_SCHEMA = "vibecrafted.guardian-state.v2"
+GUARDIAN_STATE_SCHEMA_V1 = "vibecrafted.guardian-state.v1"
+GUARDIAN_DEAD_LETTER_SCHEMA = "vibecrafted.guardian-dead-letters.v2"
 GUARDIAN_READY_SCHEMA = "vibecrafted.guardian-ready.v1"
 DEFAULT_SERVER_URL = "http://127.0.0.1:3024"
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
@@ -68,6 +72,20 @@ DEFAULT_RECOVERY_TIMEOUT_SECONDS = 5.0
 DEFAULT_BACKOFF_INITIAL_SECONDS = 1.0
 DEFAULT_BACKOFF_MAX_SECONDS = 30.0
 DEFAULT_REPLAY_HEARTBEATS = 4
+DEFAULT_PENDING_PASS_LIMIT = 64
+MAX_PENDING_RECORDS = 1024
+MAX_PENDING_ATTEMPTS = 8
+MAX_STATE_BYTES = 8 * 1024 * 1024
+MAX_DEAD_LETTER_BYTES = 1024 * 1024
+MAX_DEAD_LETTER_ENTRIES = 128
+MAX_DEAD_LETTER_DATA_BYTES = 16 * 1024
+MAX_SSE_LINE_BYTES = 64 * 1024
+MAX_SSE_FRAME_BYTES = 1024 * 1024
+MAX_CURSOR_BYTES = 1024
+MAX_RUN_ID_BYTES = 1024
+MAX_STATE_TEXT_BYTES = 4096
+PENDING_RETRY_INITIAL_SECONDS = 1.0
+PENDING_RETRY_MAX_SECONDS = 300.0
 
 _TUI_SEVERITY = {
     TUI_FINALIZED: "info",
@@ -97,6 +115,289 @@ class GuardianProtocolError(RuntimeError):
     """The configured endpoint did not return the guardian's SSE contract."""
 
 
+class GuardianStateError(RuntimeError):
+    """The durable guardian state failed a strict integrity or semantic check."""
+
+
+class GuardianStateLimitError(GuardianStateError):
+    """A bounded guardian persistence surface reached its hard limit."""
+
+
+class GuardianLockSecurityError(GuardianStateError):
+    """The single-instance lock path failed ownership or inode validation."""
+
+
+CursorToken = int | str
+
+
+def _bounded_text(
+    value: object,
+    *,
+    field_name: str,
+    allow_empty: bool = True,
+    maximum: int = MAX_STATE_TEXT_BYTES,
+) -> str:
+    if not isinstance(value, str):
+        raise GuardianStateError(f"{field_name} must be a string")
+    if not allow_empty and not value:
+        raise GuardianStateError(f"{field_name} must not be empty")
+    if len(value.encode("utf-8")) > maximum:
+        raise GuardianStateError(f"{field_name} exceeds {maximum} bytes")
+    if any(ord(character) < 0x20 and character not in "\t" for character in value):
+        raise GuardianStateError(f"{field_name} contains control characters")
+    return value
+
+
+def _validate_cursor(value: object) -> CursorToken:
+    if type(value) is int and value >= 0:
+        return value
+    if isinstance(value, str):
+        return _bounded_text(
+            value,
+            field_name="cursor",
+            allow_empty=False,
+            maximum=MAX_CURSOR_BYTES,
+        )
+    raise GuardianStateError("cursor must be a non-negative integer or opaque string")
+
+
+def _parse_event_cursor(raw_cursor: str) -> CursorToken | None:
+    value = raw_cursor.strip()
+    if not value or len(value.encode("utf-8")) > MAX_CURSOR_BYTES:
+        return None
+    if value.isdigit():
+        parsed = int(value)
+        return parsed if parsed <= (2**64) - 1 else None
+    parts = value.split(":")
+    if len(parts) != 4 or parts[0] != "v2":
+        return None
+    epoch, generation_raw, offset_raw = parts[1:]
+    if (
+        not epoch
+        or not epoch.isascii()
+        or not all(character.isalnum() or character in "-_." for character in epoch)
+        or not generation_raw.isdigit()
+        or not offset_raw.isdigit()
+    ):
+        return None
+    generation = int(generation_raw)
+    offset = int(offset_raw)
+    if generation > (2**64) - 1 or offset > (2**64) - 1:
+        return None
+    return value
+
+
+def _is_v2_cursor(cursor: object) -> bool:
+    return isinstance(cursor, str) and _parse_event_cursor(cursor) == cursor
+
+
+def _v2_cursor_parts(cursor: CursorToken) -> tuple[str, int, int] | None:
+    if not _is_v2_cursor(cursor):
+        return None
+    assert isinstance(cursor, str)
+    _version, epoch, generation, offset = cursor.split(":")
+    return (epoch, int(generation), int(offset))
+
+
+def _cursor_reaches(current: CursorToken, target: CursorToken) -> bool:
+    current_parts = _v2_cursor_parts(current)
+    target_parts = _v2_cursor_parts(target)
+    if current_parts is not None and target_parts is not None:
+        current_epoch, current_generation, current_offset = current_parts
+        target_epoch, target_generation, target_offset = target_parts
+        return current_epoch == target_epoch and (
+            current_generation > target_generation
+            or (
+                current_generation == target_generation
+                and current_offset >= target_offset
+            )
+        )
+    return type(current) is int and type(target) is int and current >= target
+
+
+def _boundary_is_valid(
+    from_cursor: CursorToken,
+    to_cursor: CursorToken,
+    *,
+    reason: str,
+) -> bool:
+    if reason == "connection_start":
+        return from_cursor == to_cursor
+    if reason != "generation_change":
+        return False
+    from_parts = _v2_cursor_parts(from_cursor)
+    to_parts = _v2_cursor_parts(to_cursor)
+    if from_parts is None or to_parts is None:
+        return False
+    from_epoch, from_generation, _from_offset = from_parts
+    to_epoch, to_generation, _to_offset = to_parts
+    return from_epoch == to_epoch and to_generation > from_generation
+
+
+def _canonical_json(payload: object) -> bytes:
+    try:
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise GuardianStateError(f"state is not canonical JSON: {exc}") from exc
+    return encoded
+
+
+def _strict_json_loads(encoded: bytes) -> object:
+    def object_without_duplicates(
+        pairs: list[tuple[str, object]],
+    ) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise GuardianStateError(f"duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
+    try:
+        return json.loads(
+            encoded.decode("utf-8"),
+            object_pairs_hook=object_without_duplicates,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                GuardianStateError(f"non-finite JSON number: {value}")
+            ),
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise GuardianStateError(f"state is not valid UTF-8 JSON: {exc}") from exc
+
+
+def _ensure_private_directory(path: Path) -> None:
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise GuardianLockSecurityError(
+            f"guardian directory cannot be opened securely: {path}"
+        ) from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise GuardianLockSecurityError(
+                f"guardian directory is not a real directory: {path}"
+            )
+        if metadata.st_uid != os.getuid():
+            raise GuardianLockSecurityError(
+                f"guardian directory is not owned by this uid: {path}"
+            )
+        if stat.S_IMODE(metadata.st_mode) & 0o077:
+            raise GuardianLockSecurityError(
+                f"guardian directory permissions are not private: {path}"
+            )
+    finally:
+        os.close(descriptor)
+
+
+def _validate_existing_private_file(path: Path) -> None:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or metadata.st_nlink != 1
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+    ):
+        raise GuardianStateError(f"unsafe guardian file target: {path}")
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _atomic_private_write(path: Path, encoded: bytes) -> None:
+    _ensure_private_directory(path.parent)
+    _validate_existing_private_file(path)
+    temporary = path.parent / (f".{path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp")
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(temporary, flags, 0o600)
+    try:
+        view = memoryview(encoded)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError("short write while persisting guardian state")
+            view = view[written:]
+        metadata = os.fstat(descriptor)
+        if stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise GuardianStateError(
+                f"guardian temporary file permissions are not 0600: {temporary}"
+            )
+        os.fsync(descriptor)
+    except BaseException:
+        os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+        raise
+    else:
+        os.close(descriptor)
+    try:
+        os.replace(temporary, path)
+        _fsync_directory(path.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _read_private_file(path: Path, *, maximum: int) -> bytes:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_nlink != 1
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+        ):
+            raise GuardianStateError(f"unsafe guardian state file: {path}")
+        if metadata.st_size > maximum:
+            raise GuardianStateLimitError(
+                f"guardian file exceeds {maximum} bytes: {path}"
+            )
+        chunks: list[bytes] = []
+        remaining = maximum + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, min(remaining, 64 * 1024))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        encoded = b"".join(chunks)
+        if len(encoded) > maximum:
+            raise GuardianStateLimitError(
+                f"guardian file exceeds {maximum} bytes: {path}"
+            )
+        return encoded
+    finally:
+        os.close(descriptor)
+
+
 @dataclass(frozen=True)
 class SettlementRevision:
     """Validated terminal settlement carried by one SSE frame."""
@@ -108,6 +409,7 @@ class SettlementRevision:
     reason: str
     source: str
     settled_at: str
+    receipt_id: str = ""
 
     @property
     def key(self) -> SettlementKey:
@@ -126,6 +428,7 @@ class SettlementRevision:
             "reason": self.reason,
             "source": self.source,
             "settled_at": self.settled_at,
+            "receipt_id": self.receipt_id,
         }
 
     @classmethod
@@ -136,14 +439,35 @@ class SettlementRevision:
         revision = payload.get("settlement_revision")
         verdict = payload.get("verdict")
         tui = payload.get("tui")
+        reason = payload.get("reason")
+        source = payload.get("source")
+        settled_at = payload.get("settled_at")
+        receipt_id = payload.get("receipt_id", "")
         if (
             not isinstance(run_id, str)
             or not run_id
+            or len(run_id.encode("utf-8")) > MAX_RUN_ID_BYTES
             or type(revision) is not int
             or revision <= 0
             or not isinstance(verdict, str)
             or not isinstance(tui, str)
             or _VERDICT_TUI.get(verdict) != tui
+            or not isinstance(reason, str)
+            or not isinstance(source, str)
+            or not isinstance(settled_at, str)
+            or not isinstance(receipt_id, str)
+            or len(reason.encode("utf-8")) > MAX_STATE_TEXT_BYTES
+            or len(source.encode("utf-8")) > MAX_STATE_TEXT_BYTES
+            or len(settled_at.encode("utf-8")) > MAX_STATE_TEXT_BYTES
+            or (
+                receipt_id != ""
+                and (
+                    len(receipt_id) != 64
+                    or any(
+                        character not in "0123456789abcdef" for character in receipt_id
+                    )
+                )
+            )
         ):
             return None
         return cls(
@@ -151,9 +475,10 @@ class SettlementRevision:
             revision=revision,
             verdict=verdict,
             tui=tui,
-            reason=str(payload.get("reason") or ""),
-            source=str(payload.get("source") or ""),
-            settled_at=str(payload.get("settled_at") or ""),
+            reason=reason,
+            source=source,
+            settled_at=settled_at,
+            receipt_id=receipt_id,
         )
 
 
@@ -175,6 +500,130 @@ class ReconcileDecision:
     reason: str = "resume adapter unavailable"
 
 
+@dataclass(frozen=True)
+class ActionResult:
+    """Strict terminal/retryable result returned by an external action."""
+
+    accepted: bool
+    retryable: bool
+    terminal: bool
+    reason: str
+
+
+@dataclass(frozen=True)
+class CompletionRecord:
+    """Compact maximum processed revision for one run."""
+
+    revision: int
+    outcome: str
+    reason: str
+
+    def to_state_payload(self, run_id: str) -> dict[str, object]:
+        return {
+            "run_id": run_id,
+            "settlement_revision": self.revision,
+            "outcome": self.outcome,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class PendingRecord:
+    """Durable outbox state for one settlement revision."""
+
+    event: SettlementRevision
+    stream_cursor: CursorToken = 0
+    resume_authorized: bool = False
+    notification_done: bool = False
+    attempts: int = 0
+    next_retry: float = 0.0
+    last_reason: str = ""
+    outcome: str = "pending"
+
+    @property
+    def key(self) -> SettlementKey:
+        return self.event.key
+
+    def to_state_payload(self) -> dict[str, object]:
+        return {
+            **self.event.to_state_payload(),
+            "stream_cursor": self.stream_cursor,
+            "resume_authorized": self.resume_authorized,
+            "notification_done": self.notification_done,
+            "attempts": self.attempts,
+            "next_retry": self.next_retry,
+            "last_reason": self.last_reason,
+            "outcome": self.outcome,
+        }
+
+    @classmethod
+    def from_state_payload(cls, payload: Mapping[str, object]) -> PendingRecord:
+        expected = {
+            "run_id",
+            "settlement_revision",
+            "verdict",
+            "tui",
+            "reason",
+            "source",
+            "settled_at",
+            "receipt_id",
+            "stream_cursor",
+            "resume_authorized",
+            "notification_done",
+            "attempts",
+            "next_retry",
+            "last_reason",
+            "outcome",
+        }
+        if set(payload) != expected:
+            raise GuardianStateError("pending record fields are not canonical")
+        event = SettlementRevision.from_state_payload(payload)
+        if event is None:
+            raise GuardianStateError("pending settlement is semantically invalid")
+        notification_done = payload.get("notification_done")
+        resume_authorized = payload.get("resume_authorized")
+        attempts = payload.get("attempts")
+        next_retry = payload.get("next_retry")
+        last_reason = payload.get("last_reason")
+        outcome = payload.get("outcome")
+        if type(notification_done) is not bool:
+            raise GuardianStateError("pending notification_done must be boolean")
+        if type(resume_authorized) is not bool:
+            raise GuardianStateError("pending resume_authorized must be boolean")
+        stream_cursor = _validate_cursor(payload.get("stream_cursor"))
+        if resume_authorized and not _is_v2_cursor(stream_cursor):
+            raise GuardianStateError(
+                "pending resume authority requires an opaque v2 cursor"
+            )
+        if type(attempts) is not int or attempts < 0 or attempts > 1_000_000:
+            raise GuardianStateError("pending attempts is out of range")
+        if not isinstance(next_retry, (int, float)) or isinstance(next_retry, bool):
+            raise GuardianStateError("pending next_retry is invalid")
+        next_retry_value = float(next_retry)
+        if not math.isfinite(next_retry_value) or next_retry_value < 0:
+            raise GuardianStateError("pending next_retry is invalid")
+        parsed_outcome = _bounded_text(
+            outcome,
+            field_name="pending.outcome",
+            allow_empty=False,
+        )
+        if parsed_outcome not in {"pending", "retryable"}:
+            raise GuardianStateError("pending outcome is invalid")
+        return cls(
+            event=event,
+            stream_cursor=stream_cursor,
+            resume_authorized=resume_authorized,
+            notification_done=notification_done,
+            attempts=attempts,
+            next_retry=next_retry_value,
+            last_reason=_bounded_text(
+                last_reason,
+                field_name="pending.last_reason",
+            ),
+            outcome=parsed_outcome,
+        )
+
+
 Notifier = Callable[[GuardianNotification], None]
 Reconciler = Callable[[SettlementRevision], ReconcileDecision]
 ResumeCallback = Callable[[SettlementRevision, str], object]
@@ -182,13 +631,14 @@ UrlOpener = Callable[..., Any]
 ReadyCallback = Callable[[], None]
 GuardEnforcer = Callable[..., object]
 NativeResumer = Callable[..., Mapping[str, object]]
+CursorParser = Callable[[str], CursorToken | None]
 
 
 @dataclass(frozen=True)
 class SSEFrame:
-    """One complete SSE data frame with its durable byte cursor."""
+    """One complete SSE data frame with its durable cursor."""
 
-    cursor: int
+    cursor: CursorToken
     data: str
 
 
@@ -197,7 +647,178 @@ class SSEHeartbeat:
     """The vibecrafted-server ``: ping`` keepalive."""
 
 
-SSEItem = SSEFrame | SSEHeartbeat
+@dataclass(frozen=True)
+class SSEControlFrame:
+    """Opaque named SSE control frame left for a versioned extension parser."""
+
+    event: str
+    raw_cursor: str
+    data: str
+
+
+@dataclass(frozen=True)
+class SSEStreamBoundary:
+    """Validated connection/generation boundary."""
+
+    cursor: CursorToken
+    from_cursor: CursorToken
+    reason: str
+
+
+@dataclass(frozen=True)
+class SSEStreamGap:
+    """Validated discontinuity requiring a fresh side-effect baseline."""
+
+    cursor: CursorToken
+    requested: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class SSEStreamCaughtUp:
+    """Validated finite-baseline receipt independent of heartbeat traffic."""
+
+    cursor: CursorToken
+    high_watermark: CursorToken
+    authoritative: bool
+
+
+SSEItem = (
+    SSEFrame
+    | SSEHeartbeat
+    | SSEControlFrame
+    | SSEStreamBoundary
+    | SSEStreamGap
+    | SSEStreamCaughtUp
+)
+ControlParser = Callable[[SSEControlFrame], SSEItem | None]
+
+
+def _control_document(
+    frame: SSEControlFrame,
+    *,
+    schema: str,
+    fields: set[str],
+) -> dict[str, object]:
+    try:
+        document = _strict_json_loads(frame.data.encode("utf-8"))
+    except GuardianStateError as exc:
+        raise GuardianProtocolError(
+            f"{frame.event} control frame is not strict JSON"
+        ) from exc
+    if (
+        not isinstance(document, dict)
+        or set(document) != fields
+        or document.get("schema") != schema
+        or document.get("kind") != frame.event
+    ):
+        raise GuardianProtocolError(f"{frame.event} control frame violates {schema}")
+    return document
+
+
+def parse_stream_control(frame: SSEControlFrame) -> SSEItem:
+    """Parse only the committed v1 stream controls; preserve unknown frames."""
+
+    if frame.event == "stream.boundary":
+        document = _control_document(
+            frame,
+            schema="vibecrafted.stream-boundary.v1",
+            fields={"schema", "kind", "from", "to", "reason"},
+        )
+        raw_from = document.get("from")
+        raw_to = document.get("to")
+        from_cursor = (
+            _parse_event_cursor(raw_from) if isinstance(raw_from, str) else None
+        )
+        to_cursor = _parse_event_cursor(raw_to) if isinstance(raw_to, str) else None
+        reason = document.get("reason")
+        if (
+            from_cursor is None
+            or to_cursor is None
+            or frame.raw_cursor != raw_to
+            or not isinstance(reason, str)
+            or not reason
+            or len(reason.encode("utf-8")) > MAX_STATE_TEXT_BYTES
+            or not _boundary_is_valid(
+                from_cursor,
+                to_cursor,
+                reason=reason,
+            )
+        ):
+            raise GuardianProtocolError("stream.boundary control fields are invalid")
+        return SSEStreamBoundary(
+            cursor=to_cursor,
+            from_cursor=from_cursor,
+            reason=reason,
+        )
+    if frame.event == "stream.gap":
+        document = _control_document(
+            frame,
+            schema="vibecrafted.stream-gap.v1",
+            fields={
+                "schema",
+                "kind",
+                "requested",
+                "resumed_at",
+                "reason",
+                "action",
+            },
+        )
+        raw_resumed_at = document.get("resumed_at")
+        resumed_at = (
+            _parse_event_cursor(raw_resumed_at)
+            if isinstance(raw_resumed_at, str)
+            else None
+        )
+        requested = document.get("requested")
+        reason = document.get("reason")
+        if (
+            resumed_at is None
+            or frame.raw_cursor != raw_resumed_at
+            or not isinstance(requested, str)
+            or not requested
+            or len(requested.encode("utf-8")) > MAX_CURSOR_BYTES
+            or not isinstance(reason, str)
+            or not reason
+            or len(reason.encode("utf-8")) > MAX_STATE_TEXT_BYTES
+            or document.get("action") != "resnapshot"
+        ):
+            raise GuardianProtocolError("stream.gap control fields are invalid")
+        return SSEStreamGap(
+            cursor=resumed_at,
+            requested=requested,
+            reason=reason,
+        )
+    if frame.event == "stream.caught-up":
+        document = _control_document(
+            frame,
+            schema="vibecrafted.stream-caught-up.v1",
+            fields={"schema", "kind", "cursor", "high_watermark"},
+        )
+        raw_cursor = document.get("cursor")
+        raw_high_watermark = document.get("high_watermark")
+        cursor = (
+            _parse_event_cursor(raw_cursor) if isinstance(raw_cursor, str) else None
+        )
+        high_watermark = (
+            _parse_event_cursor(raw_high_watermark)
+            if isinstance(raw_high_watermark, str)
+            else None
+        )
+        if (
+            cursor is None
+            or high_watermark is None
+            or frame.raw_cursor != raw_cursor
+            or not _cursor_reaches(cursor, high_watermark)
+            or _is_v2_cursor(cursor) != _is_v2_cursor(high_watermark)
+        ):
+            raise GuardianProtocolError("stream.caught-up control fields are invalid")
+        return SSEStreamCaughtUp(
+            cursor=cursor,
+            high_watermark=high_watermark,
+            authoritative=_is_v2_cursor(cursor),
+        )
+    return frame
 
 
 @dataclass
@@ -221,126 +842,353 @@ class ConnectionStats:
 
 @dataclass
 class GuardianState:
-    """Durable cursor, baseline gate, and settlement action outbox."""
+    """Checksummed v2 cursor, compact highwater, and durable action outbox."""
 
     path: Path
-    cursor: int = 0
+    cursor: CursorToken = 0
     baseline_complete: bool = False
-    processed: list[SettlementKey] = field(default_factory=list)
-    pending: dict[SettlementKey, SettlementRevision] = field(default_factory=dict)
-    _processed_set: set[SettlementKey] = field(init=False, repr=False)
+    highwater: dict[str, CompletionRecord] = field(default_factory=dict)
+    pending: dict[SettlementKey, PendingRecord] = field(default_factory=dict)
+    degraded: bool = False
+    recovered_from_backup: bool = False
 
     def __post_init__(self) -> None:
-        self.cursor = max(int(self.cursor), 0)
-        normalized: list[SettlementKey] = []
-        seen: set[SettlementKey] = set()
-        for run_id, revision in self.processed:
-            key = (str(run_id), int(revision))
-            if not key[0] or key[1] <= 0 or key in seen:
-                continue
-            normalized.append(key)
-            seen.add(key)
-        self.processed = normalized
-        self._processed_set = set(self.processed)
-        self.pending = {
-            event.key: event
-            for event in self.pending.values()
-            if event.key not in self._processed_set
-        }
+        self.cursor = _validate_cursor(self.cursor)
+        if type(self.baseline_complete) is not bool:
+            raise GuardianStateError("baseline_complete must be boolean")
+        if (
+            type(self.degraded) is not bool
+            or type(self.recovered_from_backup) is not bool
+        ):
+            raise GuardianStateError("guardian state flags must be boolean")
+        if len(self.pending) > MAX_PENDING_RECORDS:
+            raise GuardianStateLimitError("guardian pending outbox exceeds capacity")
+        for run_id, completion in self.highwater.items():
+            if not isinstance(completion, CompletionRecord):
+                raise GuardianStateError("highwater value must be a completion record")
+            _bounded_text(
+                run_id,
+                field_name="highwater.run_id",
+                allow_empty=False,
+                maximum=MAX_RUN_ID_BYTES,
+            )
+            if type(completion.revision) is not int or completion.revision <= 0:
+                raise GuardianStateError("highwater revision must be positive")
+            _bounded_text(
+                completion.outcome,
+                field_name="highwater.outcome",
+                allow_empty=False,
+            )
+            _bounded_text(
+                completion.reason,
+                field_name="highwater.reason",
+            )
+        for key, record in self.pending.items():
+            if not isinstance(record, PendingRecord):
+                raise GuardianStateError("pending value must be a pending record")
+            if PendingRecord.from_state_payload(record.to_state_payload()) != record:
+                raise GuardianStateError("pending record is not canonical")
+            if key != record.key:
+                raise GuardianStateError("pending key does not match settlement")
+            if record.resume_authorized and (
+                not self.baseline_complete
+                or not _is_v2_cursor(self.cursor)
+                or record.event.source != "trust"
+                or not record.event.receipt_id
+            ):
+                raise GuardianStateError(
+                    "pending resume authority requires an authoritative state cursor"
+                )
+            prior_completion = self.highwater.get(record.event.run_id)
+            if (
+                prior_completion is not None
+                and record.event.revision <= prior_completion.revision
+            ):
+                raise GuardianStateError(
+                    "pending revision is already covered by highwater"
+                )
+
+    @property
+    def backup_path(self) -> Path:
+        return self.path.with_name(f"{self.path.name}.bak")
+
+    @property
+    def processed(self) -> list[SettlementKey]:
+        """Compatibility observation over the compact per-run highwater."""
+
+        return [
+            (run_id, completion.revision)
+            for run_id, completion in sorted(self.highwater.items())
+        ]
 
     @classmethod
-    def load(
+    def _from_v2_document(
         cls,
         path: Path,
+        encoded: bytes,
+        *,
+        recovered_from_backup: bool = False,
     ) -> GuardianState:
-        """Load state; malformed or foreign state starts a suppressed baseline."""
+        document = _strict_json_loads(encoded)
+        if not isinstance(document, dict) or set(document) != {
+            "schema",
+            "cursor",
+            "baseline_complete",
+            "highwater",
+            "pending",
+            "checksum",
+        }:
+            raise GuardianStateError("guardian v2 document fields are not canonical")
+        checksum = document.get("checksum")
+        if (
+            not isinstance(checksum, str)
+            or len(checksum) != 64
+            or any(character not in "0123456789abcdef" for character in checksum)
+        ):
+            raise GuardianStateError("guardian state checksum is malformed")
+        body = {key: value for key, value in document.items() if key != "checksum"}
+        expected_checksum = hashlib.sha256(_canonical_json(body)).hexdigest()
+        if not hmac.compare_digest(checksum, expected_checksum):
+            raise GuardianStateError("guardian state checksum mismatch")
+        if body.get("schema") != GUARDIAN_STATE_SCHEMA:
+            raise GuardianStateError("guardian state schema is not v2")
+        baseline_complete = body.get("baseline_complete")
+        highwater_entries = body.get("highwater")
+        pending_entries = body.get("pending")
+        if type(baseline_complete) is not bool:
+            raise GuardianStateError("baseline_complete must be boolean")
+        if not isinstance(highwater_entries, list):
+            raise GuardianStateError("highwater must be a list")
+        if not isinstance(pending_entries, list):
+            raise GuardianStateError("pending must be a list")
+        if len(pending_entries) > MAX_PENDING_RECORDS:
+            raise GuardianStateLimitError("guardian pending outbox exceeds capacity")
 
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return cls(path=path)
-        except (OSError, json.JSONDecodeError) as exc:
-            LOGGER.warning("guardian state unreadable; starting suppressed: %s", exc)
-            return cls(path=path)
-        if not isinstance(raw, dict) or raw.get("schema") != GUARDIAN_STATE_SCHEMA:
-            LOGGER.warning("guardian state schema invalid; starting suppressed")
-            return cls(path=path)
+        highwater: dict[str, CompletionRecord] = {}
+        for entry in highwater_entries:
+            if not isinstance(entry, dict) or set(entry) != {
+                "run_id",
+                "settlement_revision",
+                "outcome",
+                "reason",
+            }:
+                raise GuardianStateError("highwater entry fields are not canonical")
+            run_id = _bounded_text(
+                entry.get("run_id"),
+                field_name="highwater.run_id",
+                allow_empty=False,
+                maximum=MAX_RUN_ID_BYTES,
+            )
+            revision = entry.get("settlement_revision")
+            if type(revision) is not int or revision <= 0:
+                raise GuardianStateError("highwater revision must be positive")
+            if run_id in highwater:
+                raise GuardianStateError("duplicate highwater run")
+            highwater[run_id] = CompletionRecord(
+                revision=revision,
+                outcome=_bounded_text(
+                    entry.get("outcome"),
+                    field_name="highwater.outcome",
+                    allow_empty=False,
+                ),
+                reason=_bounded_text(
+                    entry.get("reason"),
+                    field_name="highwater.reason",
+                ),
+            )
 
-        cursor_raw = raw.get("cursor")
-        cursor = (
-            cursor_raw
-            if type(cursor_raw) is int and cursor_raw >= 0  # bool is not a cursor
-            else 0
-        )
-        baseline_complete = raw.get("baseline_complete") is True
-        processed: list[SettlementKey] = []
-        entries = raw.get("processed")
-        if isinstance(entries, list):
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
-                run_id = entry.get("run_id")
-                revision = entry.get("settlement_revision")
-                if (
-                    isinstance(run_id, str)
-                    and run_id
-                    and type(revision) is int
-                    and revision > 0
-                ):
-                    processed.append((run_id, revision))
-        pending: dict[SettlementKey, SettlementRevision] = {}
-        pending_entries = raw.get("pending")
-        if isinstance(pending_entries, list):
-            for entry in pending_entries:
-                if not isinstance(entry, dict):
-                    continue
-                event = SettlementRevision.from_state_payload(entry)
-                if event is not None:
-                    pending[event.key] = event
+        pending: dict[SettlementKey, PendingRecord] = {}
+        for entry in pending_entries:
+            if not isinstance(entry, dict):
+                raise GuardianStateError("pending record must be an object")
+            record = PendingRecord.from_state_payload(entry)
+            if record.key in pending:
+                raise GuardianStateError("duplicate pending settlement")
+            pending[record.key] = record
         return cls(
             path=path,
-            cursor=cursor,
+            cursor=_validate_cursor(body.get("cursor")),
             baseline_complete=baseline_complete,
-            processed=processed,
+            highwater=highwater,
             pending=pending,
+            recovered_from_backup=recovered_from_backup,
         )
 
+    @classmethod
+    def _migrate_v1(cls, path: Path, encoded: bytes) -> GuardianState:
+        document = _strict_json_loads(encoded)
+        if not isinstance(document, dict) or set(document) != {
+            "schema",
+            "cursor",
+            "baseline_complete",
+            "processed",
+            "pending",
+        }:
+            raise GuardianStateError("guardian v1 document fields are not canonical")
+        if document.get("schema") != GUARDIAN_STATE_SCHEMA_V1:
+            raise GuardianStateError("guardian state schema is unsupported")
+        cursor = document.get("cursor")
+        baseline = document.get("baseline_complete")
+        processed_entries = document.get("processed")
+        pending_entries = document.get("pending")
+        if type(cursor) is not int or cursor < 0 or type(baseline) is not bool:
+            raise GuardianStateError("guardian v1 cursor/baseline is invalid")
+        if not isinstance(processed_entries, list) or not isinstance(
+            pending_entries, list
+        ):
+            raise GuardianStateError("guardian v1 ledgers must be lists")
+
+        highwater: dict[str, CompletionRecord] = {}
+
+        def merge(run_id: str, revision: int, outcome: str, reason: str) -> None:
+            existing = highwater.get(run_id)
+            if existing is None or revision >= existing.revision:
+                highwater[run_id] = CompletionRecord(revision, outcome, reason)
+
+        for entry in processed_entries:
+            if not isinstance(entry, dict) or set(entry) != {
+                "run_id",
+                "settlement_revision",
+            }:
+                raise GuardianStateError("guardian v1 processed entry is invalid")
+            run_id = _bounded_text(
+                entry.get("run_id"),
+                field_name="v1.processed.run_id",
+                allow_empty=False,
+                maximum=MAX_RUN_ID_BYTES,
+            )
+            revision = entry.get("settlement_revision")
+            if type(revision) is not int or revision <= 0:
+                raise GuardianStateError("guardian v1 processed revision is invalid")
+            merge(run_id, revision, "legacy_processed", "v1_migration")
+
+        expected_event_fields = {
+            "run_id",
+            "settlement_revision",
+            "verdict",
+            "tui",
+            "reason",
+            "source",
+            "settled_at",
+        }
+        for entry in pending_entries:
+            if not isinstance(entry, dict) or set(entry) != expected_event_fields:
+                raise GuardianStateError("guardian v1 pending entry is invalid")
+            event = SettlementRevision.from_state_payload(entry)
+            if event is None:
+                raise GuardianStateError("guardian v1 pending settlement is invalid")
+            merge(
+                event.run_id,
+                event.revision,
+                "legacy_authority_unbound",
+                "legacy_authority_unbound",
+            )
+
+        migrated = cls(
+            path=path,
+            cursor=0,
+            baseline_complete=False,
+            highwater=highwater,
+        )
+        migrated.persist()
+        LOGGER.warning(
+            "guardian v1 state migrated with fresh baseline; legacy pending suppressed"
+        )
+        return migrated
+
+    @classmethod
+    def load(cls, path: Path) -> GuardianState:
+        """Load a verified primary/backup or enter a side-effect-free baseline."""
+
+        found_state = False
+        for candidate, is_backup in (
+            (path, False),
+            (path.with_name(f"{path.name}.bak"), True),
+        ):
+            try:
+                encoded = _read_private_file(candidate, maximum=MAX_STATE_BYTES)
+            except FileNotFoundError:
+                continue
+            except (OSError, GuardianStateError, GuardianLockSecurityError) as exc:
+                found_state = True
+                LOGGER.error(
+                    "guardian state candidate rejected (%s): %s", candidate, exc
+                )
+                continue
+            found_state = True
+            try:
+                parsed = _strict_json_loads(encoded)
+                schema = parsed.get("schema") if isinstance(parsed, dict) else None
+                if schema == GUARDIAN_STATE_SCHEMA:
+                    state = cls._from_v2_document(
+                        path,
+                        encoded,
+                        recovered_from_backup=is_backup,
+                    )
+                    if is_backup:
+                        LOGGER.warning("guardian recovered verified backup state")
+                    return state
+                if schema == GUARDIAN_STATE_SCHEMA_V1:
+                    return cls._migrate_v1(path, encoded)
+                raise GuardianStateError("guardian state schema is unsupported")
+            except (OSError, GuardianStateError, GuardianLockSecurityError) as exc:
+                LOGGER.error(
+                    "guardian state candidate rejected (%s): %s", candidate, exc
+                )
+        return cls(path=path, degraded=found_state)
+
     @staticmethod
-    def _payload(
+    def _body(
         *,
-        cursor: int,
+        cursor: CursorToken,
         baseline_complete: bool,
-        processed: Sequence[SettlementKey],
-        pending: Mapping[SettlementKey, SettlementRevision],
+        highwater: Mapping[str, CompletionRecord],
+        pending: Mapping[SettlementKey, PendingRecord],
     ) -> dict[str, object]:
         return {
             "schema": GUARDIAN_STATE_SCHEMA,
             "cursor": cursor,
             "baseline_complete": baseline_complete,
-            "processed": [
-                {"run_id": run_id, "settlement_revision": revision}
-                for run_id, revision in processed
+            "highwater": [
+                completion.to_state_payload(run_id)
+                for run_id, completion in sorted(highwater.items())
             ],
-            "pending": [event.to_state_payload() for event in pending.values()],
+            "pending": [
+                record.to_state_payload() for _key, record in sorted(pending.items())
+            ],
         }
 
     def _persist_snapshot(
         self,
         *,
-        cursor: int,
+        cursor: CursorToken,
         baseline_complete: bool,
-        processed: Sequence[SettlementKey],
-        pending: Mapping[SettlementKey, SettlementRevision],
+        highwater: Mapping[str, CompletionRecord],
+        pending: Mapping[SettlementKey, PendingRecord],
     ) -> None:
-        atomic_write_json(
-            self.path,
-            self._payload(
-                cursor=cursor,
-                baseline_complete=baseline_complete,
-                processed=processed,
-                pending=pending,
-            ),
+        GuardianState(
+            path=self.path,
+            cursor=cursor,
+            baseline_complete=baseline_complete,
+            highwater=dict(highwater),
+            pending=dict(pending),
+            degraded=self.degraded,
+            recovered_from_backup=self.recovered_from_backup,
         )
+        body = self._body(
+            cursor=_validate_cursor(cursor),
+            baseline_complete=baseline_complete,
+            highwater=highwater,
+            pending=pending,
+        )
+        checksum = hashlib.sha256(_canonical_json(body)).hexdigest()
+        encoded = _canonical_json({**body, "checksum": checksum}) + b"\n"
+        if len(encoded) > MAX_STATE_BYTES:
+            raise GuardianStateLimitError(
+                f"guardian state exceeds {MAX_STATE_BYTES} bytes"
+            )
+        _atomic_private_write(self.backup_path, encoded)
+        _atomic_private_write(self.path, encoded)
 
     def persist(self) -> None:
         """Atomically persist the current cursor and action ledger."""
@@ -348,123 +1196,338 @@ class GuardianState:
         self._persist_snapshot(
             cursor=self.cursor,
             baseline_complete=self.baseline_complete,
-            processed=self.processed,
+            highwater=self.highwater,
             pending=self.pending,
         )
 
-    def checkpoint(self, cursor: int) -> None:
+    def checkpoint(self, cursor: CursorToken) -> None:
         """Persist one frame cursor transactionally.
 
-        A lower cursor is valid after ``events.jsonl`` rotation.  The settlement
-        key ledger survives that reset and prevents replayed revisions from
-        producing duplicate effects.
+        Numeric cursors remain compatibility-only. Opaque v2 cursors preserve
+        epoch, generation, and offset across rotation.
         """
 
-        if cursor < 0:
-            raise ValueError("SSE cursor must be non-negative")
+        cursor = _validate_cursor(cursor)
         if cursor == self.cursor:
             return
         self._persist_snapshot(
             cursor=cursor,
             baseline_complete=self.baseline_complete,
-            processed=self.processed,
+            highwater=self.highwater,
             pending=self.pending,
         )
         self.cursor = cursor
 
-    def suppress(self, cursor: int, key: SettlementKey) -> bool:
+    def _known(self, key: SettlementKey) -> bool:
+        if key in self.pending:
+            return True
+        completion = self.highwater.get(key[0])
+        return completion is not None and key[1] <= completion.revision
+
+    @staticmethod
+    def _merge_highwater(
+        highwater: dict[str, CompletionRecord],
+        *,
+        key: SettlementKey,
+        outcome: str,
+        reason: str,
+    ) -> None:
+        existing = highwater.get(key[0])
+        if existing is None or key[1] >= existing.revision:
+            highwater[key[0]] = CompletionRecord(
+                revision=key[1],
+                outcome=_bounded_text(
+                    outcome,
+                    field_name="completion.outcome",
+                    allow_empty=False,
+                ),
+                reason=_bounded_text(reason, field_name="completion.reason"),
+            )
+
+    def suppress(self, cursor: CursorToken, key: SettlementKey) -> bool:
         """Checkpoint one baseline key directly as intentionally completed."""
 
-        if key in self._processed_set or key in self.pending:
+        if self._known(key):
             self.checkpoint(cursor)
             return False
-        processed = [*self.processed, key]
+        highwater = dict(self.highwater)
+        self._merge_highwater(
+            highwater,
+            key=key,
+            outcome="baseline_suppressed",
+            reason="initial_baseline",
+        )
         self._persist_snapshot(
             cursor=cursor,
             baseline_complete=self.baseline_complete,
-            processed=processed,
+            highwater=highwater,
             pending=self.pending,
         )
         self.cursor = cursor
-        self.processed = processed
-        self._processed_set.add(key)
+        self.highwater = highwater
         return True
 
-    def claim(self, cursor: int, event: SettlementRevision) -> bool:
+    def claim(self, cursor: CursorToken, event: SettlementRevision) -> bool:
         """Durably enqueue one action before invoking external adapters."""
 
-        if event.key in self._processed_set or event.key in self.pending:
+        if self._known(event.key):
             return False
-        pending = {**self.pending, event.key: event}
+        if len(self.pending) >= MAX_PENDING_RECORDS:
+            raise GuardianStateLimitError("guardian pending outbox is full")
+        pending = {
+            **self.pending,
+            event.key: PendingRecord(
+                event=event,
+                stream_cursor=cursor,
+                resume_authorized=(
+                    self.baseline_complete
+                    and _is_v2_cursor(cursor)
+                    and not self.degraded
+                    and event.source == "trust"
+                    and bool(event.receipt_id)
+                ),
+            ),
+        }
         self._persist_snapshot(
             cursor=cursor,
             baseline_complete=self.baseline_complete,
-            processed=self.processed,
+            highwater=self.highwater,
             pending=pending,
         )
         self.cursor = cursor
         self.pending = pending
         return True
 
-    def complete(self, key: SettlementKey) -> bool:
+    def mark_notified(self, key: SettlementKey) -> bool:
+        record = self.pending.get(key)
+        if record is None or record.notification_done:
+            return False
+        pending = dict(self.pending)
+        pending[key] = PendingRecord(
+            event=record.event,
+            stream_cursor=record.stream_cursor,
+            resume_authorized=record.resume_authorized,
+            notification_done=True,
+            attempts=record.attempts,
+            next_retry=record.next_retry,
+            last_reason=record.last_reason,
+            outcome=record.outcome,
+        )
+        self._persist_snapshot(
+            cursor=self.cursor,
+            baseline_complete=self.baseline_complete,
+            highwater=self.highwater,
+            pending=pending,
+        )
+        self.pending = pending
+        return True
+
+    def complete(
+        self,
+        key: SettlementKey,
+        *,
+        outcome: str,
+        reason: str,
+    ) -> bool:
         """Move one attempted action from pending to the durable dedupe ledger."""
 
         if key not in self.pending:
             return False
         pending = dict(self.pending)
         pending.pop(key)
-        processed = [*self.processed, key]
+        highwater = dict(self.highwater)
+        self._merge_highwater(
+            highwater,
+            key=key,
+            outcome=outcome,
+            reason=reason,
+        )
         self._persist_snapshot(
             cursor=self.cursor,
             baseline_complete=self.baseline_complete,
-            processed=processed,
+            highwater=highwater,
             pending=pending,
         )
         self.pending = pending
-        self.processed = processed
-        self._processed_set.add(key)
+        self.highwater = highwater
         return True
 
-    def pending_events(self) -> tuple[SettlementRevision, ...]:
-        return tuple(self.pending.values())
+    def retry(
+        self,
+        key: SettlementKey,
+        *,
+        reason: str,
+        now: float,
+        bounded: bool,
+    ) -> bool:
+        """Schedule retry; return true when bounded exhaustion became terminal."""
 
-    def quarantine(self, cursor: int, data: str) -> bool:
+        record = self.pending.get(key)
+        if record is None:
+            return True
+        attempts = min(record.attempts + 1, 1_000_000)
+        if bounded and attempts >= MAX_PENDING_ATTEMPTS:
+            self.complete(
+                key,
+                outcome="retry_exhausted",
+                reason=f"retry_exhausted:{reason}",
+            )
+            return True
+        exponent = min(max(attempts - 1, 0), 20)
+        delay = min(
+            PENDING_RETRY_MAX_SECONDS,
+            PENDING_RETRY_INITIAL_SECONDS * (2**exponent),
+        )
+        pending = dict(self.pending)
+        pending[key] = PendingRecord(
+            event=record.event,
+            stream_cursor=record.stream_cursor,
+            resume_authorized=record.resume_authorized,
+            notification_done=record.notification_done,
+            attempts=attempts,
+            next_retry=max(float(now), 0.0) + delay,
+            last_reason=_bounded_text(reason, field_name="pending.last_reason"),
+            outcome="retryable",
+        )
+        self._persist_snapshot(
+            cursor=self.cursor,
+            baseline_complete=self.baseline_complete,
+            highwater=self.highwater,
+            pending=pending,
+        )
+        self.pending = pending
+        return False
+
+    def pending_records(
+        self,
+        *,
+        now: float,
+        limit: int,
+    ) -> tuple[PendingRecord, ...]:
+        if limit <= 0:
+            return ()
+        due = [record for record in self.pending.values() if record.next_retry <= now]
+        due.sort(
+            key=lambda record: (
+                record.next_retry,
+                record.event.run_id,
+                record.event.revision,
+            )
+        )
+        return tuple(due[:limit])
+
+    def quarantine(self, cursor: CursorToken, data: str) -> bool:
         """Persist one invalid settlement frame as an idempotent dead letter."""
 
         encoded = data.encode("utf-8", errors="replace")
         digest = hashlib.sha256(encoded).hexdigest()
-        target = self.path.parent / "dead_letters" / f"{digest}.json"
-        created = not target.is_file()
-        if created:
-            limit = 64 * 1024
-            atomic_write_json(
-                target,
+        target = self.path.parent / "dead_letters.json"
+        entries: list[dict[str, object]] = []
+        try:
+            existing = _strict_json_loads(
+                _read_private_file(target, maximum=MAX_DEAD_LETTER_BYTES)
+            )
+            if (
+                isinstance(existing, dict)
+                and existing.get("schema") == GUARDIAN_DEAD_LETTER_SCHEMA
+                and isinstance(existing.get("entries"), list)
+            ):
+                entries = [
+                    dict(entry)
+                    for entry in existing["entries"]
+                    if isinstance(entry, dict)
+                ]
+        except (FileNotFoundError, OSError, GuardianStateError):
+            entries = []
+        if any(entry.get("sha256") == digest for entry in entries):
+            created = False
+        else:
+            created = True
+            entries.append(
                 {
-                    "schema": GUARDIAN_DEAD_LETTER_SCHEMA,
                     "sha256": digest,
                     "sse_cursor": cursor,
                     "reason": "invalid settlement.changed contract",
-                    "data": encoded[:limit].decode("utf-8", errors="replace"),
-                    "truncated": len(encoded) > limit,
-                },
+                    "data": encoded[:MAX_DEAD_LETTER_DATA_BYTES].decode(
+                        "utf-8", errors="replace"
+                    ),
+                    "truncated": len(encoded) > MAX_DEAD_LETTER_DATA_BYTES,
+                }
             )
+            while len(entries) > MAX_DEAD_LETTER_ENTRIES:
+                entries.pop(0)
+            payload: dict[str, object] = {
+                "schema": GUARDIAN_DEAD_LETTER_SCHEMA,
+                "entries": entries,
+            }
+            dead_letter_bytes = _canonical_json(payload) + b"\n"
+            while entries and len(dead_letter_bytes) > MAX_DEAD_LETTER_BYTES:
+                entries.pop(0)
+                dead_letter_bytes = _canonical_json(payload) + b"\n"
+            _atomic_private_write(target, dead_letter_bytes)
         if not self.baseline_complete:
             self.checkpoint(cursor)
         return created
 
-    def complete_baseline(self) -> bool:
-        """Open the side-effect gate exactly once after the first heartbeat."""
+    def reset_for_gap(self, cursor: CursorToken, *, reason: str) -> None:
+        """Revoke pending resume authority and require a fresh caught-up receipt."""
 
-        if self.baseline_complete:
+        cursor = _validate_cursor(cursor)
+        reason = _bounded_text(
+            reason,
+            field_name="stream_gap.reason",
+            allow_empty=False,
+        )
+        pending = {
+            key: PendingRecord(
+                event=record.event,
+                stream_cursor=cursor,
+                resume_authorized=False,
+                notification_done=record.notification_done,
+                attempts=record.attempts,
+                next_retry=0.0,
+                last_reason=f"stream_gap:{reason}",
+                outcome="retryable" if record.attempts else "pending",
+            )
+            for key, record in self.pending.items()
+        }
+        self._persist_snapshot(
+            cursor=cursor,
+            baseline_complete=False,
+            highwater=self.highwater,
+            pending=pending,
+        )
+        self.cursor = cursor
+        self.baseline_complete = False
+        self.pending = pending
+        self.degraded = True
+
+    def complete_baseline(
+        self,
+        cursor: CursorToken,
+        *,
+        authoritative: bool,
+    ) -> bool:
+        """Open observation only from a typed caught-up control receipt."""
+
+        cursor = _validate_cursor(cursor)
+        if authoritative and not _is_v2_cursor(cursor):
+            raise GuardianStateError(
+                "authoritative baseline requires an opaque v2 cursor"
+            )
+        opened = not self.baseline_complete or self.degraded
+        if not opened and self.cursor == cursor and self.degraded is not authoritative:
             return False
         self._persist_snapshot(
-            cursor=self.cursor,
+            cursor=cursor,
             baseline_complete=True,
-            processed=self.processed,
+            highwater=self.highwater,
             pending=self.pending,
         )
+        self.cursor = cursor
         self.baseline_complete = True
-        return True
+        self.degraded = not authoritative
+        return opened
 
 
 @dataclass
@@ -491,16 +1554,35 @@ class BoundedBackoff:
         self._next = self.initial
 
 
-def iter_sse(lines: Iterable[bytes | str]) -> Iterator[SSEItem]:
-    """Parse complete numeric-id data frames and ``: ping`` heartbeats."""
+def iter_sse(
+    lines: Iterable[bytes | str],
+    *,
+    cursor_parser: CursorParser = _parse_event_cursor,
+    control_parser: ControlParser | None = None,
+) -> Iterator[SSEItem]:
+    """Parse bounded SSE frames with explicit opaque-extension seams."""
 
-    cursor: int | None = None
+    raw_cursor = ""
+    event_name = ""
     data: list[str] = []
     heartbeat = False
+    frame_bytes = 0
 
     for raw_line in lines:
+        encoded_line = (
+            raw_line
+            if isinstance(raw_line, bytes)
+            else raw_line.encode("utf-8", errors="replace")
+        )
+        if len(encoded_line) > MAX_SSE_LINE_BYTES:
+            raise GuardianProtocolError(f"SSE line exceeds {MAX_SSE_LINE_BYTES} bytes")
+        frame_bytes += len(encoded_line)
+        if frame_bytes > MAX_SSE_FRAME_BYTES:
+            raise GuardianProtocolError(
+                f"SSE frame exceeds {MAX_SSE_FRAME_BYTES} bytes"
+            )
         line = (
-            raw_line.decode("utf-8", errors="replace")
+            encoded_line.decode("utf-8", errors="replace")
             if isinstance(raw_line, bytes)
             else raw_line
         ).rstrip("\r\n")
@@ -508,25 +1590,41 @@ def iter_sse(lines: Iterable[bytes | str]) -> Iterator[SSEItem]:
             if line == ": ping":
                 heartbeat = True
             elif line.startswith("id:"):
-                value = line[3:].strip()
-                try:
-                    parsed = int(value)
-                except ValueError:
-                    cursor = None
-                else:
-                    cursor = parsed if parsed >= 0 else None
+                raw_cursor = line[3:].strip()
+                if len(raw_cursor.encode("utf-8")) > MAX_CURSOR_BYTES:
+                    raise GuardianProtocolError(
+                        f"SSE cursor exceeds {MAX_CURSOR_BYTES} bytes"
+                    )
+            elif line.startswith("event:"):
+                event_name = line[6:].strip()
             elif line.startswith("data:"):
                 value = line[5:]
                 data.append(value.removeprefix(" "))
             continue
 
-        if data and cursor is not None:
-            yield SSEFrame(cursor=cursor, data="\n".join(data))
+        if event_name:
+            control = SSEControlFrame(
+                event=event_name,
+                raw_cursor=raw_cursor,
+                data="\n".join(data),
+            )
+            if control_parser is None:
+                yield control
+            else:
+                parsed_control = control_parser(control)
+                if parsed_control is not None:
+                    yield parsed_control
+        elif data and raw_cursor:
+            cursor = cursor_parser(raw_cursor)
+            if cursor is not None:
+                yield SSEFrame(cursor=_validate_cursor(cursor), data="\n".join(data))
         elif heartbeat:
             yield SSEHeartbeat()
-        cursor = None
+        raw_cursor = ""
+        event_name = ""
         data = []
         heartbeat = False
+        frame_bytes = 0
 
 
 def _declares_settlement_event(data: str) -> bool:
@@ -547,16 +1645,47 @@ def parse_settlement_revision(data: str) -> SettlementRevision | None:
     if not isinstance(frame, dict) or frame.get("kind") != SETTLEMENT_EVENT_KIND:
         return None
     payload = frame.get("payload")
-    if (
-        not isinstance(payload, dict)
-        or payload.get("schema") != SETTLEMENT_EVENT_SCHEMA
-    ):
+    if not isinstance(payload, dict):
+        return None
+    top_run_id = frame.get("run_id")
+    if payload.get("schema") == SETTLEMENT_EVENT_SCHEMA_V2:
+        if set(payload) != {
+            "schema",
+            "event_key",
+            "run_id",
+            "previous",
+            "current",
+            "reason",
+            "source",
+            "settled_at",
+            "claim_digest",
+            "waived",
+            "revision",
+            "trust_receipt",
+        }:
+            return None
+        try:
+            event_v2 = SettlementEventV2.from_payload(payload)
+        except (TypeError, ValueError):
+            return None
+        if top_run_id != event_v2.run_id:
+            return None
+        return SettlementRevision(
+            run_id=event_v2.run_id,
+            revision=event_v2.revision,
+            verdict=event_v2.current.verdict,
+            tui=event_v2.current.tui,
+            reason=event_v2.reason,
+            source=event_v2.source,
+            settled_at=event_v2.settled_at,
+            receipt_id=event_v2.trust_receipt.receipt_id,
+        )
+    if payload.get("schema") != SETTLEMENT_EVENT_SCHEMA:
         return None
     current = payload.get("current")
     if not isinstance(current, dict):
         return None
 
-    top_run_id = frame.get("run_id")
     run_id = payload.get("run_id")
     revision = payload.get("revision")
     verdict = current.get("verdict")
@@ -651,8 +1780,11 @@ class RecoveryContext:
 
     root: Path
     agent: str
+    agent_session_id: str
     skill: str
     sha: str
+    settlement_revision: int
+    receipt_id: str
 
 
 def _default_guard_enforcer(**kwargs: object) -> object:
@@ -666,6 +1798,9 @@ def _default_native_resumer(
     source_dir: str | Path,
     *,
     expected_agent: str,
+    expected_agent_session_id: str,
+    expected_settlement_revision: int,
+    expected_receipt_id: str,
     idempotency_key: str,
 ) -> Mapping[str, object]:
     from .workflow import native_resume_run
@@ -674,6 +1809,9 @@ def _default_native_resumer(
         run_id,
         source_dir=source_dir,
         expected_agent=expected_agent,
+        expected_agent_session_id=expected_agent_session_id,
+        expected_settlement_revision=expected_settlement_revision,
+        expected_receipt_id=expected_receipt_id,
         idempotency_key=idempotency_key,
     )
 
@@ -697,6 +1835,10 @@ def _validate_server_url(value: str) -> str:
     ):
         raise ValueError("server URL must be an http(s) origin without a path")
     return normalized
+
+
+def _base_media_type(value: object) -> str:
+    return str(value or "").split(";", 1)[0].strip().lower()
 
 
 def _server_run_is_terminal(run: Mapping[str, object]) -> bool:
@@ -759,8 +1901,8 @@ class GuardianRecoveryAdapter:
                     f"run projection returned HTTP {status} for {run_id}"
                 )
             headers = getattr(response, "headers", {})
-            content_type = str(headers.get("Content-Type", "") or "").lower()
-            if not content_type.startswith("application/json"):
+            content_type = str(headers.get("Content-Type", "") or "")
+            if _base_media_type(content_type) != "application/json":
                 raise GuardianProtocolError(
                     f"run projection returned unexpected content type {content_type!r}"
                 )
@@ -806,8 +1948,24 @@ class GuardianRecoveryAdapter:
             event.verdict != "needs_attention"
             or event.source != "trust"
             or run.get("settlement_source") != "trust"
+            or not event.receipt_id
         ):
             return ReconcileDecision(reason="vc_trust_authority_missing")
+        receipt_payload = run.get("trust_receipt")
+        if not isinstance(receipt_payload, Mapping):
+            return ReconcileDecision(reason="trust_receipt_missing")
+        try:
+            projected_receipt = TrustReceiptV1.from_payload(receipt_payload)
+        except (TypeError, ValueError):
+            return ReconcileDecision(reason="trust_receipt_invalid")
+        if (
+            projected_receipt.receipt_id != event.receipt_id
+            or projected_receipt.run_id != event.run_id
+            or projected_receipt.settlement_revision != event.revision
+            or projected_receipt.settlement_verdict != event.verdict
+            or projected_receipt.settlement_tui != event.tui
+        ):
+            return ReconcileDecision(reason="trust_receipt_mismatch")
         if run.get("worker_alive") is not False:
             return ReconcileDecision(reason="worker_not_confirmed_dead")
         if run.get("recovery_required") is not True:
@@ -844,6 +2002,11 @@ class GuardianRecoveryAdapter:
             sha = _explicit_identity(run.get(projection_field))
             if sha:
                 break
+        if (
+            Path(projected_receipt.repo_root) != Path(root)
+            or projected_receipt.commit_sha != sha
+        ):
+            return ReconcileDecision(reason="trust_receipt_projection_mismatch")
         decision = self.guard_enforcer(
             repo=Path(root),
             sha=sha,
@@ -860,8 +2023,11 @@ class GuardianRecoveryAdapter:
         self._contexts[event.key] = RecoveryContext(
             root=Path(root),
             agent=agent,
+            agent_session_id=agent_session_id,
             skill=skill,
             sha=sha,
+            settlement_revision=event.revision,
+            receipt_id=event.receipt_id,
         )
         return ReconcileDecision(
             request_resume=True,
@@ -882,11 +2048,43 @@ class GuardianRecoveryAdapter:
             event.run_id,
             source_dir=context.root,
             expected_agent=context.agent,
+            expected_agent_session_id=context.agent_session_id,
+            expected_settlement_revision=context.settlement_revision,
+            expected_receipt_id=context.receipt_id,
             idempotency_key=idempotency_key,
         )
         if result.get("accepted") is True:
             self._contexts.pop(event.key, None)
         return result
+
+
+def _parse_action_result(value: object) -> ActionResult | None:
+    if not isinstance(value, Mapping):
+        return None
+    accepted = value.get("accepted")
+    retryable = value.get("retryable")
+    terminal = value.get("terminal")
+    reason = value.get("reason")
+    if (
+        type(accepted) is not bool
+        or type(retryable) is not bool
+        or type(terminal) is not bool
+        or not isinstance(reason, str)
+        or not reason
+        or len(reason.encode("utf-8")) > MAX_STATE_TEXT_BYTES
+    ):
+        return None
+    if accepted:
+        if retryable or not terminal:
+            return None
+    elif retryable == terminal:
+        return None
+    return ActionResult(
+        accepted=accepted,
+        retryable=retryable,
+        terminal=terminal,
+        reason=reason,
+    )
 
 
 class GuardianWorker:
@@ -904,6 +2102,10 @@ class GuardianWorker:
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
         replay_heartbeats: int = DEFAULT_REPLAY_HEARTBEATS,
         ready_callback: ReadyCallback | None = None,
+        pending_pass_limit: int = DEFAULT_PENDING_PASS_LIMIT,
+        clock: Callable[[], float] = time.time,
+        cursor_parser: CursorParser = _parse_event_cursor,
+        control_parser: ControlParser | None = parse_stream_control,
     ) -> None:
         self.server_url = _validate_server_url(server_url)
         self.state = state
@@ -915,25 +2117,34 @@ class GuardianWorker:
             raise ValueError("connect timeout must be > 0")
         if replay_heartbeats <= 0:
             raise ValueError("replay heartbeat count must be > 0")
+        if pending_pass_limit <= 0:
+            raise ValueError("pending pass limit must be > 0")
         self.connect_timeout = connect_timeout
         self.replay_heartbeats = replay_heartbeats
         self.ready_callback = ready_callback
+        self.pending_pass_limit = pending_pass_limit
+        self.clock = clock
+        self.cursor_parser = cursor_parser
+        self.control_parser = control_parser
         self._ready_announced = False
 
     def _request(self) -> urllib.request.Request:
-        # During the first suppressed drain, resuming the saved cursor avoids
-        # repeatedly walking a large historical stream. Once armed, always
-        # replay from zero: only a full replay is safe across file generations
-        # because the server cursor is a generation-less byte offset.
-        cursor = 0 if self.state.baseline_complete else self.state.cursor
-        url = f"{self.server_url}/api/control/events?since={cursor}"
+        # A fresh numeric zero is not sent: omitting it lets a v2 server choose
+        # its generation-aware start cursor. Persisted opaque cursors are safe
+        # across rotation; numeric cursors remain compatibility-only.
+        cursor = self.state.cursor
+        url = f"{self.server_url}/api/control/events"
+        headers = {
+            "Accept": "text/event-stream",
+            "Cache-Control": "no-cache",
+        }
+        if _is_v2_cursor(cursor) or self.state.baseline_complete:
+            query = urllib.parse.urlencode({"since": str(cursor)})
+            url = f"{url}?{query}"
+            headers["Last-Event-ID"] = str(cursor)
         return urllib.request.Request(
             url,
-            headers={
-                "Accept": "text/event-stream",
-                "Cache-Control": "no-cache",
-                "Last-Event-ID": str(cursor),
-            },
+            headers=headers,
         )
 
     @staticmethod
@@ -942,8 +2153,8 @@ class GuardianWorker:
         if status != 200:
             raise GuardianProtocolError(f"SSE endpoint returned HTTP {status}")
         headers = getattr(response, "headers", {})
-        content_type = str(headers.get("Content-Type", "") or "").lower()
-        if not content_type.startswith("text/event-stream"):
+        content_type = str(headers.get("Content-Type", "") or "")
+        if _base_media_type(content_type) != "text/event-stream":
             raise GuardianProtocolError(
                 f"SSE endpoint returned unexpected content type {content_type!r}"
             )
@@ -952,16 +2163,17 @@ class GuardianWorker:
         """Consume one SSE connection until the server disconnects."""
 
         stats = ConnectionStats()
-        for pending in self.state.pending_events():
+        for pending in self.state.pending_records(
+            now=self.clock(),
+            limit=self.pending_pass_limit,
+        ):
             stats.claimed += 1
-            if self._attempt_and_complete(pending):
+            if self._attempt_record_safely(pending):
                 stats.completed_actions += 1
             else:
                 stats.action_failures += 1
-        if stats.action_failures:
-            return stats
 
-        latest_cursor: int | None = None
+        latest_cursor: CursorToken | None = None
         try:
             response = self.opener(self._request(), timeout=self.connect_timeout)
             with contextlib.closing(response):
@@ -969,48 +2181,117 @@ class GuardianWorker:
                 if not self._ready_announced and self.ready_callback is not None:
                     self.ready_callback()
                     self._ready_announced = True
-                for item in iter_sse(response):
+                for item in iter_sse(
+                    response,
+                    cursor_parser=self.cursor_parser,
+                    control_parser=self.control_parser,
+                ):
+                    if isinstance(item, SSEStreamBoundary):
+                        latest_cursor = item.cursor
+                        try:
+                            self.state.checkpoint(item.cursor)
+                        except (OSError, GuardianStateError):
+                            LOGGER.exception(
+                                "guardian could not persist stream boundary %s",
+                                item.cursor,
+                            )
+                        continue
+
+                    if isinstance(item, SSEStreamGap):
+                        latest_cursor = item.cursor
+                        try:
+                            self.state.reset_for_gap(
+                                item.cursor,
+                                reason=item.reason,
+                            )
+                            LOGGER.critical(
+                                "guardian stream gap for %s; resume authority "
+                                "revoked until fresh caught-up at %s",
+                                item.requested,
+                                item.cursor,
+                            )
+                        except (OSError, GuardianStateError):
+                            LOGGER.exception(
+                                "guardian could not persist stream gap %s",
+                                item.cursor,
+                            )
+                        continue
+
+                    if isinstance(item, SSEStreamCaughtUp):
+                        latest_cursor = item.cursor
+                        try:
+                            if self.state.complete_baseline(
+                                item.cursor,
+                                authoritative=item.authoritative,
+                            ):
+                                stats.completed_baseline = True
+                                LOGGER.info(
+                                    "guardian baseline caught up at %s (%s)",
+                                    item.cursor,
+                                    (
+                                        "resume-authoritative"
+                                        if item.authoritative
+                                        else "legacy notification-only"
+                                    ),
+                                )
+                        except (OSError, GuardianStateError):
+                            LOGGER.exception(
+                                "guardian could not persist caught-up receipt %s",
+                                item.cursor,
+                            )
+                        continue
+
                     if isinstance(item, SSEHeartbeat):
                         stats.heartbeats += 1
-                        if self.state.complete_baseline():
-                            stats.completed_baseline = True
-                            LOGGER.info(
-                                "guardian baseline drained at cursor %s",
-                                self.state.cursor,
-                            )
-                            # Close the first attachment deliberately. The next
-                            # connection performs the first generation-safe replay
-                            # from zero with the now-armed dedupe ledger.
-                            return stats
                         if stats.heartbeats >= self.replay_heartbeats:
-                            # A generation-less byte cursor cannot notice every
-                            # rotation while a socket stays open. Periodic,
-                            # heartbeat-paced SSE reattachment bounds that blind
-                            # window without polling another API or vc-frame.
+                            # Reattachment is only a liveness refresh. Baseline
+                            # authority comes from stream.caught-up, never ping.
                             return stats
+                        continue
+
+                    if isinstance(item, SSEControlFrame):
+                        LOGGER.debug(
+                            "guardian ignored opaque SSE control frame %s",
+                            item.event,
+                        )
                         continue
 
                     stats.frames += 1
                     latest_cursor = item.cursor
                     event = parse_settlement_revision(item.data)
                     if event is None:
-                        if _declares_settlement_event(item.data):
-                            if self.state.quarantine(item.cursor, item.data):
-                                LOGGER.critical(
-                                    "guardian quarantined invalid settlement frame at "
-                                    "SSE cursor %s",
-                                    item.cursor,
-                                )
-                        elif not self.state.baseline_complete:
-                            self.state.checkpoint(item.cursor)
+                        try:
+                            if _declares_settlement_event(item.data):
+                                if self.state.quarantine(item.cursor, item.data):
+                                    LOGGER.critical(
+                                        "guardian quarantined invalid settlement frame "
+                                        "at SSE cursor %s",
+                                        item.cursor,
+                                    )
+                            elif not self.state.baseline_complete:
+                                self.state.checkpoint(item.cursor)
+                        except (OSError, GuardianStateError):
+                            LOGGER.exception(
+                                "guardian could not persist invalid frame evidence at %s",
+                                item.cursor,
+                            )
                         continue
 
                     baseline_was_complete = self.state.baseline_complete
-                    claimed = (
-                        self.state.claim(item.cursor, event)
-                        if baseline_was_complete
-                        else self.state.suppress(item.cursor, event.key)
-                    )
+                    try:
+                        claimed = (
+                            self.state.claim(item.cursor, event)
+                            if baseline_was_complete
+                            else self.state.suppress(item.cursor, event.key)
+                        )
+                    except (OSError, GuardianStateError):
+                        LOGGER.exception(
+                            "guardian could not persist settlement %s r%s",
+                            event.run_id,
+                            event.revision,
+                        )
+                        stats.action_failures += 1
+                        continue
                     if not claimed:
                         continue
                     stats.claimed += 1
@@ -1021,54 +2302,100 @@ class GuardianWorker:
                             event.revision,
                         )
                         continue
-                    if self._attempt_and_complete(event):
+                    record = self.state.pending.get(event.key)
+                    if record is not None and self._attempt_record_safely(record):
                         stats.completed_actions += 1
                     else:
                         stats.action_failures += 1
-                        return stats
             return stats
         finally:
-            # The armed stream always replays from zero, so per-frame cursor
-            # fsync would turn a large replay into quadratic disk churn. One
-            # transactional checkpoint per connection is enough for evidence.
+            # Settlement claims and controls persist their own cursor. This
+            # final checkpoint covers non-settlement traffic once per socket.
             if self.state.baseline_complete and latest_cursor is not None:
-                self.state.checkpoint(latest_cursor)
+                try:
+                    self.state.checkpoint(latest_cursor)
+                except (OSError, GuardianStateError):
+                    LOGGER.exception(
+                        "guardian could not persist final SSE cursor %s",
+                        latest_cursor,
+                    )
 
-    def _attempt_and_complete(self, event: SettlementRevision) -> bool:
-        """Attempt pending work, then complete it with a transactional receipt."""
+    def _retry_record(self, record: PendingRecord, reason: str) -> bool:
+        """Persist bounded retry state; return true only on terminal exhaustion."""
 
-        if not self._handle_claimed(event):
-            return False
-        self.state.complete(event.key)
-        return True
+        return self.state.retry(
+            record.key,
+            reason=reason,
+            now=self.clock(),
+            bounded=True,
+        )
 
-    def _handle_claimed(self, event: SettlementRevision) -> bool:
-        """Run one idempotent reconcile/resume attempt for a claimed key."""
-
-        notification = notification_for(event)
+    def _attempt_record_safely(self, record: PendingRecord) -> bool:
         try:
-            self.notifier(notification)
-        except Exception:
+            return self._attempt_record(record)
+        except (OSError, GuardianStateError):
             LOGGER.exception(
-                "guardian notifier failed for %s r%s", event.run_id, event.revision
+                "guardian could not persist pending action for %s r%s",
+                record.event.run_id,
+                record.event.revision,
+            )
+            return False
+
+    def _attempt_record(self, record: PendingRecord) -> bool:
+        """Advance one durable outbox record by at most one external attempt."""
+
+        event = record.event
+        if not record.notification_done:
+            try:
+                self.notifier(notification_for(event))
+            except Exception as exc:
+                LOGGER.exception(
+                    "guardian notifier failed for %s r%s",
+                    event.run_id,
+                    event.revision,
+                )
+                return self._retry_record(
+                    record,
+                    f"notifier_exception:{type(exc).__name__}",
+                )
+            self.state.mark_notified(event.key)
+            current = self.state.pending.get(event.key)
+            if current is None:
+                return True
+            record = current
+
+        if not record.resume_authorized:
+            return self.state.complete(
+                event.key,
+                outcome="terminal",
+                reason="legacy_notification_only",
             )
 
         try:
             decision = self.reconciler(event)
-        except Exception:
+        except Exception as exc:
             LOGGER.exception(
-                "guardian reconcile failed for %s r%s", event.run_id, event.revision
+                "guardian reconcile failed for %s r%s",
+                event.run_id,
+                event.revision,
             )
-            return False
+            return self._retry_record(
+                record,
+                f"reconcile_exception:{type(exc).__name__}",
+            )
         if not isinstance(decision, ReconcileDecision):
             LOGGER.error(
                 "guardian reconcile returned invalid decision for %s r%s",
                 event.run_id,
                 event.revision,
             )
-            return False
+            return self._retry_record(record, "invalid_reconcile_decision")
         if not decision.request_resume:
-            return True
+            return self.state.complete(
+                event.key,
+                outcome="terminal",
+                reason=decision.reason,
+            )
 
         # Hard policy boundary: failed/invalid runs never resume. Finalized runs
         # have nothing to resume. Only needs-attention may reach the adapter.
@@ -1078,32 +2405,51 @@ class GuardianWorker:
                 event.tui,
                 event.run_id,
             )
-            return True
+            return self.state.complete(
+                event.key,
+                outcome="terminal",
+                reason=f"resume_denied_for_{event.tui}",
+            )
         if self.resume is None:
             LOGGER.warning(
                 "guardian resume requested for %s but adapter is unavailable",
                 event.run_id,
             )
-            return False
+            return self._retry_record(record, "resume_adapter_unavailable")
         try:
-            result = self.resume(event, event.idempotency_key)
-        except Exception:
+            raw_result = self.resume(event, event.idempotency_key)
+        except Exception as exc:
             LOGGER.exception("guardian resume adapter failed for %s", event.run_id)
-            return False
-        if isinstance(result, bool):
-            accepted = result
-        elif isinstance(result, Mapping):
-            accepted = result.get("accepted") is True
-        else:
-            accepted = False
-        if not accepted:
+            return self._retry_record(
+                record,
+                f"resume_exception:{type(exc).__name__}",
+            )
+        result = _parse_action_result(raw_result)
+        if result is None:
+            LOGGER.error(
+                "guardian resume adapter returned invalid result for %s",
+                event.run_id,
+            )
+            return self._retry_record(record, "invalid_resume_result")
+        if result.accepted:
+            return self.state.complete(
+                event.key,
+                outcome="accepted",
+                reason=result.reason,
+            )
+        if result.retryable:
             LOGGER.warning(
-                "guardian resume adapter did not accept %s (%s)",
+                "guardian resume adapter deferred %s (%s): %s",
                 event.run_id,
                 event.idempotency_key,
+                result.reason,
             )
-            return False
-        return True
+            return self._retry_record(record, result.reason)
+        return self.state.complete(
+            event.key,
+            outcome="terminal",
+            reason=result.reason,
+        )
 
     def run_forever(
         self,
@@ -1138,27 +2484,75 @@ class GuardianWorker:
             sleep(retry.next_delay())
 
 
+def _validate_lock_descriptor(path: Path, descriptor: int) -> None:
+    metadata = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or metadata.st_nlink != 1
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+    ):
+        raise GuardianLockSecurityError(f"unsafe guardian lock descriptor: {path}")
+    try:
+        path_metadata = path.lstat()
+    except OSError as exc:
+        raise GuardianLockSecurityError(
+            f"guardian lock path disappeared after open: {path}"
+        ) from exc
+    if (
+        not stat.S_ISREG(path_metadata.st_mode)
+        or path_metadata.st_uid != os.getuid()
+        or path_metadata.st_nlink != 1
+        or stat.S_IMODE(path_metadata.st_mode) != 0o600
+        or path_metadata.st_dev != metadata.st_dev
+        or path_metadata.st_ino != metadata.st_ino
+    ):
+        raise GuardianLockSecurityError(
+            f"guardian lock path no longer names the opened inode: {path}"
+        )
+    if not fcntl.fcntl(descriptor, fcntl.F_GETFD) & fcntl.FD_CLOEXEC:
+        raise GuardianLockSecurityError(f"guardian lock is not close-on-exec: {path}")
+
+
 @contextlib.contextmanager
 def single_instance_lock(path: Path) -> Iterator[None]:
-    """Own one non-blocking process lock for the guardian lifetime."""
+    """Own one validated, non-following process lock for the guardian lifetime."""
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle = path.open("a+", encoding="utf-8")
+    _ensure_private_directory(path.parent)
+    flags = (
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
     try:
+        descriptor = os.open(path, flags, 0o600)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.EMLINK):
+            raise GuardianLockSecurityError(
+                f"guardian lock target is a symlink: {path}"
+            ) from exc
+        raise
+    locked = False
+    try:
+        descriptor_flags = fcntl.fcntl(descriptor, fcntl.F_GETFD)
+        fcntl.fcntl(descriptor, fcntl.F_SETFD, descriptor_flags | fcntl.FD_CLOEXEC)
+        _validate_lock_descriptor(path, descriptor)
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            locked = True
         except OSError as exc:
             if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK):
                 raise
             raise GuardianAlreadyRunning(
                 f"guardian lock is already held: {path}"
             ) from exc
-        try:
-            yield
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        _validate_lock_descriptor(path, descriptor)
+        yield
     finally:
-        handle.close()
+        if locked:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
 
 
 def default_state_path() -> Path:
@@ -1260,7 +2654,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--replay-heartbeats",
         type=int,
         default=DEFAULT_REPLAY_HEARTBEATS,
-        help="reattach from byte zero after this many SSE heartbeats",
+        help="refresh the SSE attachment after this many idle heartbeats",
     )
     parser.add_argument(
         "--no-desktop",
@@ -1289,6 +2683,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     def notifier(notification: GuardianNotification) -> None:
         notify_operator(notification, desktop=not args.no_desktop)
 
+    ready_callback: ReadyCallback | None = None
+    if args.ready_file is not None and args.ready_nonce is not None:
+
+        def announce_ready() -> None:
+            write_ready_receipt(
+                args.ready_file,
+                nonce=args.ready_nonce,
+                server_url=args.server_url,
+            )
+
+        ready_callback = announce_ready
+
     try:
         recovery = GuardianRecoveryAdapter(
             server_url=args.server_url,
@@ -1302,17 +2708,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             resume=recovery.resume,
             connect_timeout=args.connect_timeout,
             replay_heartbeats=args.replay_heartbeats,
-            ready_callback=(
-                (
-                    lambda: write_ready_receipt(
-                        args.ready_file,
-                        nonce=args.ready_nonce,
-                        server_url=args.server_url,
-                    )
-                )
-                if args.ready_file is not None and args.ready_nonce is not None
-                else None
-            ),
+            ready_callback=ready_callback,
         )
         backoff = BoundedBackoff(args.backoff_initial, args.backoff_max)
     except ValueError as exc:

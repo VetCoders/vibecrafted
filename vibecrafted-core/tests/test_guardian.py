@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import stat
 import subprocess
 import urllib.error
 from collections.abc import Iterable, Iterator, Mapping
@@ -13,14 +15,19 @@ import pytest
 import vibecrafted_core.guardian as guardian_module
 from vibecrafted_core.guardian import (
     BoundedBackoff,
+    CompletionRecord,
     GuardianAlreadyRunning,
+    GuardianLockSecurityError,
     GuardianNotification,
     GuardianProtocolError,
     GuardianRecoveryAdapter,
     GuardianState,
+    GuardianStateLimitError,
     GuardianWorker,
+    PendingRecord,
     ReconcileDecision,
     SettlementRevision,
+    SSEControlFrame,
     SSEFrame,
     SSEHeartbeat,
     iter_sse,
@@ -29,6 +36,7 @@ from vibecrafted_core.guardian import (
     parse_settlement_revision,
     single_instance_lock,
 )
+from vibecrafted_core.settlement import TrustReceiptV1
 
 
 class FakeResponse:
@@ -103,40 +111,136 @@ def settlement_data(
     verdict: str | None = None,
     reason: str = "proof checked",
     source: str = "await",
+    repo_root: str | Path = "/tmp/vibecrafted-guardian-tests",
+    commit_sha: str = "a" * 40,
 ) -> str:
     verdict_by_tui = {
         "f": "finalized",
         "n": "needs_attention",
         "x": "failed",
     }
+    current_verdict = verdict or verdict_by_tui[tui]
+    claim_digest = "c" * 64
+    payload: dict[str, object] = {
+        "schema": "vibecrafted.settlement-event.v1",
+        "run_id": run_id,
+        "previous": None,
+        "current": {
+            "verdict": current_verdict,
+            "tui": tui,
+        },
+        "reason": reason,
+        "source": source,
+        "settled_at": "2026-07-26T06:00:00+00:00",
+        "claim_digest": claim_digest,
+        "waived": False,
+        "revision": revision,
+    }
+    if source == "trust":
+        receipt = TrustReceiptV1.issue(
+            repo_root=str(repo_root),
+            run_id=run_id,
+            commit_sha=commit_sha,
+            trust_verdict="pass-with-gaps",
+            settlement_verdict=current_verdict,
+            settlement_tui=tui,
+            settlement_revision=revision,
+            claim_digest=claim_digest,
+        )
+        payload.update(
+            {
+                "schema": "vibecrafted.settlement-event.v2",
+                "event_key": f"{run_id}:{revision}:{receipt.receipt_id}",
+                "trust_receipt": receipt.to_payload(),
+            }
+        )
     return json.dumps(
         {
             "ts": "2026-07-26T06:00:00+00:00",
             "run_id": run_id,
             "kind": "settlement.changed",
             "message": f"settlement revision {revision}",
-            "payload": {
-                "schema": "vibecrafted.settlement-event.v1",
-                "run_id": run_id,
-                "previous": None,
-                "current": {
-                    "verdict": verdict or verdict_by_tui[tui],
-                    "tui": tui,
-                },
-                "reason": reason,
-                "source": source,
-                "settled_at": "2026-07-26T06:00:00+00:00",
-                "claim_digest": "claim-123",
-                "waived": False,
-                "revision": revision,
-            },
+            "payload": payload,
         },
         separators=(",", ":"),
     )
 
 
-def frame(cursor: int, data: str) -> list[str]:
+TEST_STREAM_EPOCH = "019f-stream-epoch"
+
+
+def v2_cursor(offset: int, *, generation: int = 0) -> str:
+    return f"v2:{TEST_STREAM_EPOCH}:{generation}:{offset}"
+
+
+def frame(cursor: int | str, data: str) -> list[str]:
     return [f"id: {cursor}\n", f"data: {data}\n", "\n"]
+
+
+def control_frame(event: str, cursor: int | str, payload: object) -> list[str]:
+    return [
+        f"event: {event}\n",
+        f"id: {cursor}\n",
+        f"data: {json.dumps(payload, separators=(',', ':'))}\n",
+        "\n",
+    ]
+
+
+def boundary(
+    from_cursor: int | str,
+    to_cursor: int | str | None = None,
+    *,
+    reason: str = "connection_start",
+) -> list[str]:
+    target = from_cursor if to_cursor is None else to_cursor
+    return control_frame(
+        "stream.boundary",
+        target,
+        {
+            "schema": "vibecrafted.stream-boundary.v1",
+            "kind": "stream.boundary",
+            "from": str(from_cursor),
+            "to": str(target),
+            "reason": reason,
+        },
+    )
+
+
+def caught_up(
+    cursor: int | str,
+    high_watermark: int | str | None = None,
+) -> list[str]:
+    target = cursor if high_watermark is None else high_watermark
+    return control_frame(
+        "stream.caught-up",
+        cursor,
+        {
+            "schema": "vibecrafted.stream-caught-up.v1",
+            "kind": "stream.caught-up",
+            "cursor": str(cursor),
+            "high_watermark": str(target),
+        },
+    )
+
+
+def stream_gap(
+    *,
+    requested: str,
+    resumed_at: int | str,
+    reason: str = "generation_expired_or_unknown",
+) -> list[str]:
+    return control_frame(
+        "stream.gap",
+        resumed_at,
+        {
+            "schema": "vibecrafted.stream-gap.v1",
+            "kind": "stream.gap",
+            "requested": requested,
+            "resumed_at": str(resumed_at),
+            "reason": reason,
+            "action": "resnapshot",
+        },
+    )
 
 
 def heartbeat() -> list[str]:
@@ -149,9 +253,16 @@ def settlement_event(
     tui: str,
     *,
     source: str = "await",
+    repo_root: str | Path = "/tmp/vibecrafted-guardian-tests",
 ) -> SettlementRevision:
     event = parse_settlement_revision(
-        settlement_data(run_id, revision, tui, source=source)
+        settlement_data(
+            run_id,
+            revision,
+            tui,
+            source=source,
+            repo_root=repo_root,
+        )
     )
     assert event is not None
     return event
@@ -161,7 +272,7 @@ def resumable_projection(
     event: SettlementRevision,
     root: Path,
 ) -> dict[str, object]:
-    return {
+    projection: dict[str, object] = {
         "run_id": event.run_id,
         "state": "recovery_required",
         "agent": "codex",
@@ -177,7 +288,7 @@ def resumable_projection(
         "settlement_verdict": event.verdict,
         "settlement_source": event.source,
         "settlement_revision": event.revision,
-        "commit_sha": "abc123",
+        "commit_sha": "a" * 40,
         "controls": {
             "native_resume_candidate": {
                 "agent": "codex",
@@ -185,6 +296,45 @@ def resumable_projection(
             }
         },
     }
+    if event.receipt_id:
+        receipt = TrustReceiptV1.issue(
+            repo_root=str(root),
+            run_id=event.run_id,
+            commit_sha="a" * 40,
+            trust_verdict="pass-with-gaps",
+            settlement_verdict=event.verdict,
+            settlement_tui=event.tui,
+            settlement_revision=event.revision,
+            claim_digest="c" * 64,
+        )
+        assert receipt.receipt_id == event.receipt_id
+        projection["trust_receipt"] = receipt.to_payload()
+    return projection
+
+
+def action_result(
+    *,
+    accepted: bool,
+    retryable: bool,
+    terminal: bool,
+    reason: str,
+) -> dict[str, object]:
+    return {
+        "accepted": accepted,
+        "retryable": retryable,
+        "terminal": terminal,
+        "reason": reason,
+    }
+
+
+def write_checked_v2(path: Path, body: dict[str, object]) -> None:
+    checksum = guardian_module.hashlib.sha256(
+        guardian_module._canonical_json(body)
+    ).hexdigest()
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    guardian_module._atomic_private_write(
+        path, guardian_module._canonical_json({**body, "checksum": checksum}) + b"\n"
+    )
 
 
 def test_iter_sse_only_emits_complete_numeric_frames_and_ping() -> None:
@@ -233,23 +383,67 @@ def test_parse_settlement_revision_rejects_schema_or_tui_contradiction() -> None
     assert parse_settlement_revision(json.dumps(wrong_schema)) is None
 
 
-def test_first_heartbeat_opens_gate_then_f_n_x_are_exactly_once(
+def test_parse_trust_settlement_v2_binds_exact_receipt(tmp_path: Path) -> None:
+    encoded = settlement_data(
+        "run-trust-v2",
+        4,
+        "n",
+        source="trust",
+        repo_root=tmp_path,
+    )
+    event = parse_settlement_revision(encoded)
+
+    assert event is not None
+    assert event.source == "trust"
+    assert len(event.receipt_id) == 64
+
+    wrong_key = json.loads(encoded)
+    wrong_key["payload"]["event_key"] = "run-trust-v2:4:wrong"
+    assert parse_settlement_revision(json.dumps(wrong_key)) is None
+
+    mutated_receipt = json.loads(encoded)
+    mutated_receipt["payload"]["trust_receipt"]["receipt_id"] = "f" * 64
+    assert parse_settlement_revision(json.dumps(mutated_receipt)) is None
+
+
+def test_caught_up_opens_gate_then_f_n_x_are_exactly_once(
     tmp_path: Path,
 ) -> None:
+    start = v2_cursor(0)
+    historical = v2_cursor(100)
     opener = QueueOpener(
         FakeResponse(
             [
-                *frame(100, settlement_data("historical", 1, "x")),
-                *heartbeat(),
+                *boundary(start),
+                *frame(historical, settlement_data("historical", 1, "x")),
+                *caught_up(historical),
             ]
         ),
         FakeResponse(
             [
-                *frame(100, settlement_data("historical", 1, "x")),
-                *frame(200, settlement_data("run-f", 1, "f")),
-                *frame(300, settlement_data("run-n", 1, "n")),
-                *frame(301, settlement_data("run-n", 1, "n")),
-                *frame(400, settlement_data("run-x", 1, "x")),
+                *boundary(historical),
+                *frame(v2_cursor(200), settlement_data("run-f", 1, "f")),
+                *frame(
+                    v2_cursor(300),
+                    settlement_data(
+                        "run-n",
+                        1,
+                        "n",
+                        source="trust",
+                        repo_root=tmp_path,
+                    ),
+                ),
+                *frame(
+                    v2_cursor(301),
+                    settlement_data(
+                        "run-n",
+                        1,
+                        "n",
+                        source="trust",
+                        repo_root=tmp_path,
+                    ),
+                ),
+                *frame(v2_cursor(400), settlement_data("run-x", 1, "x")),
             ]
         ),
     )
@@ -262,10 +456,15 @@ def test_first_heartbeat_opens_gate_then_f_n_x_are_exactly_once(
         reconciled.append(event.key)
         return ReconcileDecision(request_resume=True, reason="test request")
 
-    def resume(event: SettlementRevision, key: str) -> bool:
+    def resume(event: SettlementRevision, key: str) -> Mapping[str, object]:
         resumed.append(event.key)
         resume_keys.append(key)
-        return True
+        return {
+            "accepted": True,
+            "retryable": False,
+            "terminal": True,
+            "reason": "accepted",
+        }
 
     state_path = tmp_path / "guardian" / "state.json"
     state = GuardianState.load(state_path)
@@ -282,10 +481,10 @@ def test_first_heartbeat_opens_gate_then_f_n_x_are_exactly_once(
     active = worker.consume_connection()
 
     assert baseline.frames == 1
-    assert baseline.heartbeats == 1
+    assert baseline.heartbeats == 0
     assert baseline.claimed == 1
     assert baseline.completed_baseline is True
-    assert active.frames == 5
+    assert active.frames == 4
     assert active.claimed == 3
     assert active.completed_actions == 3
     assert [(notice.event.run_id, notice.severity) for notice in notifications] == [
@@ -293,14 +492,14 @@ def test_first_heartbeat_opens_gate_then_f_n_x_are_exactly_once(
         ("run-n", "warning"),
         ("run-x", "critical"),
     ]
-    assert reconciled == [("run-f", 1), ("run-n", 1), ("run-x", 1)]
+    assert reconciled == [("run-n", 1)]
     assert resumed == [("run-n", 1)]
     assert resume_keys == ["settlement:run-n:1"]
-    assert state.cursor == 400
+    assert state.cursor == v2_cursor(400)
     assert state.baseline_complete is True
 
     reloaded = GuardianState.load(state_path)
-    assert reloaded.cursor == 400
+    assert reloaded.cursor == v2_cursor(400)
     assert reloaded.baseline_complete is True
     assert set(reloaded.processed) == {
         ("historical", 1),
@@ -309,23 +508,33 @@ def test_first_heartbeat_opens_gate_then_f_n_x_are_exactly_once(
         ("run-x", 1),
     }
     url, headers, timeout = opener.calls[0]
-    assert url == "http://127.0.0.1:3024/api/control/events?since=0"
-    assert headers["last-event-id"] == "0"
+    assert url == "http://127.0.0.1:3024/api/control/events"
+    assert "last-event-id" not in headers
     assert headers["accept"] == "text/event-stream"
     assert timeout == 30.0
-    assert opener.calls[1][0].endswith("/api/control/events?since=0")
+    assert opener.calls[1][0].endswith(
+        "/api/control/events?since=v2%3A019f-stream-epoch%3A0%3A100"
+    )
+    assert opener.calls[1][1]["last-event-id"] == historical
 
 
-def test_disconnect_before_first_ping_keeps_suppressing_after_reconnect(
+def test_disconnect_before_caught_up_keeps_suppressing_after_reconnect(
     tmp_path: Path,
 ) -> None:
+    start = v2_cursor(0)
+    old_cursor = v2_cursor(90)
     opener = QueueOpener(
-        FakeResponse(frame(90, settlement_data("old", 1, "n"))),
-        FakeResponse(heartbeat()),
         FakeResponse(
             [
-                *frame(90, settlement_data("old", 1, "n")),
-                *frame(180, settlement_data("new", 1, "n")),
+                *boundary(start),
+                *frame(old_cursor, settlement_data("old", 1, "n")),
+            ]
+        ),
+        FakeResponse([*boundary(old_cursor), *caught_up(old_cursor)]),
+        FakeResponse(
+            [
+                *boundary(old_cursor),
+                *frame(v2_cursor(180), settlement_data("new", 1, "n")),
             ]
         ),
     )
@@ -348,29 +557,59 @@ def test_disconnect_before_first_ping_keeps_suppressing_after_reconnect(
 
     worker.consume_connection()
     assert [notice.event.run_id for notice in notifications] == ["new"]
-    assert opener.calls[1][0].endswith("/api/control/events?since=90")
-    assert opener.calls[1][1]["last-event-id"] == "90"
-    assert opener.calls[2][0].endswith("/api/control/events?since=0")
+    assert opener.calls[1][0].endswith(
+        "/api/control/events?since=v2%3A019f-stream-epoch%3A0%3A90"
+    )
+    assert opener.calls[1][1]["last-event-id"] == old_cursor
+    assert opener.calls[2][0].endswith(
+        "/api/control/events?since=v2%3A019f-stream-epoch%3A0%3A90"
+    )
 
 
-def test_rotation_accepts_lower_cursor_but_keeps_revision_dedupe(
+def test_generation_boundary_keeps_revision_dedupe(
     tmp_path: Path,
 ) -> None:
     state_path = tmp_path / "state.json"
     state = GuardianState(
         path=state_path,
-        cursor=999,
+        cursor=v2_cursor(999),
         baseline_complete=True,
-        processed=[("run-a", 1)],
+        highwater={
+            "run-a": CompletionRecord(
+                revision=1,
+                outcome="terminal",
+                reason="already handled",
+            )
+        },
     )
     state.persist()
     state = GuardianState.load(state_path)
     opener = QueueOpener(
         FakeResponse(
             [
-                *frame(120, settlement_data("new-prefix", 1, "n")),
-                *frame(240, settlement_data("run-a", 1, "n")),
-                *frame(1_200, settlement_data("run-a", 2, "f")),
+                *boundary(
+                    v2_cursor(999),
+                    v2_cursor(0, generation=1),
+                    reason="generation_change",
+                ),
+                *frame(
+                    v2_cursor(120, generation=1),
+                    settlement_data(
+                        "new-prefix",
+                        1,
+                        "n",
+                        source="trust",
+                        repo_root=tmp_path,
+                    ),
+                ),
+                *frame(
+                    v2_cursor(240, generation=1),
+                    settlement_data("run-a", 1, "n"),
+                ),
+                *frame(
+                    v2_cursor(1_200, generation=1),
+                    settlement_data("run-a", 2, "f"),
+                ),
             ]
         )
     )
@@ -391,14 +630,19 @@ def test_rotation_accepts_lower_cursor_but_keeps_revision_dedupe(
 
     worker.consume_connection()
 
-    assert state.cursor == 1_200
+    assert state.cursor == v2_cursor(1_200, generation=1)
     assert [notice.event.key for notice in notifications] == [
         ("new-prefix", 1),
         ("run-a", 2),
     ]
-    assert reconciled == [("new-prefix", 1), ("run-a", 2)]
-    assert opener.calls[0][0].endswith("/api/control/events?since=0")
-    assert GuardianState.load(state_path).cursor == 1_200
+    assert reconciled == [("new-prefix", 1)]
+    assert opener.calls[0][0].endswith(
+        "/api/control/events?since=v2%3A019f-stream-epoch%3A0%3A999"
+    )
+    assert GuardianState.load(state_path).cursor == v2_cursor(
+        1_200,
+        generation=1,
+    )
 
 
 def test_non_settlement_and_malformed_frames_only_advance_cursor(
@@ -435,26 +679,26 @@ def test_non_settlement_and_malformed_frames_only_advance_cursor(
     assert state.cursor == 30
     assert notifications == []
     assert "quarantined invalid settlement frame" in caplog.text
-    dead_letters = list((state.path.parent / "dead_letters").glob("*.json"))
-    assert len(dead_letters) == 1
-    dead_letter = json.loads(dead_letters[0].read_text(encoding="utf-8"))
-    assert dead_letter["schema"] == "vibecrafted.guardian-dead-letter.v1"
-    assert dead_letter["sse_cursor"] == 30
-    assert dead_letter["reason"] == "invalid settlement.changed contract"
+    dead_letter = json.loads(
+        (state.path.parent / "dead_letters.json").read_text(encoding="utf-8")
+    )
+    assert dead_letter["schema"] == guardian_module.GUARDIAN_DEAD_LETTER_SCHEMA
+    assert dead_letter["entries"][0]["sse_cursor"] == 30
+    assert dead_letter["entries"][0]["reason"] == "invalid settlement.changed contract"
 
 
-def test_processed_history_is_unbounded_and_round_trips(tmp_path: Path) -> None:
+def test_processed_history_compacts_to_max_revision_per_run(tmp_path: Path) -> None:
     path = tmp_path / "state.json"
     state = GuardianState(path=path)
 
     assert state.suppress(10, ("a", 1)) is True
-    assert state.suppress(20, ("b", 1)) is True
-    assert state.suppress(30, ("c", 1)) is True
-    assert state.processed == [("a", 1), ("b", 1), ("c", 1)]
+    assert state.suppress(20, ("a", 2)) is True
+    assert state.suppress(30, ("b", 1)) is True
+    assert state.processed == [("a", 2), ("b", 1)]
 
     loaded = GuardianState.load(path)
     assert loaded.cursor == 30
-    assert loaded.processed == [("a", 1), ("b", 1), ("c", 1)]
+    assert loaded.processed == [("a", 2), ("b", 1)]
 
 
 def test_failed_claim_persist_does_not_poison_in_memory_dedupe(
@@ -468,11 +712,11 @@ def test_failed_claim_persist_does_not_poison_in_memory_dedupe(
     event = parse_settlement_revision(settlement_data("run-loss", 1, "n"))
     assert event is not None
 
-    def fail_write(_path: Path, _payload: Mapping[str, object]) -> Path:
+    def fail_write(_path: Path, _payload: bytes) -> None:
         raise OSError("disk unavailable")
 
     with monkeypatch.context() as scoped:
-        scoped.setattr(guardian_module, "atomic_write_json", fail_write)
+        scoped.setattr(guardian_module, "_atomic_private_write", fail_write)
         with pytest.raises(OSError, match="disk unavailable"):
             state.claim(10, event)
 
@@ -480,17 +724,31 @@ def test_failed_claim_persist_does_not_poison_in_memory_dedupe(
     assert state.processed == []
     assert state.pending == {}
     assert state.claim(10, event) is True
-    assert state.pending == {("run-loss", 1): event}
+    assert state.pending == {
+        ("run-loss", 1): PendingRecord(event=event, stream_cursor=10)
+    }
 
 
 def test_pending_action_survives_kill_window_and_is_recovered_once(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "state.json"
-    event = parse_settlement_revision(settlement_data("run-pending", 2, "n"))
+    event = parse_settlement_revision(
+        settlement_data(
+            "run-pending",
+            2,
+            "n",
+            source="trust",
+            repo_root=tmp_path,
+        )
+    )
     assert event is not None
-    before_crash = GuardianState(path=path, baseline_complete=True)
-    assert before_crash.claim(44, event) is True
+    before_crash = GuardianState(
+        path=path,
+        cursor=v2_cursor(40),
+        baseline_complete=True,
+    )
+    assert before_crash.claim(v2_cursor(44), event) is True
 
     recovered = GuardianState.load(path)
     notifications: list[GuardianNotification] = []
@@ -522,7 +780,18 @@ def test_pending_action_survives_kill_window_and_is_recovered_once(
         state=completed,
         notifier=duplicate_notifications.append,
         opener=QueueOpener(
-            FakeResponse(frame(88, settlement_data("run-pending", 2, "n")))
+            FakeResponse(
+                frame(
+                    v2_cursor(88),
+                    settlement_data(
+                        "run-pending",
+                        2,
+                        "n",
+                        source="trust",
+                        repo_root=tmp_path,
+                    ),
+                )
+            )
         ),
     )
     duplicate_worker.consume_connection()
@@ -533,18 +802,40 @@ def test_resume_failure_stays_pending_and_retries_with_same_key(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "state.json"
-    state = GuardianState(path=path, baseline_complete=True)
+    state = GuardianState(
+        path=path,
+        cursor=v2_cursor(0),
+        baseline_complete=True,
+    )
     opener = QueueOpener(
-        FakeResponse(frame(50, settlement_data("run-retry", 1, "n"))),
+        FakeResponse(
+            frame(
+                v2_cursor(50),
+                settlement_data(
+                    "run-retry",
+                    1,
+                    "n",
+                    source="trust",
+                    repo_root=tmp_path,
+                ),
+            )
+        ),
         FakeResponse([]),
     )
     resume_keys: list[str] = []
+    now = [0.0]
 
     def resume(_event: SettlementRevision, key: str) -> object:
         resume_keys.append(key)
         if len(resume_keys) == 1:
             raise OSError("transient resume failure")
-        return {"accepted": True, "idempotency_key": key}
+        return {
+            "accepted": True,
+            "retryable": False,
+            "terminal": True,
+            "reason": "accepted",
+            "idempotency_key": key,
+        }
 
     worker = GuardianWorker(
         server_url="http://127.0.0.1:3024",
@@ -553,6 +844,7 @@ def test_resume_failure_stays_pending_and_retries_with_same_key(
         reconciler=lambda _event: ReconcileDecision(request_resume=True),
         resume=resume,
         opener=opener,
+        clock=lambda: now[0],
     )
 
     failed = worker.consume_connection()
@@ -560,6 +852,7 @@ def test_resume_failure_stays_pending_and_retries_with_same_key(
     assert state.pending.keys() == {("run-retry", 1)}
     assert state.processed == []
 
+    now[0] = 2.0
     recovered = worker.consume_connection()
     assert recovered.completed_actions == 1
     assert recovered.action_failures == 0
@@ -574,7 +867,13 @@ def test_resume_failure_stays_pending_and_retries_with_same_key(
 def test_recovery_adapter_accepts_once_and_deduplicates_replayed_revision(
     tmp_path: Path,
 ) -> None:
-    event = settlement_event("run-native", 7, "n", source="trust")
+    event = settlement_event(
+        "run-native",
+        7,
+        "n",
+        source="trust",
+        repo_root=tmp_path,
+    )
     projection_opener = QueueOpener(
         FakeJSONResponse(resumable_projection(event, tmp_path))
     )
@@ -590,6 +889,9 @@ def test_recovery_adapter_accepts_once_and_deduplicates_replayed_revision(
         source_dir: str | Path,
         *,
         expected_agent: str,
+        expected_agent_session_id: str,
+        expected_settlement_revision: int,
+        expected_receipt_id: str,
         idempotency_key: str,
     ) -> Mapping[str, object]:
         resume_calls.append(
@@ -597,11 +899,17 @@ def test_recovery_adapter_accepts_once_and_deduplicates_replayed_revision(
                 "run_id": run_id,
                 "source_dir": source_dir,
                 "expected_agent": expected_agent,
+                "expected_agent_session_id": expected_agent_session_id,
+                "expected_settlement_revision": expected_settlement_revision,
+                "expected_receipt_id": expected_receipt_id,
                 "idempotency_key": idempotency_key,
             }
         )
         return {
             "accepted": True,
+            "retryable": False,
+            "terminal": True,
+            "reason": "accepted",
             "deduplicated": True,
             "idempotency_key": idempotency_key,
         }
@@ -614,6 +922,7 @@ def test_recovery_adapter_accepts_once_and_deduplicates_replayed_revision(
     )
     state = GuardianState(
         path=tmp_path / "guardian-state.json",
+        cursor=v2_cursor(0),
         baseline_complete=True,
     )
     worker = GuardianWorker(
@@ -626,21 +935,23 @@ def test_recovery_adapter_accepts_once_and_deduplicates_replayed_revision(
             FakeResponse(
                 [
                     *frame(
-                        70,
+                        v2_cursor(70),
                         settlement_data(
                             event.run_id,
                             event.revision,
                             event.tui,
                             source=event.source,
+                            repo_root=tmp_path,
                         ),
                     ),
                     *frame(
-                        71,
+                        v2_cursor(71),
                         settlement_data(
                             event.run_id,
                             event.revision,
                             event.tui,
                             source=event.source,
+                            repo_root=tmp_path,
                         ),
                     ),
                 ]
@@ -663,7 +974,7 @@ def test_recovery_adapter_accepts_once_and_deduplicates_replayed_revision(
     assert guard_calls == [
         {
             "repo": tmp_path,
-            "sha": "abc123",
+            "sha": "a" * 40,
             "skill": "implement",
         }
     ]
@@ -672,6 +983,9 @@ def test_recovery_adapter_accepts_once_and_deduplicates_replayed_revision(
             "run_id": "run-native",
             "source_dir": tmp_path,
             "expected_agent": "codex",
+            "expected_agent_session_id": "019-native-session",
+            "expected_settlement_revision": 7,
+            "expected_receipt_id": event.receipt_id,
             "idempotency_key": "settlement:run-native:7",
         }
     ]
@@ -739,7 +1053,13 @@ def test_recovery_adapter_blocks_unsafe_projection(
     overrides: dict[str, object],
     reason: str,
 ) -> None:
-    event = settlement_event(f"run-{tui}", 7, tui, source="trust")
+    event = settlement_event(
+        f"run-{tui}",
+        7,
+        tui,
+        source="trust",
+        repo_root=tmp_path,
+    )
     projection = resumable_projection(event, tmp_path)
     projection.update(overrides)
     opener = QueueOpener(FakeJSONResponse(projection))
@@ -784,7 +1104,13 @@ def test_recovery_adapter_never_resumes_auto_needs_attention(
 
 
 def test_recovery_adapter_obeys_vc_guard_block(tmp_path: Path) -> None:
-    event = settlement_event("run-guarded", 2, "n", source="trust")
+    event = settlement_event(
+        "run-guarded",
+        2,
+        "n",
+        source="trust",
+        repo_root=tmp_path,
+    )
     recovery = GuardianRecoveryAdapter(
         server_url="http://127.0.0.1:3024",
         opener=QueueOpener(FakeJSONResponse(resumable_projection(event, tmp_path))),
@@ -800,6 +1126,45 @@ def test_recovery_adapter_obeys_vc_guard_block(tmp_path: Path) -> None:
     )
 
 
+def test_recovery_adapter_rejects_projection_receipt_mismatch(
+    tmp_path: Path,
+) -> None:
+    event = settlement_event(
+        "run-receipt-mismatch",
+        2,
+        "n",
+        source="trust",
+        repo_root=tmp_path,
+    )
+    projection = resumable_projection(event, tmp_path)
+    other_receipt = TrustReceiptV1.issue(
+        repo_root=str(tmp_path),
+        run_id=event.run_id,
+        commit_sha="b" * 40,
+        trust_verdict="pass-with-gaps",
+        settlement_verdict=event.verdict,
+        settlement_tui=event.tui,
+        settlement_revision=event.revision,
+        claim_digest="c" * 64,
+    )
+    projection["trust_receipt"] = other_receipt.to_payload()
+    recovery = GuardianRecoveryAdapter(
+        server_url="http://127.0.0.1:3024",
+        opener=QueueOpener(FakeJSONResponse(projection)),
+        guard_enforcer=lambda **_kwargs: pytest.fail(
+            "vc-guard must not run after receipt mismatch"
+        ),
+        native_resumer=lambda *_args, **_kwargs: pytest.fail(
+            "native resume must not run after receipt mismatch"
+        ),
+    )
+
+    assert recovery.reconcile(event) == ReconcileDecision(
+        request_resume=False,
+        reason="trust_receipt_mismatch",
+    )
+
+
 @pytest.mark.parametrize("failure_stage", ["http", "guard"])
 def test_recovery_truth_or_guard_error_keeps_event_pending(
     tmp_path: Path,
@@ -810,6 +1175,7 @@ def test_recovery_truth_or_guard_error_keeps_event_pending(
         1,
         "n",
         source="trust",
+        repo_root=tmp_path,
     )
 
     def guard_enforcer(**_kwargs: object) -> object:
@@ -832,6 +1198,7 @@ def test_recovery_truth_or_guard_error_keeps_event_pending(
     )
     state = GuardianState(
         path=tmp_path / "guardian-state.json",
+        cursor=v2_cursor(0),
         baseline_complete=True,
     )
     worker = GuardianWorker(
@@ -843,8 +1210,14 @@ def test_recovery_truth_or_guard_error_keeps_event_pending(
         opener=QueueOpener(
             FakeResponse(
                 frame(
-                    50,
-                    settlement_data(event.run_id, 1, "n", source=event.source),
+                    v2_cursor(50),
+                    settlement_data(
+                        event.run_id,
+                        1,
+                        "n",
+                        source=event.source,
+                        repo_root=tmp_path,
+                    ),
                 )
             )
         ),
@@ -853,7 +1226,9 @@ def test_recovery_truth_or_guard_error_keeps_event_pending(
     stats = worker.consume_connection()
 
     assert stats.action_failures == 1
-    assert state.pending == {event.key: event}
+    assert state.pending[event.key].event == event
+    assert state.pending[event.key].notification_done is True
+    assert state.pending[event.key].attempts == 1
     assert state.processed == []
 
 
@@ -1070,3 +1445,853 @@ def test_invalid_server_origin_is_rejected(tmp_path: Path) -> None:
             server_url="http://127.0.0.1:3024/api/control/events",
             state=GuardianState(path=tmp_path / "state.json"),
         )
+
+
+def test_iter_sse_keeps_opaque_wire_data_behind_explicit_parsers() -> None:
+    named = list(
+        iter_sse(
+            [
+                "event: control.v2\n",
+                "id: opaque-7\n",
+                "data: payload\n",
+                "\n",
+            ]
+        )
+    )
+    assert named == [
+        SSEControlFrame(
+            event="control.v2",
+            raw_cursor="opaque-7",
+            data="payload",
+        )
+    ]
+
+    assert list(iter_sse(["id: opaque-8\n", "data: payload\n", "\n"])) == []
+    assert list(
+        iter_sse(
+            ["id: opaque-8\n", "data: payload\n", "\n"],
+            cursor_parser=lambda raw: f"v2:{raw}",
+        )
+    ) == [SSEFrame(cursor="v2:opaque-8", data="payload")]
+
+    parsed_control = list(
+        iter_sse(
+            [
+                "event: control.v2\n",
+                "id: opaque-9\n",
+                "data: payload\n",
+                "\n",
+            ],
+            control_parser=lambda control: SSEFrame(
+                cursor=f"control:{control.raw_cursor}",
+                data=control.data,
+            ),
+        )
+    )
+    assert parsed_control == [SSEFrame(cursor="control:opaque-9", data="payload")]
+
+
+def test_iter_sse_rejects_oversized_lines_and_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as scoped:
+        scoped.setattr(guardian_module, "MAX_SSE_LINE_BYTES", 8)
+        with pytest.raises(GuardianProtocolError, match="line exceeds"):
+            list(iter_sse(["data: payload\n"]))
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(guardian_module, "MAX_SSE_LINE_BYTES", 32)
+        scoped.setattr(guardian_module, "MAX_SSE_FRAME_BYTES", 12)
+        with pytest.raises(GuardianProtocolError, match="frame exceeds"):
+            list(iter_sse(["id: 1\n", "data: x\n", "\n"]))
+
+
+def test_protocol_requires_exact_base_media_types(tmp_path: Path) -> None:
+    bad_sse = FakeResponse([], content_type="text/event-streaming")
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=GuardianState(path=tmp_path / "sse-state.json"),
+        opener=QueueOpener(bad_sse),
+    )
+    with pytest.raises(GuardianProtocolError, match="content type"):
+        worker.consume_connection()
+
+    event = settlement_event(
+        "run-json-media",
+        1,
+        "n",
+        source="trust",
+        repo_root=tmp_path,
+    )
+    adapter = GuardianRecoveryAdapter(
+        server_url="http://127.0.0.1:3024",
+        opener=QueueOpener(
+            FakeJSONResponse(
+                resumable_projection(event, tmp_path),
+                content_type="application/jsonp",
+            )
+        ),
+    )
+    with pytest.raises(GuardianProtocolError, match="content type"):
+        adapter.reconcile(event)
+
+
+def test_retryable_pending_does_not_starve_f_x_and_notifies_once(
+    tmp_path: Path,
+) -> None:
+    state = GuardianState(
+        path=tmp_path / "state.json",
+        cursor=v2_cursor(0),
+        baseline_complete=True,
+    )
+    pending_event = settlement_event(
+        "run-n",
+        1,
+        "n",
+        source="trust",
+        repo_root=tmp_path,
+    )
+    assert state.claim(v2_cursor(10), pending_event)
+    notifications: list[tuple[str, int]] = []
+    resume_keys: list[str] = []
+    resume_results = [
+        action_result(
+            accepted=False,
+            retryable=True,
+            terminal=False,
+            reason="provider_temporarily_unavailable",
+        ),
+        action_result(
+            accepted=True,
+            retryable=False,
+            terminal=True,
+            reason="accepted",
+        ),
+    ]
+    now = [0.0]
+
+    def reconcile(event: SettlementRevision) -> ReconcileDecision:
+        return ReconcileDecision(
+            request_resume=event.tui == "n",
+            reason=f"{event.tui}_observed",
+        )
+
+    def resume(_event: SettlementRevision, key: str) -> Mapping[str, object]:
+        resume_keys.append(key)
+        return resume_results.pop(0)
+
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=state,
+        notifier=lambda notice: notifications.append(notice.event.key),
+        reconciler=reconcile,
+        resume=resume,
+        opener=QueueOpener(
+            FakeResponse(
+                [
+                    *frame(v2_cursor(20), settlement_data("run-f", 1, "f")),
+                    *frame(v2_cursor(30), settlement_data("run-x", 1, "x")),
+                ]
+            ),
+            FakeResponse([]),
+        ),
+        clock=lambda: now[0],
+        pending_pass_limit=1,
+    )
+
+    first = worker.consume_connection()
+
+    assert first.frames == 2
+    assert first.completed_actions == 2
+    assert first.action_failures == 1
+    assert notifications == [("run-n", 1), ("run-f", 1), ("run-x", 1)]
+    assert set(state.pending) == {("run-n", 1)}
+    assert state.pending[("run-n", 1)].notification_done is True
+    assert state.processed == [("run-f", 1), ("run-x", 1)]
+
+    now[0] = 2.0
+    second = worker.consume_connection()
+
+    assert second.completed_actions == 1
+    assert state.pending == {}
+    assert notifications == [("run-n", 1), ("run-f", 1), ("run-x", 1)]
+    assert resume_keys == [
+        "settlement:run-n:1",
+        "settlement:run-n:1",
+    ]
+
+
+def test_terminal_resume_rejection_completes_without_retry(tmp_path: Path) -> None:
+    resume_calls: list[str] = []
+    state = GuardianState(
+        path=tmp_path / "state.json",
+        cursor=v2_cursor(0),
+        baseline_complete=True,
+    )
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=state,
+        notifier=lambda _notice: None,
+        reconciler=lambda _event: ReconcileDecision(request_resume=True),
+        resume=lambda _event, key: (
+            resume_calls.append(key)
+            or action_result(
+                accepted=False,
+                retryable=False,
+                terminal=True,
+                reason="expected_agent_session_mismatch",
+            )
+        ),
+        opener=QueueOpener(
+            FakeResponse(
+                frame(
+                    v2_cursor(10),
+                    settlement_data(
+                        "run-terminal",
+                        1,
+                        "n",
+                        source="trust",
+                        repo_root=tmp_path,
+                    ),
+                )
+            )
+        ),
+    )
+
+    stats = worker.consume_connection()
+
+    assert stats.completed_actions == 1
+    assert stats.action_failures == 0
+    assert state.pending == {}
+    assert state.highwater["run-terminal"] == CompletionRecord(
+        revision=1,
+        outcome="terminal",
+        reason="expected_agent_session_mismatch",
+    )
+    assert resume_calls == ["settlement:run-terminal:1"]
+
+
+def test_invalid_action_result_exhausts_bounded_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = [0.0]
+    notifications: list[tuple[str, int]] = []
+    state = GuardianState(
+        path=tmp_path / "state.json",
+        cursor=v2_cursor(0),
+        baseline_complete=True,
+    )
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=state,
+        notifier=lambda notice: notifications.append(notice.event.key),
+        reconciler=lambda _event: ReconcileDecision(request_resume=True),
+        resume=lambda _event, _key: {"accepted": False},
+        opener=QueueOpener(
+            FakeResponse(
+                frame(
+                    v2_cursor(10),
+                    settlement_data(
+                        "run-invalid",
+                        1,
+                        "n",
+                        source="trust",
+                        repo_root=tmp_path,
+                    ),
+                )
+            ),
+            FakeResponse([]),
+        ),
+        clock=lambda: now[0],
+    )
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(guardian_module, "MAX_PENDING_ATTEMPTS", 2)
+        first = worker.consume_connection()
+        now[0] = 2.0
+        second = worker.consume_connection()
+
+    assert first.action_failures == 1
+    assert second.completed_actions == 1
+    assert state.pending == {}
+    assert state.highwater["run-invalid"].outcome == "retry_exhausted"
+    assert state.highwater["run-invalid"].reason.endswith("invalid_resume_result")
+    assert notifications == [("run-invalid", 1)]
+
+
+def test_notifier_failure_is_durable_and_not_silently_completed(
+    tmp_path: Path,
+) -> None:
+    now = [0.0]
+    calls = [0]
+    state = GuardianState(
+        path=tmp_path / "state.json",
+        cursor=v2_cursor(0),
+        baseline_complete=True,
+    )
+
+    def notifier(_notice: GuardianNotification) -> None:
+        calls[0] += 1
+        if calls[0] == 1:
+            raise OSError("notification bus down")
+
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=state,
+        notifier=notifier,
+        opener=QueueOpener(
+            FakeResponse(frame(10, settlement_data("run-notify", 1, "f"))),
+            FakeResponse([]),
+        ),
+        clock=lambda: now[0],
+    )
+
+    first = worker.consume_connection()
+    assert first.action_failures == 1
+    assert state.pending[("run-notify", 1)].notification_done is False
+    assert state.processed == []
+
+    now[0] = 2.0
+    second = worker.consume_connection()
+    assert second.completed_actions == 1
+    assert calls == [2]
+    assert state.pending == {}
+    assert state.processed == [("run-notify", 1)]
+
+
+def test_v2_checksum_backup_and_private_modes(tmp_path: Path) -> None:
+    path = tmp_path / "guardian" / "state.json"
+    state = GuardianState(
+        path=path,
+        cursor=17,
+        baseline_complete=True,
+        highwater={
+            "run-a": CompletionRecord(
+                revision=3,
+                outcome="terminal",
+                reason="done",
+            )
+        },
+    )
+    state.persist()
+
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(state.backup_path.stat().st_mode) == 0o600
+    document = json.loads(path.read_text(encoding="utf-8"))
+    checksum = document.pop("checksum")
+    assert (
+        checksum
+        == guardian_module.hashlib.sha256(
+            guardian_module._canonical_json(document)
+        ).hexdigest()
+    )
+
+    path.write_bytes(path.read_bytes().replace(b'"cursor":17', b'"cursor":18'))
+    recovered = GuardianState.load(path)
+    assert recovered.recovered_from_backup is True
+    assert recovered.cursor == 17
+    assert recovered.processed == [("run-a", 3)]
+
+
+def test_semantically_invalid_checked_state_enters_fresh_safe_baseline(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "guardian" / "state.json"
+    write_checked_v2(
+        path,
+        {
+            "schema": guardian_module.GUARDIAN_STATE_SCHEMA,
+            "cursor": 99,
+            "baseline_complete": True,
+            "highwater": [
+                {
+                    "run_id": "must-not-survive",
+                    "settlement_revision": 4,
+                    "outcome": "terminal",
+                    "reason": "old",
+                }
+            ],
+            "pending": [{"malformed": True}],
+        },
+    )
+
+    state = GuardianState.load(path)
+    assert state.degraded is True
+    notifications: list[GuardianNotification] = []
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=state,
+        notifier=notifications.append,
+        opener=QueueOpener(
+            FakeResponse(
+                [
+                    *boundary(v2_cursor(0)),
+                    *frame(
+                        v2_cursor(10),
+                        settlement_data("historical", 1, "x"),
+                    ),
+                    *caught_up(v2_cursor(10)),
+                ]
+            )
+        ),
+    )
+
+    stats = worker.consume_connection()
+
+    assert state.degraded is False
+    assert stats.completed_baseline is True
+    assert notifications == []
+    assert "must-not-survive" not in state.highwater
+    assert state.processed == [("historical", 1)]
+
+
+def test_v1_migration_suppresses_unbound_pending_and_rebaselines(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "guardian" / "state.json"
+    legacy_pending = settlement_event("legacy-run", 2, "n")
+    legacy_pending_payload = legacy_pending.to_state_payload()
+    legacy_pending_payload.pop("receipt_id")
+    path.parent.mkdir(mode=0o700, parents=True)
+    guardian_module._atomic_private_write(
+        path,
+        json.dumps(
+            {
+                "schema": guardian_module.GUARDIAN_STATE_SCHEMA_V1,
+                "cursor": 800,
+                "baseline_complete": True,
+                "processed": [
+                    {
+                        "run_id": "legacy-run",
+                        "settlement_revision": 1,
+                    }
+                ],
+                "pending": [legacy_pending_payload],
+            }
+        ).encode("utf-8"),
+    )
+
+    migrated = GuardianState.load(path)
+
+    assert migrated.cursor == 0
+    assert migrated.baseline_complete is False
+    assert migrated.pending == {}
+    assert migrated.highwater["legacy-run"] == CompletionRecord(
+        revision=2,
+        outcome="legacy_authority_unbound",
+        reason="legacy_authority_unbound",
+    )
+    assert json.loads(path.read_text(encoding="utf-8"))["schema"] == (
+        guardian_module.GUARDIAN_STATE_SCHEMA
+    )
+
+
+def test_pending_and_state_size_caps_fail_without_partial_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GuardianState(
+        path=tmp_path / "state.json",
+        cursor=v2_cursor(0),
+        baseline_complete=True,
+    )
+    first = settlement_event("run-one", 1, "n")
+    second = settlement_event("run-two", 1, "n")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(guardian_module, "MAX_PENDING_RECORDS", 1)
+        assert state.claim(10, first)
+        with pytest.raises(GuardianStateLimitError, match="outbox is full"):
+            state.claim(20, second)
+    assert set(state.pending) == {first.key}
+    assert state.cursor == 10
+
+    oversized = GuardianState(path=tmp_path / "small-state.json")
+    with monkeypatch.context() as scoped:
+        scoped.setattr(guardian_module, "MAX_STATE_BYTES", 100)
+        with pytest.raises(GuardianStateLimitError, match="state exceeds"):
+            oversized.persist()
+    assert not oversized.path.exists()
+
+
+def test_dead_letters_are_one_bounded_aggregate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = GuardianState(
+        path=tmp_path / "guardian" / "state.json",
+        baseline_complete=True,
+    )
+    with monkeypatch.context() as scoped:
+        scoped.setattr(guardian_module, "MAX_DEAD_LETTER_ENTRIES", 2)
+        scoped.setattr(guardian_module, "MAX_DEAD_LETTER_DATA_BYTES", 8)
+        for cursor in range(3):
+            assert state.quarantine(cursor, f"invalid-{cursor}-payload")
+
+    target = state.path.parent / "dead_letters.json"
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert len(payload["entries"]) == 2
+    assert all(entry["truncated"] is True for entry in payload["entries"])
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+def test_single_instance_lock_rejects_symlink_without_touching_target(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "guardian"
+    directory.mkdir(mode=0o700)
+    target = tmp_path / "operator-owned"
+    target.write_text("unchanged", encoding="utf-8")
+    lock = directory / "guardian.lock"
+    lock.symlink_to(target)
+
+    with (
+        pytest.raises(GuardianLockSecurityError, match="symlink"),
+        single_instance_lock(lock),
+    ):
+        pytest.fail("symlink lock must never be acquired")
+
+    assert target.read_text(encoding="utf-8") == "unchanged"
+
+
+def test_single_instance_lock_rejects_inode_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock = tmp_path / "guardian" / "guardian.lock"
+    displaced = lock.with_suffix(".displaced")
+    original_flock = guardian_module.fcntl.flock
+    swapped = [False]
+
+    def swapping_flock(descriptor: int, operation: int) -> object:
+        if operation & guardian_module.fcntl.LOCK_EX and not swapped[0]:
+            swapped[0] = True
+            os.replace(lock, displaced)
+            replacement = os.open(
+                lock,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            os.close(replacement)
+        return original_flock(descriptor, operation)
+
+    monkeypatch.setattr(guardian_module.fcntl, "flock", swapping_flock)
+
+    with (
+        pytest.raises(GuardianLockSecurityError, match="opened inode"),
+        single_instance_lock(lock),
+    ):
+        pytest.fail("swapped lock must never be yielded")
+
+
+def test_same_agent_wrong_session_is_terminal_and_never_launches(
+    tmp_path: Path,
+) -> None:
+    event = settlement_event(
+        "run-session-swap",
+        5,
+        "n",
+        source="trust",
+        repo_root=tmp_path,
+    )
+    projection = resumable_projection(event, tmp_path)
+    launched: list[str] = []
+
+    def native_resume(
+        run_id: str,
+        source_dir: str | Path,
+        *,
+        expected_agent: str,
+        expected_agent_session_id: str,
+        expected_settlement_revision: int,
+        expected_receipt_id: str,
+        idempotency_key: str,
+    ) -> Mapping[str, object]:
+        assert run_id == event.run_id
+        assert source_dir == tmp_path
+        assert expected_agent == "codex"
+        assert expected_agent_session_id == "019-native-session"
+        assert expected_settlement_revision == 5
+        assert expected_receipt_id == event.receipt_id
+        assert idempotency_key == event.idempotency_key
+        current_same_agent_session = "019-different-session"
+        if expected_agent_session_id != current_same_agent_session:
+            return action_result(
+                accepted=False,
+                retryable=False,
+                terminal=True,
+                reason="expected_agent_session_mismatch",
+            )
+        launched.append(run_id)
+        return action_result(
+            accepted=True,
+            retryable=False,
+            terminal=True,
+            reason="accepted",
+        )
+
+    recovery = GuardianRecoveryAdapter(
+        server_url="http://127.0.0.1:3024",
+        opener=QueueOpener(FakeJSONResponse(projection)),
+        guard_enforcer=lambda **_kwargs: SimpleNamespace(allowed=True),
+        native_resumer=native_resume,
+    )
+    state = GuardianState(
+        path=tmp_path / "state.json",
+        cursor=v2_cursor(0),
+        baseline_complete=True,
+    )
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=state,
+        notifier=lambda _notice: None,
+        reconciler=recovery.reconcile,
+        resume=recovery.resume,
+        opener=QueueOpener(
+            FakeResponse(
+                frame(
+                    v2_cursor(50),
+                    settlement_data(
+                        event.run_id,
+                        event.revision,
+                        event.tui,
+                        source=event.source,
+                        repo_root=tmp_path,
+                    ),
+                )
+            )
+        ),
+    )
+
+    stats = worker.consume_connection()
+
+    assert stats.completed_actions == 1
+    assert launched == []
+    assert state.pending == {}
+    assert state.highwater[event.run_id].reason == "expected_agent_session_mismatch"
+
+
+def test_heartbeat_cannot_open_a_fresh_v2_baseline(tmp_path: Path) -> None:
+    notifications: list[GuardianNotification] = []
+    state = GuardianState(path=tmp_path / "state.json")
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=state,
+        notifier=notifications.append,
+        opener=QueueOpener(
+            FakeResponse(
+                [
+                    *boundary(v2_cursor(0)),
+                    *frame(
+                        v2_cursor(10),
+                        settlement_data("historical", 1, "x"),
+                    ),
+                    *heartbeat(),
+                ]
+            )
+        ),
+    )
+
+    stats = worker.consume_connection()
+
+    assert stats.heartbeats == 1
+    assert stats.completed_baseline is False
+    assert state.baseline_complete is False
+    assert notifications == []
+
+
+def test_busy_stream_acts_immediately_after_caught_up_without_heartbeat(
+    tmp_path: Path,
+) -> None:
+    notifications: list[tuple[str, int]] = []
+    resumed: list[str] = []
+    state = GuardianState(path=tmp_path / "state.json")
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=state,
+        notifier=lambda notice: notifications.append(notice.event.key),
+        reconciler=lambda _event: ReconcileDecision(request_resume=True),
+        resume=lambda _event, key: (
+            resumed.append(key)
+            or action_result(
+                accepted=True,
+                retryable=False,
+                terminal=True,
+                reason="accepted",
+            )
+        ),
+        opener=QueueOpener(
+            FakeResponse(
+                [
+                    *boundary(v2_cursor(0)),
+                    *frame(
+                        v2_cursor(10),
+                        settlement_data("historical", 1, "n"),
+                    ),
+                    *caught_up(v2_cursor(10)),
+                    *frame(
+                        v2_cursor(20),
+                        settlement_data(
+                            "live",
+                            1,
+                            "n",
+                            source="trust",
+                            repo_root=tmp_path,
+                        ),
+                    ),
+                ]
+            )
+        ),
+    )
+
+    stats = worker.consume_connection()
+
+    assert stats.heartbeats == 0
+    assert stats.completed_baseline is True
+    assert stats.completed_actions == 1
+    assert notifications == [("live", 1)]
+    assert resumed == ["settlement:live:1"]
+    assert state.baseline_complete is True
+    assert state.degraded is False
+
+
+def test_stream_gap_revokes_pending_authority_until_fresh_caught_up(
+    tmp_path: Path,
+) -> None:
+    old_cursor = v2_cursor(50)
+    resumed_at = v2_cursor(100, generation=2)
+    pending_event = settlement_event(
+        "pending-before-gap",
+        1,
+        "n",
+        source="trust",
+        repo_root=tmp_path,
+    )
+    state = GuardianState(
+        path=tmp_path / "state.json",
+        cursor=old_cursor,
+        baseline_complete=True,
+    )
+    assert state.claim(v2_cursor(60), pending_event)
+    assert (
+        state.retry(
+            pending_event.key,
+            reason="deferred",
+            now=0.0,
+            bounded=True,
+        )
+        is False
+    )
+    resume_calls: list[str] = []
+    notifications: list[tuple[str, int]] = []
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=state,
+        notifier=lambda notice: notifications.append(notice.event.key),
+        reconciler=lambda _event: ReconcileDecision(request_resume=True),
+        resume=lambda _event, key: (
+            resume_calls.append(key)
+            or action_result(
+                accepted=True,
+                retryable=False,
+                terminal=True,
+                reason="accepted",
+            )
+        ),
+        opener=QueueOpener(
+            FakeResponse(
+                [
+                    *boundary(old_cursor),
+                    *stream_gap(requested=old_cursor, resumed_at=resumed_at),
+                ]
+            ),
+            FakeResponse(
+                [
+                    *boundary(resumed_at),
+                    *caught_up(resumed_at),
+                    *frame(
+                        v2_cursor(120, generation=2),
+                        settlement_data(
+                            "live-after-gap",
+                            1,
+                            "n",
+                            source="trust",
+                            repo_root=tmp_path,
+                        ),
+                    ),
+                ]
+            ),
+        ),
+        clock=lambda: 0.0,
+    )
+
+    first = worker.consume_connection()
+
+    assert first.completed_baseline is False
+    assert state.degraded is True
+    assert state.baseline_complete is False
+    assert state.pending[pending_event.key].resume_authorized is False
+    assert resume_calls == []
+
+    second = worker.consume_connection()
+
+    assert second.completed_baseline is True
+    assert second.completed_actions == 2
+    assert state.degraded is False
+    assert state.baseline_complete is True
+    assert notifications == [
+        ("pending-before-gap", 1),
+        ("live-after-gap", 1),
+    ]
+    assert resume_calls == ["settlement:live-after-gap:1"]
+    assert state.highwater["pending-before-gap"].reason == "legacy_notification_only"
+
+
+def test_numeric_legacy_stream_is_notification_only_after_caught_up(
+    tmp_path: Path,
+) -> None:
+    notifications: list[tuple[str, int]] = []
+    reconciled: list[tuple[str, int]] = []
+    resumed: list[str] = []
+    state = GuardianState(path=tmp_path / "state.json")
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=state,
+        notifier=lambda notice: notifications.append(notice.event.key),
+        reconciler=lambda event: (
+            reconciled.append(event.key) or ReconcileDecision(request_resume=True)
+        ),
+        resume=lambda _event, key: (
+            resumed.append(key)
+            or action_result(
+                accepted=True,
+                retryable=False,
+                terminal=True,
+                reason="accepted",
+            )
+        ),
+        opener=QueueOpener(
+            FakeResponse(
+                [
+                    *boundary(0),
+                    *frame(10, settlement_data("legacy-history", 1, "n")),
+                    *caught_up(10),
+                    *frame(20, settlement_data("legacy-live", 1, "n")),
+                ]
+            )
+        ),
+    )
+
+    stats = worker.consume_connection()
+
+    assert stats.completed_baseline is True
+    assert stats.completed_actions == 1
+    assert notifications == [("legacy-live", 1)]
+    assert reconciled == []
+    assert resumed == []
+    assert state.cursor == 20
+    assert state.baseline_complete is True
+    assert state.degraded is True
+    assert state.highwater["legacy-live"].reason == "legacy_notification_only"
