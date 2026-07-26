@@ -637,10 +637,19 @@ def test_close_revalidates_proof_and_uses_typed_selector(tmp_path: Path) -> None
                 stdout=json.dumps(payload),
                 stderr="",
             )
+        pending_meta = cp / "runtime_runs" / "impl-good" / "meta.json"
+        pending_payload = json.loads(pending_meta.read_text(encoding="utf-8"))
+        assert pending_payload["triage_gc"]["status"] == "pending"
+        assert pending_payload["triage_gc"]["reason"] == "explicit_apply"
+        assert "triage_gc_error" not in pending_payload
         present = False
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
-    assert close_tab("vc-frame", cp, candidate, env={}, runner=runner) is True
+    result = close_tab("vc-frame", cp, candidate, env={}, runner=runner)
+
+    assert result.succeeded is True
+    assert result.status == "closed"
+    assert result.persisted is True
     close = next(call for call in calls if "close-tab" in call)
     assert close == [
         "vc-frame",
@@ -654,7 +663,22 @@ def test_close_revalidates_proof_and_uses_typed_selector(tmp_path: Path) -> None
         "viewer-incarnation",
         "--expected-tab-instance-id",
         VIEWER_INSTANCE,
+        "--gc-if-quiescent",
     ]
+    runtime_meta = cp / "runtime_runs" / "impl-good" / "meta.json"
+    payload = json.loads(runtime_meta.read_text(encoding="utf-8"))
+    assert payload["triage"] == "needs_attention"
+    assert payload["triage_pending"] is False
+    assert payload["triage_transfer"]["version"] == 4
+    assert payload["triage_gc"]["status"] == "closed"
+    assert payload["triage_gc"]["target"] == {
+        "session": "Needs attention",
+        "name": f"impl-good [vc:{VIEWER_TOKEN}]",
+        "id": 4,
+        "session_incarnation": "viewer-incarnation",
+        "tab_instance_id": VIEWER_INSTANCE,
+    }
+    assert "triage_gc_error" not in payload
 
 
 def test_apply_refuses_when_proof_changes_after_planning(tmp_path: Path) -> None:
@@ -679,8 +703,75 @@ def test_apply_refuses_when_proof_changes_after_planning(tmp_path: Path) -> None
         called_close = called_close or "close-tab" in argv
         return subprocess.CompletedProcess(argv, 0, stdout="[]", stderr="")
 
-    assert close_tab("vc-frame", cp, candidate, env={}, runner=runner) is False
+    result = close_tab("vc-frame", cp, candidate, env={}, runner=runner)
+
+    assert result.succeeded is False
+    assert result.reason == "proof_unavailable"
+    assert result.persisted is True
     assert called_close is False
+    runtime_meta = cp / "runtime_runs" / "impl-good" / "meta.json"
+    payload = json.loads(runtime_meta.read_text(encoding="utf-8"))
+    assert payload["triage"] == "needs_attention"
+    assert payload["triage_gc"]["status"] == "error"
+    assert payload["triage_gc_error"]["code"] == "proof_unavailable"
+
+
+def test_server_gc_refusal_is_typed_durable_and_keeps_terminal_truth(
+    tmp_path: Path,
+) -> None:
+    cp = tmp_path / "control_plane"
+    durable_run(cp)
+    viewer = viewer_tab()
+    candidate = plan_tab_cleanup(
+        {"Needs attention": [viewer]},
+        proofs=durable_transfer_proofs(cp),
+        bucket_tab_limit=0,
+    )[0]
+    calls: list[list[str]] = []
+
+    def runner(
+        argv: list[str],
+        *,
+        env: dict[str, str],
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        if argv[1:] == ["action", "list-tabs", "--json"]:
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                stdout=json.dumps([live_json(viewer)]),
+                stderr="",
+            )
+        return subprocess.CompletedProcess(
+            argv,
+            1,
+            stdout="",
+            stderr="GC-safe close refused: rerun terminal is running (not held)",
+        )
+
+    result = close_tab("vc-frame", cp, candidate, env={}, runner=runner)
+
+    assert result.succeeded is False
+    assert result.status == "error"
+    assert result.reason == "vc_frame_refused"
+    assert result.returncode == 1
+    assert result.persisted is True
+    close = next(call for call in calls if "close-tab" in call)
+    assert "--gc-if-quiescent" in close
+    runtime_meta = cp / "runtime_runs" / "impl-good" / "meta.json"
+    payload = json.loads(runtime_meta.read_text(encoding="utf-8"))
+    assert payload["triage"] == "needs_attention"
+    assert payload["triage_pending"] is False
+    assert payload["triage_transfer"]["version"] == 4
+    assert payload["triage_gc"]["status"] == "error"
+    assert payload["triage_gc"]["reason"] == "vc_frame_refused"
+    assert payload["triage_gc_error"] == {
+        "schema": "vibecrafted.vc-frame-tab-gc.v1",
+        "code": "vc_frame_refused",
+        "detail": "GC-safe close refused: rerun terminal is running (not held)",
+        "returncode": 1,
+        "recorded_at": payload["triage_gc"]["recorded_at"],
+    }
 
 
 def test_gc_cli_rejects_bucket_limit_without_a_value() -> None:

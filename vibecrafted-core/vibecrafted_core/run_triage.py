@@ -60,6 +60,7 @@ __all__ = [
     "MINIMAL_REPORT_BYTES",
     "MINIMAL_TRANSCRIPT_BYTES",
     "TRANSFER_PROOF_SCHEMA",
+    "TRIAGE_GC_SCHEMA",
     "VERDICT_FAILED",
     "VERDICT_FINALIZED",
     "VERDICT_NEEDS_ATTENTION",
@@ -69,6 +70,7 @@ __all__ = [
     "RunSignals",
     "TransferProofError",
     "TransferTabIdentity",
+    "TriageGcResult",
     "TriageOutcome",
     "TriagePlan",
     "bucket_for_exit_code",
@@ -80,6 +82,7 @@ __all__ = [
     "plan_triage",
     "read_kernel_axes",
     "read_run_signals",
+    "record_triage_gc_result",
     "triage_finished_run",
 ]
 
@@ -159,6 +162,7 @@ _BUCKET_FLAG_FOR_VERDICT = {
 }
 
 TRANSFER_PROOF_SCHEMA = "vibecrafted.vc-frame-transfer-proof.v1"
+TRIAGE_GC_SCHEMA = "vibecrafted.vc-frame-tab-gc.v1"
 _TRANSFER_RECEIPT_VERSION = 4
 _CAPTURE_MANIFEST_VERSION = 1
 _CAPTURE_SOURCES = {"terminal_scrollback", "runtime_transcript"}
@@ -174,6 +178,18 @@ _SETTLEMENT_TUI = {
     VERDICT_NEEDS_ATTENTION: "n",
 }
 _TERMINAL_AWAIT_OUTCOMES = {"completed", "timed_out"}
+_TRIAGE_GC_REASONS = {
+    "closed",
+    "explicit_apply",
+    "identity_or_focus_changed",
+    "inventory_unavailable",
+    "post_close_inventory_unavailable",
+    "proof_changed_after_intent",
+    "proof_changed_before_intent",
+    "proof_unavailable",
+    "target_still_present",
+    "vc_frame_refused",
+}
 _HEX = frozenset("0123456789abcdefABCDEF")
 
 
@@ -262,6 +278,44 @@ class DurableTransferProof:
                 "identity": self.viewer_identity.projection(),
             },
             "updated_at": self.updated_at,
+        }
+
+
+@dataclass(frozen=True)
+class TriageGcResult:
+    """One explicit proof-bound viewer-GC attempt and its durable disposition."""
+
+    run_id: str
+    status: str
+    reason: str
+    target_role: str
+    target: TransferTabIdentity
+    settlement_revision: int
+    receipt_sha256: str
+    recorded_at: str
+    detail: str = ""
+    returncode: int | None = None
+    persisted: bool = False
+
+    @property
+    def succeeded(self) -> bool:
+        """A close counts only when the terminal mutation and receipt both landed."""
+        return self.status == "closed" and self.persisted
+
+    def projection(self) -> dict[str, Any]:
+        """Canonical additive projection; never rewrites terminal triage truth."""
+        return {
+            "schema": TRIAGE_GC_SCHEMA,
+            "run_id": self.run_id,
+            "status": self.status,
+            "reason": self.reason,
+            "target_role": self.target_role,
+            "target": self.target.projection(),
+            "settlement_revision": self.settlement_revision,
+            "receipt_sha256": self.receipt_sha256,
+            "recorded_at": self.recorded_at,
+            "detail": self.detail,
+            "returncode": self.returncode,
         }
 
 
@@ -1626,6 +1680,82 @@ def _record_receipt(
         return mutate_run_meta(
             control_plane_root,
             meta_path=meta,
+            run_id=run_id,
+            mutator=_merge,
+        )
+    except (OSError, RunMetaMutationError, TypeError, ValueError):
+        return False
+
+
+def record_triage_gc_result(
+    control_plane: Path,
+    result: TriageGcResult,
+) -> bool:
+    """Persist one explicit GC attempt without changing terminal triage fields."""
+    if (
+        result.status not in {"pending", "closed", "error"}
+        or result.target_role not in {"origin", "viewer"}
+        or result.reason not in _TRIAGE_GC_REASONS
+        or result.settlement_revision <= 0
+        or not _is_hex(result.receipt_sha256, 64)
+        or not result.recorded_at
+        or type(result.returncode) not in {int, type(None)}
+        or not result.target.session
+        or not result.target.name
+        or result.target.tab_id < 0
+        or not result.target.session_incarnation
+        or not _is_hex(result.target.tab_instance_id, 32)
+    ):
+        return False
+    try:
+        run_id = _safe_run_id(result.run_id)
+        root = _canonical_root(control_plane)
+    except TransferProofError:
+        return False
+    runtime_meta = _canonical_runtime_meta(root, run_id)
+    projection = result.projection()
+
+    def _merge(current: dict[str, Any]) -> dict[str, Any] | None:
+        transfer = current.get("triage_transfer")
+        if (
+            current.get("run_id") != run_id
+            or current.get("triage_pending") is not False
+            or current.get("triage") not in _BUCKET_FOR_VERDICT
+            or current.get("settlement_revision") != result.settlement_revision
+            or not isinstance(transfer, Mapping)
+            or transfer.get("receipt_sha256") != result.receipt_sha256
+        ):
+            return None
+        if result.target_role == "viewer":
+            viewer = transfer.get("viewer")
+            bound_identity = (
+                viewer.get("identity") if isinstance(viewer, Mapping) else None
+            )
+        else:
+            origin = transfer.get("origin")
+            bound_identity = (
+                origin.get("identity") if isinstance(origin, Mapping) else None
+            )
+        if bound_identity != result.target.projection():
+            return None
+
+        current["triage_gc"] = projection
+        if result.status == "error":
+            current["triage_gc_error"] = {
+                "schema": TRIAGE_GC_SCHEMA,
+                "code": result.reason,
+                "detail": result.detail,
+                "returncode": result.returncode,
+                "recorded_at": result.recorded_at,
+            }
+        else:
+            current.pop("triage_gc_error", None)
+        return current
+
+    try:
+        return mutate_run_meta(
+            root,
+            meta_path=runtime_meta,
             run_id=run_id,
             mutator=_merge,
         )

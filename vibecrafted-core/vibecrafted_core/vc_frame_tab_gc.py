@@ -8,11 +8,12 @@ runtime settlement, and the tab's exact incarnation all still agree.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import os
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, TypeGuard
 
@@ -20,7 +21,9 @@ from .run_triage import (
     DurableTransferProof,
     TransferProofError,
     TransferTabIdentity,
+    TriageGcResult,
     load_durable_transfer_proof,
+    record_triage_gc_result,
 )
 
 BUCKET_SESSIONS = ("Finalized runs", "Failed runs", "Needs attention")
@@ -426,6 +429,48 @@ def _reload_bound_proof(
     return proof if _bound_identity(proof, tab) is not None else None
 
 
+def _gc_result(
+    tab: TabRef,
+    *,
+    status: str,
+    reason: str,
+    detail: str = "",
+    returncode: int | None = None,
+) -> TriageGcResult:
+    role = {
+        "redundant-origin": "origin",
+        "durable-bucket-view": "viewer",
+    }.get(tab.reason, "viewer")
+    return TriageGcResult(
+        run_id=tab.run_id,
+        status=status,
+        reason=reason,
+        target_role=role,
+        target=TransferTabIdentity(
+            session=tab.session,
+            name=tab.name,
+            tab_id=tab.tab_id,
+            session_incarnation=tab.session_incarnation,
+            tab_instance_id=tab.tab_instance_id,
+        ),
+        settlement_revision=tab.settlement_revision,
+        receipt_sha256=tab.receipt_sha256,
+        recorded_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+        detail=detail[:500],
+        returncode=returncode,
+    )
+
+
+def _persist_gc_result(
+    control_plane: Path,
+    result: TriageGcResult,
+) -> TriageGcResult:
+    return replace(
+        result,
+        persisted=record_triage_gc_result(control_plane, result),
+    )
+
+
 def close_tab(
     binary: str,
     control_plane: Path,
@@ -433,15 +478,33 @@ def close_tab(
     *,
     env: Mapping[str, str],
     runner: Runner = _default_runner,
-) -> bool:
-    """Close one tab only after proof and live incarnation agree twice."""
+) -> TriageGcResult:
+    """Apply one explicit GC close with proof, atomic quiescence, and a receipt."""
+
+    def _error(
+        reason: str,
+        *,
+        detail: str = "",
+        returncode: int | None = None,
+    ) -> TriageGcResult:
+        return _persist_gc_result(
+            control_plane,
+            _gc_result(
+                tab,
+                status="error",
+                reason=reason,
+                detail=detail,
+                returncode=returncode,
+            ),
+        )
+
     proof = _reload_bound_proof(control_plane, tab)
     if proof is None:
-        return False
+        return _error("proof_unavailable")
 
     current = list_tabs(binary, tab.session, env=env, runner=runner)
     if current is None:
-        return False
+        return _error("inventory_unavailable")
     matches = [
         candidate
         for candidate in current
@@ -455,11 +518,28 @@ def close_tab(
         or matches[0].active
         or matches[0].focused_elsewhere
     ):
-        return False
+        return _error("identity_or_focus_changed")
 
     # Re-read after the live query: a changed receipt/revision cancels apply.
     if _reload_bound_proof(control_plane, tab) is None:
-        return False
+        return _error("proof_changed_before_intent")
+
+    pending = _persist_gc_result(
+        control_plane,
+        _gc_result(
+            tab,
+            status="pending",
+            reason="explicit_apply",
+        ),
+    )
+    if not pending.persisted:
+        return _gc_result(
+            tab,
+            status="error",
+            reason="intent_persist_failed",
+        )
+    if _reload_bound_proof(control_plane, tab) is None:
+        return _error("proof_changed_after_intent")
 
     session_env = dict(env)
     session_env["VC_FRAME_SESSION_NAME"] = tab.session
@@ -477,15 +557,41 @@ def close_tab(
             tab.session_incarnation,
             "--expected-tab-instance-id",
             tab.tab_instance_id,
+            "--gc-if-quiescent",
         ],
         env=session_env,
     )
     if proc.returncode != 0:
-        return False
+        detail = str(proc.stderr or proc.stdout or "").strip()
+        return _error(
+            "vc_frame_refused",
+            detail=detail,
+            returncode=proc.returncode,
+        )
     remaining = list_tabs(binary, tab.session, env=env, runner=runner)
     if remaining is None:
-        return False
-    return all(item.tab_instance_id != tab.tab_instance_id for item in remaining)
+        return _error("post_close_inventory_unavailable")
+    if any(item.tab_instance_id == tab.tab_instance_id for item in remaining):
+        return _error("target_still_present")
+
+    closed = _persist_gc_result(
+        control_plane,
+        _gc_result(
+            tab,
+            status="closed",
+            reason="closed",
+            returncode=proc.returncode,
+        ),
+    )
+    if closed.persisted:
+        return closed
+    return _gc_result(
+        tab,
+        status="error",
+        reason="close_result_persist_failed",
+        detail="vc-frame closed the exact target but canonical meta was not updated",
+        returncode=proc.returncode,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -507,32 +613,40 @@ def main(argv: Sequence[str] | None = None) -> int:
         bucket_tab_limit=args.bucket_tab_limit,
         env=env,
     )
-    closed: list[TabRef] = []
+    results: list[tuple[TabRef, TriageGcResult]] = []
     if args.apply:
-        closed = [
-            tab
-            for tab in candidates
-            if close_tab(
-                args.vc_frame_bin,
-                args.control_plane,
+        results = [
+            (
                 tab,
-                env=env,
+                close_tab(
+                    args.vc_frame_bin,
+                    args.control_plane,
+                    tab,
+                    env=env,
+                ),
             )
+            for tab in candidates
         ]
+    closed = [tab for tab, result in results if result.succeeded]
 
-    failed = args.apply and len(closed) != len(candidates)
+    failed = args.apply and any(not result.succeeded for _tab, result in results)
     if not args.quiet or failed:
         mode = "applied" if args.apply else "dry-run"
         print(
             f"vc_frame-tab-gc: {mode}; "
             f"candidates={len(candidates)} closed={len(closed)}"
         )
+        result_by_tab = {tab: result for tab, result in results}
         for tab in candidates:
-            state = "closed" if tab in closed else "candidate"
+            result = result_by_tab.get(tab)
+            state = "closed" if result is not None and result.succeeded else "candidate"
+            suffix = ""
+            if result is not None and not result.succeeded:
+                suffix = f"; error={result.reason}; persisted={str(result.persisted).lower()}"
             print(
                 f"  {state}: {tab.session}/{tab.name} "
                 f"id={tab.tab_id} instance={tab.tab_instance_id} "
-                f"run={tab.run_id} ({tab.reason})"
+                f"run={tab.run_id} ({tab.reason}){suffix}"
             )
     return 1 if failed else 0
 
