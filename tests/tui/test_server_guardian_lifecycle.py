@@ -487,6 +487,34 @@ def test_server_lifecycle_starts_heals_and_stops_guardian(
     )
 
 
+def test_symlinked_guardian_entrypoint_gets_durable_identity(
+    isolated_server_runtime: tuple[dict[str, str], Path, Path],
+) -> None:
+    env, state_dir, _ = isolated_server_runtime
+    bin_dir = Path(env["HOME"]) / ".local" / "bin"
+    guardian = bin_dir / "vc-guardian"
+    guardian_target = bin_dir / "vc-guardian-real"
+    guardian.rename(guardian_target)
+    guardian.symlink_to(guardian_target)
+    port = _free_port()
+
+    started = _run_launcher(
+        env, "server", "start", "--host", "127.0.0.1", "--port", str(port)
+    )
+    assert started.returncode == 0, started.stderr
+    identity = json.loads(
+        (state_dir / "guardian.identity.json").read_text(encoding="utf-8")
+    )
+    assert identity["declared_executable"] == str(guardian)
+
+    doctor = _run_launcher(env, "server", "doctor")
+    assert doctor.returncode == 0, doctor.stderr
+    assert "durable identity and a valid SSE readiness receipt" in doctor.stdout
+
+    stopped = _run_launcher(env, "server", "stop")
+    assert stopped.returncode == 0, stopped.stderr
+
+
 def test_server_start_rolls_back_when_guardian_entrypoint_is_missing(
     isolated_server_runtime: tuple[dict[str, str], Path, Path],
 ) -> None:

@@ -1731,7 +1731,8 @@ elif operation == "capture-identity":
     pid = int(args[1])
     role = args[2]
     nonce = args[3]
-    declared = Path(args[4]).resolve()
+    declared = Path(os.path.abspath(args[4]))
+    declared_realpath = declared.resolve()
     if not nonce:
         fail("managed process nonce must not be empty")
     try:
@@ -1740,7 +1741,10 @@ elif operation == "capture-identity":
         fail(f"cannot fingerprint declared executable {declared}: {exc}", 4)
     snapshot = process_snapshot(pid)
     command_identity = json.dumps(snapshot["command"], ensure_ascii=False)
-    if str(declared) not in command_identity:
+    if (
+        str(declared) not in command_identity
+        and str(declared_realpath) not in command_identity
+    ):
         fail(
             f"process {pid} has not exec'd declared executable {declared}",
             4,
