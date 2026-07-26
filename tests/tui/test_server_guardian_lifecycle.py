@@ -515,6 +515,88 @@ def test_symlinked_guardian_entrypoint_gets_durable_identity(
     assert stopped.returncode == 0, stopped.stderr
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="macOS ps is the fallback process identity source",
+)
+def test_macos_identity_reverification_does_not_reread_launch_nonce(
+    isolated_server_runtime: tuple[dict[str, str], Path, Path],
+) -> None:
+    env, state_dir, _ = isolated_server_runtime
+    bin_dir = Path(env["HOME"]) / ".local" / "bin"
+    real_ps = shutil.which("ps", path="/usr/bin:/bin")
+    assert real_ps is not None
+    ps_state = state_dir / "fake-ps-state"
+    ps_state.mkdir(parents=True)
+    env["VIBECRAFTED_TEST_PS_STATE"] = str(ps_state)
+    _write_executable(
+        bin_dir / "ps",
+        f"""#!{sys.executable}
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+result = subprocess.run(
+    [{real_ps!r}, *sys.argv[1:]],
+    check=False,
+    capture_output=True,
+    text=True,
+)
+output = result.stdout
+pattern = re.compile(
+    r"(^|\\s)(VIBECRAFTED_PROCESS_NONCE=([0-9a-f]{{64}}))(?=\\s|$)"
+)
+state = Path(os.environ["VIBECRAFTED_TEST_PS_STATE"])
+identity_root = Path(os.environ["VIBECRAFTED_HOME"]) / "server"
+
+def redact_published_nonce(match):
+    nonce = match.group(3)
+    marker = state / f"{{nonce}}.seen"
+    marker.touch(exist_ok=True)
+    for identity_path in identity_root.glob("*.identity.json"):
+        try:
+            identity = json.loads(identity_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        process = identity.get("process", {{}})
+        command = process.get("command", {{}})
+        recorded_command = (
+            command.get("value")
+            if command.get("kind") == "command_line"
+            else None
+        )
+        if (
+            process.get("process_nonce") == nonce
+            and isinstance(recorded_command, str)
+            and output.lstrip().startswith(recorded_command)
+        ):
+            return match.group(1)
+    return match.group(0)
+
+output = pattern.sub(redact_published_nonce, output)
+sys.stdout.write(output)
+sys.stderr.write(result.stderr)
+raise SystemExit(result.returncode)
+""",
+    )
+    port = _free_port()
+
+    started = _run_launcher(
+        env, "server", "start", "--host", "127.0.0.1", "--port", str(port)
+    )
+
+    assert started.returncode == 0, started.stderr
+    for role in ("server", "guardian"):
+        identity = json.loads(
+            (state_dir / f"{role}.identity.json").read_text(encoding="utf-8")
+        )
+        assert identity["process"]["process_nonce"] == identity["nonce"]
+    assert len(list(ps_state.glob("*.seen"))) == 2
+
+
 def test_server_start_rolls_back_when_guardian_entrypoint_is_missing(
     isolated_server_runtime: tuple[dict[str, str], Path, Path],
 ) -> None:

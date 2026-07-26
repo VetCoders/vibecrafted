@@ -1433,7 +1433,11 @@ def managed_process_nonce(pid: int) -> str | None:
     return match.group(1) if match else None
 
 
-def process_snapshot(pid: int) -> dict[str, object]:
+def process_snapshot(
+    pid: int,
+    *,
+    include_nonce: bool = True,
+) -> dict[str, object]:
     if pid <= 1 or not process_alive(pid):
         fail(f"process {pid} is not live", 3)
     first_start = process_start_token(pid)
@@ -1474,13 +1478,15 @@ def process_snapshot(pid: int) -> dict[str, object]:
     second_start = process_start_token(pid)
     if first_start != second_start:
         fail(f"process {pid} changed while identity was captured", 4)
-    return {
+    snapshot: dict[str, object] = {
         "start_token": first_start,
         "command": command,
         "executable": executable,
         "executable_sha256": executable_sha256,
-        "process_nonce": managed_process_nonce(pid),
     }
+    if include_nonce:
+        snapshot["process_nonce"] = managed_process_nonce(pid)
+    return snapshot
 
 
 def verify_identity(path: Path, pid: int, role: str) -> dict[str, object]:
@@ -1494,8 +1500,16 @@ def verify_identity(path: Path, pid: int, role: str) -> dict[str, object]:
         or not isinstance(payload.get("process"), dict)
     ):
         fail(f"managed identity metadata mismatch for {role} PID {pid}", 4)
-    current = process_snapshot(pid)
-    if current != payload["process"]:
+    recorded = payload["process"]
+    if recorded.get("process_nonce") != payload["nonce"]:
+        fail(f"managed identity nonce mismatch for {role} PID {pid}", 4)
+    stable_recorded = {
+        key: value
+        for key, value in recorded.items()
+        if key != "process_nonce"
+    }
+    current = process_snapshot(pid, include_nonce=False)
+    if current != stable_recorded:
         fail(f"managed identity changed for {role} PID {pid}", 4)
     return payload
 
