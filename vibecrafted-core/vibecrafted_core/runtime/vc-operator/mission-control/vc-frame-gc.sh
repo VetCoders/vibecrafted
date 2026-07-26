@@ -5,7 +5,7 @@ apply=0
 include_live=0
 quiet=0
 max_age_hours="${VIBECRAFTED_VC_FRAME_MAX_AGE_HOURS:-24}"
-bucket_tab_limit="${VIBECRAFTED_VC_FRAME_BUCKET_TAB_LIMIT:-0}"
+bucket_tab_limit="${VIBECRAFTED_VC_FRAME_BUCKET_TAB_LIMIT:-}"
 
 vc_frame_bin() {
   command -v vc-frame 2>/dev/null || return 1
@@ -20,13 +20,14 @@ Usage:
 Default behavior is a dry-run over vc-frame sessions:
   - always reports dead EXITED sessions
   - optionally targets detached live sessions older than the threshold
-  - reconciles terminal origin tabs and bounds durable bucket viewer tabs
+  - reconciles redundant terminal origin tabs
+  - preserves durable bucket viewer tabs unless a limit is explicitly configured
 
 Flags:
   --apply                 Actually kill the selected sessions
   --include-live          Include detached live sessions older than the threshold
   --max-age-hours <n>     Age threshold for detached live sessions (default: 24)
-  --bucket-tab-limit <n>   Durable viewer tabs retained per bucket (default: 0)
+  --bucket-tab-limit <n>   Durable viewer tabs retained per bucket (default: disabled)
   --quiet                 Suppress the summary when nothing actionable is found
   -h, --help              Show this help
 EOF
@@ -48,11 +49,12 @@ while (($#)); do
       max_age_hours="${1:-}"
       ;;
     --bucket-tab-limit)
-      shift || {
+      if (($# < 2)); then
         echo "--bucket-tab-limit requires a value" >&2
         exit 1
-      }
-      bucket_tab_limit="${1:-}"
+      fi
+      shift
+      bucket_tab_limit="$1"
       ;;
     --quiet)
       quiet=1
@@ -76,7 +78,7 @@ vc_frame_bin="$(vc_frame_bin)" || {
 }
 
 case "$bucket_tab_limit" in
-  ''|*[!0-9]*)
+  *[!0-9]*)
     echo "--bucket-tab-limit must be a non-negative integer" >&2
     exit 1
     ;;
@@ -90,8 +92,8 @@ if [[ -f "$tab_gc" && "${VIBECRAFTED_TEST_MODE:-0}" != "1" ]]; then
     "$tab_gc"
     --vc-frame-bin "$vc_frame_bin"
     --control-plane "$control_plane"
-    --bucket-tab-limit "$bucket_tab_limit"
   )
+  [[ -z "$bucket_tab_limit" ]] || tab_args+=(--bucket-tab-limit "$bucket_tab_limit")
   (( apply )) && tab_args+=(--apply)
   (( quiet )) && tab_args+=(--quiet)
   python3 "${tab_args[@]}" || true

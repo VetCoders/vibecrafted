@@ -162,9 +162,9 @@ def plan_tab_cleanup(
     *,
     durable: set[str],
     origins: set[tuple[str, str]],
-    bucket_tab_limit: int,
+    bucket_tab_limit: int | None,
 ) -> list[TabRef]:
-    """Choose only inactive, unobserved tabs backed by durable capture."""
+    """Choose proof-backed duplicates and explicitly bounded bucket views."""
     candidates: dict[tuple[str, int], TabRef] = {}
 
     for session, tab_name in origins:
@@ -174,6 +174,11 @@ def plan_tab_cleanup(
             ref = _tab_ref(session, tab, "redundant-origin")
             if ref and not ref.active and not ref.focused_elsewhere:
                 candidates[(session, ref.tab_id)] = ref
+
+    if bucket_tab_limit is None:
+        return sorted(
+            candidates.values(), key=lambda item: (item.session, item.position)
+        )
 
     limit = max(0, bucket_tab_limit)
     for session in BUCKET_SESSIONS:
@@ -202,7 +207,7 @@ def collect_cleanup(
     binary: str,
     control_plane: Path,
     *,
-    bucket_tab_limit: int,
+    bucket_tab_limit: int | None,
     env: Mapping[str, str],
     runner: Runner = _default_runner,
 ) -> list[TabRef]:
@@ -255,7 +260,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--vc-frame-bin", required=True)
     parser.add_argument("--control-plane", type=Path, required=True)
-    parser.add_argument("--bucket-tab-limit", type=int, default=0)
+    parser.add_argument("--bucket-tab-limit", type=int)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)

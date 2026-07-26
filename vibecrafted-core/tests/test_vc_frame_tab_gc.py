@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +59,7 @@ def test_durable_origins_require_capture_and_confirmed_receipt(tmp_path: Path) -
     assert terminal_origins(cp, durable) == {("vibecrafted", "impl-good")}
 
 
-def test_plan_closes_redundant_origin_and_all_durable_bucket_views() -> None:
+def test_plan_without_bucket_limit_preserves_durable_views() -> None:
     run_id = "impl-260725-120000-00000"
     tabs = {
         "vibecrafted": [
@@ -78,13 +79,52 @@ def test_plan_closes_redundant_origin_and_all_durable_bucket_views() -> None:
         tabs,
         durable={run_id},
         origins={("vibecrafted", run_id)},
+        bucket_tab_limit=None,
+    )
+
+    assert [(item.session, item.tab_id, item.reason) for item in plan] == [
+        ("vibecrafted", 7, "redundant-origin"),
+    ]
+
+
+def test_explicit_zero_bucket_limit_closes_all_durable_views() -> None:
+    run_id = "impl-260725-120000-00000"
+    tabs = {
+        "Needs attention": [
+            tab(0, "Start here", 0),
+            tab(1, "Shell", 1),
+            tab(4, run_id, 2),
+            tab(5, "not-durable", 3),
+        ],
+    }
+
+    plan = plan_tab_cleanup(
+        tabs,
+        durable={run_id},
+        origins=set(),
         bucket_tab_limit=0,
     )
 
     assert [(item.session, item.tab_id, item.reason) for item in plan] == [
         ("Needs attention", 4, "durable-bucket-view"),
-        ("vibecrafted", 7, "redundant-origin"),
     ]
+
+
+def test_gc_cli_rejects_bucket_limit_without_a_value() -> None:
+    script = (
+        Path(__file__).parents[1]
+        / "vibecrafted_core/runtime/vc-operator/mission-control/vc-frame-gc.sh"
+    )
+
+    result = subprocess.run(
+        ["bash", str(script), "--bucket-tab-limit"],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert result.stderr.strip() == "--bucket-tab-limit requires a value"
 
 
 def test_plan_never_closes_active_or_other_client_tabs() -> None:

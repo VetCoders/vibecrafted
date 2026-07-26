@@ -356,6 +356,7 @@ def _runtime_script_exports(
     artifact_ts: str = "",
     artifact_suffix: str = "",
     claim_digest: str = "",
+    worker_session: str = "",
 ) -> dict[str, str]:
     pythonpath = os.pathsep.join(
         dict.fromkeys(
@@ -392,6 +393,12 @@ def _runtime_script_exports(
         exports["VIBECRAFTED_ARTIFACT_SUFFIX"] = artifact_suffix
     if claim_digest:
         exports[CLAIM_DIGEST_ENV] = claim_digest
+    if worker_session:
+        # vc-frame launches this script from the host server's long-lived
+        # environment. That environment can still describe the human
+        # dispatcher seat, so pin the actual worker host for durable triage.
+        exports["VIBECRAFTED_WORKER_SESSION"] = worker_session
+        exports["VIBECRAFTED_OPERATOR_SESSION"] = worker_session
     if runtime in {"terminal", "visible"}:
         exports["VIBECRAFTED_TEE_OUTPUT"] = "1"
     return exports
@@ -417,6 +424,7 @@ def _write_research_lane_scripts(
     research_selection: ResearchAgentSelection,
     model_requested: str = "",
     claim_digest: str = "",
+    worker_session: str = "",
 ) -> dict[str, Path]:
     scripts: dict[str, Path] = {}
     for agent in research_selection.agents:
@@ -450,6 +458,7 @@ def _write_research_lane_scripts(
             artifact_ts=artifact_ts,
             artifact_suffix=artifact_suffix,
             claim_digest=claim_digest,
+            worker_session=worker_session,
         )
         export_lines = "".join(
             f"export {key}={shlex.quote(value)}\n" for key, value in exports.items()
@@ -714,6 +723,7 @@ def _launch_transport_command(
             artifact_ts=artifact_ts,
             artifact_suffix=artifact_suffix,
             claim_digest=spec.claim_digest,
+            worker_session=operator_session,
         ),
     )
     definition = workflow_registry.workflow_definition(spec.skill)
@@ -739,6 +749,7 @@ def _launch_transport_command(
             research_selection=selection,
             model_requested=spec.model,
             claim_digest=spec.claim_digest,
+            worker_session=operator_session,
         )
         layout_file = _write_research_layout(
             path=launch_dir / f"{run_id}-research.kdl",

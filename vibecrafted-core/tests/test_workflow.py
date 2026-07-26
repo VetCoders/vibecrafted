@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -591,6 +592,8 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     assert "vibecrafted_core.dispatcher" in script_body
     assert f"export PYTHONPATH={workflow._core_package_root()}" in script_body
     assert "export PYTHONDONTWRITEBYTECODE=1" in script_body
+    assert f"export VIBECRAFTED_WORKER_SESSION={tmp_path.name}" in script_body
+    assert f"export VIBECRAFTED_OPERATOR_SESSION={tmp_path.name}" in script_body
     assert "--tee-output" in script_body
     assert "--quiet" in script_body
     assert "--json" not in script_body
@@ -904,6 +907,8 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
     assert f"export VIBECRAFTED_CLAIM_DIGEST={digest}" in lane_bodies
     assert "export VIBECRAFTED_CANONICAL_REPORT_DIR=" in lane_bodies
     assert "export VIBECRAFTED_ARTIFACT_SLUG=map-it" in lane_bodies
+    assert f"export VIBECRAFTED_WORKER_SESSION={tmp_path.name}" in lane_bodies
+    assert f"export VIBECRAFTED_OPERATOR_SESSION={tmp_path.name}" in lane_bodies
     assert (
         f"export VIBECRAFTED_ARTIFACT_TS={workflow.time.strftime('%Y-%m-%d')}"
         in lane_bodies
@@ -1136,7 +1141,7 @@ def test_stop_run_terms_live_launcher_process_group(
                 "agent": "codex",
                 "mode": "workflow",
                 "root": str(tmp_path),
-                "updated_at": "2026-06-11T00:00:00+00:00",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
                 "skill_code": "wflw",
                 "launcher_pid": proc.pid,
                 "liveness": "pid_alive",
@@ -1177,7 +1182,7 @@ def test_stop_run_records_already_dead_launcher_without_error(
             "agent": "codex",
             "mode": "workflow",
             "root": str(tmp_path),
-            "updated_at": "2026-06-11T00:00:00+00:00",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
             "skill_code": "wflw",
             "launcher_pid": 999999999,
             "liveness": "pid_alive",
@@ -1209,7 +1214,7 @@ def test_stop_run_terminal_record_is_noop(
             "agent": "codex",
             "mode": "workflow",
             "root": str(tmp_path),
-            "updated_at": "2026-06-11T00:00:00+00:00",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
             "skill_code": "wflw",
             "exit_code": 0,
             "launcher_pid": 999999999,
