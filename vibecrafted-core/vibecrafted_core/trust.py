@@ -900,6 +900,30 @@ def _recover_prepared_journal_entry(
         existing = _receipt_entries(records, receipt_id)
 
         if torn_tail:
+            if torn_tail == expected_without_newline:
+                if existing:
+                    if len(existing) != 1 or existing[0] != dict(payload):
+                        raise ValueError(
+                            "trust settlement journal receipt missing or mismatched"
+                        )
+                    os.ftruncate(descriptor, len(complete_raw))
+                    os.fsync(descriptor)
+                    control_plane._fsync_directory_durable(parent)
+                    return existing[0]
+                _write_all(descriptor, b"\n")
+                os.fsync(descriptor)
+                control_plane._fsync_directory_durable(parent)
+                verified = _parse_journal_bytes(
+                    _read_descriptor_all(descriptor),
+                    path,
+                    partial_is_retryable=False,
+                )
+                matches = _receipt_entries(verified, receipt_id)
+                if len(matches) != 1 or matches[0] != dict(payload):
+                    raise OSError(
+                        "trust settlement journal durability verification failed"
+                    )
+                return matches[0]
             try:
                 decoded_tail = torn_tail.decode("utf-8")
                 json.loads(decoded_tail)
@@ -913,10 +937,7 @@ def _recover_prepared_journal_entry(
                 raise ValueError(
                     f"trust journal has a foreign tail after prepared receipt: {path}"
                 )
-            if (
-                not expected_without_newline.startswith(torn_tail)
-                or torn_tail == expected_without_newline
-            ):
+            if not expected_without_newline.startswith(torn_tail):
                 raise ValueError(
                     f"trust journal partial tail is not this prepared receipt: {path}"
                 )
@@ -1428,6 +1449,8 @@ def _trust_event_exists(event: SettlementEventV2) -> bool:
                 continue
             with handle:
                 for raw in handle:
+                    if not raw.endswith(b"\n"):
+                        continue
                     try:
                         candidate = json.loads(raw)
                     except (UnicodeDecodeError, json.JSONDecodeError):

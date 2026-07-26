@@ -10,7 +10,7 @@ import threading
 from pathlib import Path
 
 import pytest
-from vibecrafted_core import cli, guard, trust, workflow
+from vibecrafted_core import cli, control_plane, guard, trust, workflow
 from vibecrafted_core.run_mutation import run_mutation_locks
 from vibecrafted_core.settlement import TrustReceiptV1, board_fxn_counts
 from vibecrafted_core.workflows import registry
@@ -844,6 +844,105 @@ def test_publish_must_be_exactly_observable_before_outbox_acknowledgement(
     assert len(events) == 1
 
 
+def test_hard_exit_after_unterminated_event_repairs_and_republishes_exactly_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "run-unterminated-event"
+    repo, sha, journal, _meta, _snapshot = _trust_run_fixture(
+        tmp_path,
+        monkeypatch,
+        run_id=run_id,
+    )
+    claims = [
+        {
+            "claim": "unterminated event is not an acknowledgement",
+            "grade": "strong",
+            "evidence": "hard exit after durable JSON before newline",
+        }
+    ]
+    exit_code = 82
+    pid = os.fork()
+    if pid == 0:  # pragma: no branch - the child never returns to pytest
+
+        def write_unterminated_event_then_exit(event):
+            control_plane._ensure_event_segment()
+            previous = event.previous.verdict if event.previous else "unsettled"
+            record = {
+                "ts": control_plane._now().isoformat(),
+                "run_id": event.run_id,
+                "kind": "settlement.changed",
+                "message": (
+                    f"settlement revision {event.revision}: "
+                    f"{previous} -> {event.current.verdict}"
+                ),
+                "payload": event.to_payload(),
+            }
+            encoded = json.dumps(record, ensure_ascii=False).encode("utf-8")
+            with control_plane._event_lock(exclusive=True):
+                flags = os.O_RDWR | os.O_APPEND
+                flags |= getattr(os, "O_CLOEXEC", 0)
+                flags |= getattr(os, "O_NOFOLLOW", 0)
+                descriptor = os.open(control_plane.event_stream_path(), flags)
+                control_plane._repair_incomplete_event_tail_locked(descriptor)
+                offset = 0
+                while offset < len(encoded):
+                    written = os.write(descriptor, encoded[offset:])
+                    if written <= 0:
+                        os._exit(96)
+                    offset += written
+                os.fsync(descriptor)
+                os._exit(exit_code)
+
+        trust._publish_trust_event = write_unterminated_event_then_exit
+        trust.note_verdict(
+            repo=repo,
+            journal=journal,
+            sha=sha,
+            verdict="pass-with-gaps",
+            run_id=run_id,
+            claims=claims,
+        )
+        os._exit(97)
+    _wait_for_child(pid, expected_exit=exit_code)
+
+    outbox_path = trust._trust_outbox_path(run_id)
+    prepared = json.loads(outbox_path.read_text(encoding="utf-8"))
+    expected_event_key = prepared["event"]["event_key"]
+    event_path = control_plane.event_stream_path()
+    crashed_stream = event_path.read_bytes()
+    assert not crashed_stream.endswith(b"\n")
+    assert json.loads(crashed_stream.splitlines()[-1])["payload"]["event_key"] == (
+        expected_event_key
+    )
+
+    report = _fresh_process_recovery_report(
+        tmp_path / "unterminated-event-recovery-report.json"
+    )
+
+    assert report["ok"] is True
+    assert report["errors"] == []
+    assert not outbox_path.exists()
+    control_plane._append_event(
+        {
+            "ts": control_plane._now().isoformat(),
+            "run_id": "unrelated-run",
+            "kind": "worker.heartbeat",
+            "message": "force tail repair boundary",
+            "payload": {},
+        }
+    )
+    repaired_stream = event_path.read_bytes()
+    assert repaired_stream.endswith(b"\n")
+    events = [
+        json.loads(line)
+        for line in repaired_stream.splitlines()
+        if json.loads(line).get("kind") == "settlement.changed"
+    ]
+    assert len(events) == 1
+    assert events[0]["payload"]["event_key"] == expected_event_key
+
+
 def test_acknowledged_outbox_republishes_event_missing_from_retention_window(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1279,6 +1378,93 @@ def test_hard_exit_during_prepared_append_repairs_only_exact_torn_prefix(
             "settlement_revision": 1,
         }
     ]
+    assert trust._read_journal(journal) == [expected_entry]
+    assert not outbox_path.exists()
+    for path in (meta_path, snapshot_path):
+        projection = json.loads(path.read_text(encoding="utf-8"))
+        assert projection["trust_receipt"] == expected_receipt
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "crafted" / "control_plane" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if json.loads(line).get("kind") == "settlement.changed"
+    ]
+    assert len(events) == 1
+    assert events[0]["payload"]["trust_receipt"] == expected_receipt
+
+
+def test_hard_exit_after_complete_prepared_json_finishes_newline_exactly_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "run-complete-prepared-without-newline"
+    repo, sha, journal, meta_path, snapshot_path = _trust_run_fixture(
+        tmp_path,
+        monkeypatch,
+        run_id=run_id,
+    )
+    claims = [
+        {
+            "claim": "finish exact prepared record",
+            "grade": "strong",
+            "evidence": "hard os._exit after every JSON byte before newline",
+        }
+    ]
+    exit_code = 83
+    pid = os.fork()
+    if pid == 0:  # pragma: no branch - the child never returns to pytest
+        real_write = trust._journal_write
+
+        def write_record_without_newline_then_exit(
+            descriptor: int,
+            data: bytes,
+        ) -> int:
+            record = data[:-1]
+            offset = 0
+            while offset < len(record):
+                written = real_write(descriptor, record[offset:])
+                if written <= 0:
+                    os._exit(96)
+                offset += written
+            os.fsync(descriptor)
+            os._exit(exit_code)
+
+        trust._journal_write = write_record_without_newline_then_exit
+        trust.note_verdict(
+            repo=repo,
+            journal=journal,
+            sha=sha,
+            verdict="pass-with-gaps",
+            run_id=run_id,
+            claims=claims,
+        )
+        os._exit(97)
+    _wait_for_child(pid, expected_exit=exit_code)
+
+    outbox_path = trust._trust_outbox_path(run_id)
+    prepared = json.loads(outbox_path.read_text(encoding="utf-8"))
+    expected_entry = prepared["journal_entry"]
+    expected_receipt = prepared["trust_receipt"]
+    expected_encoded = (
+        json.dumps(expected_entry, sort_keys=True, ensure_ascii=False) + "\n"
+    ).encode("utf-8")
+    assert journal.read_bytes() == expected_encoded[:-1]
+
+    report = _fresh_process_recovery_report(
+        tmp_path / "complete-prepared-recovery-report.json"
+    )
+
+    assert report["ok"] is True
+    assert report["errors"] == []
+    assert report["recovered"] == [
+        {
+            "run_id": run_id,
+            "receipt_id": expected_receipt["receipt_id"],
+            "settlement_revision": 1,
+        }
+    ]
+    assert journal.read_bytes() == expected_encoded
     assert trust._read_journal(journal) == [expected_entry]
     assert not outbox_path.exists()
     for path in (meta_path, snapshot_path):
