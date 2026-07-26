@@ -494,12 +494,7 @@ prompt_attended_consent
 mkdir -p "$tools_dir"
 
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/vibecrafted-bootstrap.XXXXXX")"
-# ShellCheck cannot see function names registered indirectly through `trap`.
-# shellcheck disable=SC2329
-cleanup() {
-  rm -rf "$tmpdir"
-}
-trap cleanup EXIT
+trap 'rm -rf -- "$tmpdir"' EXIT
 
 # Candidate commands must return through this shell so the EXIT trap can remove
 # the private verified payload. Publication is owned by install-bundle-tools
