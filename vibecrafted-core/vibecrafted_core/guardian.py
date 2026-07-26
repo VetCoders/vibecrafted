@@ -61,6 +61,7 @@ LOGGER = logging.getLogger(__name__)
 
 GUARDIAN_STATE_SCHEMA = "vibecrafted.guardian-state.v1"
 GUARDIAN_DEAD_LETTER_SCHEMA = "vibecrafted.guardian-dead-letter.v1"
+GUARDIAN_READY_SCHEMA = "vibecrafted.guardian-ready.v1"
 DEFAULT_SERVER_URL = "http://127.0.0.1:3024"
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
 DEFAULT_RECOVERY_TIMEOUT_SECONDS = 5.0
@@ -178,6 +179,7 @@ Notifier = Callable[[GuardianNotification], None]
 Reconciler = Callable[[SettlementRevision], ReconcileDecision]
 ResumeCallback = Callable[[SettlementRevision, str], object]
 UrlOpener = Callable[..., Any]
+ReadyCallback = Callable[[], None]
 GuardEnforcer = Callable[..., object]
 NativeResumer = Callable[..., Mapping[str, object]]
 
@@ -901,6 +903,7 @@ class GuardianWorker:
         opener: UrlOpener = urllib.request.urlopen,
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
         replay_heartbeats: int = DEFAULT_REPLAY_HEARTBEATS,
+        ready_callback: ReadyCallback | None = None,
     ) -> None:
         self.server_url = _validate_server_url(server_url)
         self.state = state
@@ -914,6 +917,8 @@ class GuardianWorker:
             raise ValueError("replay heartbeat count must be > 0")
         self.connect_timeout = connect_timeout
         self.replay_heartbeats = replay_heartbeats
+        self.ready_callback = ready_callback
+        self._ready_announced = False
 
     def _request(self) -> urllib.request.Request:
         # During the first suppressed drain, resuming the saved cursor avoids
@@ -961,6 +966,9 @@ class GuardianWorker:
             response = self.opener(self._request(), timeout=self.connect_timeout)
             with contextlib.closing(response):
                 self._validate_response(response)
+                if not self._ready_announced and self.ready_callback is not None:
+                    self.ready_callback()
+                    self._ready_announced = True
                 for item in iter_sse(response):
                     if isinstance(item, SSEHeartbeat):
                         stats.heartbeats += 1
@@ -1161,6 +1169,54 @@ def default_lock_path() -> Path:
     return vibecrafted_home() / "control_plane" / "guardian" / "guardian.lock"
 
 
+def write_ready_receipt(
+    path: Path,
+    *,
+    nonce: str,
+    server_url: str,
+    pid: int | None = None,
+) -> Path:
+    """Atomically prove that this process owns the lock and accepted SSE."""
+
+    if not nonce:
+        raise ValueError("guardian readiness nonce must not be empty")
+    return atomic_write_json(
+        path,
+        {
+            "schema": GUARDIAN_READY_SCHEMA,
+            "nonce": nonce,
+            "pid": os.getpid() if pid is None else pid,
+            "server_url": _validate_server_url(server_url),
+        },
+    )
+
+
+def remove_ready_receipt_if_owned(
+    path: Path,
+    *,
+    nonce: str,
+    pid: int | None = None,
+) -> bool:
+    """Remove only the receipt written by this exact guardian invocation."""
+
+    expected_pid = os.getpid() if pid is None else pid
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict) or (
+        payload.get("schema") != GUARDIAN_READY_SCHEMA
+        or payload.get("nonce") != nonce
+        or payload.get("pid") != expected_pid
+    ):
+        return False
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -1170,6 +1226,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--state", type=Path, default=default_state_path())
     parser.add_argument("--lock", type=Path, default=default_lock_path())
+    parser.add_argument(
+        "--ready-file",
+        type=Path,
+        help="atomic launcher readiness receipt (requires --ready-nonce)",
+    )
+    parser.add_argument(
+        "--ready-nonce",
+        help="launcher nonce copied into --ready-file after a valid SSE response",
+    )
     parser.add_argument(
         "--connect-timeout",
         type=float,
@@ -1218,6 +1283,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     state = GuardianState.load(args.state)
+    if (args.ready_file is None) != (args.ready_nonce is None):
+        parser.error("--ready-file and --ready-nonce must be provided together")
 
     def notifier(notification: GuardianNotification) -> None:
         notify_operator(notification, desktop=not args.no_desktop)
@@ -1235,6 +1302,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             resume=recovery.resume,
             connect_timeout=args.connect_timeout,
             replay_heartbeats=args.replay_heartbeats,
+            ready_callback=(
+                (
+                    lambda: write_ready_receipt(
+                        args.ready_file,
+                        nonce=args.ready_nonce,
+                        server_url=args.server_url,
+                    )
+                )
+                if args.ready_file is not None and args.ready_nonce is not None
+                else None
+            ),
         )
         backoff = BoundedBackoff(args.backoff_initial, args.backoff_max)
     except ValueError as exc:
@@ -1242,12 +1320,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         with single_instance_lock(args.lock):
-            LOGGER.info(
-                "guardian attached to %s/api/control/events; "
-                "guarded native recovery adapter active",
-                worker.server_url,
-            )
-            worker.run_forever(backoff=backoff)
+            try:
+                LOGGER.info(
+                    "guardian attaching to %s/api/control/events; "
+                    "guarded native recovery adapter active",
+                    worker.server_url,
+                )
+                worker.run_forever(backoff=backoff)
+            finally:
+                if args.ready_file is not None and args.ready_nonce is not None:
+                    remove_ready_receipt_if_owned(
+                        args.ready_file,
+                        nonce=args.ready_nonce,
+                    )
     except GuardianAlreadyRunning as exc:
         LOGGER.error("%s", exc)
         return 75

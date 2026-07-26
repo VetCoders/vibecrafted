@@ -1209,7 +1209,7 @@ cmd_gui() {
 }
 
 _server_runtime_dir() {
-  printf '%s\n' "$HOME/.vibecrafted/server"
+  printf '%s/server\n' "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
 }
 
 _pid_file_value() {
@@ -1220,11 +1220,425 @@ _pid_file_value() {
   printf '%s\n' "$value"
 }
 
+_server_python() {
+  python3 - "$@" <<'PY'
+from __future__ import annotations
+
+import datetime as dt
+import hashlib
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+
+IDENTITY_SCHEMA = "vibecrafted.managed-process.v1"
+LOCK_SCHEMA = "vibecrafted.server-lifecycle-lock.v1"
+READY_SCHEMA = "vibecrafted.guardian-ready.v1"
+
+
+def fail(message: str, code: int = 2) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def atomic_text(path: Path, data: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    with temporary.open("w", encoding="utf-8") as handle:
+        handle.write(data)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+def atomic_json(path: Path, payload: dict[str, object]) -> None:
+    atomic_text(
+        path,
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+    )
+
+
+def read_json(path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f"invalid JSON evidence at {path}: {exc}", 5)
+    if not isinstance(payload, dict):
+        fail(f"JSON evidence at {path} is not an object", 5)
+    return payload
+
+
+def validate_endpoint(host_value: object, port_value: object) -> tuple[str, int]:
+    if not isinstance(host_value, str):
+        fail("host must be a string")
+    host = host_value
+    if (
+        not host
+        or host != host.strip()
+        or len(host) > 253
+        or host.startswith("-")
+        or re.fullmatch(r"[A-Za-z0-9._:-]+", host) is None
+    ):
+        fail(f"invalid server host: {host!r}")
+    raw_port = str(port_value)
+    if re.fullmatch(r"[0-9]{1,5}", raw_port) is None:
+        fail(f"invalid server port: {raw_port!r}")
+    port = int(raw_port)
+    if not 1 <= port <= 65535:
+        fail(f"server port out of range: {port}")
+    return host, port
+
+
+def origin(host: str, port: int) -> str:
+    rendered_host = f"[{host}]" if ":" in host else host
+    return f"http://{rendered_host}:{port}"
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def ps_value(pid: int, field: str, *, wide: bool = False) -> str:
+    argv = ["ps"]
+    if wide:
+        argv.append("-ww")
+    argv.extend(["-p", str(pid), "-o", f"{field}="])
+    result = subprocess.run(
+        argv,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    if result.returncode != 0:
+        fail(f"cannot inspect process {pid} field {field}", 4)
+    return result.stdout.strip()
+
+
+def process_start_token(pid: int) -> str:
+    proc_stat = Path(f"/proc/{pid}/stat")
+    if proc_stat.is_file():
+        raw = proc_stat.read_text(encoding="utf-8")
+        closing = raw.rfind(")")
+        fields = raw[closing + 2 :].split()
+        if closing < 0 or len(fields) <= 19:
+            fail(f"cannot parse process start token for {pid}", 4)
+        return f"proc:{fields[19]}"
+    started = ps_value(pid, "lstart")
+    if not started:
+        fail(f"cannot inspect process start token for {pid}", 4)
+    return f"ps:{started}"
+
+
+def managed_process_nonce(pid: int) -> str | None:
+    proc_environ = Path(f"/proc/{pid}/environ")
+    if proc_environ.is_file():
+        prefix = b"VIBECRAFTED_PROCESS_NONCE="
+        for item in proc_environ.read_bytes().split(b"\0"):
+            if item.startswith(prefix):
+                return item[len(prefix) :].decode("ascii", errors="strict")
+        return None
+    result = subprocess.run(
+        ["ps", "eww", "-p", str(pid), "-o", "command="],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    if result.returncode != 0:
+        fail(f"cannot inspect process nonce for {pid}", 4)
+    match = re.search(
+        r"(?:^|\s)VIBECRAFTED_PROCESS_NONCE=([0-9a-f]{64})(?:\s|$)",
+        result.stdout,
+    )
+    return match.group(1) if match else None
+
+
+def process_snapshot(pid: int) -> dict[str, object]:
+    if pid <= 1 or not process_alive(pid):
+        fail(f"process {pid} is not live", 3)
+    first_start = process_start_token(pid)
+    proc_cmdline = Path(f"/proc/{pid}/cmdline")
+    if proc_cmdline.is_file():
+        command: dict[str, object] = {
+            "kind": "argv",
+            "value": [
+                item.decode("utf-8", errors="surrogateescape")
+                for item in proc_cmdline.read_bytes().split(b"\0")
+                if item
+            ],
+        }
+        executable_probe = Path(f"/proc/{pid}/exe")
+        try:
+            executable = os.path.realpath(executable_probe)
+            executable_sha256 = sha256_file(executable_probe)
+        except OSError as exc:
+            fail(f"cannot fingerprint executable for process {pid}: {exc}", 4)
+    else:
+        command_line = ps_value(pid, "command", wide=True)
+        executable_raw = ps_value(pid, "comm")
+        if not command_line or not executable_raw:
+            fail(f"cannot capture command identity for process {pid}", 4)
+        command = {"kind": "command_line", "value": command_line}
+        executable_path = Path(executable_raw)
+        executable = (
+            str(executable_path.resolve())
+            if executable_path.exists()
+            else executable_raw
+        )
+        try:
+            executable_sha256 = (
+                sha256_file(Path(executable)) if Path(executable).is_file() else None
+            )
+        except OSError as exc:
+            fail(f"cannot fingerprint executable for process {pid}: {exc}", 4)
+    second_start = process_start_token(pid)
+    if first_start != second_start:
+        fail(f"process {pid} changed while identity was captured", 4)
+    return {
+        "start_token": first_start,
+        "command": command,
+        "executable": executable,
+        "executable_sha256": executable_sha256,
+        "process_nonce": managed_process_nonce(pid),
+    }
+
+
+def verify_identity(path: Path, pid: int, role: str) -> dict[str, object]:
+    payload = read_json(path)
+    if (
+        payload.get("schema") != IDENTITY_SCHEMA
+        or payload.get("pid") != pid
+        or payload.get("role") != role
+        or not isinstance(payload.get("nonce"), str)
+        or not payload.get("nonce")
+        or not isinstance(payload.get("process"), dict)
+    ):
+        fail(f"managed identity metadata mismatch for {role} PID {pid}", 4)
+    current = process_snapshot(pid)
+    if current != payload["process"]:
+        fail(f"managed identity changed for {role} PID {pid}", 4)
+    return payload
+
+
+operation = sys.argv[1] if len(sys.argv) > 1 else ""
+args = sys.argv[2:]
+
+if operation == "nonce":
+    print(os.urandom(32).hex())
+elif operation == "validate-endpoint":
+    host, port = validate_endpoint(args[0], args[1])
+    print(f"{host}\t{port}")
+elif operation == "origin":
+    host, port = validate_endpoint(args[0], args[1])
+    print(origin(host, port))
+elif operation == "status-read":
+    path = Path(args[0])
+    default_host, default_port = validate_endpoint(args[1], args[2])
+    if not path.is_file():
+        print(f"{default_host}\t{default_port}")
+    else:
+        payload = read_json(path)
+        host, port = validate_endpoint(
+            payload.get("host", default_host),
+            payload.get("port", default_port),
+        )
+        print(f"{host}\t{port}")
+elif operation == "health":
+    host, port = validate_endpoint(args[0], args[1])
+    request = urllib.request.Request(
+        f"{origin(host, port)}/api/control/state",
+        headers={"Accept": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=1.0) as response:
+        if getattr(response, "status", 200) != 200:
+            fail("server health endpoint did not return HTTP 200", 1)
+elif operation == "port-free":
+    host, port = validate_endpoint(args[0], args[1])
+    with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind((host, port))
+elif operation == "write-text":
+    atomic_text(Path(args[0]), args[1] + "\n")
+elif operation == "write-status":
+    path = Path(args[0])
+    raw_pid = args[1]
+    host, port = validate_endpoint(args[2], args[3])
+    status = args[4]
+    pid: int | None = None if raw_pid == "none" else int(raw_pid)
+    atomic_json(
+        path,
+        {
+            "pid": pid,
+            "host": host,
+            "port": port,
+            "started_at": dt.datetime.now(dt.timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "status": status,
+        },
+    )
+elif operation == "update-status":
+    path = Path(args[0])
+    status = args[1]
+    raw_pid = args[2]
+    try:
+        payload = read_json(path) if path.is_file() else {}
+    except SystemExit:
+        payload = {}
+    payload["status"] = status
+    payload["pid"] = None if raw_pid == "none" else int(raw_pid)
+    atomic_json(path, payload)
+elif operation == "capture-identity":
+    path = Path(args[0])
+    pid = int(args[1])
+    role = args[2]
+    nonce = args[3]
+    declared = Path(args[4]).resolve()
+    if not nonce:
+        fail("managed process nonce must not be empty")
+    try:
+        declared_sha256 = sha256_file(declared)
+    except OSError as exc:
+        fail(f"cannot fingerprint declared executable {declared}: {exc}", 4)
+    snapshot = process_snapshot(pid)
+    command_identity = json.dumps(snapshot["command"], ensure_ascii=False)
+    if str(declared) not in command_identity:
+        fail(
+            f"process {pid} has not exec'd declared executable {declared}",
+            4,
+        )
+    if snapshot.get("process_nonce") != nonce:
+        fail(f"process {pid} does not carry its lifecycle nonce", 4)
+    atomic_json(
+        path,
+        {
+            "schema": IDENTITY_SCHEMA,
+            "pid": pid,
+            "role": role,
+            "nonce": nonce,
+            "declared_executable": str(declared),
+            "declared_executable_sha256": declared_sha256,
+            "expected_argv": args[5:],
+            "process": snapshot,
+        },
+    )
+elif operation == "verify-identity":
+    verify_identity(Path(args[0]), int(args[1]), args[2])
+elif operation == "identity-nonce":
+    payload = read_json(Path(args[0]))
+    nonce = payload.get("nonce")
+    if not isinstance(nonce, str) or not nonce:
+        fail("identity nonce is missing", 5)
+    print(nonce)
+elif operation == "ready-check":
+    path = Path(args[0])
+    nonce = args[1]
+    pid = int(args[2])
+    server_url = args[3]
+    payload = read_json(path)
+    if payload != {
+        "schema": READY_SCHEMA,
+        "nonce": nonce,
+        "pid": pid,
+        "server_url": server_url,
+    }:
+        fail("guardian readiness receipt does not match this invocation", 4)
+elif operation == "ready-remove":
+    path = Path(args[0])
+    if not path.is_file():
+        raise SystemExit(0)
+    nonce = args[1]
+    pid = int(args[2])
+    server_url = args[3]
+    payload = read_json(path)
+    if payload != {
+        "schema": READY_SCHEMA,
+        "nonce": nonce,
+        "pid": pid,
+        "server_url": server_url,
+    }:
+        fail("refusing to remove an unowned guardian readiness receipt", 4)
+    path.unlink()
+elif operation == "lock-owner-write":
+    path = Path(args[0])
+    pid = int(args[1])
+    nonce = args[2]
+    atomic_json(
+        path,
+        {
+            "schema": LOCK_SCHEMA,
+            "pid": pid,
+            "nonce": nonce,
+            "acquired_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "process": process_snapshot(pid),
+        },
+    )
+elif operation == "lock-state":
+    path = Path(args[0])
+    try:
+        payload = read_json(path)
+        pid = int(payload.get("pid", 0))
+        if (
+            payload.get("schema") != LOCK_SCHEMA
+            or not isinstance(payload.get("nonce"), str)
+            or not payload.get("nonce")
+            or not isinstance(payload.get("process"), dict)
+        ):
+            fail("invalid lifecycle lock owner", 5)
+        if not process_alive(pid):
+            print(f"stale:{pid}")
+        elif process_snapshot(pid) != payload["process"]:
+            print(f"unverified:{pid}")
+        else:
+            print(f"live:{pid}")
+    except SystemExit as exc:
+        if exc.code == 5:
+            print("invalid")
+        else:
+            raise
+elif operation == "lock-owned":
+    payload = read_json(Path(args[0]))
+    if (
+        payload.get("schema") != LOCK_SCHEMA
+        or payload.get("pid") != int(args[1])
+        or payload.get("nonce") != args[2]
+    ):
+        fail("lifecycle lock ownership changed", 4)
+else:
+    fail(f"unknown server helper operation: {operation!r}")
+PY
+}
+
+_server_identity_file() {
+  local role="${1:-}"
+  printf '%s/%s.identity.json\n' "$(_server_runtime_dir)" "$role"
+}
+
 _managed_pid_state() {
   local pid_file="${1:-}"
-  local marker="${2:-}"
+  local role="${2:-}"
   local pid=""
-  local command_line=""
+  local identity_file=""
+  local verify_status=0
 
   [[ -f "$pid_file" ]] || {
     printf 'missing\n'
@@ -1239,13 +1653,256 @@ _managed_pid_state() {
     printf 'stale\n'
     return 0
   fi
-  command_line="$(ps -p "$pid" -o command= 2>/dev/null || true)"
-  if [[ -z "$command_line" || "$command_line" != *"$marker"* ]]; then
+  identity_file="$(_server_identity_file "$role")"
+  if [[ ! -f "$identity_file" ]]; then
     printf 'foreign\n'
     return 0
   fi
-  printf 'live\n'
+  if _server_python verify-identity "$identity_file" "$pid" "$role" >/dev/null 2>&1; then
+    printf 'live\n'
+    return 0
+  else
+    verify_status=$?
+  fi
+  if [[ "$verify_status" -eq 3 ]]; then
+    printf 'stale\n'
+  else
+    printf 'foreign\n'
+  fi
 }
+
+_capture_managed_identity() {
+  local role="${1:-}"
+  local pid="${2:-}"
+  local nonce="${3:-}"
+  local executable="${4:-}"
+  shift 4 || true
+  local identity_file
+  identity_file="$(_server_identity_file "$role")"
+  _server_python capture-identity \
+    "$identity_file" "$pid" "$role" "$nonce" "$executable" "$@" || return 1
+  sleep 0.05
+  _server_python verify-identity "$identity_file" "$pid" "$role"
+}
+
+_write_managed_pid() {
+  local pid_file="${1:-}"
+  local pid="${2:-}"
+  _server_python write-text "$pid_file" "$pid"
+}
+
+_server_endpoint() {
+  local status_file="${1:-}"
+  _server_python status-read "$status_file" "127.0.0.1" "3024"
+}
+
+_server_healthcheck() {
+  _server_python health "${1:-}" "${2:-}"
+}
+
+_server_port_available() {
+  _server_python port-free "${1:-}" "${2:-}"
+}
+
+_server_origin() {
+  _server_python origin "${1:-}" "${2:-}"
+}
+
+_wait_for_pid_exit() {
+  local pid="${1:-}"
+  local ticks="${2:-50}"
+  local elapsed=0
+  while [[ "$elapsed" -lt "$ticks" ]]; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+    elapsed=$((elapsed + 1))
+  done
+  ! kill -0 "$pid" 2>/dev/null
+}
+
+_cleanup_managed_evidence() {
+  local role="${1:-}"
+  local pid="${2:-}"
+  local runtime_dir pid_file identity_file nonce=""
+  local ready_path="" guardian_url=""
+  runtime_dir="$(_server_runtime_dir)"
+  pid_file="$runtime_dir/$role.pid"
+  identity_file="$(_server_identity_file "$role")"
+
+  if [[ -f "$identity_file" ]]; then
+    nonce="$(_server_python identity-nonce "$identity_file" 2>/dev/null || true)"
+  fi
+  if [[ "$role" == "guardian" ]]; then
+    ready_path="$(_pid_file_value "$runtime_dir/guardian.ready-path" 2>/dev/null || true)"
+    guardian_url="$(_pid_file_value "$runtime_dir/guardian.url" 2>/dev/null || true)"
+    if [[ -n "$ready_path" && -n "$nonce" && "$pid" =~ ^[0-9]+$ && -n "$guardian_url" ]]; then
+      _server_python ready-remove \
+        "$ready_path" "$nonce" "$pid" "$guardian_url" >/dev/null 2>&1 || true
+    fi
+    rm -f "$runtime_dir/guardian.url" "$runtime_dir/guardian.ready-path"
+  fi
+  rm -f "$pid_file" "$identity_file"
+}
+
+_stop_managed_process() {
+  local role="${1:-}"
+  local label="${2:-$role}"
+  local runtime_dir pid_file pid state
+  runtime_dir="$(_server_runtime_dir)"
+  pid_file="$runtime_dir/$role.pid"
+  pid="$(_pid_file_value "$pid_file" 2>/dev/null || true)"
+  state="$(_managed_pid_state "$pid_file" "$role")"
+
+  case "$state" in
+    missing)
+      printf "%s is not running.\n" "$label"
+      return 0
+      ;;
+    invalid)
+      printf "%s is not running (invalid pidfile: %s).\n" "$label" "${pid:-empty}"
+      _cleanup_managed_evidence "$role" "$pid"
+      return 0
+      ;;
+    stale)
+      printf "%s is not running (stale pidfile: %s).\n" "$label" "${pid:-empty}"
+      _cleanup_managed_evidence "$role" "$pid"
+      return 0
+      ;;
+    foreign)
+      printf "%b✗%b %s PID file points at an unverified live process (%s); refusing to signal it and retaining evidence.\n" \
+        "$_red" "$_reset" "$label" "${pid:-unknown}" >&2
+      return 1
+      ;;
+  esac
+
+  printf "Stopping %s (PID %s)...\n" "$role" "$pid"
+  if [[ "$(_managed_pid_state "$pid_file" "$role")" != "live" ]]; then
+    printf "%b✗%b %s identity changed immediately before SIGTERM; refusing to signal and retaining evidence.\n" \
+      "$_red" "$_reset" "$label" >&2
+    return 1
+  fi
+  if ! kill -15 "$pid" 2>/dev/null; then
+    if kill -0 "$pid" 2>/dev/null; then
+      printf "%b✗%b Failed to send SIGTERM to %s PID %s; retaining evidence.\n" \
+        "$_red" "$_reset" "$role" "$pid" >&2
+      return 1
+    fi
+  fi
+
+  if _wait_for_pid_exit "$pid" "${VIBECRAFTED_STOP_TERM_WAIT_TICKS:-50}"; then
+    _cleanup_managed_evidence "$role" "$pid"
+    printf "%b✓%b %s stopped.\n" "$_green" "$_reset" "$label"
+    return 0
+  fi
+
+  if [[ "$(_managed_pid_state "$pid_file" "$role")" != "live" ]]; then
+    printf "%b✗%b %s identity changed after SIGTERM wait; refusing SIGKILL and retaining evidence.\n" \
+      "$_red" "$_reset" "$label" >&2
+    return 1
+  fi
+  printf "%s did not exit on SIGTERM, sending SIGKILL...\n" "$label"
+  if ! kill -9 "$pid" 2>/dev/null; then
+    if kill -0 "$pid" 2>/dev/null; then
+      printf "%b✗%b Failed to send SIGKILL to %s PID %s; retaining evidence.\n" \
+        "$_red" "$_reset" "$role" "$pid" >&2
+      return 1
+    fi
+  fi
+  if ! _wait_for_pid_exit "$pid" "${VIBECRAFTED_STOP_KILL_WAIT_TICKS:-20}"; then
+    printf "%b✗%b %s PID %s survived SIGKILL; retaining PID and identity evidence.\n" \
+      "$_red" "$_reset" "$label" "$pid" >&2
+    return 1
+  fi
+  _cleanup_managed_evidence "$role" "$pid"
+  printf "%b✓%b %s stopped.\n" "$_green" "$_reset" "$label"
+}
+
+_acquire_server_lifecycle_lock() {
+  local runtime_dir lock_dir owner_file state attempts=0 invalid_attempts=0
+  runtime_dir="$(_server_runtime_dir)"
+  lock_dir="$runtime_dir/lifecycle.lock"
+  owner_file="$lock_dir/owner.json"
+  mkdir -p "$runtime_dir"
+  _SERVER_LIFECYCLE_LOCK_NONCE="$(_server_python nonce)"
+  _SERVER_LIFECYCLE_LOCK_PID="${BASHPID:-$$}"
+  _SERVER_LIFECYCLE_LOCK_DIR="$lock_dir"
+
+  while [[ "$attempts" -lt "${VIBECRAFTED_LIFECYCLE_LOCK_TICKS:-100}" ]]; do
+    if mkdir "$lock_dir" 2>/dev/null; then
+      if ! _server_python lock-owner-write \
+        "$owner_file" "$_SERVER_LIFECYCLE_LOCK_PID" "$_SERVER_LIFECYCLE_LOCK_NONCE"; then
+        rmdir "$lock_dir" 2>/dev/null || true
+        return 1
+      fi
+      return 0
+    fi
+    state="$(_server_python lock-state "$owner_file" 2>/dev/null || printf 'initializing')"
+    case "$state" in
+      live:*)
+        invalid_attempts=0
+        sleep 0.05
+        ;;
+      initializing|invalid)
+        invalid_attempts=$((invalid_attempts + 1))
+        if [[ "$invalid_attempts" -lt 20 ]]; then
+          sleep 0.05
+        else
+          printf "%b✗%b Server lifecycle lock has invalid owner evidence at %s; refusing mutation.\n" \
+            "$_red" "$_reset" "$owner_file" >&2
+          return 75
+        fi
+        ;;
+      stale:*|unverified:*)
+        printf "%b✗%b Server lifecycle lock is %s; owner evidence retained at %s.\n" \
+          "$_red" "$_reset" "$state" "$owner_file" >&2
+        return 75
+        ;;
+    esac
+    attempts=$((attempts + 1))
+  done
+  state="$(_server_python lock-state "$owner_file" 2>/dev/null || printf 'unknown')"
+  printf "%b✗%b Timed out waiting for server lifecycle lock (%s); owner evidence: %s\n" \
+    "$_red" "$_reset" "$state" "$owner_file" >&2
+  return 75
+}
+
+_release_server_lifecycle_lock() {
+  local owner_file
+  [[ -n "${_SERVER_LIFECYCLE_LOCK_DIR:-}" ]] || return 0
+  owner_file="$_SERVER_LIFECYCLE_LOCK_DIR/owner.json"
+  if _server_python lock-owned \
+    "$owner_file" "$_SERVER_LIFECYCLE_LOCK_PID" "$_SERVER_LIFECYCLE_LOCK_NONCE" \
+    >/dev/null 2>&1; then
+    rm -f "$owner_file"
+    rmdir "$_SERVER_LIFECYCLE_LOCK_DIR" 2>/dev/null || true
+  else
+    printf "%b✗%b Lifecycle lock ownership changed; retaining evidence at %s\n" \
+      "$_red" "$_reset" "$owner_file" >&2
+    return 1
+  fi
+}
+
+_server_lifecycle_lock_is_owned() {
+  local owner_file
+  [[ -n "${_SERVER_LIFECYCLE_LOCK_DIR:-}" ]] || return 1
+  [[ -n "${_SERVER_LIFECYCLE_LOCK_PID:-}" ]] || return 1
+  [[ -n "${_SERVER_LIFECYCLE_LOCK_NONCE:-}" ]] || return 1
+  owner_file="$_SERVER_LIFECYCLE_LOCK_DIR/owner.json"
+  _server_python lock-owned \
+    "$owner_file" "$_SERVER_LIFECYCLE_LOCK_PID" "$_SERVER_LIFECYCLE_LOCK_NONCE" \
+    >/dev/null 2>&1
+}
+
+_with_server_lifecycle_lock() (
+  _acquire_server_lifecycle_lock || exit $?
+  trap '_release_server_lifecycle_lock' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  cmd_server "$@"
+)
 
 _guardian_binary() {
   local candidate="$HOME/.local/bin/vc-guardian"
@@ -1257,76 +1914,61 @@ _guardian_binary() {
 }
 
 _stop_guardian() {
-  local runtime_dir guardian_pid_file guardian_url_file state pid elapsed
+  _stop_managed_process guardian Guardian
+}
+
+_guardian_ready_receipt_state() {
+  local runtime_dir pid="${1:-}" target_url="${2:-}"
+  local identity_file nonce ready_path
   runtime_dir="$(_server_runtime_dir)"
-  guardian_pid_file="$runtime_dir/guardian.pid"
-  guardian_url_file="$runtime_dir/guardian.url"
-  state="$(_managed_pid_state "$guardian_pid_file" "vc-guardian")"
-  pid="$(_pid_file_value "$guardian_pid_file" 2>/dev/null || true)"
-
-  case "$state" in
-    missing)
-      rm -f "$guardian_url_file"
-      printf "Guardian is not running.\n"
-      return 0
-      ;;
-    invalid|stale)
-      printf "Guardian is not running (%s pidfile: %s).\n" "$state" "${pid:-empty}"
-      rm -f "$guardian_pid_file" "$guardian_url_file"
-      return 0
-      ;;
-    foreign)
-      printf "%b✗%b Guardian PID file points at a different live process (%s); refusing to signal it.\n" "$_red" "$_reset" "${pid:-unknown}" >&2
-      return 1
-      ;;
-  esac
-
-  printf "Stopping guardian (PID %s)...\n" "$pid"
-  kill -15 "$pid" 2>/dev/null || true
-  elapsed=0
-  while [[ $elapsed -lt 50 ]]; do
-    if ! kill -0 "$pid" 2>/dev/null; then
-      break
-    fi
-    sleep 0.1
-    elapsed=$((elapsed + 1))
-  done
-  if kill -0 "$pid" 2>/dev/null; then
-    if [[ "$(_managed_pid_state "$guardian_pid_file" "vc-guardian")" != "live" ]]; then
-      printf "%b✗%b Guardian PID ownership changed while stopping; refusing SIGKILL.\n" "$_red" "$_reset" >&2
-      return 1
-    fi
-    printf "Guardian did not exit on SIGTERM, sending SIGKILL...\n"
-    kill -9 "$pid" 2>/dev/null || true
+  identity_file="$(_server_identity_file guardian)"
+  nonce="$(_server_python identity-nonce "$identity_file" 2>/dev/null || true)"
+  ready_path="$(_pid_file_value "$runtime_dir/guardian.ready-path" 2>/dev/null || true)"
+  if [[ -z "$nonce" || -z "$ready_path" ]]; then
+    printf 'missing\n'
+    return 0
   fi
-  rm -f "$guardian_pid_file" "$guardian_url_file"
-  printf "%b✓%b Guardian stopped.\n" "$_green" "$_reset"
-  return 0
+  if _server_python ready-check "$ready_path" "$nonce" "$pid" "$target_url" \
+    >/dev/null 2>&1; then
+    printf 'ready\n'
+  else
+    printf 'unready\n'
+  fi
 }
 
 _ensure_guardian() {
   local host="${1:-127.0.0.1}"
   local port="${2:-3024}"
-  local runtime_dir guardian_pid_file guardian_url_file guardian_log
-  local state pid guardian_bin target_url configured_url
-  local elapsed
+  local runtime_dir guardian_pid_file guardian_url_file guardian_ready_path_file
+  local guardian_log identity_file state pid guardian_bin target_url configured_url
+  local nonce ready_path elapsed captured
+  local identity_error
 
   runtime_dir="$(_server_runtime_dir)"
   guardian_pid_file="$runtime_dir/guardian.pid"
   guardian_url_file="$runtime_dir/guardian.url"
+  guardian_ready_path_file="$runtime_dir/guardian.ready-path"
   guardian_log="$runtime_dir/guardian.log"
-  target_url="http://$host:$port"
+  identity_file="$(_server_identity_file guardian)"
+  identity_error="$runtime_dir/guardian.identity-error.log"
+  target_url="$(_server_origin "$host" "$port")" || return 1
   mkdir -p "$runtime_dir"
-  state="$(_managed_pid_state "$guardian_pid_file" "vc-guardian")"
+  state="$(_managed_pid_state "$guardian_pid_file" "guardian")"
   pid="$(_pid_file_value "$guardian_pid_file" 2>/dev/null || true)"
 
   if [[ "$state" == "live" ]]; then
     configured_url="$(_pid_file_value "$guardian_url_file" 2>/dev/null || true)"
-    if [[ "$configured_url" == "$target_url" ]]; then
+    if [[ "$configured_url" == "$target_url" && \
+      "$(_guardian_ready_receipt_state "$pid" "$target_url")" == "ready" ]]; then
       printf "Guardian is already running (PID %s) for %s\n" "$pid" "$target_url"
       return 0
     fi
-    printf "Guardian endpoint changed (%s -> %s). Restarting sidecar...\n" "${configured_url:-unknown}" "$target_url"
+    if [[ "$configured_url" == "$target_url" ]]; then
+      printf "Guardian is live but has no valid SSE readiness receipt. Restarting sidecar...\n"
+    else
+      printf "Guardian endpoint changed (%s -> %s). Restarting sidecar...\n" \
+        "${configured_url:-unknown}" "$target_url"
+    fi
     _stop_guardian || return 1
     state="missing"
     pid=""
@@ -1334,12 +1976,13 @@ _ensure_guardian() {
 
   case "$state" in
     foreign)
-      printf "%b✗%b Guardian PID file points at a different live process (%s); refusing to replace it.\n" "$_red" "$_reset" "${pid:-unknown}" >&2
+      printf "%b✗%b Guardian PID file points at an unverified live process (%s); refusing to replace it.\n" \
+        "$_red" "$_reset" "${pid:-unknown}" >&2
       return 1
       ;;
     invalid|stale)
       printf "Stale guardian PID file found (%s: %s). Healing sidecar...\n" "$state" "${pid:-empty}"
-      rm -f "$guardian_pid_file" "$guardian_url_file"
+      _stop_guardian || return 1
       ;;
   esac
 
@@ -1350,28 +1993,75 @@ _ensure_guardian() {
   fi
 
   printf "Starting process guardian for %s...\n" "$target_url"
-  nohup "$guardian_bin" --server-url "$target_url" > "$guardian_log" 2>&1 < /dev/null &
+  nonce="$(_server_python nonce)"
+  ready_path="$runtime_dir/guardian.ready.$nonce.json"
+  nohup env VIBECRAFTED_PROCESS_NONCE="$nonce" "$guardian_bin" \
+    --server-url "$target_url" \
+    --ready-file "$ready_path" \
+    --ready-nonce "$nonce" \
+    > "$guardian_log" 2>&1 < /dev/null &
   pid=$!
-  printf '%s\n' "$pid" > "$guardian_pid_file.tmp.$$"
-  mv "$guardian_pid_file.tmp.$$" "$guardian_pid_file"
-  printf '%s\n' "$target_url" > "$guardian_url_file.tmp.$$"
-  mv "$guardian_url_file.tmp.$$" "$guardian_url_file"
+  _write_managed_pid "$guardian_pid_file" "$pid"
+  _server_python write-text "$guardian_url_file" "$target_url"
+  _server_python write-text "$guardian_ready_path_file" "$ready_path"
+
+  captured=0
+  elapsed=0
+  while [[ "$elapsed" -lt 20 ]]; do
+    if _capture_managed_identity guardian "$pid" "$nonce" "$guardian_bin" \
+      "$guardian_bin" \
+      --server-url "$target_url" \
+      --ready-file "$ready_path" \
+      --ready-nonce "$nonce" \
+      > /dev/null 2> "$identity_error"; then
+      captured=1
+      rm -f "$identity_error"
+      break
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.05
+    elapsed=$((elapsed + 1))
+  done
+  if [[ "$captured" -ne 1 ]]; then
+    if kill -0 "$pid" 2>/dev/null; then
+      printf "%b✗%b Guardian identity could not be captured; retaining PID evidence and refusing to signal it.\n" \
+        "$_red" "$_reset" >&2
+    else
+      _server_python ready-remove "$ready_path" "$nonce" "$pid" "$target_url" \
+        >/dev/null 2>&1 || true
+      rm -f "$guardian_pid_file" "$guardian_url_file" \
+        "$guardian_ready_path_file" "$identity_file"
+      printf "%b✗%b Guardian failed SSE readiness: exited before identity capture. Check %s\n" \
+        "$_red" "$_reset" "$guardian_log" >&2
+    fi
+    return 1
+  fi
 
   elapsed=0
-  while [[ $elapsed -lt 10 ]]; do
-    if [[ "$(_managed_pid_state "$guardian_pid_file" "vc-guardian")" == "live" ]]; then
+  while [[ "$elapsed" -lt "${VIBECRAFTED_GUARDIAN_READY_TICKS:-50}" ]]; do
+    state="$(_managed_pid_state "$guardian_pid_file" "guardian")"
+    if [[ "$state" == "live" && \
+      "$(_guardian_ready_receipt_state "$pid" "$target_url")" == "ready" ]]; then
       printf "%b✓%b Guardian is running (PID %s).\n" "$_green" "$_reset" "$pid"
       return 0
     fi
-    if ! kill -0 "$pid" 2>/dev/null; then
+    if [[ "$state" != "live" ]]; then
       break
     fi
     sleep 0.1
     elapsed=$((elapsed + 1))
   done
 
-  rm -f "$guardian_pid_file" "$guardian_url_file"
-  printf "%b✗%b Guardian failed to stay alive. Check %s\n" "$_red" "$_reset" "$guardian_log" >&2
+  state="$(_managed_pid_state "$guardian_pid_file" "guardian")"
+  if [[ "$state" == "live" ]]; then
+    _stop_guardian || true
+  elif [[ "$state" == "stale" || "$state" == "invalid" ]]; then
+    _stop_guardian >/dev/null || true
+  fi
+  printf "%b✗%b Guardian failed SSE readiness. Check %s\n" \
+    "$_red" "$_reset" "$guardian_log" >&2
   return 1
 }
 
@@ -1383,26 +2073,47 @@ cmd_server() {
     cmd_server_help
     return 0
   fi
+  if [[ ( "$verb" == "start" || "$verb" == "stop" ) ]] && \
+    ! _server_lifecycle_lock_is_owned; then
+    _with_server_lifecycle_lock "$verb" "$@"
+    return $?
+  fi
 
   case "$verb" in
     start)
       local port="3024"
       local host="127.0.0.1"
+      local endpoint=""
       while [[ $# -gt 0 ]]; do
         case "$1" in
           --port|-p)
+            if [[ $# -lt 2 ]]; then
+              printf "%b✗%b %s requires a value.\n" "$_red" "$_reset" "$1" >&2
+              return 2
+            fi
             port="$2"
             shift 2
             ;;
           --host|-h)
+            if [[ $# -lt 2 ]]; then
+              printf "%b✗%b %s requires a value.\n" "$_red" "$_reset" "$1" >&2
+              return 2
+            fi
             host="$2"
             shift 2
             ;;
           *)
-            shift
+            printf "%b✗%b Unknown server start option: %s\n" \
+              "$_red" "$_reset" "$1" >&2
+            return 2
             ;;
         esac
       done
+      if ! endpoint="$(_server_python validate-endpoint "$host" "$port")"; then
+        printf "%b✗%b Invalid server endpoint.\n" "$_red" "$_reset" >&2
+        return 2
+      fi
+      IFS=$'\t' read -r host port <<< "$endpoint"
 
       # 1. Check if already running
       local runtime_dir
@@ -1412,40 +2123,43 @@ cmd_server() {
       if [[ -f "$pid_file" ]]; then
         local existing_pid existing_state
         existing_pid="$(_pid_file_value "$pid_file" 2>/dev/null || true)"
-        existing_state="$(_managed_pid_state "$pid_file" "vc-server")"
+        existing_state="$(_managed_pid_state "$pid_file" "server")"
         if [[ "$existing_state" == "live" ]]; then
           # Check health
           local actual_host="127.0.0.1"
           local actual_port="3024"
-          if [[ -f "$status_file" ]]; then
-            actual_host=$(python3 -c "import json; print(json.load(open('$status_file')).get('host', '127.0.0.1'))" 2>/dev/null || echo "127.0.0.1")
-            actual_port=$(python3 -c "import json; print(json.load(open('$status_file')).get('port', '3024'))" 2>/dev/null || echo "3024")
+          if ! endpoint="$(_server_endpoint "$status_file")"; then
+            printf "%b✗%b Managed server status has an invalid endpoint; refusing lifecycle mutation.\n" \
+              "$_red" "$_reset" >&2
+            return 1
           fi
-          if python3 -c "import urllib.request; urllib.request.urlopen('http://$actual_host:$actual_port/api/control/state', timeout=1.0)" >/dev/null 2>&1; then
-            printf "Server is already running (PID %s) at http://%s:%s\n" "$existing_pid" "$actual_host" "$actual_port"
+          IFS=$'\t' read -r actual_host actual_port <<< "$endpoint"
+          if _server_healthcheck "$actual_host" "$actual_port" >/dev/null 2>&1; then
+            printf "Server is already running (PID %s) at %s\n" \
+              "$existing_pid" "$(_server_origin "$actual_host" "$actual_port")"
             _ensure_guardian "$actual_host" "$actual_port"
             return $?
           else
             # Stale PID or unhealthy - stop/cleanup
             printf "Unhealthy or stale server process found at PID %s. Cleaning up...\n" "$existing_pid"
             _stop_guardian || return 1
-            kill "$existing_pid" 2>/dev/null || true
-            sleep 0.5
-            kill -9 "$existing_pid" 2>/dev/null || true
-            rm -f "$pid_file"
+            _stop_managed_process server Server || return 1
           fi
         elif [[ "$existing_state" == "foreign" ]]; then
-          printf "%b✗%b Server PID file points at a different live process (%s); refusing to signal or replace it.\n" "$_red" "$_reset" "${existing_pid:-unknown}" >&2
+          printf "%b✗%b Server PID file points at an unverified live process (%s); refusing to signal or replace it.\n" \
+            "$_red" "$_reset" "${existing_pid:-unknown}" >&2
           return 1
         else
-          printf "Removing %s server PID file (%s).\n" "$existing_state" "${existing_pid:-empty}"
-          rm -f "$pid_file"
+          printf "Healing %s server PID evidence (%s).\n" \
+            "$existing_state" "${existing_pid:-empty}"
+          _stop_managed_process server Server || return 1
         fi
       fi
 
       # 2. Pre-check port sanity
-      if ! python3 -c "import socket; s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(('$host', $port)); s.close()" 2>/dev/null; then
-        printf "%b✗%b Port %s is already in use.\n" "$_red" "$_reset" "$port" >&2
+      if ! _server_port_available "$host" "$port" >/dev/null 2>&1; then
+        printf "%b✗%b Endpoint %s is unavailable.\n" \
+          "$_red" "$_reset" "$(_server_origin "$host" "$port")" >&2
         return 1
       fi
 
@@ -1464,37 +2178,66 @@ cmd_server() {
 
       # 4. Start process
       mkdir -p "$runtime_dir"
-      printf "Starting local control-plane viewer at http://%s:%s...\n" "$host" "$port"
-      
+      printf "Starting local control-plane viewer at %s...\n" \
+        "$(_server_origin "$host" "$port")"
+
+      local server_nonce
+      local identity_error
+      identity_error="$runtime_dir/server.identity-error.log"
+      server_nonce="$(_server_python nonce)"
       nohup env VC_SERVER_ADDR="$host:$port" \
                 VC_SERVER_SITE_ROOT="$site_root" \
                 VIBECRAFTED_HOME="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}" \
+                VIBECRAFTED_PROCESS_NONCE="$server_nonce" \
                 "$server_bin" > "$runtime_dir/server.log" 2>&1 < /dev/null &
       local server_pid=$!
-      echo "$server_pid" > "$pid_file"
+      local captured=0
+      _write_managed_pid "$pid_file" "$server_pid"
+      local capture_elapsed=0
+      while [[ "$capture_elapsed" -lt 20 ]]; do
+        if _capture_managed_identity server "$server_pid" "$server_nonce" \
+          "$server_bin" "$server_bin" > /dev/null 2> "$identity_error"; then
+          captured=1
+          rm -f "$identity_error"
+          break
+        fi
+        if ! kill -0 "$server_pid" 2>/dev/null; then
+          break
+        fi
+        sleep 0.05
+        capture_elapsed=$((capture_elapsed + 1))
+      done
+      if [[ "$captured" -ne 1 ]]; then
+        if kill -0 "$server_pid" 2>/dev/null; then
+          printf "%b✗%b Server identity could not be captured; retaining PID evidence and refusing to signal it.\n" \
+            "$_red" "$_reset" >&2
+        else
+          _cleanup_managed_evidence server "$server_pid"
+          printf "%b✗%b Server exited before identity capture. Check %s/server.log\n" \
+            "$_red" "$_reset" "$runtime_dir" >&2
+        fi
+        return 1
+      fi
 
-      # Write initial status.json
-      cat <<EOF > "$status_file"
-{
-  "pid": $server_pid,
-  "host": "$host",
-  "port": $port,
-  "started_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "status": "starting"
-}
-EOF
+      _server_python write-status \
+        "$status_file" "$server_pid" "$host" "$port" "starting"
 
       # 5. Wait for health
       local timeout=15
       local elapsed=0
       local healthy=0
       while [[ $elapsed -lt 30 ]]; do
-        if ! kill -0 "$server_pid" 2>/dev/null; then
+        local current_state
+        current_state="$(_managed_pid_state "$pid_file" "server")"
+        if [[ "$current_state" != "live" ]]; then
           printf "%b✗%b Server process died immediately. Check log at %s/server.log\n" "$_red" "$_reset" "$runtime_dir" >&2
-          python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='failed'; json.dump(d, open(p, 'w'))"
+          if [[ "$current_state" == "stale" || "$current_state" == "invalid" ]]; then
+            _stop_managed_process server Server >/dev/null || true
+          fi
+          _server_python update-status "$status_file" "failed" "none"
           return 1
         fi
-        if python3 -c "import urllib.request; urllib.request.urlopen('http://$host:$port/api/control/state', timeout=1.0)" >/dev/null 2>&1; then
+        if _server_healthcheck "$host" "$port" >/dev/null 2>&1; then
           healthy=1
           break
         fi
@@ -1503,23 +2246,27 @@ EOF
       done
 
       if [[ $healthy -eq 1 ]]; then
-        printf "%b✓%b Server is up and healthy at http://%s:%s\n" "$_green" "$_reset" "$host" "$port"
-        python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='running'; json.dump(d, open(p, 'w'))"
+        printf "%b✓%b Server is up and healthy at %s\n" \
+          "$_green" "$_reset" "$(_server_origin "$host" "$port")"
+        _server_python update-status "$status_file" "running" "$server_pid"
         if ! _ensure_guardian "$host" "$port"; then
           printf "%b✗%b Guardian startup failed; rolling back the newly started server.\n" "$_red" "$_reset" >&2
-          kill -15 "$server_pid" 2>/dev/null || true
-          sleep 0.2
-          kill -9 "$server_pid" 2>/dev/null || true
-          rm -f "$pid_file"
-          python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='failed'; d['pid']=None; json.dump(d, open(p, 'w'))"
+          if _stop_managed_process server Server; then
+            _server_python update-status "$status_file" "failed" "none"
+          else
+            _server_python update-status "$status_file" "failed" "$server_pid"
+          fi
           return 1
         fi
         return 0
       else
-        printf "%b✗%b Server started but failed health check at http://%s:%s/api/control/state after %s seconds.\n" "$_red" "$_reset" "$host" "$port" "$timeout" >&2
-        kill "$server_pid" 2>/dev/null || true
-        rm -f "$pid_file"
-        python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='failed'; json.dump(d, open(p, 'w'))"
+        printf "%b✗%b Server started but failed health check at %s/api/control/state after %s seconds.\n" \
+          "$_red" "$_reset" "$(_server_origin "$host" "$port")" "$timeout" >&2
+        if _stop_managed_process server Server; then
+          _server_python update-status "$status_file" "failed" "none"
+        else
+          _server_python update-status "$status_file" "failed" "$server_pid"
+        fi
         return 1
       fi
       ;;
@@ -1530,54 +2277,13 @@ EOF
       local status_file="$runtime_dir/status.json"
       local stop_errors=0
       _stop_guardian || stop_errors=1
-      if [[ ! -f "$pid_file" ]]; then
-        printf "Server is not running.\n"
-        if [[ -f "$status_file" ]]; then
-          python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='stopped'; d['pid']=None; json.dump(d, open(p, 'w'))"
-        fi
-        return "$stop_errors"
+      if ! _stop_managed_process server Server; then
+        stop_errors=1
       fi
-
-      local pid server_state
-      pid="$(_pid_file_value "$pid_file" 2>/dev/null || true)"
-      server_state="$(_managed_pid_state "$pid_file" "vc-server")"
-      if [[ "$server_state" == "foreign" ]]; then
-        printf "%b✗%b Server PID file points at a different live process (%s); refusing to signal it.\n" "$_red" "$_reset" "${pid:-unknown}" >&2
-        return 1
+      if [[ "$(_managed_pid_state "$pid_file" "server")" == "missing" && \
+        -f "$status_file" ]]; then
+        _server_python update-status "$status_file" "stopped" "none"
       fi
-      if [[ "$server_state" != "live" ]]; then
-        printf "Server is not running.\n"
-        rm -f "$pid_file"
-        if [[ -f "$status_file" ]]; then
-          python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='stopped'; d['pid']=None; json.dump(d, open(p, 'w'))"
-        fi
-        return "$stop_errors"
-      fi
-
-      printf "Stopping server (PID %s)...\n" "$pid"
-      kill -15 "$pid" 2>/dev/null || true
-
-      local elapsed=0
-      local exited=0
-      while [[ $elapsed -lt 50 ]]; do
-        if ! kill -0 "$pid" 2>/dev/null; then
-          exited=1
-          break
-        fi
-        sleep 0.1
-        elapsed=$((elapsed + 1))
-      done
-
-      if [[ $exited -eq 0 ]]; then
-        printf "Server did not exit on SIGTERM, sending SIGKILL...\n"
-        kill -9 "$pid" 2>/dev/null || true
-      fi
-
-      rm -f "$pid_file"
-      if [[ -f "$status_file" ]]; then
-        python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='stopped'; d['pid']=None; json.dump(d, open(p, 'w'))"
-      fi
-      printf "%b✓%b Server stopped.\n" "$_green" "$_reset"
       return "$stop_errors"
       ;;
     status)
@@ -1594,10 +2300,17 @@ EOF
       local server_state guardian_state
       local server_healthy=0
       local has_errors=0
+      local endpoint_valid=1
+      local endpoint=""
+      local target_url=""
 
-      if [[ -f "$status_file" ]]; then
-        host=$(python3 -c "import json; print(json.load(open('$status_file')).get('host', '127.0.0.1'))" 2>/dev/null || echo "127.0.0.1")
-        port=$(python3 -c "import json; print(json.load(open('$status_file')).get('port', '3024'))" 2>/dev/null || echo "3024")
+      if endpoint="$(_server_endpoint "$status_file" 2>/dev/null)"; then
+        IFS=$'\t' read -r host port <<< "$endpoint"
+        target_url="$(_server_origin "$host" "$port")"
+      else
+        printf "Server status: INVALID-ENDPOINT (refusing status.json values)\n"
+        endpoint_valid=0
+        has_errors=1
       fi
 
       if [[ -f "$pid_file" ]]; then
@@ -1605,8 +2318,8 @@ EOF
       fi
       guardian_pid="$(_pid_file_value "$guardian_pid_file" 2>/dev/null || true)"
       guardian_url="$(_pid_file_value "$runtime_dir/guardian.url" 2>/dev/null || true)"
-      server_state="$(_managed_pid_state "$pid_file" "vc-server")"
-      guardian_state="$(_managed_pid_state "$guardian_pid_file" "vc-guardian")"
+      server_state="$(_managed_pid_state "$pid_file" "server")"
+      guardian_state="$(_managed_pid_state "$guardian_pid_file" "guardian")"
 
       case "$server_state" in
         missing)
@@ -1617,15 +2330,16 @@ EOF
           has_errors=1
           ;;
         foreign)
-          printf "Server: PID-MISMATCH (%s belongs to another process)\n" "${pid:-unknown}"
+          printf "Server: PID-MISMATCH (%s is live but identity is unverified)\n" "${pid:-unknown}"
           has_errors=1
           ;;
         live)
-          if python3 -c "import urllib.request; urllib.request.urlopen('http://$host:$port/api/control/state', timeout=1.0)" >/dev/null 2>&1; then
+          if [[ "$endpoint_valid" -eq 1 ]] && \
+            _server_healthcheck "$host" "$port" >/dev/null 2>&1; then
             server_healthy=1
-            printf "Server: RUNNING (PID %s, listening on http://%s:%s)\n" "$pid" "$host" "$port"
+            printf "Server: RUNNING (PID %s, listening on %s)\n" "$pid" "$target_url"
           else
-            printf "Server: UNHEALTHY (PID %s, http://%s:%s/api/control/state is not responding)\n" "$pid" "$host" "$port"
+            printf "Server: UNHEALTHY (PID %s, endpoint is invalid or not responding)\n" "$pid"
             has_errors=1
           fi
           ;;
@@ -1641,14 +2355,19 @@ EOF
           has_errors=1
           ;;
         foreign)
-          printf "Guardian: PID-MISMATCH (%s belongs to another process)\n" "${guardian_pid:-unknown}"
+          printf "Guardian: PID-MISMATCH (%s is live but identity is unverified)\n" "${guardian_pid:-unknown}"
           has_errors=1
           ;;
         live)
-          if [[ $server_healthy -eq 1 && "$guardian_url" == "http://$host:$port" ]]; then
-            printf "Guardian: RUNNING (PID %s, server http://%s:%s)\n" "$guardian_pid" "$host" "$port"
+          if [[ $server_healthy -eq 1 && "$guardian_url" == "$target_url" && \
+            "$(_guardian_ready_receipt_state "$guardian_pid" "$target_url")" == "ready" ]]; then
+            printf "Guardian: RUNNING (PID %s, server %s)\n" "$guardian_pid" "$target_url"
+          elif [[ $server_healthy -eq 1 && "$guardian_url" == "$target_url" ]]; then
+            printf "Guardian: UNREADY (PID %s has no valid SSE readiness receipt)\n" "$guardian_pid"
+            has_errors=1
           elif [[ $server_healthy -eq 1 ]]; then
-            printf "Guardian: MISCONFIGURED (PID %s, %s != http://%s:%s)\n" "$guardian_pid" "${guardian_url:-unknown}" "$host" "$port"
+            printf "Guardian: MISCONFIGURED (PID %s, %s != %s)\n" \
+              "$guardian_pid" "${guardian_url:-unknown}" "$target_url"
             has_errors=1
           else
             printf "Guardian: ORPHANED (PID %s is live without a healthy managed server)\n" "$guardian_pid"
@@ -1659,22 +2378,28 @@ EOF
       return "$has_errors"
       ;;
     open)
-      local status_file="$HOME/.vibecrafted/server/status.json"
+      local status_file
+      status_file="$(_server_runtime_dir)/status.json"
       local host="127.0.0.1"
       local port="3024"
-      if [[ -f "$status_file" ]]; then
-        host=$(python3 -c "import json; print(json.load(open('$status_file')).get('host', '127.0.0.1'))" 2>/dev/null || echo "127.0.0.1")
-        port=$(python3 -c "import json; print(json.load(open('$status_file')).get('port', '3024'))" 2>/dev/null || echo "3024")
+      local endpoint=""
+      local target_url=""
+      if ! endpoint="$(_server_endpoint "$status_file")"; then
+        printf "%b✗%b Server status contains an invalid endpoint; refusing to open it.\n" \
+          "$_red" "$_reset" >&2
+        return 1
       fi
+      IFS=$'\t' read -r host port <<< "$endpoint"
+      target_url="$(_server_origin "$host" "$port")"
 
-      if python3 -c "import urllib.request; urllib.request.urlopen('http://$host:$port/api/control/state', timeout=1.0)" >/dev/null 2>&1; then
-        printf "Opening http://%s:%s/ in browser...\n" "$host" "$port"
+      if _server_healthcheck "$host" "$port" >/dev/null 2>&1; then
+        printf "Opening %s/ in browser...\n" "$target_url"
         if command -v open >/dev/null 2>&1; then
-          open "http://$host:$port/"
+          open "$target_url/"
         elif command -v xdg-open >/dev/null 2>&1; then
-          xdg-open "http://$host:$port/"
+          xdg-open "$target_url/"
         else
-          printf "Please open http://%s:%s/ manually.\n" "$host" "$port"
+          printf "Please open %s/ manually.\n" "$target_url"
         fi
         return 0
       else
@@ -1757,10 +2482,18 @@ EOF
       local port="3024"
       local server_state guardian_state
       local server_healthy=0
+      local endpoint_valid=1
+      local endpoint=""
+      local target_url=""
 
-      if [[ -f "$status_file" ]]; then
-        host=$(python3 -c "import json; print(json.load(open('$status_file')).get('host', '127.0.0.1'))" 2>/dev/null || echo "127.0.0.1")
-        port=$(python3 -c "import json; print(json.load(open('$status_file')).get('port', '3024'))" 2>/dev/null || echo "3024")
+      if endpoint="$(_server_endpoint "$status_file" 2>/dev/null)"; then
+        IFS=$'\t' read -r host port <<< "$endpoint"
+        target_url="$(_server_origin "$host" "$port")"
+      else
+        printf "  [%b✗%b] status.json contains an invalid endpoint; values were not used\n" \
+          "$_red" "$_reset"
+        endpoint_valid=0
+        has_errors=1
       fi
 
       if [[ -f "$pid_file" ]]; then
@@ -1768,38 +2501,33 @@ EOF
       fi
       guardian_pid="$(_pid_file_value "$guardian_pid_file" 2>/dev/null || true)"
       guardian_url="$(_pid_file_value "$runtime_dir/guardian.url" 2>/dev/null || true)"
-      server_state="$(_managed_pid_state "$pid_file" "vc-server")"
-      guardian_state="$(_managed_pid_state "$guardian_pid_file" "vc-guardian")"
+      server_state="$(_managed_pid_state "$pid_file" "server")"
+      guardian_state="$(_managed_pid_state "$guardian_pid_file" "guardian")"
 
       if [[ "$server_state" == "live" ]]; then
-        local pid_alive=0
-        pid_alive=1
-        printf "  [%b✓%b] Server PID %s is active and owned by vc-server\n" "$_green" "$_reset" "$pid"
-        
-        if python3 -c "import urllib.request; urllib.request.urlopen('http://$host:$port/api/control/state', timeout=1.0)" >/dev/null 2>&1; then
+        printf "  [%b✓%b] Server PID %s matches its durable process identity\n" \
+          "$_green" "$_reset" "$pid"
+
+        if [[ "$endpoint_valid" -eq 1 ]] && \
+          _server_healthcheck "$host" "$port" >/dev/null 2>&1; then
           server_healthy=1
-          printf "  [%b✓%b] HTTP server is healthy and responding at http://%s:%s\n" "$_green" "$_reset" "$host" "$port"
-          if [[ $pid_alive -eq 0 ]]; then
-            printf "  [%b✗%b] Split brain: HTTP responds but PID is dead/mismatched\n" "$_red" "$_reset"
-            has_errors=1
-          fi
+          printf "  [%b✓%b] HTTP server is healthy and responding at %s\n" \
+            "$_green" "$_reset" "$target_url"
         else
-          if [[ $pid_alive -eq 1 ]]; then
-            printf "  [%b✗%b] Process %s is running but HTTP health check at http://%s:%s/api/control/state is not responding\n" "$_red" "$_reset" "$pid" "$host" "$port"
-            has_errors=1
-          else
-            printf "  [i] Server is stopped (cleaned up)\n"
-          fi
+          printf "  [%b✗%b] Process %s is running but its HTTP endpoint is invalid or not responding\n" \
+            "$_red" "$_reset" "$pid"
+          has_errors=1
         fi
       elif [[ "$server_state" == "missing" ]]; then
         printf "  [i] Server is stopped (no pid file)\n"
-        if ! python3 -c "import socket; s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(('127.0.0.1', 3024)); s.close()" 2>/dev/null; then
+        if ! _server_port_available "127.0.0.1" "3024" >/dev/null 2>&1; then
           printf "  [%b!%b] Port 3024 is in use by another process (non-fatal, but 'vibecrafted server start' without custom port will fail)\n" "$_yellow" "$_reset"
         else
           printf "  [%b✓%b] Default port 3024 is free\n" "$_green" "$_reset"
         fi
       elif [[ "$server_state" == "foreign" ]]; then
-        printf "  [%b✗%b] Server PID file points at a different live process: %s\n" "$_red" "$_reset" "${pid:-unknown}"
+        printf "  [%b✗%b] Server PID %s is live but its durable identity is unverified\n" \
+          "$_red" "$_reset" "${pid:-unknown}"
         has_errors=1
       else
         printf "  [%b✗%b] Stale server PID file (%s: %s)\n" "$_red" "$_reset" "$server_state" "${pid:-empty}"
@@ -1816,10 +2544,17 @@ EOF
           fi
           ;;
         live)
-          if [[ $server_healthy -eq 1 && "$guardian_url" == "http://$host:$port" ]]; then
-            printf "  [%b✓%b] Guardian PID %s is active and attached to the healthy server lifecycle\n" "$_green" "$_reset" "$guardian_pid"
+          if [[ $server_healthy -eq 1 && "$guardian_url" == "$target_url" && \
+            "$(_guardian_ready_receipt_state "$guardian_pid" "$target_url")" == "ready" ]]; then
+            printf "  [%b✓%b] Guardian PID %s has durable identity and a valid SSE readiness receipt\n" \
+              "$_green" "$_reset" "$guardian_pid"
+          elif [[ $server_healthy -eq 1 && "$guardian_url" == "$target_url" ]]; then
+            printf "  [%b✗%b] Guardian PID %s is live but lacks its exact SSE readiness receipt\n" \
+              "$_red" "$_reset" "$guardian_pid"
+            has_errors=1
           elif [[ $server_healthy -eq 1 ]]; then
-            printf "  [%b✗%b] Guardian PID %s targets %s instead of http://%s:%s\n" "$_red" "$_reset" "$guardian_pid" "${guardian_url:-unknown}" "$host" "$port"
+            printf "  [%b✗%b] Guardian PID %s targets %s instead of %s\n" \
+              "$_red" "$_reset" "$guardian_pid" "${guardian_url:-unknown}" "$target_url"
             has_errors=1
           else
             printf "  [%b✗%b] Guardian PID %s is orphaned without a healthy managed server\n" "$_red" "$_reset" "$guardian_pid"
@@ -1827,7 +2562,8 @@ EOF
           fi
           ;;
         foreign)
-          printf "  [%b✗%b] Guardian PID file points at a different live process: %s\n" "$_red" "$_reset" "${guardian_pid:-unknown}"
+          printf "  [%b✗%b] Guardian PID %s is live but its durable identity is unverified\n" \
+            "$_red" "$_reset" "${guardian_pid:-unknown}"
           has_errors=1
           ;;
         *)

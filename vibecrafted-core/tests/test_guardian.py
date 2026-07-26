@@ -961,6 +961,72 @@ def test_protocol_rejects_non_sse_response(tmp_path: Path) -> None:
     assert response.closed is True
 
 
+def test_readiness_is_announced_only_after_valid_sse_response(tmp_path: Path) -> None:
+    announced: list[str] = []
+    valid = FakeResponse([])
+    valid_reconnect = FakeResponse([])
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=GuardianState(path=tmp_path / "valid-state.json"),
+        opener=QueueOpener(valid, valid_reconnect),
+        ready_callback=lambda: announced.append("ready"),
+    )
+
+    worker.consume_connection()
+    worker.consume_connection()
+
+    assert announced == ["ready"]
+
+    rejected: list[str] = []
+    invalid = FakeResponse([], status=404)
+    invalid_worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=GuardianState(path=tmp_path / "invalid-state.json"),
+        opener=QueueOpener(invalid),
+        ready_callback=lambda: rejected.append("ready"),
+    )
+    with pytest.raises(GuardianProtocolError, match="HTTP 404"):
+        invalid_worker.consume_connection()
+    assert rejected == []
+
+
+def test_ready_receipt_is_atomic_and_removed_only_by_owner(tmp_path: Path) -> None:
+    ready_file = tmp_path / "guardian.ready.json"
+
+    guardian_module.write_ready_receipt(
+        ready_file,
+        nonce="owner-nonce",
+        server_url="http://127.0.0.1:3024",
+        pid=4321,
+    )
+
+    payload = json.loads(ready_file.read_text(encoding="utf-8"))
+    assert payload == {
+        "schema": guardian_module.GUARDIAN_READY_SCHEMA,
+        "nonce": "owner-nonce",
+        "pid": 4321,
+        "server_url": "http://127.0.0.1:3024",
+    }
+    assert (
+        guardian_module.remove_ready_receipt_if_owned(
+            ready_file,
+            nonce="other-nonce",
+            pid=4321,
+        )
+        is False
+    )
+    assert ready_file.is_file()
+    assert (
+        guardian_module.remove_ready_receipt_if_owned(
+            ready_file,
+            nonce="owner-nonce",
+            pid=4321,
+        )
+        is True
+    )
+    assert not ready_file.exists()
+
+
 def test_notification_mapping_and_macos_log_fallback(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
