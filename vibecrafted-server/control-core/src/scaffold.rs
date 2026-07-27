@@ -305,34 +305,50 @@ impl ScaffoldArtifactStore {
         Ok(plans)
     }
 
-    pub fn latest_workspace(&self) -> ScaffoldResult<ScaffoldWorkspace> {
-        let mut manifests = Vec::new();
-        collect_manifest_paths(&self.home.join("artifacts"), &mut manifests);
-        if manifests.len() != 1 {
-            let plan_ids = manifests
-                .iter()
-                .filter_map(|path| {
-                    read_manifest(path.parent()?)
-                        .ok()
-                        .map(|manifest| manifest.plan_id)
+    /// Every valid manifest-backed scaffold plan visible to the runtime.
+    ///
+    /// The artifacts tree can also contain unrelated `manifest.json` files
+    /// (for example Loctree context atlases). Those are deliberately ignored:
+    /// this catalog is scaffold truth, not a filename census.
+    #[must_use]
+    pub fn catalog(&self) -> Vec<ScaffoldPlanSummary> {
+        let mut manifest_paths = Vec::new();
+        collect_manifest_paths(&self.home.join("artifacts"), &mut manifest_paths);
+        let mut plans = manifest_paths
+            .into_iter()
+            .filter_map(|path| {
+                let root = path.parent()?;
+                let manifest = read_manifest(root).ok()?;
+                Some(ScaffoldPlanSummary {
+                    plan_id: manifest.plan_id,
+                    org: manifest.org,
+                    repo: manifest.repo,
+                    day: manifest.day,
+                    plan_root: root.display().to_string(),
+                    artifact_count: manifest.artifacts.len(),
+                    legacy_read_only: false,
                 })
-                .collect();
+            })
+            .collect::<Vec<_>>();
+        plans.sort_by(|left, right| {
+            right
+                .day
+                .cmp(&left.day)
+                .then_with(|| left.org.cmp(&right.org))
+                .then_with(|| left.repo.cmp(&right.repo))
+                .then_with(|| left.plan_id.cmp(&right.plan_id))
+        });
+        plans
+    }
+
+    pub fn latest_workspace(&self) -> ScaffoldResult<ScaffoldWorkspace> {
+        let plans = self.catalog();
+        if plans.len() != 1 {
+            let plan_ids = plans.into_iter().map(|plan| plan.plan_id).collect();
             return Err(ScaffoldError::SelectionRequired { plan_ids });
         }
-        let root = manifests
-            .remove(0)
-            .parent()
-            .map(Path::to_path_buf)
-            .ok_or_else(|| ScaffoldError::InvalidManifest {
-                message: "manifest has no plan root".into(),
-            })?;
-        let manifest = read_manifest(&root)?;
-        self.workspace(
-            &manifest.org,
-            &manifest.repo,
-            &manifest.day,
-            Some(&manifest.plan_id),
-        )
+        let plan = &plans[0];
+        self.workspace(&plan.org, &plan.repo, &plan.day, Some(&plan.plan_id))
     }
 
     pub fn workspace(

@@ -322,6 +322,40 @@ fn plan_selection_is_explicit_when_more_than_one_manifest_exists() {
 }
 
 #[test]
+fn global_catalog_lists_scaffold_truth_and_ignores_unrelated_manifests() {
+    let home = temp_home("catalog");
+    for plan_id in ["plan-a", "plan-b"] {
+        let root = write_plan(&home, plan_id, declarations());
+        populate(&root, plan_id);
+    }
+    let unrelated = home.join("artifacts/Loctree/context-atlas");
+    fs::create_dir_all(&unrelated).expect("unrelated manifest root");
+    fs::write(
+        unrelated.join("manifest.json"),
+        br#"{"schema":"loctree.context-atlas.v1","files":[]}"#,
+    )
+    .expect("unrelated manifest");
+
+    let store = ScaffoldArtifactStore::new(&home);
+    let catalog = store.catalog();
+    assert_eq!(
+        catalog
+            .iter()
+            .map(|plan| plan.plan_id.as_str())
+            .collect::<Vec<_>>(),
+        ["plan-a", "plan-b"]
+    );
+    assert!(catalog.iter().all(|plan| plan.artifact_count == 4));
+    assert!(matches!(
+        store.latest_workspace(),
+        Err(ScaffoldError::SelectionRequired { plan_ids })
+            if plan_ids == ["plan-a", "plan-b"]
+    ));
+
+    fs::remove_dir_all(home).ok();
+}
+
+#[test]
 fn canonical_write_requires_hash_rejects_unlisted_and_scopes_history() {
     let home = temp_home("writes");
     for plan_id in ["plan-a", "plan-b"] {
