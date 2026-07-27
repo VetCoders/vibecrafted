@@ -76,8 +76,10 @@ Before this workflow performs repo-specific analysis, planning, implementation, 
 
 The point is to find the hooks: load-bearing hubs, twins, dead code, drift, runtime entrypoints, and blast-radius traps. If the task is explicitly non-repo or no-code, state the no-repo exception in the report. Otherwise, missing `vc-init`/Loctree evidence is a process failure.
 
-Standard launcher: `vibecrafted start` / `vc-start`, then `vibecrafted dou <agent>` / `vc-dou` (see [Delegation Matrix](../DELEGATION_MATRIX.md)).
-Outside vc-frame the framework attaches/creates the operator session.
+Standard launcher: `vibecrafted dou <agent>` / `vc-dou` (see
+[Delegation Matrix](../DELEGATION_MATRIX.md)). The worker defaults to detached
+headless execution; `vibecrafted start` / `vc-start` is optional observation
+and interactive User Session setup, not a process host requirement.
 
 ```bash
 vibecrafted dou claude --prompt 'Audit launch readiness'

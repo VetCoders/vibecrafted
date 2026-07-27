@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import subprocess
 import time
 from collections.abc import Callable
@@ -13,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from vibecrafted_core.delivery.model import ExecutionEnvelope
-from vibecrafted_core.workflow import WorkflowLaunchSpec, launch_workflow, stop_run
+from vibecrafted_core.workflow import WorkflowLaunchSpec, launch_workflow
 
 from .model import (
     STATE_FAILED,
@@ -465,10 +466,10 @@ class DispatchSupervisor:
         )
         outcome = self._await(cell)
         if outcome.timed_out:
-            termination = self._terminate(cell)
+            self._terminate(cell)
             self._journal(
                 f"[{cut.id}] {kind} cell timed out after {outcome.elapsed_s:.0f}s;"
-                f" {termination}"
+                " process terminated"
             )
         else:
             recovered = " (recovered by mtime)" if outcome.recovered_by_mtime else ""
@@ -601,28 +602,16 @@ class DispatchSupervisor:
             return False
         return False
 
-    def _terminate(self, cell: CellRun) -> str:
-        if cell.proc is not None:
-            try:
-                cell.proc.terminate()
-            except (ProcessLookupError, PermissionError, OSError) as exc:
-                return f"process termination failed: {type(exc).__name__}"
-            return "process terminated through live handle"
-
-        if not cell.run_id:
-            return "process termination refused: missing run identity"
+    def _terminate(self, cell: CellRun) -> None:
         try:
-            outcome = stop_run(
-                cell.run_id,
-                reason=f"dispatch timeout for {cell.cut_id}",
-                grace_seconds=0.5,
-            )
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            return f"process termination refused: {type(exc).__name__}"
-        if not outcome.get("accepted"):
-            evidence = outcome.get("error") or outcome.get("reason") or "unproven"
-            return f"process termination refused: {evidence}"
-        return "process termination accepted by run identity authority"
+            if cell.proc is not None:
+                cell.proc.terminate()
+            elif cell.pid:
+                # launch_workflow spawns with start_new_session, so the pid
+                # doubles as the process-group id.
+                os.killpg(cell.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
 
     def _resolve_report(
         self, cell: CellRun, wall_started: float

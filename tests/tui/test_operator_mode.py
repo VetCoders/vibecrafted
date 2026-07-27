@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -134,19 +133,7 @@ def _expected_operator_session(run_id: str | None = None) -> str:
     base = (
         re.sub(r"[^a-z0-9]+", "-", REPO_ROOT.name.lower()).strip("-") or "vibecrafted"
     )
-    full_name = f"{base}-{run_id}" if run_id else base
-    if len(full_name) <= 24:
-        return full_name
-    digest = hashlib.sha256(full_name.encode()).hexdigest()[:4]
-    if run_id:
-        prefix_length = 24 - len(run_id) - len(digest) - 2
-        if prefix_length > 0:
-            prefix = full_name[:prefix_length].rstrip("-") or digest[:1]
-            compact = f"{prefix}-{digest}-{run_id}"
-            if len(compact) <= 24:
-                return compact
-    prefix = full_name[: 24 - len(digest) - 1].rstrip("-") or digest[:1]
-    return f"{prefix}-{digest}"[:24]
+    return f"{base}-{run_id}" if run_id else base
 
 
 def _org_repo() -> str:
@@ -688,7 +675,7 @@ def test_vc_init_missing_vc_frame_message_has_fresh_install_path_hint(
     )
 
 
-def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right(
+def test_explicit_terminal_marbles_from_operator_mode_spawns_fresh_tab(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -707,12 +694,18 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
     env["VC_FRAME"] = "operator"
     env["VIBECRAFTED_RUN_ID"] = "marb-014520"
     env["VIBECRAFTED_MARBLES_RUN_ID"] = "marb-014520"
-    env["VC_FRAME_SESSION_NAME"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+    expected_session = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+    env["VC_FRAME_SESSION_NAME"] = expected_session
     subprocess.run(
         [
             "bash",
-            "-lc",
-            f'source "{HELPER_SCRIPT}"; codex-marbles --prompt "Check runtime" --count 2',
+            "--noprofile",
+            "--norc",
+            "-c",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                'codex-marbles --runtime terminal --prompt "Check runtime" --count 2'
+            ),
         ],
         check=True,
         cwd=REPO_ROOT,
@@ -722,7 +715,6 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
     payload = capture_file.read_text(encoding="utf-8").splitlines()
     # One marbles run owns a dedicated host session. Its first surface is a
     # fresh marbles tab, never a pane in the operator's active session.
-    expected_session = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
     assert payload[:4] == [
         "--session",
         expected_session,
@@ -734,7 +726,7 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
     assert expected_session in payload
 
 
-def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
+def test_explicit_terminal_marbles_inside_vc_frame_prefers_bundled_vc_frame(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -756,7 +748,8 @@ def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
     env["VC_FRAME"] = "operator"
     env["VIBECRAFTED_RUN_ID"] = "marb-014520"
     env["VIBECRAFTED_MARBLES_RUN_ID"] = "marb-014520"
-    env["VC_FRAME_SESSION_NAME"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+    expected_session = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+    env["VC_FRAME_SESSION_NAME"] = expected_session
 
     result = subprocess.run(
         [
@@ -766,7 +759,7 @@ def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
             "-c",
             (
                 f'source "{HELPER_SCRIPT}"; '
-                'codex-marbles --prompt "Check runtime" --count 2 && '
+                'codex-marbles --runtime terminal --prompt "Check runtime" --count 2 && '
                 'printf "PATH=%s\\n" "$PATH"'
             ),
         ],
@@ -781,12 +774,11 @@ def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
     assert result.stderr == ""
     payload = capture_file.read_text(encoding="utf-8")
     # Bundled vc-frame must create the tab in the dedicated marbles host.
-    expected_session = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
     assert f"--session\n{expected_session}\naction\nnew-tab\n" in payload
     assert result.stdout.endswith(f"PATH={os.defpath}\n")
 
 
-def test_marbles_manual_spawn_emits_probe_without_l1_transcript_tail(
+def test_explicit_terminal_marbles_manual_spawn_omits_l1_transcript_tail(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -799,7 +791,7 @@ def test_marbles_manual_spawn_emits_probe_without_l1_transcript_tail(
         / ".vibecrafted"
         / "artifacts"
         / _org_repo()
-        / datetime.now().astimezone().strftime("%Y_%m%d")
+        / datetime.now(timezone.utc).strftime("%Y_%m%d")
         / "marbles"
         / "reports"
     )
@@ -809,6 +801,7 @@ def test_marbles_manual_spawn_emits_probe_without_l1_transcript_tail(
     fake_bin.mkdir()
     reports_dir.mkdir(parents=True)
     _write_capture_command(fake_bin, "vc-frame", capture_file)
+    _write_capture_command(fake_bin, "codex", capture_file)
     (fake_bin / "osascript").write_text(
         "#!/usr/bin/env bash\nexit 0\n",
         encoding="utf-8",
@@ -844,8 +837,13 @@ def test_marbles_manual_spawn_emits_probe_without_l1_transcript_tail(
     result = subprocess.run(
         [
             "bash",
-            "-lc",
-            f'source "{HELPER_SCRIPT}"; codex-marbles --prompt "Check runtime" --count 2',
+            "--noprofile",
+            "--norc",
+            "-c",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                'codex-marbles --runtime terminal --prompt "Check runtime" --count 2'
+            ),
         ],
         check=True,
         cwd=REPO_ROOT,
@@ -858,6 +856,7 @@ def test_marbles_manual_spawn_emits_probe_without_l1_transcript_tail(
     assert "line 6" not in result.stdout
     assert "line 20" not in result.stdout
     assert result.stderr == ""
+    assert "action\nnew-tab" in capture_file.read_text(encoding="utf-8")
 
 
 def test_spawn_script_prefers_repo_runtime_over_installed_copy(tmp_path: Path) -> None:
@@ -995,7 +994,9 @@ def test_vc_dashboard_recreates_dead_run_id_session_without_layout_suffix(
     assert f"{expected_session}-marbles" not in payload
 
 
-def test_skill_bootstraps_operator_session_before_spawning(tmp_path: Path) -> None:
+def test_explicit_terminal_skill_bootstraps_operator_session_before_spawning(
+    tmp_path: Path,
+) -> None:
     home = tmp_path / "home"
     fake_bin = home / ".local" / "bin"
     capture_file = tmp_path / "capture.log"
@@ -1030,7 +1031,10 @@ def test_skill_bootstraps_operator_session_before_spawning(tmp_path: Path) -> No
         [
             "bash",
             "-lc",
-            f'source "{HELPER_SCRIPT}"; codex-followup --prompt "Check runtime"',
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                'codex-followup --runtime terminal --prompt "Check runtime"'
+            ),
         ],
         check=True,
         cwd=REPO_ROOT,

@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 import shutil
-import stat
 import subprocess
 import sys
 import time
@@ -22,7 +21,12 @@ from .control_plane import (
     sync_state,
 )
 from .package_resources import deck_path, package_root
-from .workflow import await_launch_truth, launch_workflow, normalize_launch_spec
+from .workflow import (
+    await_launch_truth,
+    launch_workflow,
+    manual_resume_session,
+    normalize_launch_spec,
+)
 
 AGENTS = {"claude", "codex", "agy", "junie", "grok", "swarm"}
 LAUNCHERS = (
@@ -80,45 +84,6 @@ TERMINAL_STATES = {
     "stopped",
     "timed_out",
 }
-_INSTALLER_LEASE_FD_ENV = "VIBECRAFTED_INSTALL_LEASE_FD"
-_INSTALLER_LOCK_NAME = ".vibecrafted-install.lock"
-_EX_TEMPFAIL = 75
-
-
-def _installer_lease_pass_fds(tools_home: Path) -> tuple[int, ...]:
-    raw_descriptor = os.environ.get(_INSTALLER_LEASE_FD_ENV)
-    if not raw_descriptor:
-        return ()
-    if os.name != "posix":
-        raise OSError("installer coordination descriptors require POSIX")
-    try:
-        descriptor = int(raw_descriptor)
-    except ValueError as exc:
-        raise OSError("invalid installer coordination descriptor") from exc
-    if descriptor < 0:
-        raise OSError("invalid installer coordination descriptor")
-
-    lock_path = tools_home.resolve(strict=False) / _INSTALLER_LOCK_NAME
-    try:
-        opened = os.fstat(descriptor)
-        named = os.stat(lock_path, follow_symlinks=False)
-    except OSError as exc:
-        raise OSError(
-            f"installer coordination lease is unavailable at {lock_path}"
-        ) from exc
-    if (
-        not stat.S_ISREG(opened.st_mode)
-        or not stat.S_ISREG(named.st_mode)
-        or opened.st_uid != os.geteuid()
-        or named.st_uid != os.geteuid()
-        or opened.st_nlink != 1
-        or named.st_nlink != 1
-        or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
-    ):
-        raise OSError(
-            f"installer coordination descriptor does not own {lock_path}"
-        )
-    return (descriptor,)
 
 
 def _add_launch_parser(sub: argparse._SubParsersAction, name: str) -> None:
@@ -136,6 +101,11 @@ def _add_launch_parser(sub: argparse._SubParsersAction, name: str) -> None:
         return
     run.add_argument("-p", "--prompt", default="")
     run.add_argument("-f", "--file", default="")
+    run.add_argument(
+        "--prompt-stdin",
+        action="store_true",
+        help="read the prompt from stdin and keep it out of argv/temp files",
+    )
     run.add_argument("--runtime", default="")
     run.add_argument("--root", default="")
     run.add_argument("--mode", default="")
@@ -186,12 +156,12 @@ def _build_parser() -> argparse.ArgumentParser:
     capabilities.add_argument("--json", action="store_true")
     config = sub.add_parser(
         "config",
-        help="wire pre-materialized vc-frame config into ~/.config/vc-frame",
+        help="install/wire packaged vc-frame config into the tools store and ~/.config/vc-frame",
     )
     config_sub = config.add_subparsers(dest="config_action")
     config_install = config_sub.add_parser(
         "install",
-        help="wire current runtime config → ~/.config/vc-frame (full install materializes it)",
+        help="stage package config → tools store + wire ~/.config/vc-frame view",
     )
     config_install.add_argument(
         "--dry-run",
@@ -259,6 +229,28 @@ def _build_parser() -> argparse.ArgumentParser:
     term.add_argument("--expected-start", required=True)
     term.add_argument("--expected-command-sha256", required=True)
     term.add_argument("--expected-run-id", default="")
+    resume = sub.add_parser(
+        "resume-session",
+        help="continue one explicit provider session as a tracked headless run",
+    )
+    resume.add_argument(
+        "agent",
+        choices=sorted(AGENTS - {"swarm"}),
+        help="provider owning the explicit session id",
+    )
+    resume.add_argument("--agent-session-id", required=True)
+    prompt_input = resume.add_mutually_exclusive_group(required=True)
+    prompt_input.add_argument("-p", "--prompt", default="")
+    prompt_input.add_argument("-f", "--prompt-file", default="")
+    prompt_input.add_argument(
+        "--prompt-stdin",
+        action="store_true",
+        help="read the continuation prompt from stdin (keeps it out of argv)",
+    )
+    resume.add_argument("--root", default="")
+    resume.add_argument("--source-dir", default="")
+    resume.add_argument("--model", default="")
+    resume.add_argument("--json", action="store_true")
     for name in LAUNCHERS:
         _add_launch_parser(sub, name)
     return parser
@@ -299,11 +291,14 @@ def _live_operator_session_exists(root: str) -> bool:
 
 
 def _default_runtime(explicit_runtime: str, root: str = "") -> str:
+    """Resolve launch surface: explicit > inherited session env > TTY > live session > headless."""
     runtime = str(explicit_runtime or "").strip()
     if runtime:
         return runtime
+    # In-frame surface only. VIBECRAFTED_OPERATOR_SESSION alone must NOT force
+    # terminal — fleet workers stay headless unless they inherit a real frame
+    # session name or discover a live repo-bound host (see default_runtime tests).
     for key in (
-        "VIBECRAFTED_OPERATOR_SESSION",
         "VC_FRAME_SESSION_NAME",
         "ZELLIJ_SESSION_NAME",
     ):
@@ -311,12 +306,8 @@ def _default_runtime(explicit_runtime: str, root: str = "") -> str:
             return "terminal"
     if sys.stdin.isatty() and sys.stdout.isatty():
         return "terminal"
-    # Non-TTY dispatch (headless agent, nested dispatch, pipe) with no inherited
-    # operator-session env would otherwise pick "headless" here, skipping the
-    # vc-frame tab path entirely in spawn_launch(). When the operator has a LIVE
-    # repo-bound vc-frame session to host it, prefer a visible tab — that is the
-    # whole "command -> vc-frame -> tab" mission. Headless stays the correct
-    # fallback only when no such live session exists.
+    # Non-TTY dispatch with a LIVE repo-bound vc-frame session prefers a visible
+    # tab; headless is the fallback when no such session exists.
     if _live_operator_session_exists(root):
         return "terminal"
     return "headless"
@@ -409,6 +400,34 @@ def _print_launch_receipt(payload: dict[str, Any]) -> None:
     print("=====================================================================")
 
 
+def _print_resume_session_receipt(payload: dict[str, Any]) -> None:
+    if not payload.get("accepted"):
+        reason = _field(payload, "reason", "launch_rejected")
+        print(
+            f"error: explicit session continuation rejected: {reason}", file=sys.stderr
+        )
+        detail = _field(payload, "detail")
+        if detail:
+            print(f"detail: {detail}", file=sys.stderr)
+        return
+    run_id = _field(payload, "run_id")
+    agent = _field(payload, "agent")
+    print("=============== MANUAL EXPLICIT RESUME RECEIPT ===============")
+    print(f"run_id:             {run_id}")
+    print(f"agent:              {agent}")
+    print(f"agent_session_id:   {_field(payload, 'agent_session_id')}")
+    print(f"runtime_session_id: {_field(payload, 'runtime_session_id')}")
+    print(f"resume_mode:        {_field(payload, 'resume_mode')}")
+    print("runtime:            headless")
+    print(f"root:               {_field(payload, 'root')}")
+    print(f"status:             {_field(payload, 'status', 'launching')}")
+    print(f"control:            {_field(payload, 'control')}")
+    print(f"transcript:         {_field(payload, 'transcript')}")
+    print(f"observe:            vibecrafted {agent} observe --run-id {run_id}")
+    print(f"await:              vibecrafted {agent} await --run-id {run_id}")
+    print("===============================================================")
+
+
 def _print_launch_input_error(*, command: str, agent: str | None, message: str) -> None:
     base = f"vibecrafted {command}"
     if agent:
@@ -424,7 +443,10 @@ def _pid_alive(pid: object) -> bool:
     if not isinstance(pid, (str, int)):
         return False
     try:
-        os.kill(int(pid), 0)
+        resolved = int(pid)
+        if resolved <= 0:
+            return False
+        os.kill(resolved, 0)
     except (ProcessLookupError, ValueError, TypeError):
         return False
     except PermissionError:
@@ -432,21 +454,47 @@ def _pid_alive(pid: object) -> bool:
     return True
 
 
-def _apply_live_liveness(run: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Override a stale ``heartbeat`` liveness with a real-time pid check.
+def _pgid_alive(pgid: object) -> bool:
+    if not isinstance(pgid, (str, int)):
+        return False
+    try:
+        resolved = int(pgid)
+        if resolved <= 0:
+            return False
+        os.killpg(resolved, 0)
+    except (ProcessLookupError, ValueError, TypeError):
+        return False
+    except PermissionError:
+        return True
+    return True
 
-    The snapshot can keep claiming a run is alive for tens of seconds after its
-    launcher dies, until the next ``sync_state`` reconciles it. observe must not
-    echo that stale "active" for a process that is already gone — that is the
-    verification gap (green/heartbeat shown for a dead run). If the recorded
-    launcher pid is gone and the run is not already terminal, report it as
-    ``pid_gone`` so the operator sees the truth, not the lag.
+
+def _apply_live_liveness(run: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Override stale liveness with the detached worker's real OS identity.
+
+    A headless worker survives its short-lived dispatcher by design. Prefer its
+    process group/pid and consult launcher_pid only before worker identity has
+    been seeded. This avoids both false death after dispatcher exit and stale
+    "active" output after the actual worker disappears.
     """
     if not run:
         return run
-    pid = run.get("launcher_pid")
-    if not pid or _run_terminal(run) or _pid_alive(pid):
+    if _run_terminal(run):
         return run
+
+    worker_probes = []
+    if run.get("worker_pgid") not in (None, ""):
+        worker_probes.append(_pgid_alive(run.get("worker_pgid")))
+    if run.get("worker_pid") not in (None, ""):
+        worker_probes.append(_pid_alive(run.get("worker_pid")))
+    if worker_probes:
+        if any(worker_probes):
+            return run
+    else:
+        launcher_pid = run.get("launcher_pid")
+        if not launcher_pid or _pid_alive(launcher_pid):
+            return run
+
     run = dict(run)
     run["liveness"] = "pid_gone"
     return run
@@ -722,6 +770,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     from . import __version__
     from .help_surface import (
         has_workflow_help,
+        render_resume_session_help,
         render_root_help,
         render_workflow_help,
     )
@@ -734,9 +783,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(render_root_help(__version__), end="")
             return 0
         topic = raw_args[1].removeprefix("vc-")
+        if topic == "resume-session":
+            print(render_resume_session_help(), end="")
+            return 0
         if topic not in {"--all", "--full"} and has_workflow_help(topic):
             print(render_workflow_help(topic), end="")
             return 0
+    if raw_args[0] == "resume-session" and any(
+        arg in {"-h", "--help"} for arg in raw_args[1:]
+    ):
+        print(render_resume_session_help(), end="")
+        return 0
     if raw_args[0] in LAUNCHERS:
         workflow_args = raw_args[1:]
         help_requested = (
@@ -758,6 +815,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "procs",
         "reap",
         "receipt",
+        "resume-session",
         "settle",
         "stop",
     } | set(LAUNCHERS)
@@ -778,27 +836,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         from .runtime_paths import vibecrafted_tools_home
 
-        tools_home = vibecrafted_tools_home()
-        deck = tools_home / "vibecrafted-current" / "scripts" / "vibecrafted"
+        deck = (
+            vibecrafted_tools_home() / "vibecrafted-current" / "scripts" / "vibecrafted"
+        )
         if not deck.is_file():
             deck = deck_path()
         if deck.is_file():
-            try:
-                lease_pass_fds = _installer_lease_pass_fds(tools_home)
-            except OSError as exc:
-                print(
-                    f"error: cannot preserve installer coordination lease: {exc}",
-                    file=sys.stderr,
-                )
-                return _EX_TEMPFAIL
-            if lease_pass_fds:
-                res = subprocess.run(
-                    [str(deck), *raw_args],
-                    check=False,
-                    pass_fds=lease_pass_fds,
-                )
-            else:
-                res = subprocess.run([str(deck), *raw_args], check=False)
+            res = subprocess.run([str(deck), *raw_args], check=False)
             return res.returncode
         if shell_wrapper_verb is not None:
             print(
@@ -842,7 +886,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 0
     if args.command == "config":
-        from .vc_frame_delivery import ensure_zshrc, wire_vc_frame_config
+        from .vc_frame_delivery import ensure_zshrc, stage_vc_frame_config
 
         action = getattr(args, "config_action", None)
         if action == "ensure-zshrc":
@@ -856,7 +900,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        plan = wire_vc_frame_config(
+        plan = stage_vc_frame_config(
             dry_run=bool(getattr(args, "dry_run", False)),
             force=bool(getattr(args, "force", False)),
             prefer_repo=True if getattr(args, "prefer_repo", False) else None,
@@ -975,12 +1019,55 @@ def main(argv: Sequence[str] | None = None) -> int:
             for line in render_capabilities_lines(capabilities_payload):
                 print(line)
         return 0
+    if args.command == "resume-session":
+        prompt = str(args.prompt or "")
+        if args.prompt_stdin:
+            prompt = sys.stdin.read()
+        elif args.prompt_file:
+            prompt_path = Path(args.prompt_file).expanduser()
+            try:
+                prompt = prompt_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                resume_result: dict[str, Any] = {
+                    "schema": "vibecrafted.manual_explicit_resume.v1",
+                    "accepted": False,
+                    "reason": "prompt_file_unreadable",
+                    "retryable": False,
+                    "terminal": True,
+                    "resume_mode": "manual_explicit",
+                    "agent": args.agent,
+                    "agent_session_id": args.agent_session_id,
+                    "detail": f"{type(exc).__name__}: {exc}",
+                }
+                if args.json:
+                    print(json.dumps(resume_result, ensure_ascii=False, indent=2))
+                else:
+                    _print_resume_session_receipt(resume_result)
+                return 2
+        resume_result = manual_resume_session(
+            args.agent,
+            args.agent_session_id,
+            args.source_dir or package_root(),
+            prompt=prompt,
+            root=args.root or Path.cwd(),
+            model=args.model,
+        )
+        if args.json:
+            print(json.dumps(resume_result, ensure_ascii=False, indent=2))
+        else:
+            _print_resume_session_receipt(resume_result)
+        return 0 if resume_result.get("accepted") else 1
     if args.command == "paste":
         from .paste import run_namespace
 
         return run_namespace(args, source_dir=package_root())
 
     source_dir = args.source_dir or package_root()
+    prompt = str(args.prompt or "")
+    if args.prompt_stdin:
+        if prompt or args.file:
+            parser.error("--prompt-stdin cannot be combined with --prompt or --file")
+        prompt = sys.stdin.read()
     agent_arg = args.agent
     research_agents = ()
     if args.command == "research" and isinstance(agent_arg, list):
@@ -988,7 +1075,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     payload = {
         "skill": LAUNCH_ALIASES.get(args.command, args.command),
         "agent": args.agent,
-        "prompt": args.prompt,
+        "prompt": prompt,
         "file": args.file,
         "runtime": _default_runtime(args.runtime, args.root),
         "root": args.root or str(Path.cwd()),

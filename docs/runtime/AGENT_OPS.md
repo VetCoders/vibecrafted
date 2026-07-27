@@ -169,10 +169,12 @@ No baton cargo is lost; the stage relaunches with the full report trail.
    exits write nothing, which also keeps the write too rare to race operator
    verbs on the same file.
 
-### Launch-time variant — dead hosting session (G3, 2026-07-21)
+### Launch-time variant — dead hosting session (G3, explicit terminal compatibility)
 
 Class 2 above covers death **mid-run**. This variant covers death **at
-launch**, before any worker process exists:
+launch**, before any worker process exists. Ordinary workers now default to
+headless and do not depend on a hosting session; this contract applies only
+when `terminal` / `visible` was explicitly selected:
 
 - **Symptom**: `vc-frame --session <host> action new-tab ...` prints
   `Session '<host>' not found` (and some builds still exit 0). The launcher
@@ -202,20 +204,21 @@ launch**, before any worker process exists:
   Python terminal transport. Hosting session name is never hardcoded —
   it is the resolved `operator_session` already written to the launch log.
 
-### Hosting — per-project worker sessions (G7, 2026-07-21)
+### Explicit terminal hosting — per-project worker sessions (G7)
 
-Worker tabs must **never** open in the human operator's interactive seat.
-The operator session (e.g. `vc-workspace`) stays clean; workers land in a
-host session named after the project, visible as a separate session in the
-vc-frame left rail. Finished runs still triage into `f` / `x` / `n`
-drawers independently of the source session.
+Ordinary workers have no host tab: they launch headless in their own process
+session. If a provider path is explicitly forced into `terminal` / `visible`,
+its compatibility tab must **never** open in the human operator's interactive
+seat. It lands in a project-named worker host visible in the vc-frame rail.
+Finished viewer placement remains independent of the source session.
 
-Canonical triage contract (what `f·x·n` counts, origin stamp, classification,
-push≠install, research vs implement tabs):
+Canonical settlement and optional terminal projection contract (`f·x·n`
+ledger counts, origin stamp, classification, push≠install):
 [`TRIAGE_AND_SESSIONS.md`](./TRIAGE_AND_SESSIONS.md).
 
-**Surface**: skill-worker launch path (`runtime/scripts/lib/vc_frame.sh` +
-`spawn_launch` + Python `workflow.launch_workflow`). Operator-UI entrypoints
+**Surface**: explicit terminal skill-worker path
+(`runtime/scripts/lib/vc_frame.sh` + `spawn_launch` + Python
+`workflow.launch_workflow`). Operator-UI entrypoints
 (`vc-init`, interactive operator agent, shell twin
 `_vetcoders_spawn_into_operator_session`) still land in the prepared human
 seat unless `VIBECRAFTED_WORKER_SESSION` is set.
@@ -247,9 +250,9 @@ off the operator seat (primary fleet path is scripts/lib).
 `spawn_triage_run` → `vc-frame triage-run`, origin stamp in meta, conjunction
 classifier, fail-open receipts. See
 [`TRIAGE_AND_SESSIONS.md`](./TRIAGE_AND_SESSIONS.md). If tools home lags the
-checkout that contains the wire, finished tabs stay in the work session and
-`f·x·n` stays at zero even with many `completed` metas — install, do not assume
-git alone refreshed the daily driver.
+checkout that contains the wire, terminal viewer tabs may stay in the work
+session. That projection failure must not change settlement-ledger `f·x·n`
+counts — install, do not assume git alone refreshed the daily driver.
 
 ---
 

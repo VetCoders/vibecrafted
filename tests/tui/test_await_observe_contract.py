@@ -147,40 +147,6 @@ def test_await_exits_zero_for_completed_meta(tmp_path: Path) -> None:
     assert "tracks:  1" in result.stdout
 
 
-def test_await_describe_keeps_spawn_identity_before_finalization(
-    tmp_path: Path,
-) -> None:
-    store_root = tmp_path / "store"
-    launcher = store_root / "tmp" / "launcher.sh"
-    announced_meta = store_root / "reports" / "plan.meta.json"
-    report = store_root / "reports" / "plan.md"
-    transcript = store_root / "reports" / "plan.transcript.log"
-    launcher.parent.mkdir(parents=True)
-    launcher.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                f"meta='{announced_meta}'",
-                f"report='{report}'",
-                f"transcript='{transcript}'",
-                "export SPAWN_RUN_ID='plan-260726-130833-74630'",
-                "export SPAWN_AGENT='codex'",
-                'meta="$(spawn_finalize_artifacts "$meta" "$report" "$transcript")"',
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    result = _run(AWAIT_SH, store_root, "--describe", str(launcher))
-
-    assert result.returncode == 0, result.stderr
-    assert f"meta       {announced_meta}" in result.stdout
-    assert "run_id     plan-260726-130833-74630" in result.stdout
-    assert "agent      codex" in result.stdout
-    assert "$(spawn_finalize_artifacts" not in result.stdout
-
-
 def test_await_exits_nonzero_for_failed_meta(tmp_path: Path) -> None:
     store_root = tmp_path / "store"
     _write_meta(

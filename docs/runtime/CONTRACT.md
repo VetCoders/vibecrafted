@@ -51,21 +51,25 @@ provides all the necessary tools to follow this pattern.
 4. **`vc-agents`:**
    The skill that spawns external specialized AI agents from the user's fleet
    (Codex, Claude, Gemini) using the `vc-why-matrix` picker, `vibecrafted` helper
-   and (if applied) the magic of vc_frame panes that keeps the track, measurability,
-   telemetry and auditability of the delegated work.
+   and durable runtime receipts, transcripts, telemetry, and reports. vc-frame
+   may project those surfaces for the operator; its panes do not host or own
+   worker processes.
 
 ---
 
 ## Runtime Contract
 
-- Session ownership is repo-bound. The operator session name is derived from
-  the current repo root, not a global shared session.
+- User Session ownership is repo-bound. Its name is derived from the current
+  repo root, not a global shared session.
+- Ordinary workflow and fleet workers launch as detached headless processes by
+  default, regardless of TTY presence or an existing repo session.
 - In the `vc-panes` mode, the operator pane reserves the upper `3/5`
-  for the operator's tab and the spawn surfaces belong in the lower `2/5`.
-- If you are outside the `vc-panes` mode, open a new tab in the repo session
-  instead of mutating the currently focused operator tab.
-- There's a fallback strategy if no usable repo session routing exists,
-  and is described in further section.
+  for the User Session and the lower `2/5` for observation surfaces.
+- Outside `vc-panes`, observe workers through receipts, control-plane state,
+  transcripts, and reports; do not create a process-host tab implicitly.
+- A true PTY is reserved for the interactive User Session, a bare resume, or
+  an explicit `--runtime terminal` for a provider path proven to require it.
+  Explicit terminal mode must not replace or mutate the focused User Session.
 - `.vibecrafted/plans` and `.vibecrafted/reports` inside the repo are
   convenience links only. The default store remains
   `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/`.
@@ -256,6 +260,10 @@ The default launch path for agent-to-agent delegation is through the portable sp
 If the environment has optional shell aliases (like `codex-implement`), those are just convenience wrappers around these
 exact same scripts. Always use the portable scripts to ensure maximum compatibility.
 
+Portable spawns default to detached headless execution on every platform.
+Pass `--runtime terminal` only for an explicitly selected TTY-required
+compatibility path; vc-frame remains an optional observer.
+
 ### Codex
 
 ```bash
@@ -296,6 +304,8 @@ If these tools are unavailable, stop pretending spawn is correctly configured an
 ## Observation
 
 Observe progress through durable artifacts in `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/`.
+vc-frame may render the same run state and transcript, but closing that viewer
+must not affect worker liveness.
 
 If your environment exposes the observer helper, the standard check is:
 

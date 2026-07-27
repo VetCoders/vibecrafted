@@ -17,12 +17,18 @@ from .agent_stream import (
     resolve_default_model,
 )
 from .artifacts import ArtifactValidation, validate_artifacts
-from .control_plane import control_plane_home, ensure_session_id, normalize_run_root
+from .control_plane import (
+    control_plane_home,
+    ensure_session_id,
+    lookup_run,
+    normalize_run_root,
+)
 from .events import append_event
 from .lifecycle import EventKind, RunState
 from .model_overrides import _model_override_receipt
+from .process_control import process_identity_receipt
 from .report_contract import CLAIM_DIGEST_ENV
-from .run_mutation import mutate_run_meta
+from .run_mutation import RunMetaMutationError, mutate_run_meta
 
 STDIO_LIMIT_BYTES = 16 * 1024 * 1024
 # Well under the reconciler's 120s staleness threshold, so an ordinary talking
@@ -139,12 +145,28 @@ def _origin_fields_from_env(env: Mapping[str, str] | None = None) -> dict[str, s
     # dispatched runs stamped the operator's pane "1"; the scrollback dump
     # aimed at it found nothing and the tabs never reached their buckets.)
     tab = _get("VIBECRAFTED_RUN_ID", "SPAWN_RUN_ID")
-    if tab:
+    if session and tab:
         fields["origin_tab"] = tab
     pane = _get("VC_FRAME_PANE_ID", "ZELLIJ_PANE_ID")
-    if pane and tab and _get("VC_FRAME_TAB_NAME") == tab:
+    if session and pane and tab and _get("VC_FRAME_TAB_NAME") == tab:
         fields["origin_pane_id"] = pane
     return fields
+
+
+def _accepted_operator_stop(run_id: str) -> dict[str, object] | None:
+    """Read the durable operator-stop authority after the worker exits."""
+
+    try:
+        run = lookup_run(run_id)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+    if (
+        isinstance(run, dict)
+        and str(run.get("state") or "") == "stopped"
+        and run.get("operator_stop_accepted") is True
+    ):
+        return run
+    return None
 
 
 def _cache_write_line(prefix: str, value: int | None) -> str:
@@ -268,7 +290,6 @@ class AsyncRunHandle:
     process: asyncio.subprocess.Process
     started_at: datetime
     meta_path: Path | None = None
-    meta_mutation_root: Path | None = None
     report_path: Path | None = None
     transcript_path: Path | None = None
     pgid: int | None = None
@@ -295,6 +316,9 @@ class AsyncRunHandle:
     cost_source: str | None = None
     resume_command: str = ""
     heartbeat_monotonic: float = 0.0
+    worker_identity: dict[str, object] | None = None
+    operator_stopped: bool = False
+    operator_stop_reason: str = ""
 
     @property
     def state(self) -> RunState:
@@ -316,7 +340,6 @@ class AsyncSupervisor:
         root: str | Path = ".",
         env: Mapping[str, str] | None = None,
         meta_path: str | Path | None = None,
-        meta_mutation_root: str | Path | None = None,
         report_path: str | Path | None = None,
         transcript_path: str | Path | None = None,
         prompt_file_path: str | Path | None = None,
@@ -324,14 +347,6 @@ class AsyncSupervisor:
         if not command:
             raise ValueError("command must not be empty")
         cwd = Path(normalize_run_root(root))
-        meta = Path(meta_path).expanduser() if meta_path is not None else None
-        if meta is None and meta_mutation_root is not None:
-            raise ValueError("meta_mutation_root requires meta_path")
-        mutation_root = (
-            Path(meta_mutation_root).expanduser()
-            if meta_mutation_root is not None
-            else (control_plane_home() if meta is not None else None)
-        )
         transcript = Path(transcript_path) if transcript_path is not None else None
         if transcript is not None:
             transcript.parent.mkdir(parents=True, exist_ok=True)
@@ -342,8 +357,10 @@ class AsyncSupervisor:
             merged_env.update(env)
         session_id = ensure_session_id(merged_env.get("VIBECRAFTED_SESSION_ID"))
         merged_env["VIBECRAFTED_SESSION_ID"] = session_id
-        if meta is not None:
-            merged_env["VIBECRAFTED_META_PATH"] = str(meta)
+        merged_env["VIBECRAFTED_RUN_ID"] = run_id
+        merged_env["SPAWN_RUN_ID"] = run_id
+        if meta_path is not None:
+            merged_env["VIBECRAFTED_META_PATH"] = str(meta_path)
         if report_path is not None:
             merged_env["VIBECRAFTED_REPORT_PATH"] = str(report_path)
         if transcript_path is not None:
@@ -430,8 +447,7 @@ class AsyncSupervisor:
             root=cwd,
             process=process,
             started_at=started_at,
-            meta_path=meta,
-            meta_mutation_root=mutation_root,
+            meta_path=Path(meta_path) if meta_path is not None else None,
             report_path=Path(report_path) if report_path is not None else None,
             transcript_path=transcript,
             session_id=session_id,
@@ -453,6 +469,10 @@ class AsyncSupervisor:
             handle.pgid = os.getpgid(process.pid)
         except ProcessLookupError:
             handle.pgid = None
+        handle.worker_identity = process_identity_receipt(
+            process.pid,
+            run_id=run_id,
+        )
         self._runs[run_id] = handle
         # Seed durable origin identity as soon as the worker exists so triage
         # still works when the finisher has no ambient VC_FRAME pane env.
@@ -460,8 +480,6 @@ class AsyncSupervisor:
             try:
                 origin = _origin_fields_from_env(merged_env)
                 handle.meta_path.parent.mkdir(parents=True, exist_ok=True)
-                if handle.meta_mutation_root is None:
-                    raise RuntimeError("meta mutation authority is missing")
 
                 def _seed(latest: dict[str, object]) -> dict[str, object]:
                     if (
@@ -472,8 +490,12 @@ class AsyncSupervisor:
                         latest["operator_session"] = origin.get(
                             "operator_session", origin["origin_session"]
                         )
-                    if not str(latest.get("origin_tab") or "").strip():
-                        latest["origin_tab"] = origin.get("origin_tab") or run_id
+                    if (
+                        origin.get("origin_session")
+                        and origin.get("origin_tab")
+                        and not str(latest.get("origin_tab") or "").strip()
+                    ):
+                        latest["origin_tab"] = origin["origin_tab"]
                     if (
                         origin.get("origin_pane_id")
                         and not str(latest.get("origin_pane_id") or "").strip()
@@ -483,6 +505,10 @@ class AsyncSupervisor:
                     latest.setdefault("root", str(cwd))
                     latest.setdefault("agent", agent)
                     latest.setdefault("skill", skill)
+                    latest["worker_pid"] = handle.process.pid
+                    latest["worker_pgid"] = handle.pgid
+                    if handle.worker_identity is not None:
+                        latest["worker_identity"] = handle.worker_identity
                     if initial_agent_session_id:
                         latest.setdefault("agent_session_id", initial_agent_session_id)
                         latest.setdefault("runtime_session_id", session_id)
@@ -491,19 +517,15 @@ class AsyncSupervisor:
                     return latest
 
                 mutate_run_meta(
-                    handle.meta_mutation_root,
+                    control_plane_home(),
                     meta_path=handle.meta_path,
+                    mutation_root=handle.meta_path.parent,
                     run_id=run_id,
                     mutator=_seed,
                     create=True,
                 )
-            except BaseException:
-                # Metadata is part of the launch contract.  If it cannot be
-                # seeded under the caller-declared authority, do not leave an
-                # untracked worker running behind a swallowed mutation error.
-                await self._terminate(handle)
-                self._runs.pop(run_id, None)
-                raise
+            except (OSError, RunMetaMutationError, TypeError):
+                pass
         await self._transition(
             handle,
             RunState.PROCESS_SPAWNED,
@@ -511,6 +533,11 @@ class AsyncSupervisor:
             payload={
                 "worker_pid": handle.process.pid,
                 "worker_pgid": handle.pgid,
+                **(
+                    {"worker_identity": handle.worker_identity}
+                    if handle.worker_identity is not None
+                    else {}
+                ),
                 "meta": str(handle.meta_path or ""),
                 "report": str(handle.report_path or ""),
                 "transcript": str(handle.transcript_path or ""),
@@ -526,7 +553,6 @@ class AsyncSupervisor:
         root: str | Path = ".",
         env: Mapping[str, str] | None = None,
         meta_path: str | Path | None = None,
-        meta_mutation_root: str | Path | None = None,
         report_path: str | Path | None = None,
         transcript_path: str | Path | None = None,
         prompt_file_path: str | Path | None = None,
@@ -541,7 +567,6 @@ class AsyncSupervisor:
             root=root,
             env=env,
             meta_path=meta_path,
-            meta_mutation_root=meta_mutation_root,
             report_path=report_path,
             transcript_path=transcript_path,
             prompt_file_path=prompt_file_path,
@@ -574,6 +599,30 @@ class AsyncSupervisor:
 
         handle.exit_code = handle.process.returncode
         handle.completed_at = _utc_now()
+        operator_stop = await asyncio.to_thread(
+            _accepted_operator_stop,
+            handle.run_id,
+        )
+        if operator_stop is not None:
+            handle.operator_stopped = True
+            handle.operator_stop_reason = str(
+                operator_stop.get("stop_reason") or "operator stop request"
+            )
+            self._write_meta_summary(handle)
+            # A deliberately stopped run owes no completion report. Keep an
+            # observational artifact receipt for dispatcher callers, but do
+            # not manufacture lifecycle:failed/report_missing after the
+            # durable stop authority already won.
+            handle.artifact_validation = validate_artifacts(
+                meta_path=handle.meta_path,
+                report_path=handle.report_path,
+                transcript_path=handle.transcript_path,
+                require_report=False,
+                require_transcript_output=False,
+            )
+            if tee_output:
+                _write_terminal(_terminal_footer(handle))
+            return handle
         self._write_report_fallback(handle)
         self._write_meta_summary(handle)
         if handle.exit_code == 0:
@@ -842,8 +891,6 @@ class AsyncSupervisor:
     def _write_meta_summary(self, handle: AsyncRunHandle) -> None:
         if handle.meta_path is None:
             return
-        if handle.meta_mutation_root is None:
-            raise RuntimeError("meta mutation authority is missing")
         summary = {
             "run_id": handle.run_id,
             "agent": handle.agent,
@@ -865,10 +912,24 @@ class AsyncSupervisor:
             "completed_at": handle.completed_at.isoformat()
             if handle.completed_at
             else "",
-            "status": "completed"
-            if handle.exit_code == 0
-            else ("failed" if handle.exit_code is not None else "running"),
+            "status": (
+                "stopped"
+                if handle.operator_stopped
+                else (
+                    "completed"
+                    if handle.exit_code == 0
+                    else ("failed" if handle.exit_code is not None else "running")
+                )
+            ),
+            "worker_pid": handle.process.pid,
+            "worker_pgid": handle.pgid,
         }
+        if handle.worker_identity is not None:
+            summary["worker_identity"] = handle.worker_identity
+        if handle.operator_stopped:
+            summary["operator_stop_accepted"] = True
+            summary["stop_reason"] = handle.operator_stop_reason
+            summary["recovery_required"] = False
         # Stamp origin for triage-run: dispatcher finishes outside the worker
         # pane, so ambient VC_FRAME_* is often empty at triage time. Prefer
         # values already in meta (launch path) over live env.
@@ -893,8 +954,12 @@ class AsyncSupervisor:
                 summary["operator_session"] = origin.get(
                     "operator_session", origin["origin_session"]
                 )
-            if not str(payload.get("origin_tab") or "").strip():
-                summary["origin_tab"] = origin.get("origin_tab") or handle.run_id
+            if (
+                origin.get("origin_session")
+                and origin.get("origin_tab")
+                and not str(payload.get("origin_tab") or "").strip()
+            ):
+                summary["origin_tab"] = origin["origin_tab"]
             if (
                 origin.get("origin_pane_id")
                 and not str(payload.get("origin_pane_id") or "").strip()
@@ -906,10 +971,12 @@ class AsyncSupervisor:
             return payload
 
         mutate_run_meta(
-            handle.meta_mutation_root,
+            control_plane_home(),
             meta_path=handle.meta_path,
+            mutation_root=handle.meta_path.parent,
             run_id=handle.run_id,
             mutator=_merge_summary,
+            create=True,
         )
 
     async def _terminate(self, handle: AsyncRunHandle) -> None:

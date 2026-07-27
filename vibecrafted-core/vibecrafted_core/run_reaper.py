@@ -9,35 +9,33 @@ belong to them and takes them down, with a receipt for every decision.
 
 **Ownership must be proven, never inferred.** The reaper runs inside a live
 workspace full of processes it must not touch — vc-frame servers, MCP servers, the
-operator's own shells and panes. PID, PGID, command text and a run id in ``ps``
-output are all reusable or forgeable hints; none is authority by itself.
+operator's own shells and panes. So a pid is a candidate only when it carries one of
+two independent proofs tying it to a specific terminal run:
 
-A process is signalable only when all four witnesses agree:
+``env_run_id``
+    The process environment carries ``SPAWN_RUN_ID=<run>``. Every process in a run's
+    tree inherits it (``lib/launcher.sh`` exports it), so this is the strongest
+    proof available. It is not universally *readable*, though: macOS strips the
+    environment of SIP-protected/hardened binaries, so ``ps eww`` answers for a
+    homebrew ``python``/``node`` (what agents actually are) and stays silent for
+    ``/bin/sleep``. Absence of the variable therefore proves nothing.
 
-``run birth identity``
-    The terminal snapshot carries the immutable ``session_id`` created at launch.
+``worker_pgid``
+    The process group id matches the run's recorded ``worker_pgid``/``worker_pid``.
+    Crucially this survives orphaning — when a parent dies the child is reparented
+    to launchd/init but keeps its process group — which is exactly the state the
+    survivors we are hunting are in. Where env-reading fails, this still holds.
 
-``environment lineage``
-    The process exposes both that ``session_id`` and the matching run id.
-
-``process-group lineage``
-    Its current PGID matches the run's launch-recorded worker PGID.
-
-``process birth token``
-    The kernel start token captured in the plan is re-read immediately before
-    TERM and again before KILL. Missing or changed identity fails closed.
-
-Anything missing one witness is reported as ``unproven`` and left running. A
+Anything without one of those is reported as ``unproven`` and left running. A
 survivor we failed to prove is a survivor we keep; killing the wrong process in a
-live workspace costs far more than missing one. The opportunistic launch-time
-sweep is audit-only; signalling is an explicit operator action.
+live workspace costs far more than missing one.
 
 **Three ownership buckets** (run-level inventory + process verdicts):
 
 ``provable``
-    Terminal run carries both a launch ``session_id`` and a recorded
-    ``worker_pgid``/``worker_pid``. Kill candidates only come from this bucket,
-    and still need matching process environment plus a revalidated birth token.
+    Terminal run carries a recorded ``worker_pgid``/``worker_pid`` (or a live
+    process is proven via ``SPAWN_RUN_ID`` / matching pgid). Kill candidates only
+    come from this bucket.
 
 ``legacy``
     Historical terminal run without a recorded pgid, explicitly marked by the
@@ -53,9 +51,10 @@ Migration lives at ``quarantine_legacy_runs`` (doctor: ``--quarantine-legacy-run
 marks terminal-no-pgid as legacy; best-effort recovers pgid for *live* runs only
 when ``SPAWN_RUN_ID`` is positively visible in ``ps``.
 
-**We never take ourselves down.** The terminal-seam caller's own pid, ancestors,
-and every process in its current process group are excluded before anything is
-signalled. This protects operator/control-plane siblings sharing a terminal group.
+**We never take ourselves down.** The terminal-seam caller runs *inside* the very
+run whose survivors it is reaping, so its own pid and every ancestor are excluded
+before anything is signalled. Siblings — the orphaned monitor — remain fair game;
+that is the whole point.
 
 Escalation is TERM, then a bounded grace, then KILL, receipted per step. The kill
 switch is ``VIBECRAFTED_REAPER=0``.
@@ -69,7 +68,6 @@ import os
 import re
 import signal
 import subprocess
-import sys
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -83,12 +81,10 @@ __all__ = [
     "REAPER_OWNERSHIP_KEY",
     "OwnershipBuckets",
     "ProcessEntry",
-    "ProcessEnvIdentity",
     "QuarantineResult",
     "ReapCandidate",
     "ReapPlan",
     "ReapReceipt",
-    "RunBirthIdentity",
     "build_env_index",
     "build_process_table",
     "classify_run_ownership",
@@ -96,11 +92,8 @@ __all__ = [
     "plan_json_payload",
     "plan_reap",
     "quarantine_legacy_runs",
-    "read_process_start_token",
     "reap_terminal_runs",
-    "recorded_run_identity",
     "recorded_worker_pgid",
-    "verify_run_process",
 ]
 
 _TRUTHY_OFF = {"0", "false", "no", "off"}
@@ -126,41 +119,11 @@ PROTECTED_COMMAND_PATTERNS = (
     "mcp-server",
     "loctree-mcp",
     "aicx-mcp",
-    "vibecrafted-server",
-    "control-core",
-    "vibecrafted-reap",
-    "vibecrafted procs",
     "sshd",
     "login",
 )
 
-_ENV_RUN_ID_PATTERNS = (
-    re.compile(r"(?:^|\s)SPAWN_RUN_ID=(\S+)"),
-    re.compile(r"(?:^|\s)VIBECRAFTED_RUN_ID=(\S+)"),
-)
-_ENV_SESSION_ID_PATTERN = re.compile(r"(?:^|\s)VIBECRAFTED_SESSION_ID=(\S+)")
-_MISSING_BIRTH_IDS = {"", "none", "null", "pending", "pending-unset", "unknown"}
-
-
-@dataclass(frozen=True)
-class ProcessEnvIdentity:
-    """Immutable run lineage exposed by a process environment."""
-
-    run_id: str = ""
-    session_id: str = ""
-
-    @property
-    def complete(self) -> bool:
-        return bool(self.run_id and self.session_id)
-
-
-@dataclass(frozen=True)
-class RunBirthIdentity:
-    """Launch-recorded identity required before a run can own a process group."""
-
-    run_id: str
-    session_id: str
-    pgid: int
+_ENV_RUN_ID_PATTERN = re.compile(r"(?:^|\s)SPAWN_RUN_ID=(\S+)")
 
 
 def reaper_enabled(env: Mapping[str, str] | None = None) -> bool:
@@ -180,90 +143,10 @@ def grace_seconds(env: Mapping[str, str] | None = None) -> float:
     return value if value >= 0 else DEFAULT_GRACE_SECONDS
 
 
-def read_process_start_token(pid: int) -> str | None:
-    """Return an OS birth token for ``pid`` or ``None`` when it is unavailable.
-
-    A command hash is deliberately not a fallback: a recycled PID can execute
-    the same command. Linux exposes the monotonic birth tick in ``/proc``.
-    Darwin's libproc exposes the kernel ``timeval`` with microsecond precision.
-    Unsupported or unreadable platforms fail closed.
-    """
-    if pid <= 1:
-        return None
-    try:
-        proc_stat = f"/proc/{pid}/stat"
-        if os.path.isfile(proc_stat):
-            with open(proc_stat, encoding="utf-8", errors="replace") as handle:
-                raw = handle.read()
-            closing = raw.rfind(")")
-            if closing < 0:
-                return None
-            fields = raw[closing + 2 :].split()
-            if len(fields) < 20:
-                return None
-            return f"proc:{fields[19]}"
-    except (OSError, ValueError, IndexError):
-        return None
-
-    if sys.platform != "darwin":
-        return None
-
-    try:
-        import ctypes
-        import ctypes.util
-
-        class _ProcBsdInfo(ctypes.Structure):
-            _fields_ = [
-                ("pbi_flags", ctypes.c_uint32),
-                ("pbi_status", ctypes.c_uint32),
-                ("pbi_xstatus", ctypes.c_uint32),
-                ("pbi_pid", ctypes.c_uint32),
-                ("pbi_ppid", ctypes.c_uint32),
-                ("pbi_uid", ctypes.c_uint32),
-                ("pbi_gid", ctypes.c_uint32),
-                ("pbi_ruid", ctypes.c_uint32),
-                ("pbi_rgid", ctypes.c_uint32),
-                ("pbi_svuid", ctypes.c_uint32),
-                ("pbi_svgid", ctypes.c_uint32),
-                ("rfu_1", ctypes.c_uint32),
-                ("pbi_comm", ctypes.c_char * 16),
-                ("pbi_name", ctypes.c_char * 32),
-                ("pbi_nfiles", ctypes.c_uint32),
-                ("pbi_pgid", ctypes.c_uint32),
-                ("pbi_pjobc", ctypes.c_uint32),
-                ("e_tdev", ctypes.c_uint32),
-                ("e_tpgid", ctypes.c_uint32),
-                ("pbi_nice", ctypes.c_int32),
-                ("pbi_start_tvsec", ctypes.c_uint64),
-                ("pbi_start_tvusec", ctypes.c_uint64),
-            ]
-
-        library_path = ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib"
-        libproc = ctypes.CDLL(library_path, use_errno=True)
-        proc_pidinfo = libproc.proc_pidinfo
-        proc_pidinfo.argtypes = [
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_uint64,
-            ctypes.c_void_p,
-            ctypes.c_int,
-        ]
-        proc_pidinfo.restype = ctypes.c_int
-        info = _ProcBsdInfo()
-        size = ctypes.sizeof(info)
-        written = proc_pidinfo(pid, 3, 0, ctypes.byref(info), size)
-        if written != size or info.pbi_pid != pid or info.pbi_start_tvsec <= 0:
-            return None
-        return f"darwin:{info.pbi_start_tvsec}:{info.pbi_start_tvusec}"
-    except (AttributeError, OSError, TypeError, ValueError):
-        return None
-
-
 def recorded_worker_pgid(run: Mapping[str, Any]) -> int | None:
-    """Return the run's recorded process-group hint.
+    """Return a recorded process-group id that is safe to treat as ownership proof.
 
-    This is never sufficient ownership proof by itself. pgid 0/1 would match
-    half the machine, so only a real group (>1) is returned.
+    pgid 0/1 would match half the machine; only a real group (>1) counts.
     """
     from .control_plane import _coerce_int
 
@@ -272,22 +155,6 @@ def recorded_worker_pgid(run: Mapping[str, Any]) -> int | None:
         if pgid is not None and pgid > 1:
             return pgid
     return None
-
-
-def recorded_run_identity(run: Mapping[str, Any]) -> RunBirthIdentity | None:
-    """Return complete launch identity or ``None`` for stale/legacy metadata."""
-    run_id = str(run.get("run_id") or "").strip()
-    session_id = str(
-        run.get("runtime_session_id") or run.get("session_id") or ""
-    ).strip()
-    pgid = recorded_worker_pgid(run)
-    if (
-        not run_id
-        or session_id.lower() in _MISSING_BIRTH_IDS
-        or pgid is None
-    ):
-        return None
-    return RunBirthIdentity(run_id=run_id, session_id=session_id, pgid=pgid)
 
 
 def classify_run_ownership(run: Mapping[str, Any]) -> str:
@@ -299,7 +166,7 @@ def classify_run_ownership(run: Mapping[str, Any]) -> str:
     """
     if str(run.get(REAPER_OWNERSHIP_KEY) or "").strip() == OWNERSHIP_LEGACY:
         return OWNERSHIP_LEGACY
-    if recorded_run_identity(run) is not None:
+    if recorded_worker_pgid(run) is not None:
         return OWNERSHIP_PROVABLE
     return OWNERSHIP_UNDECIDABLE
 
@@ -352,7 +219,6 @@ class ProcessEntry:
     ppid: int
     pgid: int
     command: str
-    start_token: str = ""
 
 
 @dataclass(frozen=True)
@@ -365,14 +231,10 @@ class ReapCandidate:
     #: "env_run_id" | "worker_pgid" — empty when unproven.
     evidence: str = ""
     detail: str = ""
-    session_id: str = ""
-    start_token: str = ""
 
     @property
     def proven(self) -> bool:
-        return bool(
-            self.evidence and self.run_id and self.session_id and self.start_token
-        )
+        return bool(self.evidence and self.run_id)
 
     def row(self) -> dict[str, Any]:
         return {
@@ -380,8 +242,6 @@ class ReapCandidate:
             "run_id": self.run_id,
             "evidence": self.evidence or "unproven",
             "detail": self.detail,
-            "session_id": self.session_id,
-            "start_token": self.start_token,
             "command": self.command[:200],
         }
 
@@ -477,11 +337,9 @@ def _default_runner(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
 
 def build_process_table(
     runner: Callable[..., Any] | None = None,
-    start_reader: Callable[[int], str | None] | None = None,
 ) -> tuple[ProcessEntry, ...]:
     """Snapshot the process table. Empty on any failure — never raises."""
     runner = _default_runner if runner is None else runner
-    start_reader = read_process_start_token if start_reader is None else start_reader
     try:
         proc = runner(["ps", "-A", "-o", "pid=,ppid=,pgid=,command="])
     except Exception:  # noqa: BLE001
@@ -497,36 +355,12 @@ def build_process_table(
             pid, ppid, pgid = int(parts[0]), int(parts[1]), int(parts[2])
         except ValueError:
             continue
-        try:
-            start_token = str(start_reader(pid) or "")
-        except Exception:  # noqa: BLE001
-            start_token = ""
-        entries.append(
-            ProcessEntry(
-                pid=pid,
-                ppid=ppid,
-                pgid=pgid,
-                command=parts[3],
-                start_token=start_token,
-            )
-        )
+        entries.append(ProcessEntry(pid=pid, ppid=ppid, pgid=pgid, command=parts[3]))
     return tuple(entries)
 
 
-def _single_env_value(line: str, patterns: Sequence[re.Pattern[str]]) -> str:
-    values = {
-        match.group(1)
-        for pattern in patterns
-        for match in pattern.finditer(line)
-        if match.group(1)
-    }
-    return next(iter(values)) if len(values) == 1 else ""
-
-
-def build_env_index(
-    runner: Callable[..., Any] | None = None,
-) -> dict[int, ProcessEnvIdentity]:
-    """Map pid -> run birth identity for processes that expose both fields.
+def build_env_index(runner: Callable[..., Any] | None = None) -> dict[int, str]:
+    """Map pid -> ``SPAWN_RUN_ID`` for every process that exposes one.
 
     One ``ps axeww`` for the whole machine rather than one probe per pid: the sweep
     runs on every spawn, so hundreds of forks would make it too expensive to be
@@ -534,9 +368,12 @@ def build_env_index(
     environment is clipped and the variable silently disappears.
 
     Best-effort by design: macOS refuses the environment of SIP-protected/hardened
-    binaries and lists only argv for them. A missing field means "could not prove",
-    never "not owned". Even a complete pair is still only one witness: plan_reap
-    additionally requires the launch-recorded PGID and a kernel birth token.
+    binaries and lists only argv for them. A missing entry means "could not prove",
+    never "not owned" — which is why ``worker_pgid`` exists as the second proof.
+
+    The pattern is anchored on a whitespace boundary so a run id merely *mentioned*
+    in some other process's command line (``--env SPAWN_RUN_ID:...``) cannot forge
+    ownership; only a real ``SPAWN_RUN_ID=<id>`` token counts.
     """
     runner = _default_runner if runner is None else runner
     try:
@@ -545,32 +382,15 @@ def build_env_index(
         return {}
     if getattr(proc, "returncode", 1) != 0:
         return {}
-    index: dict[int, ProcessEnvIdentity] = {}
+    index: dict[int, str] = {}
     for line in str(getattr(proc, "stdout", "") or "").splitlines():
         head = line.split(maxsplit=1)
         if not head or not head[0].isdigit():
             continue
-        run_id = _single_env_value(line, _ENV_RUN_ID_PATTERNS)
-        session_id = _single_env_value(line, (_ENV_SESSION_ID_PATTERN,))
-        if run_id or session_id:
-            index[int(head[0])] = ProcessEnvIdentity(
-                run_id=run_id,
-                session_id=session_id,
-            )
+        match = _ENV_RUN_ID_PATTERN.search(line)
+        if match:
+            index[int(head[0])] = match.group(1)
     return index
-
-
-def _coerce_env_identity(value: Any) -> ProcessEnvIdentity:
-    if isinstance(value, ProcessEnvIdentity):
-        return value
-    if isinstance(value, Mapping):
-        return ProcessEnvIdentity(
-            run_id=str(value.get("run_id") or "").strip(),
-            session_id=str(value.get("session_id") or "").strip(),
-        )
-    # Compatibility for old callers: a bare run id remains visible for
-    # diagnostics but is intentionally incomplete and can never authorize.
-    return ProcessEnvIdentity(run_id=str(value or "").strip())
 
 
 def _ancestors(pid: int, by_pid: Mapping[int, ProcessEntry]) -> set[int]:
@@ -591,63 +411,11 @@ def _is_protected(command: str) -> bool:
     return any(pattern in lowered for pattern in PROTECTED_COMMAND_PATTERNS)
 
 
-def verify_run_process(
-    run: Mapping[str, Any],
-    target_pid: int,
-    table: Sequence[ProcessEntry],
-    env_index: Mapping[int, Any],
-    *,
-    self_pid: int | None = None,
-) -> tuple[ProcessEntry | None, str]:
-    """Verify one explicit signal target against launch identity.
-
-    Unlike the terminal reaper this helper may verify a live run, but it never
-    authorizes a group signal. The caller gets one exact PID plus its birth
-    token and must re-read that token immediately before signalling.
-    """
-    run_id = str(run.get("run_id") or "").strip()
-    session_id = str(
-        run.get("runtime_session_id") or run.get("session_id") or ""
-    ).strip()
-    if not run_id or session_id.lower() in _MISSING_BIRTH_IDS:
-        return None, "missing_run_birth_identity"
-
-    by_pid = {entry.pid: entry for entry in table}
-    entry = by_pid.get(target_pid)
-    if entry is None:
-        return None, "pid_not_in_process_table"
-    if not entry.start_token:
-        return None, "process_birth_unavailable"
-
-    identity = _coerce_env_identity(env_index.get(target_pid))
-    if identity.run_id != run_id or identity.session_id != session_id:
-        return None, "environment_birth_mismatch"
-
-    recorded_pgid = recorded_worker_pgid(run)
-    if recorded_pgid is None:
-        return None, "missing_recorded_pgid"
-    if entry.pgid != recorded_pgid:
-        return None, "recorded_pgid_mismatch"
-
-    self_pid = os.getpid() if self_pid is None else self_pid
-    protected_pids = _ancestors(self_pid, by_pid)
-    self_entry = by_pid.get(self_pid)
-    if self_entry is not None and self_entry.pgid > 1:
-        protected_pids.update(
-            row.pid for row in table if row.pgid == self_entry.pgid
-        )
-    if entry.pid in protected_pids:
-        return None, "operator_lineage_protected"
-    if _is_protected(entry.command):
-        return None, "infrastructure_command_protected"
-    return entry, ""
-
-
 def _terminal_run_index(
     runs: Iterable[Mapping[str, Any]],
 ) -> tuple[
     dict[str, dict[str, Any]],
-    dict[int, RunBirthIdentity],
+    dict[int, str],
     dict[int, str],
     set[str],
     OwnershipBuckets,
@@ -662,7 +430,7 @@ def _terminal_run_index(
     from .control_plane import _run_is_terminal
 
     by_run: dict[str, dict[str, Any]] = {}
-    pgid_owner: dict[int, RunBirthIdentity] = {}
+    pgid_owner: dict[int, str] = {}
     legacy_pgid_owner: dict[int, str] = {}
     legacy_runs: set[str] = set()
     provable: list[str] = []
@@ -685,9 +453,9 @@ def _terminal_run_index(
             continue
         if bucket == OWNERSHIP_PROVABLE:
             provable.append(run_id)
-            identity = recorded_run_identity(payload)
-            if identity is not None:
-                pgid_owner.setdefault(identity.pgid, identity)
+            pgid = recorded_worker_pgid(payload)
+            if pgid is not None:
+                pgid_owner.setdefault(pgid, run_id)
             continue
         undecidable.append(run_id)
 
@@ -702,7 +470,7 @@ def _terminal_run_index(
 def plan_reap(
     runs: Iterable[Mapping[str, Any]],
     table: Sequence[ProcessEntry],
-    env_index: Mapping[int, Any] | None = None,
+    env_index: Mapping[int, str] | None = None,
     self_pid: int | None = None,
     env: Mapping[str, str] | None = None,
 ) -> ReapPlan:
@@ -724,18 +492,9 @@ def plan_reap(
     env_index = {} if env_index is None else env_index
     self_pid = os.getpid() if self_pid is None else self_pid
     by_pid = {entry.pid: entry for entry in table}
-    # Our own lineage and process-group siblings. A terminal invocation may run
-    # inside the same terminal group as the operator/control plane.
+    # Our own line of descent. The terminal-seam caller is itself a process of the
+    # run being reaped; killing an ancestor would kill the reap mid-flight.
     protected_pids = _ancestors(self_pid, by_pid)
-    self_entry = by_pid.get(self_pid)
-    if self_entry is not None and self_entry.pgid > 1:
-        protected_pids.update(
-            entry.pid for entry in table if entry.pgid == self_entry.pgid
-        )
-    current_identity = ProcessEnvIdentity(
-        run_id=str(env.get("VIBECRAFTED_RUN_ID") or "").strip(),
-        session_id=str(env.get("VIBECRAFTED_SESSION_ID") or "").strip(),
-    )
 
     doomed: list[ReapCandidate] = []
     unproven: list[ReapCandidate] = []
@@ -743,59 +502,48 @@ def plan_reap(
     legacy_candidates: list[ReapCandidate] = []
 
     for entry in table:
-        if entry.pid <= 1:
+        if entry.pid <= 1 or entry.pid in protected_pids:
             continue
 
-        proc_identity = _coerce_env_identity(env_index.get(entry.pid))
-        legacy_owner = legacy_pgid_owner.get(entry.pgid)
-        if legacy_owner or proc_identity.run_id in legacy_runs:
-            run_id = legacy_owner or proc_identity.run_id
-            legacy_candidates.append(
-                ReapCandidate(
-                    pid=entry.pid,
-                    command=entry.command,
-                    run_id=run_id,
-                    evidence=OWNERSHIP_LEGACY,
-                    detail=f"reaper_ownership=legacy pgid={entry.pgid}",
-                    session_id=proc_identity.session_id,
-                    start_token=entry.start_token,
-                )
-            )
-            continue
+        run_id = ""
+        evidence = ""
+        detail = ""
+        is_legacy = False
 
-        owner = pgid_owner.get(entry.pgid)
-        exact_identity = bool(
-            owner is not None
-            and proc_identity.complete
-            and proc_identity.run_id == owner.run_id
-            and proc_identity.session_id == owner.session_id
-        )
-
-        if owner is None and not proc_identity.run_id:
-            # The whole machine is not an interesting unproven list.
-            continue
-
-        run_id = owner.run_id if owner is not None else proc_identity.run_id
-        session_id = (
-            owner.session_id if owner is not None else proc_identity.session_id
-        )
-        evidence = "run_birth_identity" if exact_identity else ""
-        if exact_identity and entry.start_token:
-            detail = (
-                f"run_id+session_id+pgid={entry.pgid} match; "
-                f"birth={entry.start_token}"
-            )
-        elif exact_identity:
-            detail = "process birth token unavailable"
-        elif owner is not None:
-            detail = (
-                "stale or reused pgid identity: "
-                "run_id/session_id environment does not match launch record"
-            )
-        elif proc_identity.run_id in by_run:
-            detail = "run birth environment matched but recorded pgid did not"
+        env_run_id = env_index.get(entry.pid, "")
+        if env_run_id and env_run_id in by_run:
+            if env_run_id in legacy_runs:
+                is_legacy = True
+                run_id, evidence = env_run_id, OWNERSHIP_LEGACY
+                detail = f"reaper_ownership=legacy SPAWN_RUN_ID={env_run_id}"
+            else:
+                run_id, evidence = env_run_id, "env_run_id"
+                detail = f"SPAWN_RUN_ID={env_run_id}"
         else:
-            detail = "run birth environment names a non-terminal or unknown run"
+            legacy_owner = legacy_pgid_owner.get(entry.pgid)
+            if legacy_owner:
+                is_legacy = True
+                run_id, evidence = legacy_owner, OWNERSHIP_LEGACY
+                detail = f"reaper_ownership=legacy pgid={entry.pgid}"
+            else:
+                owner = pgid_owner.get(entry.pgid)
+                if owner:
+                    run_id, evidence = owner, "worker_pgid"
+                    detail = f"pgid={entry.pgid} matches run worker_pgid"
+
+        if not evidence:
+            # Only surface processes that look run-adjacent; the whole machine is
+            # not an interesting "unproven" list.
+            if env_run_id:
+                unproven.append(
+                    ReapCandidate(
+                        pid=entry.pid,
+                        command=entry.command,
+                        run_id=env_run_id,
+                        detail="SPAWN_RUN_ID names a run that is not terminal",
+                    )
+                )
+            continue
 
         candidate = ReapCandidate(
             pid=entry.pid,
@@ -803,16 +551,12 @@ def plan_reap(
             run_id=run_id,
             evidence=evidence,
             detail=detail,
-            session_id=session_id,
-            start_token=entry.start_token,
         )
-        is_current_run = bool(
-            current_identity.complete and proc_identity == current_identity
-        )
-        if entry.pid in protected_pids or is_current_run or _is_protected(entry.command):
+        if is_legacy or run_id in legacy_runs:
+            legacy_candidates.append(candidate)
+            continue
+        if _is_protected(entry.command):
             protected.append(candidate)
-        elif not candidate.proven:
-            unproven.append(candidate)
         else:
             doomed.append(candidate)
 
@@ -851,25 +595,17 @@ def execute_reap(
     sleeper: Callable[[float], None] | None = None,
     alive_check: Callable[[int], bool] | None = None,
     signaller: Callable[[int, int], str] | None = None,
-    birth_reader: Callable[[int], str | None] | None = None,
 ) -> dict[str, ReapReceipt]:
-    """Escalate TERM -> grace -> KILL after identity revalidation at each edge."""
+    """Escalate TERM -> grace -> KILL over the plan's doomed pids, receipting each step."""
     grace = grace_seconds() if grace is None else grace
     sleeper = time.sleep if sleeper is None else sleeper
     alive_check = _pid_alive if alive_check is None else alive_check
     signaller = _signal_pid if signaller is None else signaller
-    birth_reader = read_process_start_token if birth_reader is None else birth_reader
 
     receipts: dict[str, ReapReceipt] = {}
 
     def _receipt(run_id: str) -> ReapReceipt:
         return receipts.setdefault(run_id, ReapReceipt(run_id=run_id))
-
-    def _safe_birth(pid: int) -> str:
-        try:
-            return str(birth_reader(pid) or "")
-        except Exception:  # noqa: BLE001
-            return ""
 
     if not plan.should_run:
         return receipts
@@ -881,13 +617,6 @@ def execute_reap(
     termed: list[tuple[ReapCandidate, dict[str, Any]]] = []
     for candidate in plan.doomed:
         row = candidate.row()
-        live_birth = _safe_birth(candidate.pid)
-        row["birth_before_term"] = live_birth or "unavailable"
-        if not live_birth or live_birth != candidate.start_token:
-            row["term"] = "not_signalled"
-            row["outcome"] = "identity_changed"
-            _receipt(candidate.run_id).reaped.append(row)
-            continue
         row["term"] = signaller(candidate.pid, signal.SIGTERM)
         termed.append((candidate, row))
 
@@ -902,13 +631,6 @@ def execute_reap(
 
     for candidate, row in termed:
         if alive_check(candidate.pid):
-            live_birth = _safe_birth(candidate.pid)
-            row["birth_before_kill"] = live_birth or "unavailable"
-            if not live_birth or live_birth != candidate.start_token:
-                row["kill"] = "not_signalled"
-                row["outcome"] = "identity_changed"
-                _receipt(candidate.run_id).reaped.append(row)
-                continue
             result = signaller(candidate.pid, signal.SIGKILL)
             row["kill"] = result
             # Judge the delivery, not a liveness re-probe. SIGKILL cannot be caught,
@@ -970,22 +692,21 @@ def _terminal_run_snapshots() -> list[dict[str, Any]]:
 def quarantine_legacy_runs(
     runs: Iterable[Mapping[str, Any]] | None = None,
     table: Sequence[ProcessEntry] | None = None,
-    env_index: Mapping[int, Any] | None = None,
+    env_index: Mapping[int, str] | None = None,
     *,
     dry_run: bool = False,
     writer: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> QuarantineResult:
-    """Mark terminal runs without complete birth identity as legacy.
+    """One-shot migration: mark terminal runs without pgid as ``reaper_ownership: legacy``.
 
     Rules (fail-closed, no fiction):
 
-    * Terminal + missing session id or missing valid pgid →
-      ``reaper_ownership: legacy``.
-    * Terminal + complete launch identity → untouched (already provable).
+    * Terminal + no valid recorded pgid → write ``reaper_ownership: legacy``.
+    * Terminal + valid pgid → untouched (already provable).
     * Already ``reaper_ownership: legacy`` → no write (idempotent).
     * Live (non-terminal) → never marked legacy; best-effort recover
-      ``worker_pgid`` from the process table only when run id and launch session
-      id are both visible and match. A bare pgid or run id is not enough.
+      ``worker_pgid`` from the process table **only** when ``SPAWN_RUN_ID`` is
+      positively visible for that run (env proof). A bare pgid match is not enough.
 
     Historical JSON variants that break parsing are listed in ``parse_errors``
     and skipped rather than crashing the migration.
@@ -1019,7 +740,7 @@ def quarantine_legacy_runs(
     )
     if table is None and need_recovery:
         proc_table = build_process_table()
-    index: dict[int, Any] = {} if env_index is None else dict(env_index)
+    index = {} if env_index is None else dict(env_index)
     if env_index is None and need_recovery:
         index = build_env_index()
 
@@ -1044,18 +765,8 @@ def quarantine_legacy_runs(
                     result.skipped_live.append(run_id)
                     continue
                 recovered: int | None = None
-                run_session_id = str(
-                    payload.get("runtime_session_id")
-                    or payload.get("session_id")
-                    or ""
-                ).strip()
-                for pid, raw_identity in index.items():
-                    identity = _coerce_env_identity(raw_identity)
-                    if (
-                        identity.run_id != run_id
-                        or not run_session_id
-                        or identity.session_id != run_session_id
-                    ):
+                for pid, env_run_id in index.items():
+                    if env_run_id != run_id:
                         continue
                     entry = by_pid.get(pid)
                     if entry is None:
@@ -1079,7 +790,7 @@ def quarantine_legacy_runs(
             if str(payload.get(REAPER_OWNERSHIP_KEY) or "").strip() == OWNERSHIP_LEGACY:
                 result.already_legacy.append(run_id)
                 continue
-            if recorded_run_identity(payload) is not None:
+            if recorded_worker_pgid(payload) is not None:
                 result.skipped_has_pgid.append(run_id)
                 continue
 
@@ -1101,7 +812,7 @@ def reap_terminal_runs(
     env: Mapping[str, str] | None = None,
     runs: Iterable[Mapping[str, Any]] | None = None,
     table: Sequence[ProcessEntry] | None = None,
-    env_index: Mapping[int, Any] | None = None,
+    env_index: Mapping[int, str] | None = None,
 ) -> ReapPlan:
     """Find and terminate survivors of terminal runs. Never raises.
 
@@ -1130,8 +841,8 @@ def reap_terminal_runs(
 
 
 def sweep_quietly(env: Mapping[str, str] | None = None) -> None:
-    """Audit opportunistically at pre-flight; never signal from an implicit seam."""
-    reap_terminal_runs(dry_run=True, env=env)
+    """Opportunistic pre-flight sweep. Silent, best-effort, never raises."""
+    reap_terminal_runs(env=env)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

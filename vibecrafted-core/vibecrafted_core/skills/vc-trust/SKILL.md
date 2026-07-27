@@ -55,6 +55,22 @@ The settlement mapping is closed and canonical (do not reopen letters):
 | `pass-with-gaps` | Needs attention | `n` |
 | `block`          | Failed          | `x` |
 
+## Canonical Orientation Gate
+
+Before inspecting, judging, or noting a commit, run or consume the `vc-init`
+procedure for the assigned repository. Pin the repository, branch, baseline,
+review range, dirty state, and trust-journal path. `trust inspect` is a
+mechanical extractor, not a substitute for this orientation and never evidence
+enough for a verdict.
+
+Use `Loctree:loctree` to produce or refresh the Code-Derived Application Map for
+the reviewed range: changed files, consumers, runtime entrypoints, tests,
+twins, and blast radius. Use `slice`, `impact`, `find`, and `follow` where each
+claim demands them, then independently inspect the diff and real runtime path.
+The map bounds falsification; it does not award trust. Trust stays read-only
+with respect to code and writes only the explicit journal/settlement surfaces
+named below.
+
 ## Invocation
 
 - Worker: `vibecrafted trust <claude|codex|agy|junie|grok> --prompt ...`
@@ -66,19 +82,6 @@ The structured helper is:
 ```bash
 python -m vibecrafted_core.trust --help
 ```
-
-## Canonical Orientation Gate
-
-Before judging a repository or commit stream, run or consume the `vc-init`
-procedure for the exact repository and branch under review. If fresh
-orientation evidence is absent, perform the pass before extracting or grading
-claims.
-
-`Loctree:loctree` is the default structural perception skill for this pass.
-Use it to produce or refresh the Code-Derived Application Map: changed-file
-consumers, runtime entrypoints, hook and settlement boundaries, and the blast
-radius behind each material commit claim. Use `slice`, `impact`, literal
-find/body, and relevant `follow` signals before relying on prose or memory.
 
 ## Hard boundary
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import threading
@@ -7,23 +8,50 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from vibecrafted_core import control_plane
+from vibecrafted_core import control_plane, events, settlement_ledger
+from vibecrafted_core.settlement import (
+    SettlementEventStateV1,
+    SettlementEventV1,
+    SettlementEventV2,
+    TrustReceiptV1,
+    emit_settlement_event,
+)
 from vibecrafted_core.settlement_history import (
     MAX_U64,
+    SETTLEMENT_COUNT_SEMANTICS_EXACT,
+    SETTLEMENT_COUNT_SEMANTICS_LOWER_BOUND,
     SETTLEMENT_COUNTS_PIPE,
+    SETTLEMENT_HISTORY_AUTHORITY,
     SETTLEMENT_HISTORY_GENERATION_SCHEMA,
+    SETTLEMENT_HISTORY_SCHEMA,
+    SETTLEMENT_HISTORY_WIRE_SCHEMA,
     SETTLEMENT_REPLAY_INTERVAL_SECONDS,
-    RunSettlementHistory,
     SettlementCounts,
     SettlementHistoryError,
     SettlementHistoryPublisher,
     SettlementHistorySnapshot,
-    advance_run_settlement_history,
     reconcile_settlement_history,
 )
 
 GENERATION = "019f9c72-6ed3-7a41-8cf0-df0b7bff80fe"
 NEXT_GENERATION = "019f9c72-6ed3-7a41-8cf0-df0b7bff80ff"
+PRELEDGER_GAP: dict[str, object] = {
+    "kind": "preledger_history_unknown",
+    "backfill_status": "not_performed",
+    "facts_invented": False,
+}
+LEDGER_NOT_STARTED_GAP: dict[str, object] = {
+    "kind": "ledger_not_started",
+    "backfill_status": "not_performed",
+    "facts_invented": False,
+}
+
+
+@pytest.fixture(autouse=True)
+def isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    home = tmp_path / "crafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    return home
 
 
 def write_generation(
@@ -37,6 +65,7 @@ def write_generation(
         json.dumps(
             {
                 "schema": SETTLEMENT_HISTORY_GENERATION_SCHEMA,
+                "authority": SETTLEMENT_HISTORY_AUTHORITY,
                 "generation": generation,
                 "continuity_gaps": continuity_gaps,
             }
@@ -59,7 +88,7 @@ def settled(run_id: str, revision: int, tui: str) -> dict[str, Any]:
         "settlement_revision": revision,
         "settlement_reason": "test",
         "settlement_at": "2026-07-26T06:00:00+00:00",
-        "settlement_source": "test",
+        "settlement_source": "auto",
         "settlement_claim_digest": "",
         "settlement_waived": False,
         "settlement": {
@@ -67,177 +96,347 @@ def settled(run_id: str, revision: int, tui: str) -> dict[str, Any]:
             "tui": tui,
             "reason": "test",
             "settled_at": "2026-07-26T06:00:00+00:00",
-            "source": "test",
+            "source": "auto",
             "claim_digest": "",
             "waived": False,
         },
     }
 
 
-def settlement_event(run_id: str, revision: int, tui: str) -> dict[str, Any]:
-    return {
-        "schema": "vibecrafted.settlement-event.v1",
-        "run_id": run_id,
-        "revision": revision,
-        "current": {"tui": tui},
-    }
-
-
-def test_per_run_history_counts_each_revision_and_replay_is_idempotent() -> None:
-    first = settled("run-1", 1, "n")
-    first["settlement_history"] = advance_run_settlement_history(
-        None,
-        first,
-        settlement_event("run-1", 1, "n"),
+def trust_event(
+    *,
+    run_id: str,
+    revision: int,
+    verdict: str,
+    tui: str,
+    previous_verdict: str | None = None,
+    previous_tui: str | None = None,
+    reason_suffix: str = "",
+) -> SettlementEventV2:
+    trust_verdict = {
+        "finalized": "pass",
+        "failed": "block",
+        "needs_attention": "pass-with-gaps",
+    }[verdict]
+    claim_digest = hashlib.sha256(f"{run_id}:{revision}:{verdict}".encode()).hexdigest()
+    receipt = TrustReceiptV1.issue(
+        repo_root="/tmp/vibecrafted-history-test",
+        run_id=run_id,
+        commit_sha="a" * 40,
+        trust_verdict=trust_verdict,
+        settlement_verdict=verdict,
+        settlement_tui=tui,
+        settlement_revision=revision,
+        claim_digest=claim_digest,
     )
-    second = settled("run-1", 2, "f")
-    event = settlement_event("run-1", 2, "f")
-
-    advanced = advance_run_settlement_history(first, second, event)
-    replay = advance_run_settlement_history(
-        {**second, "settlement_history": advanced},
-        second,
-        event,
+    previous = (
+        SettlementEventStateV1(
+            verdict=previous_verdict,
+            tui=str(previous_tui),
+        )
+        if previous_verdict is not None
+        else None
     )
-    history = RunSettlementHistory.from_payload(advanced)
-
-    assert history.historical_transitions.to_payload() == {
-        "f": 1,
-        "x": 0,
-        "n": 1,
-        "total": 2,
-    }
-    assert (history.latest_revision, history.latest_tui) == (2, "f")
-    assert history.gaps == 0
-    assert history.complete_from == 1
-    assert replay == advanced
-
-
-def test_legacy_revision_hole_is_an_honest_lower_bound() -> None:
-    history = RunSettlementHistory.from_payload(
-        advance_run_settlement_history(None, settled("legacy", 3, "x"))
-    )
-
-    assert history.historical_transitions.to_payload() == {
-        "f": 0,
-        "x": 1,
-        "n": 0,
-        "total": 1,
-    }
-    assert history.gaps == 2
-    assert history.complete_from is None
-
-
-def test_legacy_revision_one_without_a_ledger_is_still_incomplete() -> None:
-    history = RunSettlementHistory.from_payload(
-        advance_run_settlement_history(None, settled("legacy", 1, "f"))
+    return SettlementEventV2(
+        run_id=run_id,
+        previous=previous,
+        current=SettlementEventStateV1(verdict=verdict, tui=tui),
+        reason=f"trust_{trust_verdict.replace('-', '_')}:{revision}{reason_suffix}",
+        source="trust",
+        settled_at=f"2026-07-26T12:00:{revision:02d}+00:00",
+        claim_digest=claim_digest,
+        waived=False,
+        revision=revision,
+        trust_receipt=receipt,
     )
 
-    assert history.gaps == 1
-    assert history.complete_from is None
+
+def projected_snapshot(
+    *,
+    generation: str = GENERATION,
+    historical: SettlementCounts | None = None,
+    latest: SettlementCounts | None = None,
+    gap: dict[str, object] = PRELEDGER_GAP,
+) -> SettlementHistorySnapshot:
+    historical = historical or SettlementCounts(f=1)
+    latest = latest or SettlementCounts(f=1)
+    return SettlementHistorySnapshot(
+        generation=generation,
+        sequence=historical.total,
+        historical_transitions=historical,
+        latest_by_run=latest,
+        gaps=1,
+        complete_from=None,
+        count_semantics=SETTLEMENT_COUNT_SEMANTICS_LOWER_BOUND,
+        history_complete=False,
+        history_gaps=(dict(gap),),
+    )
 
 
-def test_snapshot_carries_history_even_when_event_publish_crashes(
-    tmp_path: Path,
+def test_v1_event_is_not_transition_but_snapshot_enters_observed_lower_bound(
+    isolated_home: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path))
-    path = control_plane.run_snapshot_dir() / "run-crash.json"
-
-    def crash_after_snapshot(_event: object) -> None:
-        raise OSError("injected event append crash")
-
-    monkeypatch.setattr(control_plane, "emit_settlement_event", crash_after_snapshot)
-    with pytest.raises(OSError, match="injected event append crash"):
-        control_plane._write_run_snapshot(
-            path,
-            None,
-            settled("run-crash", 1, "n"),
+    monkeypatch.setattr(events, "append_event", lambda *_args, **_kwargs: {})
+    emit_settlement_event(
+        SettlementEventV1(
+            run_id="run-v1",
+            previous=None,
+            current=SettlementEventStateV1(
+                verdict="needs_attention",
+                tui="n",
+            ),
+            reason="automatic settlement",
+            source="auto",
+            settled_at="2026-07-26T12:00:00+00:00",
+            claim_digest="",
+            waived=False,
+            revision=1,
         )
+    )
 
-    persisted = json.loads(path.read_text(encoding="utf-8"))
-    history = RunSettlementHistory.from_payload(persisted["settlement_history"])
-    assert history.latest_tui == "n"
-    assert history.historical_transitions.n == 1
+    path = control_plane.run_snapshot_dir() / "run-auto.json"
+    payload = settled("run-auto", 1, "x")
+    payload["settlement_history"] = {"old_snapshot_authority": True}
+    persisted = control_plane._write_run_snapshot(path, None, payload)
+
+    assert "settlement_history" not in persisted
+    assert "settlement_history" not in json.loads(path.read_text(encoding="utf-8"))
+    projection = reconcile_settlement_history(
+        control_plane_root=isolated_home / "control_plane"
+    )
+    assert projection.sequence == 1
+    assert projection.historical_transitions == SettlementCounts(x=1)
+    assert projection.latest_by_run == SettlementCounts(x=1)
+    assert projection.count_semantics == SETTLEMENT_COUNT_SEMANTICS_LOWER_BOUND
+    assert projection.history_gaps == (
+        {
+            "kind": "preledger_history_unknown",
+            "backfill_status": "observed_snapshot_lower_bound",
+            "facts_invented": False,
+        },
+    )
+    ledger = settlement_ledger.read_settlement_ledger(
+        isolated_home / "control_plane" / "settlement_ledger.jsonl"
+    )
+    assert ledger["metadata"]["backfill"]["observation_count"] == 1
+    assert ledger["metadata"]["backfill"]["facts_invented"] is False
 
 
-def test_reconcile_dedupes_active_archive_and_is_restart_idempotent(
-    tmp_path: Path,
+def test_v2_is_counted_exactly_once_with_explicit_preledger_lower_bound(
+    isolated_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    root = tmp_path / "control_plane"
-    active = root / "runs" / "run-one.json"
-    archive = root / "runs" / "archive" / "run-one.json"
-    active.parent.mkdir(parents=True)
-    archive.parent.mkdir(parents=True)
+    monkeypatch.setattr(events, "append_event", lambda *_args, **_kwargs: {})
+    event = trust_event(
+        run_id="run-v2",
+        revision=1,
+        verdict="needs_attention",
+        tui="n",
+    )
+    emit_settlement_event(event)
+    emit_settlement_event(event)
 
-    first = settled("run-one", 1, "n")
-    first["settlement_history"] = advance_run_settlement_history(
-        None,
-        first,
-        settlement_event("run-one", 1, "n"),
+    projection = reconcile_settlement_history(
+        control_plane_root=isolated_home / "control_plane"
     )
-    current = settled("run-one", 2, "f")
-    current["settlement_history"] = advance_run_settlement_history(
-        first,
-        current,
-        settlement_event("run-one", 2, "f"),
+
+    assert projection.sequence == 1
+    assert projection.historical_transitions == SettlementCounts(n=1)
+    assert projection.latest_by_run == SettlementCounts(n=1)
+    assert projection.gaps == 1
+    assert projection.complete_from is None
+    assert projection.count_semantics == SETTLEMENT_COUNT_SEMANTICS_LOWER_BOUND
+    assert projection.history_complete is False
+    assert projection.history_gaps == (PRELEDGER_GAP,)
+    assert projection.to_payload()["authority"] == SETTLEMENT_HISTORY_AUTHORITY
+
+
+def test_revision_gap_is_added_to_explicit_lower_bound(
+    isolated_home: Path,
+) -> None:
+    settlement_ledger._append_settlement_fact(
+        trust_event(
+            run_id="run-gap",
+            revision=3,
+            verdict="failed",
+            tui="x",
+        )
     )
-    encoded = json.dumps(current)
-    active.write_text(encoded, encoding="utf-8")
-    archive.write_text(encoded, encoding="utf-8")
-    legacy = settled("run-two", 3, "x")
-    (archive.parent / "run-two.json").write_text(
-        json.dumps(legacy),
+
+    projection = reconcile_settlement_history(
+        control_plane_root=isolated_home / "control_plane"
+    )
+
+    assert projection.historical_transitions == SettlementCounts(x=1)
+    assert projection.gaps == 3
+    assert projection.history_gaps == (
+        PRELEDGER_GAP,
+        {
+            "kind": "missing_settlement_revisions",
+            "run_id": "run-gap",
+            "from_revision": 1,
+            "to_revision": 2,
+            "count": 2,
+        },
+    )
+
+
+def test_content_collision_fails_closed_and_keeps_first_projection(
+    isolated_home: Path,
+) -> None:
+    original = trust_event(
+        run_id="run-collision",
+        revision=1,
+        verdict="needs_attention",
+        tui="n",
+    )
+    settlement_ledger._append_settlement_fact(original)
+    first = reconcile_settlement_history(
+        control_plane_root=isolated_home / "control_plane"
+    )
+    history_path = isolated_home / "control_plane" / "settlement_history.json"
+    before = history_path.read_bytes()
+
+    collision = trust_event(
+        run_id="run-collision",
+        revision=1,
+        verdict="needs_attention",
+        tui="n",
+        reason_suffix=":different-content",
+    )
+    assert collision.event_key == original.event_key
+    with pytest.raises(
+        settlement_ledger.SettlementLedgerCollision,
+        match="event key collision",
+    ):
+        settlement_ledger._append_settlement_fact(collision)
+
+    assert (
+        reconcile_settlement_history(control_plane_root=isolated_home / "control_plane")
+        == first
+    )
+    assert history_path.read_bytes() == before
+
+
+def test_snapshot_deletion_never_decreases_or_breaks_ledger_projection(
+    isolated_home: Path,
+) -> None:
+    for event in (
+        trust_event(
+            run_id="run-one",
+            revision=1,
+            verdict="finalized",
+            tui="f",
+        ),
+        trust_event(
+            run_id="run-two",
+            revision=1,
+            verdict="failed",
+            tui="x",
+        ),
+    ):
+        settlement_ledger._append_settlement_fact(event)
+
+    root = isolated_home / "control_plane"
+    active = root / "runs" / "run-one.json"
+    archived = root / "runs" / "archive" / "run-two.json"
+    active.parent.mkdir(parents=True, exist_ok=True)
+    archived.parent.mkdir(parents=True, exist_ok=True)
+    active.write_text(json.dumps(settled("run-one", 1, "f")), encoding="utf-8")
+    archived.write_text(json.dumps(settled("run-two", 1, "x")), encoding="utf-8")
+    first = reconcile_settlement_history(control_plane_root=root)
+
+    active.unlink()
+    archived.unlink()
+    replay = reconcile_settlement_history(control_plane_root=root)
+
+    assert replay == first
+    assert replay.sequence == 2
+    assert replay.historical_transitions == SettlementCounts(f=1, x=1)
+    assert replay.latest_by_run == SettlementCounts(f=1, x=1)
+
+
+def test_corrupt_ledger_fails_closed_without_overwriting_projection(
+    isolated_home: Path,
+) -> None:
+    settlement_ledger._append_settlement_fact(
+        trust_event(
+            run_id="run-corrupt",
+            revision=1,
+            verdict="failed",
+            tui="x",
+        )
+    )
+    root = isolated_home / "control_plane"
+    reconcile_settlement_history(control_plane_root=root)
+    history_path = root / "settlement_history.json"
+    before = history_path.read_bytes()
+
+    ledger_path = settlement_ledger.settlement_ledger_path()
+    lines = ledger_path.read_bytes().splitlines(keepends=True)
+    corrupt = json.loads(lines[-1])
+    corrupt["settlement_tui"] = "f"
+    lines[-1] = (
+        json.dumps(corrupt, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+    )
+    ledger_path.write_bytes(b"".join(lines))
+
+    with pytest.raises(settlement_ledger.SettlementLedgerCorrupt):
+        reconcile_settlement_history(control_plane_root=root)
+    assert history_path.read_bytes() == before
+
+
+def test_replaced_snapshot_projection_is_overwritten_even_if_sequence_decreases(
+    isolated_home: Path,
+) -> None:
+    settlement_ledger._append_settlement_fact(
+        trust_event(
+            run_id="run-ledger",
+            revision=1,
+            verdict="finalized",
+            tui="f",
+        )
+    )
+    root = isolated_home / "control_plane"
+    write_generation(root)
+    old_projection = {
+        "schema": "vibecrafted.settlement-history.v1",
+        "generation": GENERATION,
+        "sequence": 99,
+        "historical_transitions": {"f": 99, "x": 0, "n": 0, "total": 99},
+        "latest_by_run": {"f": 1, "x": 0, "n": 0, "total": 1},
+        "gaps": 0,
+        "complete_from": 1,
+    }
+    (root / "settlement_history.json").write_text(
+        json.dumps(old_projection),
         encoding="utf-8",
     )
 
-    first_projection = reconcile_settlement_history(control_plane_root=root)
-    replay_projection = reconcile_settlement_history(control_plane_root=root)
+    projection = reconcile_settlement_history(control_plane_root=root)
 
-    assert first_projection == replay_projection
-    assert first_projection.to_payload() == {
-        "schema": "vibecrafted.settlement-history.v1",
-        "generation": first_projection.generation,
-        "sequence": 3,
-        "historical_transitions": {"f": 1, "x": 1, "n": 1, "total": 3},
-        "latest_by_run": {"f": 1, "x": 1, "n": 0, "total": 2},
-        "gaps": 2,
-        "complete_from": None,
-    }
+    assert projection.generation != GENERATION
+    assert projection.sequence == 1
+    assert projection.historical_transitions == SettlementCounts(f=1)
+    assert projection.count_semantics == SETTLEMENT_COUNT_SEMANTICS_LOWER_BOUND
 
 
-def test_reconcile_rejects_same_revision_active_archive_divergence(
-    tmp_path: Path,
+def test_generation_reset_changes_delivery_fence_not_ledger_counts(
+    isolated_home: Path,
 ) -> None:
-    root = tmp_path / "control_plane"
-    active = root / "runs" / "run-one.json"
-    archive = root / "runs" / "archive" / "run-one.json"
-    active.parent.mkdir(parents=True)
-    archive.parent.mkdir(parents=True)
-    active.write_text(json.dumps(settled("run-one", 1, "f")), encoding="utf-8")
-    archive.write_text(json.dumps(settled("run-one", 1, "x")), encoding="utf-8")
-
-    with pytest.raises(SettlementHistoryError, match="divergent active/archive"):
-        reconcile_settlement_history(control_plane_root=root)
-
-
-def test_generation_is_stable_until_its_durable_store_id_is_reset(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "control_plane"
-    run = root / "runs" / "run-one.json"
-    run.parent.mkdir(parents=True)
-    payload = settled("run-one", 1, "f")
-    payload["settlement_history"] = advance_run_settlement_history(
-        None,
-        payload,
-        settlement_event("run-one", 1, "f"),
+    settlement_ledger._append_settlement_fact(
+        trust_event(
+            run_id="run-generation",
+            revision=1,
+            verdict="finalized",
+            tui="f",
+        )
     )
-    run.write_text(json.dumps(payload), encoding="utf-8")
-
+    root = isolated_home / "control_plane"
     first = reconcile_settlement_history(control_plane_root=root)
     replay = reconcile_settlement_history(control_plane_root=root)
-    assert replay.generation == first.generation
+    assert replay == first
 
     (root / "settlement_history_generation.json").unlink()
     reset = reconcile_settlement_history(control_plane_root=root)
@@ -246,54 +445,52 @@ def test_generation_is_stable_until_its_durable_store_id_is_reset(
     assert reset.generation != first.generation
     assert reset_replay == reset
     assert reset.sequence == first.sequence
-    assert reset.gaps == 1
-    assert reset.complete_from is None
+    assert reset.historical_transitions == first.historical_transitions
+    assert reset.latest_by_run == first.latest_by_run
+    assert reset.history_gaps == first.history_gaps
+    assert reset.gaps == first.gaps
 
 
-def test_reset_to_empty_store_is_partial_not_an_exact_zero(tmp_path: Path) -> None:
-    root = tmp_path / "control_plane"
-    run = root / "runs" / "run-one.json"
-    run.parent.mkdir(parents=True)
-    payload = settled("run-one", 1, "f")
-    payload["settlement_history"] = advance_run_settlement_history(
-        None,
-        payload,
-        settlement_event("run-one", 1, "f"),
+def test_legacy_generation_rotates_even_without_legacy_projection(
+    isolated_home: Path,
+) -> None:
+    root = isolated_home / "control_plane"
+    root.mkdir(parents=True)
+    (root / "settlement_history_generation.json").write_text(
+        json.dumps(
+            {
+                "schema": "vibecrafted.settlement-history-generation.v1",
+                "generation": GENERATION,
+                "continuity_gaps": 0,
+            }
+        ),
+        encoding="utf-8",
     )
-    run.write_text(json.dumps(payload), encoding="utf-8")
-    first = reconcile_settlement_history(control_plane_root=root)
 
-    run.unlink()
-    (root / "settlement_history_generation.json").unlink()
-    reset = reconcile_settlement_history(control_plane_root=root)
+    projection = reconcile_settlement_history(control_plane_root=root)
+    persisted = json.loads(
+        (root / "settlement_history_generation.json").read_text(encoding="utf-8")
+    )
 
-    assert reset.generation != first.generation
-    assert reset.sequence == 0
-    assert reset.historical_transitions.total == 0
-    assert reset.latest_by_run.total == 0
-    assert reset.gaps == 1
-    assert reset.complete_from is None
+    assert projection.generation != GENERATION
+    assert persisted["schema"] == SETTLEMENT_HISTORY_GENERATION_SCHEMA
+    assert persisted["authority"] == SETTLEMENT_HISTORY_AUTHORITY
+    assert persisted["generation"] == projection.generation
+    assert persisted["continuity_gaps"] == 1
 
 
 def test_public_schema_rejects_latest_bucket_without_historical_transition() -> None:
+    payload = projected_snapshot().to_payload()
+    payload["historical_transitions"] = {"f": 0, "x": 0, "n": 1, "total": 1}
     with pytest.raises(SettlementHistoryError, match="bucket exceeds"):
-        SettlementHistorySnapshot.from_payload(
-            {
-                "schema": "vibecrafted.settlement-history.v1",
-                "generation": GENERATION,
-                "sequence": 1,
-                "historical_transitions": {"f": 0, "x": 0, "n": 1, "total": 1},
-                "latest_by_run": {"f": 1, "x": 0, "n": 0, "total": 1},
-                "gaps": 0,
-                "complete_from": 1,
-            }
-        )
+        SettlementHistorySnapshot.from_payload(payload)
 
 
 def test_public_schema_is_exactly_u64_width() -> None:
     maximum = SettlementHistorySnapshot.from_payload(
         {
-            "schema": "vibecrafted.settlement-history.v1",
+            "schema": SETTLEMENT_HISTORY_SCHEMA,
+            "authority": SETTLEMENT_HISTORY_AUTHORITY,
             "generation": GENERATION,
             "sequence": MAX_U64,
             "historical_transitions": {
@@ -308,8 +505,11 @@ def test_public_schema_is_exactly_u64_width() -> None:
                 "n": 0,
                 "total": MAX_U64,
             },
-            "gaps": MAX_U64,
-            "complete_from": None,
+            "gaps": 0,
+            "complete_from": 1,
+            "count_semantics": SETTLEMENT_COUNT_SEMANTICS_EXACT,
+            "history_complete": True,
+            "history_gaps": [],
         }
     )
     assert maximum.sequence == MAX_U64
@@ -322,12 +522,37 @@ def test_public_schema_is_exactly_u64_width() -> None:
     with pytest.raises(SettlementHistoryError, match="total exceeds u64"):
         SettlementCounts(f=MAX_U64, x=1)
 
-    with pytest.raises(SettlementHistoryError, match="revision exceeds u64"):
-        advance_run_settlement_history(
-            None,
-            settled("too-wide", MAX_U64 + 1, "f"),
-            settlement_event("too-wide", MAX_U64 + 1, "f"),
-        )
+
+def test_wire_projection_stays_compatible_with_strict_vc_frame_v1() -> None:
+    snapshot = projected_snapshot()
+    payload = snapshot.to_wire_payload()
+
+    assert payload == {
+        "schema": SETTLEMENT_HISTORY_WIRE_SCHEMA,
+        "generation": GENERATION,
+        "sequence": 1,
+        "historical_transitions": {"f": 1, "x": 0, "n": 0, "total": 1},
+        "latest_by_run": {"f": 1, "x": 0, "n": 0, "total": 1},
+        "gaps": 1,
+        "complete_from": None,
+    }
+    assert "authority" not in payload
+    assert "history_gaps" not in payload
+
+
+def test_custom_projection_root_reads_its_own_ledger(
+    isolated_home: Path,
+) -> None:
+    custom_root = isolated_home / "other-control-plane"
+    custom_root.mkdir(parents=True)
+    (custom_root / "settlement_ledger.jsonl").write_text(
+        "{not-json}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(settlement_ledger.SettlementLedgerCorrupt):
+        reconcile_settlement_history(control_plane_root=custom_root)
+    assert not (custom_root / "settlement_history.json").exists()
 
 
 def test_publisher_broadcasts_only_to_running_sessions_without_plugin_launch(
@@ -364,17 +589,7 @@ def test_publisher_broadcasts_only_to_running_sessions_without_plugin_launch(
         timeout=2.0,
     )
     write_generation(publisher.root)
-    snapshot = SettlementHistorySnapshot.from_payload(
-        {
-            "schema": "vibecrafted.settlement-history.v1",
-            "generation": GENERATION,
-            "sequence": 1,
-            "historical_transitions": {"f": 1, "x": 0, "n": 0, "total": 1},
-            "latest_by_run": {"f": 1, "x": 0, "n": 0, "total": 1},
-            "gaps": 0,
-            "complete_from": 1,
-        }
-    )
+    snapshot = projected_snapshot()
     publisher.stage(snapshot)
 
     report = publisher.flush()
@@ -385,13 +600,65 @@ def test_publisher_broadcasts_only_to_running_sessions_without_plugin_launch(
     assert [call[2] for call in pipe_calls] == ["live-one", "live-two"]
     assert all(
         call[3:8]
-        == ["pipe", "--name", SETTLEMENT_COUNTS_PIPE, "--", snapshot.to_json()]
+        == [
+            "pipe",
+            "--name",
+            SETTLEMENT_COUNTS_PIPE,
+            "--",
+            snapshot.to_wire_json(),
+        ]
         for call in pipe_calls
     )
     assert all("--plugin" not in call for call in pipe_calls)
 
 
-def test_publisher_failure_retains_only_the_newest_snapshot(tmp_path: Path) -> None:
+def test_publisher_excludes_output_only_triage_bucket_sessions(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "vc-frame"
+    binary.touch()
+    calls: list[list[str]] = []
+
+    def runner(
+        argv: list[str],
+        *,
+        timeout: float,
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        if "list-sessions" in argv:
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                stdout=(
+                    "Failed runs [Created now]\n"
+                    "Finalized runs [Created now]\n"
+                    "Needs attention [Created now]\n"
+                    "zippy-cymbal [Created now]\n"
+                ),
+                stderr="",
+            )
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    publisher = SettlementHistoryPublisher(
+        control_plane_root=tmp_path / "control_plane",
+        runner=runner,
+        env={"VIBECRAFTED_VC_FRAME_BIN": str(binary)},
+    )
+    write_generation(publisher.root)
+    publisher.stage(projected_snapshot())
+
+    report = publisher.flush()
+
+    pipe_calls = calls[1:]
+    assert report.attempted_sessions == ("zippy-cymbal",)
+    assert report.delivered_sessions == ("zippy-cymbal",)
+    assert len(pipe_calls) == 1
+    assert pipe_calls[0][2] == "zippy-cymbal"
+
+
+def test_publisher_failure_retains_only_newest_ledger_projection(
+    tmp_path: Path,
+) -> None:
     binary = tmp_path / "vc-frame"
     binary.touch()
 
@@ -416,35 +683,11 @@ def test_publisher_failure_retains_only_the_newest_snapshot(tmp_path: Path) -> N
         env={"VIBECRAFTED_VC_FRAME_BIN": str(binary)},
     )
     write_generation(publisher.root)
-    first = SettlementHistorySnapshot(
-        generation=GENERATION,
-        sequence=1,
-        historical_transitions=RunSettlementHistory.from_payload(
-            advance_run_settlement_history(
-                None,
-                settled("one", 1, "f"),
-                settlement_event("one", 1, "f"),
-            )
-        ).historical_transitions,
-        latest_by_run=RunSettlementHistory.from_payload(
-            advance_run_settlement_history(
-                None,
-                settled("one", 1, "f"),
-                settlement_event("one", 1, "f"),
-            )
-        ).historical_transitions,
-        gaps=0,
-        complete_from=1,
+    first = projected_snapshot()
+    second = projected_snapshot(
+        historical=SettlementCounts(f=1, x=1),
+        latest=SettlementCounts(f=1, x=1),
     )
-    second_payload = first.to_payload()
-    second_payload.update(
-        {
-            "sequence": 2,
-            "historical_transitions": {"f": 1, "x": 1, "n": 0, "total": 2},
-            "latest_by_run": {"f": 1, "x": 1, "n": 0, "total": 2},
-        }
-    )
-    second = SettlementHistorySnapshot.from_payload(second_payload)
 
     publisher.stage(first)
     assert publisher.flush().pending is True
@@ -455,31 +698,111 @@ def test_publisher_failure_retains_only_the_newest_snapshot(tmp_path: Path) -> N
     assert pending["payload"] == second.to_payload()
 
 
+def test_publisher_backs_off_an_incompatible_live_session_without_losing_outbox(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "vc-frame"
+    binary.touch()
+    now = [100.0]
+    pipe_attempts: list[list[str]] = []
+    pipe_succeeds = [False]
+
+    def runner(
+        argv: list[str],
+        *,
+        timeout: float,
+    ) -> subprocess.CompletedProcess[str]:
+        del timeout
+        if "list-sessions" in argv:
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                stdout="legacy-live [Created 1s ago] \n",
+                stderr="",
+            )
+        pipe_attempts.append(argv)
+        return subprocess.CompletedProcess(
+            argv,
+            0 if pipe_succeeds[0] else 2,
+            stdout="",
+            stderr="" if pipe_succeeds[0] else "channel closed",
+        )
+
+    publisher = SettlementHistoryPublisher(
+        control_plane_root=tmp_path / "control_plane",
+        runner=runner,
+        env={"VIBECRAFTED_VC_FRAME_BIN": str(binary)},
+        retry_backoff=300.0,
+        clock=lambda: now[0],
+    )
+    write_generation(publisher.root)
+    publisher.stage(projected_snapshot())
+
+    first = publisher.flush()
+    immediate_replay = publisher.flush()
+
+    assert first.failed_sessions == ("legacy-live",)
+    assert immediate_replay.failed_sessions == ()
+    assert immediate_replay.deferred_sessions == ("legacy-live",)
+    assert immediate_replay.pending is True
+    assert len(pipe_attempts) == 1
+    assert publisher.outbox_path.exists()
+
+    now[0] += 301.0
+    pipe_succeeds[0] = True
+    recovered = publisher.flush()
+
+    assert recovered.delivered_sessions == ("legacy-live",)
+    assert recovered.deferred_sessions == ()
+    assert recovered.pending is False
+    assert len(pipe_attempts) == 2
+    assert not publisher.outbox_path.exists()
+
+
+def test_stage_replaces_snapshot_derived_legacy_outbox(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "control_plane"
+    write_generation(root)
+    publisher = SettlementHistoryPublisher(control_plane_root=root)
+    old_payload = {
+        "schema": "vibecrafted.settlement-history.v1",
+        "generation": GENERATION,
+        "sequence": 99,
+        "historical_transitions": {"f": 99, "x": 0, "n": 0, "total": 99},
+        "latest_by_run": {"f": 1, "x": 0, "n": 0, "total": 1},
+        "gaps": 0,
+        "complete_from": 1,
+    }
+    publisher.outbox_path.write_text(
+        json.dumps(
+            {
+                "schema": "vibecrafted.settlement-history-delivery.v1",
+                "sequence": 99,
+                "payload": old_payload,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    current = projected_snapshot()
+    publisher.stage(current)
+
+    pending = json.loads(publisher.outbox_path.read_text(encoding="utf-8"))
+    assert pending["sequence"] == 1
+    assert pending["payload"] == current.to_payload()
+
+
 def test_publisher_fences_retired_generation_after_reset(tmp_path: Path) -> None:
     root = tmp_path / "control_plane"
     write_generation(root)
     publisher = SettlementHistoryPublisher(control_plane_root=root)
-    first = SettlementHistorySnapshot.from_payload(
-        {
-            "schema": "vibecrafted.settlement-history.v1",
-            "generation": GENERATION,
-            "sequence": 1,
-            "historical_transitions": {"f": 1, "x": 0, "n": 0, "total": 1},
-            "latest_by_run": {"f": 1, "x": 0, "n": 0, "total": 1},
-            "gaps": 0,
-            "complete_from": 1,
-        }
-    )
-    reset = SettlementHistorySnapshot.from_payload(
-        {
-            "schema": "vibecrafted.settlement-history.v1",
-            "generation": NEXT_GENERATION,
-            "sequence": 0,
-            "historical_transitions": {"f": 0, "x": 0, "n": 0, "total": 0},
-            "latest_by_run": {"f": 0, "x": 0, "n": 0, "total": 0},
-            "gaps": 1,
-            "complete_from": None,
-        }
+    first = projected_snapshot()
+    reset = projected_snapshot(
+        generation=NEXT_GENERATION,
+        historical=SettlementCounts(),
+        latest=SettlementCounts(),
+        gap=LEDGER_NOT_STARTED_GAP,
     )
     publisher.stage(first)
 

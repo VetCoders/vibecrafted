@@ -1,34 +1,53 @@
-# `vc-guard` Flow
+# `vc-guard` Flow — enforce, never judge
+
+`vc-guard` consumes Trust truth. It does not derive a verdict or write an
+f/x/n settlement.
 
 ## Flow
 
 ```mermaid
 flowchart TD
-    A[Operator or workflow requests guard check] --> B[Canonical Orientation Gate: vc-init + Loctree]
-    B --> C[Resolve target commit and trust journal]
-    C --> D{Latest explicit trust verdict}
-    D -->|block| E[Refuse continuation and print remedium]
-    D -->|pass / pass-with-gaps / absent| F[Allow continuation]
-    E --> G[Return deterministic guard result]
-    F --> G
+    A[Guard worker or guarded workflow] --> B[Consume vc-init and Code-Derived Application Map]
+    B --> C[Resolve target repo, HEAD, journal, and existing gate entrypoints]
+    C --> D[Read latest explicit Trust verdict for the target commit]
+    D --> E{Trust state}
+    E -->|block / x| F[Refuse continuation and print remedium]
+    E -->|pass / f| G[Allow continuation; no recovery]
+    E -->|pass-with-gaps / n| H[Allow continuation; Guardian may evaluate recovery separately]
+    E -->|no note| I[Allow because no block exists; never invent settlement]
+    F --> J[Report decision, journal path, and coverage gaps]
+    G --> J
+    H --> J
+    I --> J
 ```
+
+## Decision contract
+
+| Trust truth      | Settlement | Guard decision | Guardian recovery                |
+| ---------------- | ---------- | -------------- | -------------------------------- |
+| `pass`           | `f`        | allow          | terminal; do not resume          |
+| `pass-with-gaps` | `n`        | allow          | separately eligible under policy |
+| `block`          | `x`        | refuse         | terminal; do not resume          |
+| no explicit note | none       | allow          | no settlement to recover         |
+
+Guardian recovery is a separate runtime authority. An `n` may be resumed only
+through its native adapter, idempotency key, and automatic-attempt budget.
+Guard itself never calls resume and never turns an allow decision into a trust
+pass.
 
 ## Routes
 
-| Entry                                            | Args          | Produces                              | Exit |
-| ------------------------------------------------ | ------------- | ------------------------------------- | ---- |
-| `python -m vibecrafted_core.guard inventory`     | none          | gate inventory and coverage gaps      | `0`  |
-| `python -m vibecrafted_core.guard check`         | optional SHA  | allow/refuse decision for target HEAD | `0` or refusal code |
-| `vibecrafted guard <agent> --prompt <task>`      | prompt/file   | scoped guard report and artifacts     | `0` on dispatch |
+| Entry                                                | Reads                                     | Produces                            |
+| ---------------------------------------------------- | ----------------------------------------- | ----------------------------------- |
+| `vibecrafted guard <agent> --prompt ...`             | repo map, gate surfaces, trust journal    | worker inventory/report             |
+| `python -m vibecrafted_core.guard inventory`         | installed and repository gate entrypoints | named gate inventory + honest gaps  |
+| `python -m vibecrafted_core.guard check`             | HEAD + latest journal record              | allow/refuse exit status + remedium |
+| `python -m vibecrafted_core.guard check --sha <sha>` | named commit + latest journal record      | allow/refuse exit status + remedium |
 
-### Boundaries
+## Hard boundaries
 
-- Guard reads trust verdicts; it never creates or rewrites settlement.
-- A recorded trust `block` refuses continuation and names the remedium path.
-- Missing judgment is not silently converted into either pass or failure.
-
-### Session artifacts
-
-- Skill reports live under the normal `$VIBECRAFTED_HOME/artifacts/...` report root.
-- Enforcement reads the append-only trust journal selected by the runtime.
-- Guard writes no repository files and no trust-journal records.
+- Only an explicit Trust `block` refuses continuation.
+- Missing judgment is not silently upgraded to either pass or block.
+- Guard does not falsify claims, write trust notes, write settlements, or
+  mutate repository code.
+- Every refusal identifies the journal and the re-inspect/re-note path.

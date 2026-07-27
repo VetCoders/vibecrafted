@@ -10,11 +10,12 @@ usage() {
 Usage: junie_spawn.sh [--mode <mode>] [--runtime <terminal|visible|headless|background|detached>] [--model <model>] [--root <repo-root>] [--dry-run] <plan.md>
 
 Portable JetBrains Junie spawn wrapper.
+Defaults to headless. Pass --runtime terminal for a visible vc-frame worker pane.
 EOF_USAGE
 }
 
 mode="implement"
-runtime="terminal"
+runtime="headless"
 model="${JUNIE_MODEL:-}"
 root=""
 plan_file=""

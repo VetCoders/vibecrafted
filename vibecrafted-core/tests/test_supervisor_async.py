@@ -84,42 +84,32 @@ def test_async_supervisor_emits_lifecycle_and_validates_artifacts(
     assert "report_validated" in states
 
 
-def test_async_supervisor_uses_declared_workflow_meta_authority(
+def test_async_supervisor_persists_explicit_artifact_meta_outside_control_plane(
     tmp_path: Path, monkeypatch
 ) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
-    run_id = "workflow-child"
-    child_dir = home / "workflow-parent-children"
-    meta = child_dir / f"{run_id}.meta.json"
-    report = child_dir / f"{run_id}.md"
-    script = tmp_path / "workflow-worker.py"
-    script.write_text(
-        "from pathlib import Path\n"
-        f"Path({str(report)!r}).write_text("
-        f"'---\\nrun_id: {run_id}\\nagent: python\\nskill: test\\n"
-        "status: completed\\nclaim_status: completed\\n---\\nbody\\n', "
-        "encoding='utf-8')\n",
-        encoding="utf-8",
-    )
+    meta = tmp_path / "artifacts" / "child.meta.json"
+    script = tmp_path / "worker.py"
+    script.write_text("print('artifact child finished')\n", encoding="utf-8")
 
     handle = asyncio.run(
         AsyncSupervisor().run(
-            run_id=run_id,
+            run_id="artifact-meta-child",
             command=[sys.executable, str(script)],
             root=tmp_path,
             meta_path=meta,
-            meta_mutation_root=child_dir,
-            report_path=report,
+            require_report=False,
         )
     )
 
-    assert handle.exit_code == 0
-    assert handle.meta_mutation_root == child_dir
     payload = json.loads(meta.read_text(encoding="utf-8"))
-    assert payload["run_id"] == run_id
+    assert handle.exit_code == 0
+    assert payload["run_id"] == "artifact-meta-child"
     assert payload["status"] == "completed"
-    assert payload["report"] == str(report)
+    assert payload["exit_code"] == 0
+    assert list((home / "control_plane" / "run_mutation_locks" / "run").glob("*.lock"))
+    assert not (meta.parent / "run_mutation_locks").exists()
 
 
 def test_async_supervisor_heartbeats_while_worker_stdout_is_silent(
@@ -131,6 +121,8 @@ def test_async_supervisor_heartbeats_while_worker_stdout_is_silent(
     the latter disappear exactly while a long build/test/install is running.
     """
     monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    # Tight interval + enough quiet wall time for >=2 timeout-driven pulses on
+    # loaded hosts (0.18s was racey under Python 3.14 asyncio scheduling).
     monkeypatch.setattr(supervisor_async_module, "_HEARTBEAT_INTERVAL_SECONDS", 0.05)
     report = tmp_path / "quiet-report.md"
     transcript = tmp_path / "quiet-transcript.log"
@@ -138,7 +130,7 @@ def test_async_supervisor_heartbeats_while_worker_stdout_is_silent(
     script.write_text(
         "import time\n"
         "from pathlib import Path\n"
-        "time.sleep(0.18)\n"
+        "time.sleep(0.40)\n"
         f"Path({str(report)!r}).write_text('---\\nrun_id: asup-quiet\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n')\n"
         "print('quiet tool finished')\n",
         encoding="utf-8",

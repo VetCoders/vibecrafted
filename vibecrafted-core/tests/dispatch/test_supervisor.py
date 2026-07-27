@@ -161,8 +161,12 @@ prompt = "canonical dispatch report prompt"
             pass
 
     def fake_popen(command: list[str], **kwargs: object) -> FakeProc:
-        captured["command"] = command
         if "env" in kwargs:
+            # The tracked launcher owns the child env. Identity capture may
+            # subsequently invoke `ps` through the same monkeypatched
+            # subprocess module; do not let that probe replace the command
+            # this test is asserting.
+            captured["command"] = command
             captured["env"] = kwargs["env"]
         return FakeProc(command)
 
@@ -526,50 +530,6 @@ prompt = "sleeps forever"
     journal = (artifacts_dir / "journal.md").read_text(encoding="utf-8")
     assert "timed out" in journal
     assert "process terminated" in journal
-
-
-def test_external_cell_timeout_routes_through_identity_stop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    dispatch, _reports_dir, artifacts_dir = build_dispatch(
-        tmp_path,
-        """
-[[cuts]]
-id = "slow"
-agent = "codex"
-workflow = "implement"
-prompt = "slow"
-  [[cuts.verify]]
-  run = "echo ok"
-  expect = { contains = "ok" }
-""",
-    )
-    calls: list[str] = []
-
-    def refuse_stop(run_id: str, **_kwargs: object) -> dict[str, object]:
-        calls.append(run_id)
-        return {
-            "accepted": False,
-            "error": "identity_unproven:environment_birth_mismatch",
-        }
-
-    monkeypatch.setattr(supervisor_module, "stop_run", refuse_stop)
-    supervisor = DispatchSupervisor(dispatch, artifacts_dir=artifacts_dir)
-    result = supervisor._terminate(
-        CellRun(
-            cut_id="slow",
-            kind="initial",
-            accepted=True,
-            run_id="impl-stale",
-            pid=4242,
-        )
-    )
-
-    assert calls == ["impl-stale"]
-    assert result == (
-        "process termination refused: "
-        "identity_unproven:environment_birth_mismatch"
-    )
 
 
 def test_broken_announced_report_recovers_by_mtime(tmp_path: Path) -> None:

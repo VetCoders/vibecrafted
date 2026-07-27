@@ -245,6 +245,7 @@ def mutate_run_meta(
     control_plane_root: Path,
     *,
     meta_path: Path,
+    mutation_root: Path | None = None,
     run_id: str,
     mutator: Callable[[dict[str, Any]], dict[str, Any] | None],
     create: bool = False,
@@ -254,21 +255,29 @@ def mutate_run_meta(
     The mutator always receives the payload read *after* the shared per-run
     lock is held. Returning ``None`` refuses the write without changing the
     file. Existing metadata and the replacement must both carry the exact
-    caller-supplied run id.
+    caller-supplied run id. The lock namespace always lives under
+    ``control_plane_root``. Callers that own run metadata outside that tree
+    must opt into its narrow canonical directory through ``mutation_root``;
+    omitting it preserves the control-plane-only write boundary.
     """
 
     expected = str(run_id or "").strip()
     if not expected:
         raise RunMetaMutationError("run_id is required for a run meta mutation")
-    canonical_root = _canonical_directory(Path(control_plane_root))
+    canonical_lock_root = _canonical_directory(Path(control_plane_root))
+    canonical_mutation_root = (
+        canonical_lock_root
+        if mutation_root is None
+        else _canonical_directory(Path(mutation_root))
+    )
     canonical = _canonical_meta_path(Path(meta_path), allow_missing=create)
     try:
-        canonical.relative_to(canonical_root)
+        canonical.relative_to(canonical_mutation_root)
     except ValueError as exc:
         raise RunMetaMutationError(
             f"run meta is outside the mutation root: {canonical}"
         ) from exc
-    with run_mutation_locks(canonical_root, run_id=expected):
+    with run_mutation_locks(canonical_lock_root, run_id=expected):
         try:
             current = _read_regular_json(canonical)
         except FileNotFoundError:

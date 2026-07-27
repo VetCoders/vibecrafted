@@ -34,6 +34,7 @@ fn write_snapshot(
         "skill": "implement",
         "mode": "implement",
         "root": "/tmp/repo",
+        "commit_sha": "",
         "operator_session": format!("repo-{run_id}"),
         "latest_report": "",
         "latest_transcript": "",
@@ -219,6 +220,7 @@ fn lookup_run_projects_recovery_controls_without_promoting_legacy_session_id() {
         "skill": "implement",
         "mode": "implement",
         "root": "/tmp/repo",
+        "commit_sha": "",
         "operator_session": "repo-recover-explicit",
         "latest_report": "/tmp/report.md",
         "latest_transcript": "/tmp/transcript.log",
@@ -274,7 +276,8 @@ fn lookup_run_projects_recovery_controls_without_promoting_legacy_session_id() {
             "agent_session_id": "019f-explicit-native",
             "runtime_session_id": "runtime-explicit",
             "resume_of": "recover-parent",
-            "attempt": 2
+            "attempt": 2,
+            "commit_sha": "a".repeat(40)
         }))
         .expect("runtime meta JSON"),
     )
@@ -287,6 +290,7 @@ fn lookup_run_projects_recovery_controls_without_promoting_legacy_session_id() {
     assert_eq!(explicit.worker_alive, Some(false));
     assert_eq!(explicit.agent_session_id, "019f-explicit-native");
     assert_eq!(explicit.runtime_session_id, "runtime-explicit");
+    assert_eq!(explicit.commit_sha, "a".repeat(40));
     assert_eq!(explicit.settlement_revision, Some(4));
     let controls = explicit.controls.as_ref().expect("typed controls");
     assert!(!controls.await_run);

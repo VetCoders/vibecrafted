@@ -121,8 +121,6 @@ def parse_launcher(path: Path) -> dict[str, str]:
             continue
         key, raw = line.split("=", 1)
         key = key.strip()
-        if key.startswith("export "):
-            key = key.removeprefix("export ").strip()
         if key not in wanted:
             continue
         raw = raw.strip()
@@ -132,15 +130,15 @@ def parse_launcher(path: Path) -> dict[str, str]:
         except ValueError:
             value = raw.strip("'\"")
         if key == "meta":
-            payload.setdefault("meta", value)
+            payload["meta"] = value
         elif key == "report":
-            payload.setdefault("report", value)
+            payload["report"] = value
         elif key == "transcript":
-            payload.setdefault("transcript", value)
+            payload["transcript"] = value
         elif key == "SPAWN_RUN_ID":
-            payload.setdefault("run_id", value)
+            payload["run_id"] = value
         elif key == "SPAWN_AGENT":
-            payload.setdefault("agent", value)
+            payload["agent"] = value
     return payload
 
 

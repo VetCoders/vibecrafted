@@ -41,6 +41,7 @@ from .delivery.store import atomic_write_json
 from .events import append_event
 from .model_overrides import _model_override_receipt, _with_model_override
 from .package_resources import deck_path as package_deck_path
+from .process_control import process_identity_receipt, validate_process_identity
 from .report_contract import CLAIM_DIGEST_ENV
 from .research_config import ResearchAgentSelection, resolve_research_runtime_config
 from .run_mutation import mutate_run_meta, run_mutation_locks
@@ -52,6 +53,15 @@ SUPPORTED_WORKFLOWS = workflow_registry.SUPPORTED_WORKFLOWS
 WORKFLOW_ALIASES = workflow_registry.WORKFLOW_ALIASES
 SUPPORTED_AGENTS = {"claude", "codex", "agy", "junie", "grok", "swarm"}
 SUPPORTED_RUNTIMES = {"headless", "terminal", "visible"}
+_TERMINAL_ORIGIN_ENV = {
+    "VIBECRAFTED_WORKER_SESSION",
+    "VIBECRAFTED_OPERATOR_SESSION",
+    "VC_FRAME_SESSION_NAME",
+    "VC_FRAME_TAB_NAME",
+    "VC_FRAME_PANE_ID",
+    "ZELLIJ_SESSION_NAME",
+    "ZELLIJ_PANE_ID",
+}
 TERMINAL_STATES = {
     "completed",
     "failed",
@@ -1088,17 +1098,24 @@ def await_launch_truth(
 
 
 def _stop_signal_target(run: dict[str, Any]) -> tuple[str, int] | None:
-    # Never treat a process group as one signalable object: killpg would include
-    # members whose birth identity cannot be verified individually.
-    # The worker is the run-owned process recorded alongside worker_pgid.
-    # A dispatcher/launcher may be a different process group.
-    for key in ("worker_pid", "launcher_pid"):
+    # The dispatcher and worker deliberately live in separate process groups.
+    # Stop the actual worker tree first; launcher_pid is only a pre-seed/legacy
+    # fallback before the supervisor has published worker identity.
+    for key in ("worker_pgid", "worker_pid", "launcher_pid"):
         raw = run.get(key)
         if isinstance(raw, int) and raw > 0:
             return key, raw
         if isinstance(raw, str) and raw.strip().isdigit():
             return key, int(raw.strip())
     return None
+
+
+@dataclass(frozen=True)
+class _QualifiedStopSignal:
+    kind: str
+    target_pid: int
+    identity_pid: int
+    target_pgid: int | None
 
 
 def _pid_is_alive(pid: int) -> bool:
@@ -1115,13 +1132,116 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
-def _wait_for_pid_exit(pid: int, grace_seconds: float) -> bool:
+def _pgid_is_alive(pgid: int) -> bool:
+    if pgid <= 0:
+        return False
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _stop_target_is_alive(target: _QualifiedStopSignal) -> bool:
+    if target.target_pgid is not None:
+        return _pgid_is_alive(target.target_pgid)
+    return _pid_is_alive(target.identity_pid)
+
+
+def _wait_for_stop_target_exit(
+    target: _QualifiedStopSignal, grace_seconds: float
+) -> bool:
     deadline = time.monotonic() + max(float(grace_seconds), 0.0)
     while time.monotonic() < deadline:
-        if not _pid_is_alive(pid):
+        if not _stop_target_is_alive(target):
             return False
         time.sleep(min(0.05, max(deadline - time.monotonic(), 0.0)))
-    return _pid_is_alive(pid)
+    return _stop_target_is_alive(target)
+
+
+def _legacy_stop_target_alive(target_kind: str, target_pid: int) -> bool:
+    # All dispatcher/worker groups created by this runtime are new sessions, so
+    # their leader PID is also the PGID. A live legacy number is never enough
+    # authority to signal; this probe only distinguishes a safely-gone target.
+    if target_kind == "launcher_pid":
+        return _pid_is_alive(target_pid) or _pgid_is_alive(target_pid)
+    if target_kind == "worker_pgid":
+        return _pgid_is_alive(target_pid)
+    return _pid_is_alive(target_pid)
+
+
+def _qualify_stop_signal(
+    run_id: str,
+    run: dict[str, Any],
+    *,
+    target_kind: str,
+    target_pid: int,
+) -> tuple[_QualifiedStopSignal | None, str, bool]:
+    """Resolve a current signal target without ever trusting a number alone."""
+
+    worker_target = target_kind.startswith("worker_")
+    receipt_key = "worker_identity" if worker_target else "launcher_identity"
+    receipt = run.get(receipt_key)
+    if not isinstance(receipt, dict):
+        gone = not _legacy_stop_target_alive(target_kind, target_pid)
+        return (
+            None,
+            "pid_gone_before_stop" if gone else "process_identity_unavailable",
+            gone,
+        )
+
+    identity_pid = _coerce_positive_int(receipt.get("pid"))
+    if identity_pid is None:
+        return None, "process_identity_invalid", False
+
+    if worker_target:
+        recorded_worker_pid = _coerce_positive_int(run.get("worker_pid"))
+        if recorded_worker_pid is not None and recorded_worker_pid != identity_pid:
+            return None, "process_identity_mismatch", False
+        expected_pgid = _coerce_positive_int(run.get("worker_pgid"))
+        if target_kind == "worker_pgid" and expected_pgid != target_pid:
+            return None, "process_identity_mismatch", False
+    else:
+        if identity_pid != target_pid:
+            return None, "process_identity_mismatch", False
+        expected_pgid = _coerce_positive_int(receipt.get("pgid"))
+
+    current, reason, _identity = validate_process_identity(
+        receipt,
+        expected_pid=identity_pid,
+        expected_pgid=expected_pgid,
+        expected_run_id=run_id,
+    )
+    if not current:
+        if reason == "process_identity_gone":
+            group_alive = bool(expected_pgid and _pgid_is_alive(expected_pgid))
+            pid_alive = _pid_is_alive(identity_pid)
+            if not group_alive and not pid_alive:
+                return None, "pid_gone_before_stop", True
+            return None, "process_identity_unavailable", False
+        return None, reason, False
+
+    signal_pgid: int | None
+    if target_kind == "worker_pid":
+        signal_pgid = None
+    else:
+        signal_pgid = expected_pgid
+        if signal_pgid is None:
+            return None, "process_identity_invalid", False
+    return (
+        _QualifiedStopSignal(
+            kind=target_kind,
+            target_pid=target_pid,
+            identity_pid=identity_pid,
+            target_pgid=signal_pgid,
+        ),
+        "process_identity_current",
+        False,
+    )
 
 
 def _normalized_runtime(raw: str) -> str:
@@ -1533,6 +1653,7 @@ def launch_workflow(
     _prepend_pythonpath(merged_env, _core_package_root())
     session_id = ensure_session_id(merged_env.get("VIBECRAFTED_SESSION_ID"))
     merged_env["VIBECRAFTED_RUN_ID"] = run_id
+    merged_env["SPAWN_RUN_ID"] = run_id
     merged_env["VIBECRAFTED_SESSION_ID"] = session_id
     merged_env["VIBECRAFTED_REPORT_PATH"] = str(report_path)
     merged_env["VIBECRAFTED_TRANSCRIPT_PATH"] = str(artifacts["transcript"])
@@ -1575,11 +1696,19 @@ def launch_workflow(
     merged_env["VIBECRAFTED_ARTIFACT_TS"] = artifact_ts
     if artifact_suffix:
         merged_env["VIBECRAFTED_ARTIFACT_SUFFIX"] = artifact_suffix
-    operator_session = _effective_operator_session(
-        root=spec.root,
-        run_id=run_id,
-        env=merged_env,
-    )
+    if spec.runtime == "headless":
+        # A detached run has no terminal origin. Ambient Zellij/vc-frame
+        # variables belong to the operator shell and must not manufacture a
+        # tab that triage later captures, transfers, or closes.
+        for key in _TERMINAL_ORIGIN_ENV:
+            merged_env.pop(key, None)
+        operator_session = ""
+    else:
+        operator_session = _effective_operator_session(
+            root=spec.root,
+            run_id=run_id,
+            env=merged_env,
+        )
     command, transport, command_script = _launch_transport_command(
         spec=spec,
         run_id=run_id,
@@ -1596,7 +1725,10 @@ def launch_workflow(
         artifact_suffix=artifact_suffix,
         research_selection=research_selection,
     )
-    merged_env["VIBECRAFTED_OPERATOR_SESSION"] = operator_session
+    if operator_session:
+        merged_env["VIBECRAFTED_OPERATOR_SESSION"] = operator_session
+    else:
+        merged_env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     append_event(
         kind="launch",
@@ -1667,6 +1799,7 @@ def launch_workflow(
             + "\n"
         )
         launcher_pid: int | None = None
+        launcher_identity: dict[str, Any] | None = None
         try:
             if transport == "vc-frame":
                 # G3: run action synchronously so "Session not found" cannot
@@ -1751,6 +1884,11 @@ def launch_workflow(
                         name=f"vibecrafted-reap-{run_id}",
                         daemon=True,
                     ).start()
+            if launcher_pid is not None:
+                launcher_identity = process_identity_receipt(
+                    launcher_pid,
+                    run_id=run_id,
+                )
         except OSError as exc:
             handle.write(
                 json.dumps(
@@ -1810,6 +1948,11 @@ def launch_workflow(
             payload={
                 "state": "process_spawned",
                 "launcher_pid": launcher_pid,
+                **(
+                    {"launcher_identity": launcher_identity}
+                    if launcher_identity is not None
+                    else {}
+                ),
                 "agent": spec.agent,
                 "skill": spec.skill,
                 "mode": spec.mode,
@@ -1849,6 +1992,7 @@ def launch_workflow(
         "transport": transport,
         "command_script": str(command_script or ""),
         "pid": launcher_pid,
+        "launcher_identity": launcher_identity,
         "run_id": run_id,
         "agent": spec.agent,
         "skill": spec.skill,
@@ -1944,55 +2088,58 @@ def _stop_run_locked(
         }
 
     target_kind, target_pid = signal_target
-    target_pgid: int | None = None
-    signal_sent = False
-    already_dead = False
-    alive_after_grace: bool | None = None
-    stop_reason = reason
-    stop_error = ""
-    from .run_reaper import (
-        build_env_index,
-        build_process_table,
-        read_process_start_token,
-        verify_run_process,
+    qualified, qualification, already_dead = _qualify_stop_signal(
+        target,
+        run,
+        target_kind=target_kind,
+        target_pid=target_pid,
     )
-
-    process_table = build_process_table()
-    process_entry = next(
-        (entry for entry in process_table if entry.pid == target_pid),
-        None,
-    )
-    if process_entry is None and not _pid_is_alive(target_pid):
-        already_dead = True
-        stop_reason = "pid_gone_before_stop"
-    else:
-        env_index = build_env_index()
-        verified_entry, verify_reason = verify_run_process(
-            run,
-            target_pid,
-            process_table,
-            env_index,
+    if qualified is None and not already_dead:
+        record_stop_transition(
+            target,
+            run=run,
+            accepted=False,
+            reason=qualification,
+            target=target_kind,
+            target_pid=target_pid,
         )
-        if verified_entry is None:
-            stop_error = f"identity_unproven:{verify_reason}"
-        else:
-            target_pgid = verified_entry.pgid
-            live_birth = read_process_start_token(target_pid)
-            if not live_birth or live_birth != verified_entry.start_token:
-                stop_error = "identity_unproven:birth_changed_before_term"
+        return {
+            "accepted": False,
+            "run_id": target,
+            "target": target_kind,
+            "target_pid": target_pid,
+            "target_pgid": None,
+            "signal_sent": False,
+            "already_dead": False,
+            "alive_after_grace": None,
+            "reason": qualification,
+            "error": "",
+            "run": lookup_run(target),
+        }
+
+    target_pgid = qualified.target_pgid if qualified is not None else None
+    if qualified is None and target_kind in {"launcher_pid", "worker_pgid"}:
+        target_pgid = target_pid
+    signal_sent = False
+    alive_after_grace: bool | None = None
+    stop_reason = "pid_gone_before_stop" if already_dead else reason
+    stop_error = ""
+    if qualified is not None:
+        try:
+            if qualified.target_pgid is not None:
+                os.killpg(qualified.target_pgid, signal.SIGTERM)
             else:
-                try:
-                    os.kill(target_pid, signal.SIGTERM)
-                    signal_sent = True
-                except ProcessLookupError:
-                    already_dead = True
-                    stop_reason = "pid_gone_before_stop"
-                except OSError as exc:
-                    stop_error = f"{type(exc).__name__}: {exc}"
+                os.kill(qualified.identity_pid, signal.SIGTERM)
+            signal_sent = True
+        except ProcessLookupError:
+            already_dead = True
+            stop_reason = "pid_gone_before_stop"
+        except OSError as exc:
+            stop_error = f"{type(exc).__name__}: {exc}"
 
     accepted = not stop_error
-    if signal_sent:
-        alive_after_grace = _wait_for_pid_exit(target_pid, grace_seconds)
+    if signal_sent and qualified is not None:
+        alive_after_grace = _wait_for_stop_target_exit(qualified, grace_seconds)
     elif already_dead:
         alive_after_grace = False
 
@@ -2000,7 +2147,7 @@ def _stop_run_locked(
         target,
         run=run,
         accepted=accepted,
-        reason=stop_reason if accepted else "identity_unproven",
+        reason=stop_reason if accepted else "signal_failed",
         signal_name="SIGTERM",
         target=target_kind,
         target_pid=target_pid,
@@ -2021,7 +2168,8 @@ def _stop_run_locked(
         "signal_sent": signal_sent,
         "already_dead": already_dead,
         "alive_after_grace": alive_after_grace,
-        "reason": stop_reason if accepted else "identity_unproven",
+        "reason": stop_reason if accepted else "signal_failed",
+        "identity_qualification": qualification,
         "error": stop_error,
         "run": lookup_run(target),
     }
@@ -2235,6 +2383,20 @@ _NATIVE_RESUME_TRANSIENT_REJECTIONS = {
 
 class _AutomaticResumeBudgetExhausted(ValueError):
     pass
+
+
+class _NativeResumeCommandRejected(ValueError):
+    def __init__(
+        self,
+        reason: str,
+        *,
+        detail: str = "",
+        retryable: bool = False,
+    ) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.detail = detail
+        self.retryable = retryable
 
 
 def _native_resume_rejection(
@@ -2960,6 +3122,200 @@ def _native_resume_idempotency_result(
     }
 
 
+def _verified_native_resume_command(
+    agent: str,
+    agent_session_id: str,
+) -> tuple[list[str], str, str]:
+    """Return one live-probed provider resume argv with no shell boundary."""
+
+    normalized_agent = str(agent or "").strip().lower()
+    try:
+        capability = capability_for(normalized_agent)
+    except ValueError as exc:
+        raise _NativeResumeCommandRejected(
+            "native_resume_unsupported",
+            detail=str(exc),
+        ) from exc
+    if capability.noninteractive_resume != SUPPORTED:
+        reason = (
+            "native_resume_unverified"
+            if capability.noninteractive_resume == UNVERIFIED
+            else "native_resume_unsupported"
+        )
+        raise _NativeResumeCommandRejected(
+            reason,
+            detail=capability.notes,
+        )
+
+    provider_probe = probe_provider(normalized_agent)
+    if provider_probe.state != PROBE_CONFIRMED or not provider_probe.executable:
+        reason = (
+            "native_resume_probe_failed"
+            if provider_probe.state == "probe_failed"
+            else f"native_resume_probe_{provider_probe.state}"
+        )
+        raise _NativeResumeCommandRejected(
+            reason,
+            detail=provider_probe.detail,
+            retryable=True,
+        )
+    try:
+        command = native_resume_argv(normalized_agent, agent_session_id)
+    except ValueError as exc:
+        raise _NativeResumeCommandRejected(
+            "native_resume_unsupported",
+            detail=str(exc),
+        ) from exc
+    command[0] = provider_probe.executable
+    if any(flag in command for flag in capability.forbidden_flags):
+        raise _NativeResumeCommandRejected("native_resume_forbidden_flag")
+    return (
+        command,
+        str(provider_probe.state),
+        str(provider_probe.version or ""),
+    )
+
+
+def _manual_explicit_resume_rejection(
+    *,
+    agent: str,
+    agent_session_id: str,
+    reason: str,
+    detail: str = "",
+    retryable: bool = False,
+    run_id: str = "",
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema": "vibecrafted.manual_explicit_resume.v1",
+        "accepted": False,
+        "reason": reason,
+        "retryable": retryable,
+        "terminal": not retryable,
+        "resume_mode": "manual_explicit",
+        "agent": agent,
+        "agent_session_id": agent_session_id,
+    }
+    if run_id:
+        payload["run_id"] = run_id
+    if detail:
+        payload["detail"] = detail
+    return payload
+
+
+def manual_resume_session(
+    agent: str,
+    agent_session_id: str,
+    source_dir: str | Path = ".",
+    *,
+    prompt: str,
+    root: str | Path = "",
+    model: str = "",
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Launch an explicit provider-session continuation as its own tracked run.
+
+    This operator boundary deliberately has no parent-run authority semantics:
+    it does not claim settlement, consume the Guardian automatic budget, or
+    manufacture trust preconditions. It only proves that the requested
+    provider has a verified noninteractive resume contract, then delegates the
+    detached lifetime and prompt-stdin transport to the normal core launcher.
+    """
+
+    normalized_agent = str(agent or "").strip().lower()
+    native_id = _explicit_native_identity(agent_session_id)
+    prompt_body = str(prompt or "")
+    if not normalized_agent:
+        return _manual_explicit_resume_rejection(
+            agent="",
+            agent_session_id=native_id,
+            reason="missing_agent",
+        )
+    if not native_id:
+        return _manual_explicit_resume_rejection(
+            agent=normalized_agent,
+            agent_session_id="",
+            reason="missing_agent_session_id",
+        )
+    if not prompt_body.strip():
+        return _manual_explicit_resume_rejection(
+            agent=normalized_agent,
+            agent_session_id=native_id,
+            reason="missing_prompt",
+        )
+    try:
+        command, _probe_state, _probe_version = _verified_native_resume_command(
+            normalized_agent,
+            native_id,
+        )
+    except _NativeResumeCommandRejected as exc:
+        return _manual_explicit_resume_rejection(
+            agent=normalized_agent,
+            agent_session_id=native_id,
+            reason=exc.reason,
+            detail=exc.detail,
+            retryable=exc.retryable,
+        )
+    model_requested = str(model or "").strip()
+    command = _with_model_override(
+        normalized_agent,
+        command,
+        model_requested,
+    )
+
+    resolved_source_dir = Path(source_dir).expanduser().resolve()
+    resolved_root = normalize_run_root(root, resolved_source_dir)
+    child_run_id = reserve_run_id("rsme")
+    child_runtime_session_id = ensure_session_id()
+    child_env = dict(env or {})
+    child_env["VIBECRAFTED_SESSION_ID"] = child_runtime_session_id
+    child_env["VIBECRAFTED_AGENT_SESSION_ID"] = native_id
+    launch_meta = {
+        "run_id": child_run_id,
+        "agent": normalized_agent,
+        "agent_session_id": native_id,
+        "runtime_session_id": child_runtime_session_id,
+        "native_resume": True,
+        "resume_mode": "manual_explicit",
+        "manual_explicit": True,
+    }
+    spec = WorkflowLaunchSpec(
+        agent=normalized_agent,
+        mode="manual_explicit",
+        skill="workflow",
+        prompt=prompt_body,
+        file="",
+        runtime="headless",
+        root=resolved_root,
+        model=model_requested,
+        run_id=child_run_id,
+    )
+    try:
+        launched = launch_workflow(
+            spec,
+            resolved_source_dir,
+            env=child_env,
+            worker_command_override=command,
+            launch_meta=launch_meta,
+        )
+    except (OSError, ValueError) as exc:
+        return _manual_explicit_resume_rejection(
+            agent=normalized_agent,
+            agent_session_id=native_id,
+            reason="launch_rejected",
+            detail=f"{type(exc).__name__}: {exc}",
+            retryable=isinstance(exc, OSError),
+            run_id=child_run_id,
+        )
+    return {
+        **launched,
+        "schema": "vibecrafted.manual_explicit_resume.v1",
+        "resume_mode": "manual_explicit",
+        "agent": normalized_agent,
+        "agent_session_id": native_id,
+        "runtime_session_id": child_runtime_session_id,
+    }
+
+
 def native_resume_run(
     run_id: str,
     source_dir: str | Path = ".",
@@ -3109,60 +3465,17 @@ def native_resume_run(
         )
 
     try:
-        capability = capability_for(agent)
-    except ValueError as exc:
+        command, provider_probe_state, provider_probe_version = (
+            _verified_native_resume_command(agent, agent_session_id)
+        )
+    except _NativeResumeCommandRejected as exc:
         return _native_resume_rejection(
             target,
-            "native_resume_unsupported",
+            exc.reason,
             run=run,
-            detail=str(exc),
+            detail=exc.detail,
             idempotency_key=resume_idempotency_key,
-        )
-    if capability.noninteractive_resume != SUPPORTED:
-        reason = (
-            "native_resume_unverified"
-            if capability.noninteractive_resume == UNVERIFIED
-            else "native_resume_unsupported"
-        )
-        return _native_resume_rejection(
-            target,
-            reason,
-            run=run,
-            detail=capability.notes,
-            idempotency_key=resume_idempotency_key,
-        )
-
-    provider_probe = probe_provider(agent)
-    if provider_probe.state != PROBE_CONFIRMED or not provider_probe.executable:
-        probe_reason = (
-            "native_resume_probe_failed"
-            if provider_probe.state == "probe_failed"
-            else f"native_resume_probe_{provider_probe.state}"
-        )
-        return _native_resume_rejection(
-            target,
-            probe_reason,
-            run=run,
-            detail=provider_probe.detail,
-            idempotency_key=resume_idempotency_key,
-        )
-    try:
-        command = native_resume_argv(agent, agent_session_id)
-    except ValueError as exc:
-        return _native_resume_rejection(
-            target,
-            "native_resume_unsupported",
-            run=run,
-            detail=str(exc),
-            idempotency_key=resume_idempotency_key,
-        )
-    command[0] = provider_probe.executable
-    if any(flag in command for flag in capability.forbidden_flags):
-        return _native_resume_rejection(
-            target,
-            "native_resume_forbidden_flag",
-            run=run,
-            idempotency_key=resume_idempotency_key,
+            retryable=exc.retryable,
         )
 
     preliminary_resume_root = _native_resume_root(target, parent_meta, run)
@@ -3446,6 +3759,7 @@ def native_resume_run(
             claim_digest=claim_digest,
             run_id=child_run_id,
         )
+        resume_command = _with_model_override(agent, command, spec.model)
         if owner_token:
             _activate_native_resume_lease(owner_token)
         try:
@@ -3453,7 +3767,7 @@ def native_resume_run(
                 spec,
                 source_dir,
                 env=child_env,
-                worker_command_override=command,
+                worker_command_override=resume_command,
                 launch_meta=launch_meta,
             )
         except BaseException as exc:
@@ -3521,8 +3835,8 @@ def native_resume_run(
             "automatic_attempt_number": automatic_attempt_number,
             "settlement_revision": locked_revision,
             "trust_receipt_id": locked_receipt_id,
-            "probe_state": provider_probe.state,
-            "probe_version": provider_probe.version or "",
+            "probe_state": provider_probe_state,
+            "probe_version": provider_probe_version,
             "deduplicated": False,
             **(
                 {"idempotency_key": resume_idempotency_key}

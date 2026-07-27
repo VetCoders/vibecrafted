@@ -27,6 +27,22 @@ judges after the fact on the Living Tree. Guard **enforces at the gate**.
 Do **not** mix these roles. Guard does not re-run falsification. Trust does not
 refuse launch.
 
+## Canonical Structural Gate
+
+Before a `vc-guard` skill worker inventories gates or reports an enforcement
+decision, run or consume the `vc-init` procedure for the assigned repository.
+Pin the branch, HEAD, dirty state, runtime owner, and trust-journal path. A bare
+`guard check` is a narrow journal decision; it is not a substitute for
+repository orientation.
+
+Use `Loctree:loctree` as the default structural layer to produce or refresh the
+Code-Derived Application Map of the real enforcement line: hook entrypoints,
+`enforce_continuation` callers, journal readers, dispatch choke points, and
+possible bypasses. Use `slice`, `find`, and `follow` to prove those paths, and
+`impact` before claiming gate coverage. Guard remains non-mutating: this map
+supports truthful inventory and refusal evidence, never an implementation
+detour.
+
 ## Invocation
 
 ```bash
@@ -37,19 +53,6 @@ python -m vibecrafted_core.guard check --sha <sha>
 ```
 
 `launch_workflow` calls `enforce_continuation` unless `VIBECRAFTED_GUARD=0`.
-
-## Canonical Orientation Gate
-
-Before inventorying or enforcing repo-specific gates, run or consume the
-`vc-init` procedure for the assigned repository. If fresh orientation evidence
-is absent, perform that pass before making claims about HEAD, hooks, journals,
-or dispatch choke points.
-
-`Loctree:loctree` is the default structural perception skill for this pass.
-Use it to produce or refresh the Code-Derived Application Map, including the
-gate entrypoints, their callers, the trust-journal reader, and the continuation
-path that can be refused. Use `slice` before edits, `impact` before structural
-changes, and literal find/body queries before broad text search.
 
 ## Doctrine (hard)
 

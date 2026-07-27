@@ -472,6 +472,9 @@ pub struct RunStatus {
     pub skill: String,
     pub mode: String,
     pub root: String,
+    /// Exact commit identity projected independently from the trust receipt.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub commit_sha: String,
     pub operator_session: String,
     pub latest_report: String,
     pub latest_transcript: String,
@@ -987,6 +990,7 @@ impl LifecycleRun {
             skill: nonempty_or(&summary.workflow, "lifecycle"),
             mode: "lifecycle".to_string(),
             root: summary.root.clone(),
+            commit_sha: String::new(),
             operator_session: operator_session_name(&summary.root, &self.run_id),
             latest_report: summary.report_path,
             latest_transcript: summary.transcript_path,
@@ -1224,6 +1228,8 @@ pub struct AgentMeta {
     #[serde(default)]
     pub root: String,
     #[serde(default)]
+    pub commit_sha: String,
+    #[serde(default)]
     pub skill_code: String,
     #[serde(default)]
     pub status: String,
@@ -1378,6 +1384,7 @@ impl AgentMeta {
             skill: skill_from_code(&self.skill_code),
             mode: nonempty_or(&self.mode, "unknown"),
             root: self.root.clone(),
+            commit_sha: self.commit_sha.clone(),
             operator_session: operator_session_name(&self.root, run_id),
             latest_report: self.report.clone(),
             latest_transcript: self.transcript.clone(),
@@ -1472,6 +1479,7 @@ pub fn merge_status(existing: Option<RunStatus>, incoming: RunStatus) -> RunStat
         skill: nonempty_or(&preferred.skill, &other.skill),
         mode: nonempty_or(&preferred.mode, &other.mode),
         root: nonempty_or(&preferred.root, &other.root),
+        commit_sha: nonempty_or(&preferred.commit_sha, &other.commit_sha),
         operator_session: nonempty_or(&preferred.operator_session, &other.operator_session),
         latest_report: nonempty_or(&preferred.latest_report, &other.latest_report),
         latest_transcript: nonempty_or(&preferred.latest_transcript, &other.latest_transcript),

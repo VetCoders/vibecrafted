@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -13,7 +14,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from vibecrafted_core import trust, workflow
+from vibecrafted_core import control_plane, process_control, trust, workflow
 from vibecrafted_core.settlement import TrustReceiptV1
 
 _NATIVE_RESUME_CLAIM_SCRIPT = r"""
@@ -1172,24 +1173,17 @@ def test_stop_run_terms_live_launcher_process_group(
 ) -> None:
     home = tmp_path / ".vibecrafted"
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
-    run_id = "wflw-live-stop"
-    session_id = "019fa020-2020-7020-8020-202020202020"
-    process_env = {
-        **os.environ,
-        "VIBECRAFTED_RUN_ID": run_id,
-        "VIBECRAFTED_SESSION_ID": session_id,
-    }
-    proc = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(60)"],
-        start_new_session=True,
-        env=process_env,
-    )
+    proc = subprocess.Popen(["sleep", "60"], start_new_session=True)
     try:
+        launcher_identity = process_control.process_identity_receipt(
+            proc.pid,
+            run_id="wflw-live-stop",
+        )
+        assert launcher_identity is not None
         _write_run_meta(
             home,
             {
-                "run_id": run_id,
-                "session_id": session_id,
+                "run_id": "wflw-live-stop",
                 "status": "running",
                 "agent": "codex",
                 "mode": "workflow",
@@ -1197,12 +1191,14 @@ def test_stop_run_terms_live_launcher_process_group(
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "skill_code": "wflw",
                 "launcher_pid": proc.pid,
-                "worker_pgid": proc.pid,
+                "launcher_identity": launcher_identity,
                 "liveness": "pid_alive",
             },
         )
 
-        payload = workflow.stop_run(run_id, reason="manual", grace_seconds=0.05)
+        payload = workflow.stop_run(
+            "wflw-live-stop", reason="manual", grace_seconds=0.05
+        )
         proc.wait(timeout=2)
 
         assert payload["accepted"] is True
@@ -1221,53 +1217,210 @@ def test_stop_run_terms_live_launcher_process_group(
             proc.wait(timeout=2)
 
 
-def test_stop_signal_target_prefers_worker_over_dispatcher() -> None:
-    assert workflow._stop_signal_target(
-        {"launcher_pid": 1001, "worker_pid": 2002}
-    ) == ("worker_pid", 2002)
+def test_stop_run_real_dispatcher_worker_is_sticky_and_headless(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_GUARD", "0")
+    monkeypatch.setenv("VIBECRAFTED_REAPER", "0")
+    monkeypatch.setenv("VC_FRAME_SESSION_NAME", "operator-session-must-not-leak")
+    monkeypatch.setenv("VC_FRAME_TAB_NAME", "operator-tab-must-not-leak")
+    monkeypatch.setenv("VC_FRAME_PANE_ID", "999")
+    run_id = "wflw-real-dispatch-stop"
+    source = _source_dir(tmp_path)
+    owned_receipts: list[dict[str, Any]] = []
+
+    def wait_for(predicate: Any, *, timeout: float = 10.0) -> Any:
+        deadline = time.monotonic() + timeout
+        last: Any = None
+        while time.monotonic() < deadline:
+            last = predicate()
+            if last:
+                return last
+            time.sleep(0.05)
+        raise AssertionError(f"condition not met; last={last!r}")
+
+    def cleanup_owned(receipt: dict[str, Any]) -> None:
+        pid = int(receipt["pid"])
+        pgid = int(receipt["pgid"])
+        current, _reason, _identity = process_control.validate_process_identity(
+            receipt,
+            expected_pid=pid,
+            expected_pgid=pgid,
+            expected_run_id=run_id,
+            env_index={pid: run_id},
+        )
+        if not current:
+            return
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and workflow._pgid_is_alive(pgid):
+            time.sleep(0.05)
+        if not workflow._pgid_is_alive(pgid):
+            return
+        # Test cleanup may escalate only after revalidating the same receipt;
+        # a recycled group number is never fair game.
+        current, _reason, _identity = process_control.validate_process_identity(
+            receipt,
+            expected_pid=pid,
+            expected_pgid=pgid,
+            expected_run_id=run_id,
+            env_index={pid: run_id},
+        )
+        if current:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    try:
+        launched = workflow.launch_workflow(
+            workflow.WorkflowLaunchSpec(
+                agent="codex",
+                mode="workflow",
+                skill="workflow",
+                prompt="harmless stop lifecycle probe",
+                file="",
+                runtime="headless",
+                root=str(source),
+                run_id=run_id,
+            ),
+            source,
+            worker_command_override=[
+                sys.executable,
+                "-c",
+                (
+                    "import os,time; "
+                    "print(f'worker-ready:{os.getpid()}', flush=True); "
+                    "time.sleep(60)"
+                ),
+            ],
+        )
+        launcher_identity = launched["launcher_identity"]
+        assert isinstance(launcher_identity, dict)
+        owned_receipts.append(launcher_identity)
+
+        live = wait_for(
+            lambda: (
+                current
+                if (current := workflow.lookup_run(run_id))
+                and isinstance(current.get("worker_identity"), dict)
+                else None
+            )
+        )
+        worker_identity = live["worker_identity"]
+        owned_receipts.append(worker_identity)
+        worker_pid = int(live["worker_pid"])
+        launcher_pid = int(live["launcher_pid"])
+        assert worker_pid != launcher_pid
+        assert live["worker_pgid"] == worker_identity["pgid"]
+
+        payload = workflow.stop_run(
+            run_id,
+            reason="manual operator stop",
+            grace_seconds=1.0,
+        )
+
+        assert payload["accepted"] is True
+        assert payload["target"] == "worker_pgid"
+        assert payload["target_pid"] == worker_identity["pgid"]
+        assert payload["target_pgid"] == worker_identity["pgid"]
+        assert payload["signal_sent"] is True
+        assert payload["identity_qualification"] == "process_identity_current"
+
+        final = wait_for(
+            lambda: (
+                current
+                if (current := workflow.lookup_run(run_id))
+                and current.get("state") == "stopped"
+                and not workflow._pid_is_alive(launcher_pid)
+                else None
+            )
+        )
+        assert final["operator_stop_accepted"] is True
+        assert final["stop_reason"] == "manual operator stop"
+        assert final["artifact_gate"] == "stopped"
+        assert final["artifact_errors"] == []
+        assert final["recovery_required"] is False
+        assert final["lifecycle"]["stop"] is False
+        assert not workflow._pid_is_alive(worker_pid)
+
+        meta = json.loads(Path(final["meta"]).read_text(encoding="utf-8"))
+        assert meta["status"] == "stopped"
+        assert meta["operator_stop_accepted"] is True
+        assert "origin_session" not in meta
+        assert "operator_session" not in meta
+        assert "origin_tab" not in meta
+        assert "origin_pane_id" not in meta
+
+        events = list(
+            reversed(
+                [
+                    event
+                    for event in control_plane.read_event_tail(limit=100)
+                    if event.get("run_id") == run_id
+                ]
+            )
+        )
+        stop_index = next(
+            index
+            for index, event in enumerate(events)
+            if event.get("kind") == "audit:stop"
+        )
+        later_kinds = {
+            str(event.get("kind") or "") for event in events[stop_index + 1 :]
+        }
+        assert "lifecycle:failed" not in later_kinds
+        assert "lifecycle:report_missing" not in later_kinds
+    finally:
+        for receipt in reversed(owned_receipts):
+            cleanup_owned(receipt)
 
 
-def test_stop_run_rejects_stale_session_without_signalling(
+def test_stop_run_refuses_live_pid_when_identity_receipt_is_stale(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     home = tmp_path / ".vibecrafted"
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
-    run_id = "wflw-stale-session"
-    actual_session = "019fa021-2121-7021-8021-212121212121"
-    process_env = {
-        **os.environ,
-        "VIBECRAFTED_RUN_ID": run_id,
-        "VIBECRAFTED_SESSION_ID": actual_session,
-    }
-    proc = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(60)"],
-        start_new_session=True,
-        env=process_env,
-    )
+    proc = subprocess.Popen(["sleep", "60"], start_new_session=True)
     try:
+        identity = process_control.process_identity_receipt(
+            proc.pid,
+            run_id="wflw-stale-identity",
+        )
+        assert identity is not None
+        identity["command_sha256"] = "0" * 64
         _write_run_meta(
             home,
             {
-                "run_id": run_id,
-                "session_id": "019fdead-dead-7dea-8dea-deaddeaddead",
+                "run_id": "wflw-stale-identity",
                 "status": "running",
                 "agent": "codex",
                 "mode": "workflow",
                 "root": str(tmp_path),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "skill_code": "wflw",
-                "launcher_pid": proc.pid,
+                "worker_pid": proc.pid,
                 "worker_pgid": proc.pid,
+                "worker_identity": identity,
                 "liveness": "pid_alive",
             },
         )
 
-        payload = workflow.stop_run(run_id, reason="manual", grace_seconds=0)
+        payload = workflow.stop_run(
+            "wflw-stale-identity",
+            reason="manual operator stop",
+            grace_seconds=0.05,
+        )
 
         assert payload["accepted"] is False
-        assert payload["reason"] == "identity_unproven"
+        assert payload["reason"] == "process_identity_mismatch"
         assert payload["signal_sent"] is False
-        assert payload["error"] == "identity_unproven:environment_birth_mismatch"
         assert proc.poll() is None
     finally:
         if proc.poll() is None:
@@ -1583,10 +1736,181 @@ def _native_resume_claim_env(
     return env
 
 
+def test_manual_explicit_resume_launches_own_tracked_headless_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(workflow, "reserve_run_id", lambda _skill: "rsme-manual-1")
+    monkeypatch.setattr(
+        workflow, "ensure_session_id", lambda _value=None: "runtime-manual-1"
+    )
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launches: list[dict[str, Any]] = []
+
+    def fake_launch(
+        spec: workflow.WorkflowLaunchSpec,
+        source_dir: str | Path,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        launches.append({"spec": spec, "source_dir": source_dir, **kwargs})
+        return {
+            "accepted": True,
+            "run_id": spec.run_id,
+            "agent": spec.agent,
+            "skill": spec.skill,
+            "root": spec.root,
+            "status": "launching",
+        }
+
+    monkeypatch.setattr(workflow, "launch_workflow", fake_launch)
+
+    result = workflow.manual_resume_session(
+        "codex",
+        "codex-thread-42",
+        tmp_path,
+        prompt="continue from the verified session",
+        root=tmp_path,
+        model="gpt-5.5",
+    )
+
+    assert result["accepted"] is True
+    assert result["run_id"] == "rsme-manual-1"
+    assert result["resume_mode"] == "manual_explicit"
+    assert result["agent_session_id"] == "codex-thread-42"
+    assert result["runtime_session_id"] == "runtime-manual-1"
+    launch = launches[0]
+    assert launch["worker_command_override"] == [
+        "/verified/bin/codex",
+        "exec",
+        "-m",
+        "gpt-5.5",
+        "resume",
+        "--json",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "codex-thread-42",
+        "-",
+    ]
+    assert launch["spec"].mode == "manual_explicit"
+    assert launch["spec"].runtime == "headless"
+    assert launch["spec"].run_id == "rsme-manual-1"
+    assert launch["spec"].model == "gpt-5.5"
+    assert launch["spec"].prompt == "continue from the verified session"
+    assert launch["env"]["VIBECRAFTED_SESSION_ID"] == "runtime-manual-1"
+    assert launch["env"]["VIBECRAFTED_AGENT_SESSION_ID"] == "codex-thread-42"
+    assert launch["launch_meta"] == {
+        "run_id": "rsme-manual-1",
+        "agent": "codex",
+        "agent_session_id": "codex-thread-42",
+        "runtime_session_id": "runtime-manual-1",
+        "native_resume": True,
+        "resume_mode": "manual_explicit",
+        "manual_explicit": True,
+    }
+    forbidden_parent_claims = {
+        "resume_of",
+        "parent_runtime_session_id",
+        "resume_root",
+        "attempt",
+        "automatic_attempt_budget",
+        "automatic_attempt_number",
+        "resume_settlement_revision",
+        "resume_trust_receipt_id",
+        "resume_idempotency_key",
+        "settlement_revision",
+        "trust_receipt_id",
+    }
+    assert forbidden_parent_claims.isdisjoint(launch["launch_meta"])
+
+
+@pytest.mark.parametrize("agent", ["agy", "junie"])
+def test_manual_explicit_resume_fails_closed_for_unverified_providers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    agent: str,
+) -> None:
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda _agent: (_ for _ in ()).throw(
+            AssertionError("unverified provider must be rejected before probe")
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("unverified provider must never launch")
+        ),
+    )
+
+    result = workflow.manual_resume_session(
+        agent,
+        f"{agent}-session",
+        tmp_path,
+        prompt="continue",
+        root=tmp_path,
+    )
+
+    assert result["accepted"] is False
+    assert result["reason"] == "native_resume_unverified"
+    assert result["resume_mode"] == "manual_explicit"
+    assert result["terminal"] is True
+
+
+def test_manual_explicit_resume_requires_confirmed_runtime_probe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="probe_failed",
+            executable=None,
+            version=None,
+            detail="codex not found",
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("failed provider probe must never launch")
+        ),
+    )
+
+    result = workflow.manual_resume_session(
+        "codex",
+        "codex-thread-42",
+        tmp_path,
+        prompt="continue",
+        root=tmp_path,
+    )
+
+    assert result["accepted"] is False
+    assert result["reason"] == "native_resume_probe_failed"
+    assert result["detail"] == "codex not found"
+    assert result["retryable"] is True
+    assert result["terminal"] is False
+
+
 def test_native_resume_creates_new_tracked_monotonic_attempts(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    run_id, _run = _native_resume_parent(monkeypatch, tmp_path)
+    run_id, _run = _native_resume_parent(
+        monkeypatch,
+        tmp_path,
+        run_fields={"model_requested": "gpt-5.5"},
+    )
     child_ids = iter(("rsme-child-1", "rsme-child-2"))
     monkeypatch.setattr(workflow, "reserve_run_id", lambda _skill: next(child_ids))
     monkeypatch.setattr(
@@ -1642,6 +1966,8 @@ def test_native_resume_creates_new_tracked_monotonic_attempts(
     assert launches[0]["worker_command_override"] == [
         "/verified/bin/codex",
         "exec",
+        "-m",
+        "gpt-5.5",
         "resume",
         "--json",
         "--dangerously-bypass-approvals-and-sandbox",
@@ -1663,6 +1989,7 @@ def test_native_resume_creates_new_tracked_monotonic_attempts(
     )
     assert len(first["trust_receipt_id"]) == 64
     assert launches[0]["spec"].runtime == "headless"
+    assert launches[0]["spec"].model == "gpt-5.5"
     assert launches[0]["spec"].prompt == "continue safely"
     assert events[-1]["kind"] == "audit:native_resume"
     assert events[-1]["payload"]["new_run_id"] == "rsme-child-2"

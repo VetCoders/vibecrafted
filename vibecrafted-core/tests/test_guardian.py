@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue
 import stat
 import subprocess
 import threading
@@ -11,7 +12,7 @@ from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Self
+from typing import Any
 
 import pytest
 import vibecrafted_core.guardian as guardian_module
@@ -103,45 +104,6 @@ class QueueOpener:
             raise outcome
         assert isinstance(outcome, (FakeResponse, FakeJSONResponse))
         return outcome
-
-
-def test_guardian_bypasses_ambient_proxy_only_for_loopback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[tuple[str, str, float]] = []
-    direct_result = object()
-    proxy_result = object()
-
-    def direct_open(request, *, timeout: float):
-        calls.append(("direct", request.full_url, timeout))
-        return direct_result
-
-    def proxy_open(request, *, timeout: float):
-        calls.append(("proxy", request.full_url, timeout))
-        return proxy_result
-
-    monkeypatch.setattr(guardian_module._DIRECT_URL_OPENER, "open", direct_open)
-    monkeypatch.setattr(guardian_module._DEFAULT_URL_OPENER, "open", proxy_open)
-
-    loopback = guardian_module._guardian_urlopen(
-        guardian_module.urllib.request.Request(
-            "http://127.0.0.1:3024/api/control/events"
-        ),
-        timeout=1.5,
-    )
-    remote = guardian_module._guardian_urlopen(
-        guardian_module.urllib.request.Request(
-            "https://control.example.test/api/control/events"
-        ),
-        timeout=2.5,
-    )
-
-    assert loopback is direct_result
-    assert remote is proxy_result
-    assert calls == [
-        ("direct", "http://127.0.0.1:3024/api/control/events", 1.5),
-        ("proxy", "https://control.example.test/api/control/events", 2.5),
-    ]
 
 
 def settlement_data(
@@ -1243,7 +1205,7 @@ def test_recovery_adapter_never_resumes_auto_needs_attention(
 
 
 @pytest.mark.parametrize("tui", ["f", "x", "n"])
-def test_ordinary_terminal_event_schedules_triage_before_notification_only_gate(
+def test_terminal_event_schedules_triage_before_notification_only_gate(
     tmp_path: Path,
     tui: str,
 ) -> None:
@@ -1254,18 +1216,18 @@ def test_ordinary_terminal_event_schedules_triage_before_notification_only_gate(
         cursor=v2_cursor(0),
         baseline_complete=True,
     )
-    scheduled: list[str] = []
+    order: list[str] = []
 
-    def schedule(run_id: str) -> bool:
-        scheduled.append(run_id)
+    def schedule(scheduled: str) -> bool:
+        order.append(f"triage:{scheduled}")
         return True
 
     worker = GuardianWorker(
         server_url="http://127.0.0.1:3024",
         state=state,
-        notifier=lambda _notification: None,
+        notifier=lambda _notification: order.append("notify"),
         reconciler=lambda _event: pytest.fail(
-            "ordinary f settlement must not reach resume reconciliation"
+            "V1 notification-only settlement must not reach resume reconciliation"
         ),
         triage_scheduler=schedule,
         opener=QueueOpener(
@@ -1289,47 +1251,11 @@ def test_ordinary_terminal_event_schedules_triage_before_notification_only_gate(
     stats = worker.consume_connection()
 
     assert stats.completed_actions == 1
-    assert scheduled == [run_id]
+    assert order == [f"triage:{run_id}", "notify"]
     assert state.highwater[run_id].reason == "legacy_notification_only"
 
 
-def test_historical_baseline_settlement_also_schedules_triage(tmp_path: Path) -> None:
-    event = settlement_event("run-historical", 9, "x")
-    state = GuardianState(path=tmp_path / "guardian-state.json")
-    scheduled: list[str] = []
-    worker = GuardianWorker(
-        server_url="http://127.0.0.1:3024",
-        state=state,
-        notifier=lambda _notification: pytest.fail(
-            "baseline settlements are triaged but not notified"
-        ),
-        triage_scheduler=lambda run_id: scheduled.append(run_id) is None,
-        opener=QueueOpener(
-            FakeResponse(
-                [
-                    *frame(
-                        v2_cursor(1),
-                        settlement_data(
-                            event.run_id,
-                            event.revision,
-                            event.tui,
-                            source=event.source,
-                        ),
-                    ),
-                    *caught_up(v2_cursor(1)),
-                ]
-            )
-        ),
-    )
-
-    stats = worker.consume_connection()
-
-    assert stats.completed_baseline is True
-    assert scheduled == ["run-historical"]
-    assert state.highwater["run-historical"].reason == "initial_baseline"
-
-
-def test_unscheduled_triage_preserves_stream_cursor_for_replay(
+def test_triage_persistence_failure_preserves_stream_cursor_for_replay(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1373,7 +1299,285 @@ def test_unscheduled_triage_preserves_stream_cursor_for_replay(
     assert "was not durably queued" in caplog.text
 
 
-def test_settlement_history_publish_runs_before_a_blocked_triage_queue(
+def test_claim_failure_preserves_cursor_and_replays_after_capacity_recovers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    event = settlement_event("run-outbox-full", 1, "x")
+    state = GuardianState(
+        path=tmp_path / "guardian-state.json",
+        cursor=v2_cursor(0),
+        baseline_complete=True,
+    )
+    notifications: list[str] = []
+
+    def make_worker() -> GuardianWorker:
+        return GuardianWorker(
+            server_url="http://127.0.0.1:3024",
+            state=state,
+            notifier=lambda notification: notifications.append(
+                notification.event.run_id
+            ),
+            triage_scheduler=lambda _run_id: True,
+            opener=QueueOpener(
+                FakeResponse(
+                    [
+                        *caught_up(v2_cursor(0)),
+                        *frame(
+                            v2_cursor(1),
+                            settlement_data(
+                                event.run_id,
+                                event.revision,
+                                event.tui,
+                                source=event.source,
+                            ),
+                        ),
+                    ]
+                )
+            ),
+        )
+
+    monkeypatch.setattr(guardian_module, "MAX_PENDING_RECORDS", 0)
+    first = make_worker().consume_connection()
+
+    assert first.action_failures == 1
+    assert state.cursor == v2_cursor(0)
+    assert state.pending == {}
+    assert notifications == []
+
+    monkeypatch.setattr(guardian_module, "MAX_PENDING_RECORDS", 1)
+    second = make_worker().consume_connection()
+
+    assert second.claimed == 1
+    assert second.completed_actions == 1
+    assert state.cursor == v2_cursor(1)
+    assert notifications == ["run-outbox-full"]
+
+
+def test_durable_triage_outbox_survives_crash_before_worker_and_recovers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
+    monkeypatch.setattr(
+        guardian_module,
+        "_enqueue_terminal_triage_job",
+        lambda _key, _run_id: True,
+    )
+
+    assert guardian_module._schedule_terminal_triage_run("run-crash-window") is True
+    outbox = guardian_module._terminal_triage_outbox_path("run-crash-window")
+    assert outbox.is_file()
+
+    attempted: list[str] = []
+
+    def reconcile(run_id: str) -> bool:
+        attempted.append(run_id)
+        return True
+
+    monkeypatch.setattr(
+        guardian_module,
+        "_reconcile_terminal_triage_run",
+        reconcile,
+    )
+    guardian_module._recover_terminal_triage_outbox()
+
+    assert attempted == ["run-crash-window"]
+    assert not outbox.exists()
+
+
+def test_terminal_triage_outbox_recovery_scan_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
+    for index in range(5):
+        guardian_module._persist_terminal_triage_outbox(f"run-{index}")
+    monkeypatch.setattr(guardian_module, "TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT", 2)
+    monkeypatch.setattr(guardian_module, "TERMINAL_TRIAGE_OUTBOX_ATTEMPT_LIMIT", 2)
+
+    reads: list[Path] = []
+    original_read = guardian_module._read_terminal_triage_outbox
+
+    def recording_read(path: Path) -> tuple[str, int]:
+        reads.append(path)
+        return original_read(path)
+
+    monkeypatch.setattr(
+        guardian_module,
+        "_read_terminal_triage_outbox",
+        recording_read,
+    )
+    monkeypatch.setattr(
+        guardian_module,
+        "_reconcile_terminal_triage_run",
+        lambda _run_id: False,
+    )
+
+    guardian_module._recover_terminal_triage_outbox()
+
+    # Two scan reads plus one generation-CAS refresh for each selected job.
+    assert len(reads) <= 4
+
+
+@pytest.mark.parametrize("run_id", [".", ".."])
+def test_terminal_triage_outbox_rejects_relative_path_segments(run_id: str) -> None:
+    with pytest.raises(guardian_module.GuardianStateError):
+        guardian_module._canonical_triage_run_id(run_id)
+
+
+def test_in_memory_queue_full_leaves_durable_triage_outbox(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
+    jobs: queue.Queue[tuple[str, str | None]] = queue.Queue(maxsize=1)
+    jobs.put_nowait(("occupied", None))
+    monkeypatch.setattr(guardian_module, "_TERMINAL_TRIAGE_JOBS", jobs)
+    monkeypatch.setattr(guardian_module, "_TERMINAL_TRIAGE_PENDING", {"occupied"})
+    monkeypatch.setattr(guardian_module, "_TERMINAL_TRIAGE_LOCK", threading.Lock())
+    monkeypatch.setattr(guardian_module, "_TERMINAL_TRIAGE_THREAD", None)
+
+    assert guardian_module._schedule_terminal_triage_run("run-queue-full") is False
+    assert guardian_module._terminal_triage_outbox_path("run-queue-full").is_file()
+
+
+def test_terminal_triage_outbox_hard_capacity_backpressures_new_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
+    monkeypatch.setattr(guardian_module, "TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT", 2)
+    monkeypatch.setattr(
+        guardian_module,
+        "_enqueue_terminal_triage_job",
+        lambda _key, _run_id: True,
+    )
+
+    assert guardian_module._schedule_terminal_triage_run("run-one") is True
+    assert guardian_module._schedule_terminal_triage_run("run-two") is True
+    assert guardian_module._schedule_terminal_triage_run("run-three") is False
+
+    jobs = sorted(guardian_module._terminal_triage_outbox_root().glob("*.json"))
+    assert len(jobs) == 2
+    assert not guardian_module._terminal_triage_outbox_path("run-three").exists()
+
+
+def test_stale_worker_cannot_clear_newer_triage_generation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
+    path = guardian_module._persist_terminal_triage_outbox("run-generation")
+    _run_id, first_generation = guardian_module._read_terminal_triage_outbox(path)
+    guardian_module._persist_terminal_triage_outbox("run-generation")
+    _run_id, second_generation = guardian_module._read_terminal_triage_outbox(path)
+
+    assert second_generation > first_generation
+    assert (
+        guardian_module._clear_terminal_triage_outbox(
+            "run-generation",
+            expected_generation=first_generation,
+        )
+        is False
+    )
+    assert path.is_file()
+    assert guardian_module._clear_terminal_triage_outbox(
+        "run-generation",
+        expected_generation=second_generation,
+    )
+    assert not path.exists()
+
+
+def test_terminal_triage_scheduler_uses_one_coalescing_background_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    stop = threading.Event()
+    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
+    monkeypatch.setattr(
+        guardian_module,
+        "_TERMINAL_TRIAGE_JOBS",
+        guardian_module.queue.Queue(maxsize=4),
+    )
+    monkeypatch.setattr(guardian_module, "_TERMINAL_TRIAGE_PENDING", set())
+    monkeypatch.setattr(guardian_module, "_TERMINAL_TRIAGE_LOCK", threading.Lock())
+    monkeypatch.setattr(guardian_module, "_TERMINAL_TRIAGE_THREAD", None)
+    monkeypatch.setattr(guardian_module, "_TERMINAL_TRIAGE_STOP", stop)
+
+    def reconcile(_run_id: str) -> bool:
+        entered.set()
+        assert release.wait(5)
+        return True
+
+    monkeypatch.setattr(
+        guardian_module,
+        "_reconcile_terminal_triage_run",
+        reconcile,
+    )
+
+    assert guardian_module._schedule_terminal_triage_run("run-coalesced") is True
+    assert entered.wait(1)
+    first_thread = guardian_module._TERMINAL_TRIAGE_THREAD
+    assert first_thread is not None
+    assert guardian_module._schedule_terminal_triage_run("run-coalesced") is True
+    assert guardian_module._TERMINAL_TRIAGE_THREAD is first_thread
+
+    stop.set()
+    release.set()
+    guardian_module._TERMINAL_TRIAGE_JOBS.join()
+    first_thread.join(timeout=1)
+    assert not first_thread.is_alive()
+
+
+def test_corrupt_triage_outbox_is_quarantined_before_capacity_check(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
+    monkeypatch.setattr(guardian_module, "TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT", 1)
+    monkeypatch.setattr(guardian_module, "TERMINAL_TRIAGE_QUARANTINE_CAPACITY", 2)
+    monkeypatch.setattr(
+        guardian_module,
+        "_enqueue_terminal_triage_job",
+        lambda _key, _run_id: True,
+    )
+    outbox_root = guardian_module._terminal_triage_outbox_root()
+    poison = outbox_root / "poison.json"
+    poison.mkdir()
+
+    assert guardian_module._schedule_terminal_triage_run("run-real") is True
+
+    quarantine = list(guardian_module._terminal_triage_quarantine_root().iterdir())
+    assert not poison.exists()
+    assert len(quarantine) == 1
+    assert quarantine[0].is_dir()
+    assert guardian_module._terminal_triage_outbox_path("run-real").is_file()
+
+
+def test_full_quarantine_backpressures_corrupt_triage_outbox(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
+    monkeypatch.setattr(guardian_module, "TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT", 1)
+    monkeypatch.setattr(guardian_module, "TERMINAL_TRIAGE_QUARANTINE_CAPACITY", 0)
+    poison = guardian_module._terminal_triage_outbox_root() / "poison.json"
+    poison.mkdir()
+
+    with pytest.raises(
+        GuardianStateLimitError,
+        match="capacity could not be established",
+    ):
+        guardian_module._persist_terminal_triage_outbox("run-real")
+
+    assert poison.is_dir()
+    assert not guardian_module._terminal_triage_outbox_path("run-real").exists()
+
+
+def test_settlement_history_publish_runs_for_caught_up_and_settlement(
     tmp_path: Path,
 ) -> None:
     state = GuardianState(
@@ -1381,22 +1585,13 @@ def test_settlement_history_publish_runs_before_a_blocked_triage_queue(
         cursor=v2_cursor(0),
         baseline_complete=True,
     )
-    order: list[str] = []
-
-    def publish() -> None:
-        order.append("publish")
-
-    def schedule(_run_id: str) -> bool:
-        order.append("triage")
-        assert order[-2] == "publish"
-        return False
-
+    published: list[str] = []
     worker = GuardianWorker(
         server_url="http://127.0.0.1:3024",
         state=state,
         notifier=lambda _notification: None,
-        triage_scheduler=schedule,
-        history_publisher=publish,
+        reconciler=lambda _event: ReconcileDecision(request_resume=False),
+        history_publisher=lambda: published.append("publish"),
         opener=QueueOpener(
             FakeResponse(
                 [
@@ -1412,11 +1607,11 @@ def test_settlement_history_publish_runs_before_a_blocked_triage_queue(
 
     stats = worker.consume_connection()
 
-    assert stats.action_failures == 1
-    assert order == ["publish", "publish", "triage"]
+    assert stats.completed_actions == 1
+    assert published == ["publish", "publish"]
 
 
-def test_settlement_history_publish_failure_never_blocks_triage(
+def test_settlement_history_publish_failure_never_blocks_settlement(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1425,7 +1620,6 @@ def test_settlement_history_publish_failure_never_blocks_triage(
         cursor=v2_cursor(0),
         baseline_complete=True,
     )
-    scheduled: list[str] = []
 
     def publish() -> None:
         raise OSError("vc-frame unavailable")
@@ -1435,7 +1629,6 @@ def test_settlement_history_publish_failure_never_blocks_triage(
         state=state,
         notifier=lambda _notification: None,
         reconciler=lambda _event: ReconcileDecision(request_resume=False),
-        triage_scheduler=lambda run_id: not scheduled.append(run_id),
         history_publisher=publish,
         opener=QueueOpener(
             FakeResponse(
@@ -1454,323 +1647,7 @@ def test_settlement_history_publish_failure_never_blocks_triage(
         stats = worker.consume_connection()
 
     assert stats.completed_actions == 1
-    assert scheduled == ["run-publish-failure"]
     assert "settlement-history publication failed" in caplog.text
-
-
-def _register_terminal_triage_daemon_cleanup(
-    request: pytest.FixtureRequest,
-    *,
-    stop: threading.Event,
-    release: threading.Event,
-) -> None:
-    """Stop and drain the real daemon before monkeypatch restores operator HOME."""
-
-    def cleanup() -> None:
-        stop.set()
-        release.set()
-        thread = guardian_module._TERMINAL_TRIAGE_THREAD
-        if thread is not None:
-            thread.join(timeout=6)
-            assert not thread.is_alive()
-
-        jobs = guardian_module._TERMINAL_TRIAGE_JOBS
-        while True:
-            try:
-                jobs.get_nowait()
-            except guardian_module.queue.Empty:
-                break
-            else:
-                jobs.task_done()
-        jobs.join()
-        with guardian_module._TERMINAL_TRIAGE_LOCK:
-            guardian_module._TERMINAL_TRIAGE_PENDING.clear()
-        guardian_module._TERMINAL_TRIAGE_THREAD = None
-
-    request.addfinalizer(cleanup)
-
-
-def test_background_triage_scheduler_never_waits_for_worker(
-    request: pytest.FixtureRequest,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    entered = threading.Event()
-    release = threading.Event()
-    stop = threading.Event()
-    _register_terminal_triage_daemon_cleanup(
-        request,
-        stop=stop,
-        release=release,
-    )
-
-    def blocked(_run_id: str) -> bool:
-        entered.set()
-        assert release.wait(5)
-        return True
-
-    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
-    monkeypatch.setattr(guardian_module, "_TERMINAL_TRIAGE_STOP", stop)
-    monkeypatch.setattr(
-        guardian_module,
-        "_reconcile_terminal_triage_run",
-        blocked,
-    )
-
-    assert guardian_module._schedule_terminal_triage_run("run-background") is True
-    assert entered.wait(1)
-    assert not release.is_set()
-    outbox = guardian_module._terminal_triage_outbox_path("run-background")
-    assert outbox.is_file()
-    # Stop is set while the worker is still inside the injected job.  Once
-    # released it exits before another timed recovery can observe the real
-    # operator home after pytest restores this test's monkeypatches.
-    stop.set()
-    release.set()
-    guardian_module._TERMINAL_TRIAGE_JOBS.join()
-    thread = guardian_module._TERMINAL_TRIAGE_THREAD
-    assert thread is not None
-    thread.join(timeout=1)
-    assert not thread.is_alive()
-    assert not outbox.exists()
-
-
-def test_newer_outbox_generation_survives_stale_worker_clear(
-    request: pytest.FixtureRequest,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    entered = threading.Event()
-    release = threading.Event()
-    stop = threading.Event()
-    _register_terminal_triage_daemon_cleanup(
-        request,
-        stop=stop,
-        release=release,
-    )
-
-    def blocked(_run_id: str) -> bool:
-        entered.set()
-        assert release.wait(5)
-        return True
-
-    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
-    monkeypatch.setattr(guardian_module, "_TERMINAL_TRIAGE_STOP", stop)
-    monkeypatch.setattr(
-        guardian_module,
-        "_reconcile_terminal_triage_run",
-        blocked,
-    )
-
-    assert guardian_module._schedule_terminal_triage_run("run-generation") is True
-    assert entered.wait(1)
-    outbox = guardian_module._terminal_triage_outbox_path("run-generation")
-    _run_id, first_generation = guardian_module._read_terminal_triage_outbox(outbox)
-
-    # A repeated settlement arrives while the old worker is still reconciling.
-    # It rewrites the durable generation but coalesces against the in-flight key.
-    assert guardian_module._schedule_terminal_triage_run("run-generation") is True
-    _run_id, second_generation = guardian_module._read_terminal_triage_outbox(outbox)
-    assert second_generation > first_generation
-
-    stop.set()
-    release.set()
-    guardian_module._TERMINAL_TRIAGE_JOBS.join()
-    thread = guardian_module._TERMINAL_TRIAGE_THREAD
-    assert thread is not None
-    thread.join(timeout=1)
-    assert not thread.is_alive()
-    assert outbox.is_file()
-    _run_id, durable_generation = guardian_module._read_terminal_triage_outbox(outbox)
-    assert durable_generation == second_generation
-
-    monkeypatch.setattr(
-        guardian_module,
-        "_reconcile_terminal_triage_run",
-        lambda _run_id: True,
-    )
-    guardian_module._recover_terminal_triage_outbox()
-    assert not outbox.exists()
-
-
-def test_durable_triage_outbox_survives_enqueue_without_worker(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
-    monkeypatch.setattr(
-        guardian_module,
-        "_enqueue_terminal_triage_job",
-        lambda _key, _run_id: True,
-    )
-
-    assert guardian_module._schedule_terminal_triage_run("run-crash-window") is True
-    outbox = guardian_module._terminal_triage_outbox_path("run-crash-window")
-    assert outbox.is_file()
-
-    monkeypatch.setattr(
-        guardian_module,
-        "_reconcile_terminal_triage_run",
-        lambda _run_id: True,
-    )
-    guardian_module._recover_terminal_triage_outbox()
-
-    assert not outbox.exists()
-
-
-def test_failed_triage_job_remains_durable_for_periodic_retry(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
-    path = guardian_module._persist_terminal_triage_outbox("run-retry")
-    _run_id, queued_before = guardian_module._read_terminal_triage_outbox(path)
-    monkeypatch.setattr(
-        guardian_module,
-        "_reconcile_terminal_triage_run",
-        lambda _run_id: False,
-    )
-
-    guardian_module._recover_terminal_triage_outbox()
-
-    _run_id, queued_after = guardian_module._read_terminal_triage_outbox(path)
-    assert queued_after >= queued_before
-
-
-def test_triage_outbox_hard_capacity_backpressures_new_events(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
-    monkeypatch.setattr(guardian_module, "TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT", 2)
-    monkeypatch.setattr(
-        guardian_module,
-        "_enqueue_terminal_triage_job",
-        lambda _key, _run_id: True,
-    )
-
-    assert guardian_module._schedule_terminal_triage_run("run-one") is True
-    assert guardian_module._schedule_terminal_triage_run("run-two") is True
-    assert guardian_module._schedule_terminal_triage_run("run-three") is False
-
-    root = guardian_module._terminal_triage_outbox_root()
-    assert sorted(path.name for path in root.glob("*.json")) == sorted(
-        [
-            guardian_module._terminal_triage_outbox_path("run-one").name,
-            guardian_module._terminal_triage_outbox_path("run-two").name,
-        ]
-    )
-
-
-def test_poison_outboxes_are_fsynced_to_quarantine_before_capacity_check(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    class ReentryDetectingLock:
-        def __init__(self) -> None:
-            self._lock = threading.Lock()
-
-        def __enter__(self) -> Self:
-            if not self._lock.acquire(blocking=False):
-                raise AssertionError("terminal triage lock was re-entered")
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            self._lock.release()
-
-    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
-    monkeypatch.setattr(guardian_module, "TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT", 2)
-    monkeypatch.setattr(guardian_module, "TERMINAL_TRIAGE_QUARANTINE_CAPACITY", 2)
-    monkeypatch.setattr(
-        guardian_module,
-        "_TERMINAL_TRIAGE_LOCK",
-        ReentryDetectingLock(),
-    )
-    monkeypatch.setattr(
-        guardian_module,
-        "_enqueue_terminal_triage_job",
-        lambda _key, _run_id: True,
-    )
-    fsynced: list[Path] = []
-    original_fsync = guardian_module._fsync_directory
-
-    def record_fsync(path: Path) -> None:
-        fsynced.append(path)
-        original_fsync(path)
-
-    monkeypatch.setattr(guardian_module, "_fsync_directory", record_fsync)
-    outbox_root = guardian_module._terminal_triage_outbox_root()
-    poison = [outbox_root / "junk-one.json", outbox_root / "junk-two.json"]
-    for path in poison:
-        path.mkdir()
-
-    assert guardian_module._schedule_terminal_triage_run("run-real") is True
-
-    real_job = guardian_module._terminal_triage_outbox_path("run-real")
-    quarantine_root = guardian_module._terminal_triage_quarantine_root()
-    quarantined = sorted(quarantine_root.iterdir())
-    assert real_job.is_file()
-    assert all(not path.exists() for path in poison)
-    assert len(quarantined) == 2
-    assert all(path.is_dir() for path in quarantined)
-    assert any("junk-one.json" in path.name for path in quarantined)
-    assert any("junk-two.json" in path.name for path in quarantined)
-    assert outbox_root in fsynced
-    assert quarantine_root in fsynced
-
-
-def test_full_quarantine_cannot_turn_poison_into_free_outbox_capacity(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
-    monkeypatch.setattr(guardian_module, "TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT", 1)
-    monkeypatch.setattr(guardian_module, "TERMINAL_TRIAGE_QUARANTINE_CAPACITY", 0)
-    poison = guardian_module._terminal_triage_outbox_root() / "poison.json"
-    poison.mkdir()
-
-    with pytest.raises(
-        GuardianStateLimitError,
-        match="capacity could not be established",
-    ):
-        guardian_module._persist_terminal_triage_outbox("real-run")
-
-    assert poison.is_dir()
-    assert not guardian_module._terminal_triage_outbox_path("real-run").exists()
-
-
-def test_over_capacity_outbox_scans_all_entries_without_starvation(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
-    monkeypatch.setattr(guardian_module, "TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT", 3)
-    guardian_module._persist_terminal_triage_outbox("run-newer-one")
-    guardian_module._persist_terminal_triage_outbox("run-newer-two")
-    starved = guardian_module._persist_terminal_triage_outbox("run-oldest")
-    # Move the first two behind the third one while preserving insertion order
-    # in the directory. A first-page-only scanner would never select run-oldest.
-    guardian_module._persist_terminal_triage_outbox("run-newer-one")
-    guardian_module._persist_terminal_triage_outbox("run-newer-two")
-
-    attempted: list[str] = []
-
-    def reconcile(run_id: str) -> bool:
-        attempted.append(run_id)
-        return True
-
-    monkeypatch.setattr(guardian_module, "TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT", 2)
-    monkeypatch.setattr(guardian_module, "TERMINAL_TRIAGE_OUTBOX_ATTEMPT_LIMIT", 1)
-    monkeypatch.setattr(
-        guardian_module,
-        "_reconcile_terminal_triage_run",
-        reconcile,
-    )
-
-    guardian_module._recover_terminal_triage_outbox()
-
-    assert attempted == ["run-oldest"]
-    assert not starved.exists()
 
 
 def test_recovery_adapter_obeys_vc_guard_block(tmp_path: Path) -> None:
@@ -1794,6 +1671,71 @@ def test_recovery_adapter_obeys_vc_guard_block(tmp_path: Path) -> None:
         request_resume=False,
         reason="vc_guard_blocked",
     )
+
+
+def test_v2_needs_attention_reaches_resume_only_after_triage_and_vc_guard(
+    tmp_path: Path,
+) -> None:
+    data = settlement_data(
+        "run-guarded-resume",
+        2,
+        "n",
+        source="trust",
+        repo_root=tmp_path,
+    )
+    event = parse_settlement_revision(data)
+    assert event is not None
+    order: list[str] = []
+
+    def enforce_guard(**_kwargs: object) -> object:
+        order.append("guard")
+        return SimpleNamespace(allowed=True)
+
+    def native_resume(*_args: object, **_kwargs: object) -> Mapping[str, object]:
+        order.append("resume")
+        return action_result(
+            accepted=True,
+            retryable=False,
+            terminal=True,
+            reason="accepted",
+        )
+
+    def schedule_triage(_run_id: str) -> bool:
+        order.append("triage")
+        return True
+
+    recovery = GuardianRecoveryAdapter(
+        server_url="http://127.0.0.1:3024",
+        opener=QueueOpener(FakeJSONResponse(resumable_projection(event, tmp_path))),
+        guard_enforcer=enforce_guard,
+        native_resumer=native_resume,
+    )
+    state = GuardianState(
+        path=tmp_path / "guardian-state.json",
+        cursor=v2_cursor(0),
+        baseline_complete=True,
+    )
+    worker = GuardianWorker(
+        server_url="http://127.0.0.1:3024",
+        state=state,
+        notifier=lambda _notification: order.append("notify"),
+        reconciler=recovery.reconcile,
+        resume=recovery.resume,
+        triage_scheduler=schedule_triage,
+        opener=QueueOpener(
+            FakeResponse(
+                [
+                    *caught_up(v2_cursor(0)),
+                    *frame(v2_cursor(1), data),
+                ]
+            )
+        ),
+    )
+
+    stats = worker.consume_connection()
+
+    assert stats.completed_actions == 1
+    assert order == ["triage", "notify", "guard", "resume"]
 
 
 def test_recovery_adapter_rejects_projection_receipt_mismatch(
@@ -3198,6 +3140,12 @@ def test_numeric_legacy_stream_is_notification_only_after_caught_up(
     notifications: list[tuple[str, int]] = []
     reconciled: list[tuple[str, int]] = []
     resumed: list[str] = []
+    triaged: list[str] = []
+
+    def schedule_triage(run_id: str) -> bool:
+        triaged.append(run_id)
+        return True
+
     state = GuardianState(path=tmp_path / "state.json")
     worker = GuardianWorker(
         server_url="http://127.0.0.1:3024",
@@ -3215,6 +3163,7 @@ def test_numeric_legacy_stream_is_notification_only_after_caught_up(
                 reason="accepted",
             )
         ),
+        triage_scheduler=schedule_triage,
         opener=QueueOpener(
             FakeResponse(
                 [
@@ -3234,6 +3183,7 @@ def test_numeric_legacy_stream_is_notification_only_after_caught_up(
     assert notifications == [("legacy-live", 1)]
     assert reconciled == []
     assert resumed == []
+    assert triaged == ["legacy-history", "legacy-live"]
     assert state.cursor == 20
     assert state.baseline_complete is True
     assert state.degraded is True
@@ -3269,6 +3219,10 @@ def test_main_recovers_trust_outbox_under_lock_before_sse_attach(
         def stop_periodic_refresh(self) -> bool:
             order.append("history-stop")
             return True
+
+    def schedule_triage_startup() -> bool:
+        order.append("triage-startup")
+        return True
 
     monkeypatch.setattr(
         guardian_module,
@@ -3307,7 +3261,7 @@ def test_main_recovers_trust_outbox_under_lock_before_sse_attach(
     monkeypatch.setattr(
         guardian_module,
         "_schedule_triage_startup_sweep",
-        lambda: order.append("triage-recover"),
+        schedule_triage_startup,
     )
 
     result = guardian_module.main(
@@ -3324,7 +3278,7 @@ def test_main_recovers_trust_outbox_under_lock_before_sse_attach(
     assert order == [
         "lock",
         "recover",
-        "triage-recover",
+        "triage-startup",
         "history-start",
         "attach",
         "history-stop",
@@ -3375,39 +3329,3 @@ def test_trust_recovery_sweep_reports_success_and_preserved_failures(
         for m in messages
     )
     assert any("recovery hit its bounded limit after 2 outboxes" in m for m in messages)
-
-
-def test_triage_recovery_sweep_reports_success_and_preserved_failures(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    from vibecrafted_core import run_triage as run_triage_module
-
-    report = SimpleNamespace(
-        scanned=4,
-        attempted=2,
-        errors=(
-            SimpleNamespace(
-                run_id="run-corrupt",
-                reason="transfer_proof_invalid",
-            ),
-        ),
-        truncated=True,
-        ok=False,
-    )
-    monkeypatch.setattr(
-        run_triage_module,
-        "reconcile_untriaged_runs",
-        lambda _control_plane: report,
-    )
-    monkeypatch.setattr(
-        guardian_module,
-        "_recover_terminal_triage_outbox",
-        lambda: None,
-    )
-
-    with caplog.at_level(logging.INFO, logger="vibecrafted_core.guardian"):
-        guardian_module._recover_untriaged_runs_background()
-
-    assert "terminal triage recovery failed for run-corrupt" in caplog.text
-    assert "scanned=4 attempted=2" in caplog.text

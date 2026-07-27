@@ -81,7 +81,7 @@ unset -f _vetcoders_script_dir \
   _vetcoders_source_runtime_helpers
 unset _vetcoders_runtime_source_status
 _vetcoders_default_runtime() {
-  printf '%s\n' "${VETCODERS_SPAWN_RUNTIME:-terminal}"
+  printf '%s\n' "${VETCODERS_SPAWN_RUNTIME:-headless}"
 }
 
 _vetcoders_bundled_bin_dirs() {

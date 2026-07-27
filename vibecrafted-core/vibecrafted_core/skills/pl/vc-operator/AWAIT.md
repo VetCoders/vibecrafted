@@ -16,7 +16,7 @@ wybudzenia. Hedge'owanie await ad-hoc pollerami/watcherami to naruszenie
 Class 3; napraw `control_plane.await_run`, nie normalizuj hedge'u.
 
 Liveness jest zawsze 3-sygnałowy przed deklaracją done: await verdict,
-terminalny stan w run meta i martwy worker pid; jeśli raport jest obiecany,
+stan terminalny run meta i martwy worker pid; jeśli raport jest obiecany,
 potwierdź jego obecność. Dwa zgodne sygnały wystarczą do działania, trzy do
 deklaracji done; rozjazd = traktuj jako live i uzbrój await ponownie. Znany
 skew: rc=0-on-live oraz meta `active`/`stalled` po realnym zakończeniu.
@@ -32,7 +32,7 @@ Dla trybu operatora przekłada się to na:
   `vibecrafted <agent> await --run-id <id>`, albo komenda framework loop, która
   deleguje do tego await.
 - **Sygnał diagnostyczny**: payload `<task-notification>`, ścieżka raportu,
-  JSON control-plane, transcript, widoczna karta albo zaplanowany heartbeat.
+  JSON control-plane, transcript, opcjonalna karta-viewer albo zaplanowany heartbeat.
   One wyjaśniają stan; nie zastępują kanonicznego await.
 - **Antywzorzec**: krótkointerwałowy polling. Ponowne sprawdzanie statusu
   zadania co 60 sekund spala prompt cache i sygnalizuje operatorowi, że nie
@@ -60,11 +60,11 @@ autoryzuje ten krok.
 1. Odpal:  vibecrafted implement claude --file 01-textforge-editor-core.md
           → run_id = impl-181153-86836
           → tracker zadania w tle = b1h5dkw7s
-          → widoczny dla operatora w obserwowanej karcie terminala (reguła NIGDY HEADLESS)
+          → odłączony worker headless; receipt podaje ścieżki stanu i transkryptu
 
 2. Potwierdź start (~30s po odpaleniu):
           → sprawdź, że tracker zadania żyje
-          → potwierdź, że operator widzi obserwowaną kartę
+          → potwierdź stan control-plane i pid workera
           → arm: vibecrafted claude await --run-id impl-181153-86836
           → napisz do operatora „Fala B-1 odpalona, canonical await armed"
 
@@ -78,8 +78,8 @@ autoryzuje ten krok.
           → nie polluj, nie tailuj logów, nie czytaj /tmp/.../tasks/*.output
 
 5. Await wraca:
-          → vibecrafted <agent> await wychodzi z prawdą terminal/report
-          → potwierdź martwy worker pid i terminalny run meta; jeśli raport był
+          → vibecrafted <agent> await wychodzi z prawdą settlement/report
+          → potwierdź martwy worker pid i terminalny stan run meta; jeśli raport był
             obiecany, potwierdź obecność raportu
           → przeczytaj plik raportu workera (NIE plik /tmp output —
             zobacz „Co czyta agent operatora")
@@ -197,22 +197,26 @@ Gdy operator pinguje cię podczas await:
 
 ---
 
-## NIGDY HEADLESS
+## Domyślnie headless, zawsze obserwowalny
 
-Każdy dispatch musi być widoczny dla operatora w obserwowanej karcie terminala
-(Zellij, tmux, screen lub odpowiednik). Jeśli twój mechanizm dispatchu nie
-wystawia się na terminal operatora, odpalasz w ciemność i operator nie może
-zainterweniować. To narusza kontrakt autonomii.
+Każdy zwykły dispatch floty domyślnie uruchamia odłączonego workera headless.
+vc-frame jest powierzchnią obserwacji stanu runu i trwałych transkryptów; jego
+karty nie hostują workera, a utrata pane'a nie może zatrzymać runu.
 
-W razie wątpliwości preferuj:
+Prawdziwy PTY jest zarezerwowany dla interaktywnej User Session, bare resume
+albo jawnego `--runtime terminal` dla ścieżki providera, która dowodowo go
+wymaga. Obecność TTY lub żywej sesji repo nigdy nie włącza terminala domyślnie.
 
-1. `vibecrafted implement <agent> --file <path>` w obserwowanej karcie na pierwszym planie.
-2. Await zadania w tle dla sygnałów ukończenia przez notify.
-3. Operator może w każdej chwili przeciągnąć focus na kartę i zobaczyć żywe
-   wyjście workera.
+W razie wątpliwości:
 
-Zabronione: przepuszczanie dispatchu przez niewidoczny subproces, w którym
-operator widzi tylko twój raport po fakcie.
+1. Uruchom normalnie, bez override'u runtime.
+2. Natychmiast uzbrój supervisor-side
+   `vibecrafted <agent> await --run-id <id>`.
+3. Obserwuj receipt, stan control-plane, transkrypt i raport; opcjonalnie
+   wyświetl te powierzchnie w vc-frame.
+
+Zabronione: uzależnianie liveness workera od pane'a, karty, attach session lub
+procesu viewera.
 
 ---
 

@@ -273,19 +273,19 @@ def test_install_sh_does_not_use_grep_dash_p() -> None:
 
 
 def test_install_sh_reads_canonical_version_file() -> None:
-    """install.sh must extract the candidate version from the verified
+    """install.sh must extract the installed version from the staged
     VERSION file, not from the Makefile (which never defined VERSION).
     """
     text = INSTALL_SH.read_text(encoding="utf-8")
-    assert "candidate_root/VERSION" in text, (
-        "install.sh must read VERSION directly from the verified candidate"
+    assert "staged_dir/VERSION" in text, (
+        "install.sh must read VERSION directly from the staged source tree"
     )
     # No more archive_url fallback — the banner truth is the repo VERSION
     # file, not a tarball filename.
     assert 'basename "$archive_url" .tar.gz' not in text
 
 
-def test_install_sh_reports_version_from_candidate_tree(tmp_path: Path) -> None:
+def test_install_sh_reports_version_from_staged_tree(tmp_path: Path) -> None:
     """End-to-end: build a fake tarball with a VERSION file, run install.sh
     in archive-file mode, and verify the post-install banner prints that
     exact version string.

@@ -106,9 +106,10 @@ vc-ship claude --file mission.md                        # shell shortcut
 vibecrafted ship <agent> --start-stage review --file m.md  # resume mid-pipeline
 ```
 
-Operator invariant: stage workers fly **visibly, as vc-frame tabs**, whenever
-a live operator session can host them (headless is only the degrade-not-die
-fallback; force quiet with `--runtime headless`).
+Runtime invariant: stage workers fly **headless**, so the lifecycle survives
+vc-frame and User Session loss. Observe through lifecycle state, transcripts,
+`observe`, and `await`. `--runtime terminal` is an explicit compatibility
+exception for a provider path proven to require a TTY.
 
 ---
 

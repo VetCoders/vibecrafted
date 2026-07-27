@@ -85,6 +85,36 @@ def _legacy_expected_operator_session(run_id: str | None = None) -> str:
     return f"{base}-{run_id}" if run_id else base
 
 
+def _write_fake_core_python(path: Path) -> None:
+    """Capture a tracked core launch without importing core or spawning an agent."""
+    path.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "-c" ]]; then
+  if [[ "${2:-}" == *"package_root"* ]]; then
+    printf "%s\\n" "$FAKE_CORE_SOURCE_DIR"
+  fi
+  exit 0
+fi
+if [[ "${1:-}" == "-m" && "${2:-}" == "vibecrafted_core.cli" ]]; then
+  shift 2
+  printf "%s\\0" "$@" > "$FAKE_CORE_ARGV_FILE"
+  cat > "$FAKE_CORE_PROMPT_FILE"
+  printf '%s\\n' '=============== MANUAL EXPLICIT RESUME RECEIPT ===============' 'run_id:             rsme-fixture-1' "agent_session_id:   ${FAKE_CORE_SESSION_ID}" 'resume_mode:        manual_explicit'
+  exit 0
+fi
+printf "unexpected fake-core invocation: %s\\n" "$*" >&2
+exit 98
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def _read_nul_argv(path: Path) -> list[str]:
+    return [item.decode("utf-8") for item in path.read_bytes().split(b"\0") if item]
+
+
 def test_spawn_require_command_adds_curated_agent_tool_paths(tmp_path: Path) -> None:
     home = tmp_path / "home"
     local_bin = home / ".local" / "bin"
@@ -1754,6 +1784,13 @@ def test_generated_launcher_adds_uniform_artifact_closure(tmp_path: Path) -> Non
 
 def test_vc_resume_can_infer_agent_from_session_meta(tmp_path: Path) -> None:
     crafted_home = tmp_path / ".vibecrafted"
+    fake_core = tmp_path / "fake-core-python"
+    core_argv = tmp_path / "core-argv.bin"
+    core_prompt = tmp_path / "core-prompt.txt"
+    core_source = tmp_path / "core-source"
+    provider_called = tmp_path / "provider-called"
+    core_source.mkdir()
+    _write_fake_core_python(fake_core)
     meta_dir = (
         crafted_home / "artifacts" / "Vetcoders" / "repo" / "2026_0528" / "reports"
     )
@@ -1767,13 +1804,33 @@ def test_vc_resume_can_infer_agent_from_session_meta(tmp_path: Path) -> None:
         f'''
         set -euo pipefail
         export VIBECRAFTED_HOME="{crafted_home}"
+        export VIBECRAFTED_PYTHON="{fake_core}"
+        export FAKE_CORE_ARGV_FILE="{core_argv}"
+        export FAKE_CORE_PROMPT_FILE="{core_prompt}"
+        export FAKE_CORE_SOURCE_DIR="{core_source}"
+        export FAKE_CORE_SESSION_ID="sess-abc-123"
+        export PROVIDER_CALLED="{provider_called}"
         source "{SHELL_SH}"
-        codex() {{ printf 'codex %s\\n' "$*"; }}
+        codex() {{ : > "$PROVIDER_CALLED"; return 97; }}
         vc-resume --session sess-abc-123 --prompt hello
         '''
     )
 
-    assert "resume sess-abc-123 hello" in result.stdout
+    assert "MANUAL EXPLICIT RESUME RECEIPT" in result.stdout
+    assert "agent_session_id:   sess-abc-123" in result.stdout
+    assert _read_nul_argv(core_argv) == [
+        "resume-session",
+        "codex",
+        "--agent-session-id",
+        "sess-abc-123",
+        "--prompt-stdin",
+        "--root",
+        str(REPO_ROOT),
+        "--source-dir",
+        str(core_source),
+    ]
+    assert core_prompt.read_text(encoding="utf-8") == "hello"
+    assert not provider_called.exists()
 
 
 def test_generated_launcher_marks_meta_failed_before_failure_hook(

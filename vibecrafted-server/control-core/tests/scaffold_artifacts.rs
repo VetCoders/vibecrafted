@@ -139,10 +139,7 @@ fn doctor_rejects_invalid_driver_atlas_tracker_and_frontmatter_drift() {
         .iter()
         .map(|error| error.code.as_str())
         .collect::<Vec<_>>();
-    assert!(
-        codes.contains(&"driver_contract"),
-        "codes={codes:?}"
-    );
+    assert!(codes.contains(&"driver_contract"), "codes={codes:?}");
     assert!(codes.contains(&"atlas_contract"), "codes={codes:?}");
     assert!(
         codes.iter().any(|code| code.starts_with("frontmatter")),
@@ -188,7 +185,12 @@ fn doctor_negative_cases_fail_independently() {
     populate(&missing, "plan-missing-brief");
     fs::remove_file(missing.join("briefs/W1-01_cut.md")).expect("rm brief");
     let report = store
-        .doctor("vetcoders", "vibecrafted", "2026_0720", "plan-missing-brief")
+        .doctor(
+            "vetcoders",
+            "vibecrafted",
+            "2026_0720",
+            "plan-missing-brief",
+        )
         .expect("doctor");
     assert!(!report.valid);
     assert!(
@@ -254,8 +256,7 @@ fn doctor_negative_cases_fail_independently() {
         report
             .errors
             .iter()
-            .any(|error| error.code == "driver_contract"
-                && error.message.contains("[ ]→[x]")),
+            .any(|error| error.code == "driver_contract" && error.message.contains("[ ]→[x]")),
         "{:?}",
         report.errors
     );

@@ -14,6 +14,7 @@ import signal
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .run_reaper import (
@@ -21,10 +22,10 @@ from .run_reaper import (
     _is_protected,
     _pid_alive,
     _signal_pid,
+    build_env_index,
     build_process_table,
     grace_seconds,
     plan_reap,
-    read_process_start_token,
 )
 
 SCHEMA_VERSION = "vibecrafted.procs.v1"
@@ -59,11 +60,14 @@ __all__ = [
     "ProcessIdentity",
     "ProcessSnapshotRow",
     "TerminateOutcome",
+    "capture_process_identity",
     "command_sha256",
     "main",
+    "process_identity_receipt",
     "process_start_token",
     "snapshot_processes",
     "terminate_process",
+    "validate_process_identity",
 ]
 
 
@@ -72,9 +76,56 @@ def command_sha256(command: str) -> str:
 
 
 def process_start_token(pid: int, command: str) -> str:
-    """Kernel birth token for PID reuse detection; empty means not signalable."""
-    _ = command
-    return str(read_process_start_token(pid) or "")
+    """Stable-enough identity token for PID reuse detection.
+
+    Prefer OS start time when readable; fall back to command hash + pid so a
+    recycled PID with a different command fails the expected-start check.
+    """
+    start = _read_proc_start(pid)
+    if start is not None:
+        return f"start:{start}"
+    return f"cmd:{pid}:{command_sha256(command)[:16]}"
+
+
+def _read_proc_start(pid: int) -> int | None:
+    """Best-effort process start seconds (unix). None if unavailable."""
+    # macOS: ps -o lstart= is locale-heavy; use etime is worse. Prefer /proc on
+    # Linux; on macOS use `ps -p PID -o lstart=` only if we can parse, else None.
+    try:
+        if Path(f"/proc/{pid}/stat").is_file():
+            # field 22 is starttime in clock ticks since boot — not wall clock,
+            # but stable for reuse detection within a boot.
+            raw = Path(f"/proc/{pid}/stat").read_text(
+                encoding="utf-8", errors="replace"
+            )
+            # comm can contain spaces/parens; split after last ')'
+            rparen = raw.rfind(")")
+            if rparen == -1:
+                return None
+            fields = raw[rparen + 2 :].split()
+            if len(fields) >= 20:
+                return int(fields[19])
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        import subprocess
+
+        proc = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "lstart="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return None
+        text = (proc.stdout or "").strip()
+        if not text:
+            return None
+        # Hash the lstart string — enough for reuse detection.
+        return int(hashlib.sha256(text.encode()).hexdigest()[:12], 16)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -85,6 +136,117 @@ class ProcessIdentity:
     start_token: str
     command_sha256: str
     command: str
+
+
+def capture_process_identity(
+    pid: int,
+    *,
+    table: Sequence[ProcessEntry] | None = None,
+) -> ProcessIdentity | None:
+    """Capture the current OS identity behind one PID, or ``None`` if gone.
+
+    A caller may persist the returned start token and command hash, then require
+    an exact re-capture before signalling. This is deliberately stronger than
+    storing a PID/PGID, both of which the kernel may reuse.
+    """
+
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return None
+    current_table = build_process_table() if table is None else table
+    entry = next((row for row in current_table if row.pid == pid), None)
+    if entry is None:
+        return None
+    return ProcessIdentity(
+        pid=entry.pid,
+        ppid=entry.ppid,
+        pgid=entry.pgid,
+        start_token=process_start_token(entry.pid, entry.command),
+        command_sha256=command_sha256(entry.command),
+        command=entry.command,
+    )
+
+
+def process_identity_receipt(
+    pid: int,
+    *,
+    run_id: str,
+    table: Sequence[ProcessEntry] | None = None,
+) -> dict[str, Any] | None:
+    """Return the non-secret process identity persisted in run events/meta."""
+
+    identity = capture_process_identity(pid, table=table)
+    if identity is None:
+        return None
+    return {
+        "pid": identity.pid,
+        "ppid": identity.ppid,
+        "pgid": identity.pgid,
+        "start_token": identity.start_token,
+        "command_sha256": identity.command_sha256,
+        "run_id": str(run_id or "").strip(),
+    }
+
+
+def validate_process_identity(
+    receipt: Mapping[str, Any] | None,
+    *,
+    expected_pid: int,
+    expected_pgid: int | None,
+    expected_run_id: str,
+    table: Sequence[ProcessEntry] | None = None,
+    env_index: Mapping[int, str] | None = None,
+) -> tuple[bool, str, ProcessIdentity | None]:
+    """Re-capture and validate a persisted identity before any signal.
+
+    ``SPAWN_RUN_ID`` evidence is best-effort on macOS. If the OS exposes it, it
+    must match; when it does not, the mandatory receipt run id plus start token,
+    command hash, PID, and PGID still have to match exactly.
+    """
+
+    if not isinstance(receipt, Mapping):
+        return False, "process_identity_unavailable", None
+    try:
+        receipt_pid = int(receipt.get("pid") or 0)
+        receipt_pgid = int(receipt.get("pgid") or 0)
+    except (TypeError, ValueError):
+        return False, "process_identity_invalid", None
+    receipt_run_id = str(receipt.get("run_id") or "").strip()
+    expected_run = str(expected_run_id or "").strip()
+    expected_start = str(receipt.get("start_token") or "").strip()
+    expected_hash = str(receipt.get("command_sha256") or "").strip()
+    if (
+        receipt_pid <= 0
+        or receipt_pid != expected_pid
+        or not expected_run
+        or receipt_run_id != expected_run
+        or not expected_start
+        or len(expected_hash) != 64
+    ):
+        return False, "process_identity_mismatch", None
+    if expected_pgid is not None and (
+        expected_pgid <= 0 or receipt_pgid != expected_pgid
+    ):
+        return False, "process_identity_mismatch", None
+
+    identity = capture_process_identity(expected_pid, table=table)
+    if identity is None:
+        return False, "process_identity_gone", None
+    if (
+        identity.pid != receipt_pid
+        or identity.pgid != receipt_pgid
+        or identity.start_token != expected_start
+        or identity.command_sha256 != expected_hash
+    ):
+        return False, "process_identity_mismatch", identity
+
+    discovered = (
+        build_env_index().get(expected_pid)
+        if env_index is None
+        else env_index.get(expected_pid)
+    )
+    if discovered and str(discovered).strip() != expected_run:
+        return False, "process_run_id_mismatch", identity
+    return True, "process_identity_current", identity
 
 
 @dataclass(frozen=True)
@@ -131,20 +293,14 @@ def _classify_row(
     protected: bool,
     legacy: bool,
 ) -> ProcessSnapshotRow:
-    start = entry.start_token
+    start = process_start_token(entry.pid, entry.command)
     cmd_hash = command_sha256(entry.command)
     if protected:
         ownership, killable, reason = "protected", False, "protected_command"
     elif legacy:
         ownership, killable, reason = "legacy", False, "legacy_ownership"
-    elif evidence and run_id and start:
-        ownership, killable, reason = "proven", True, "owned"
     elif evidence and run_id:
-        ownership, killable, reason = (
-            "unproven",
-            False,
-            "birth_identity_unavailable",
-        )
+        ownership, killable, reason = "proven", True, "owned"
     else:
         ownership, killable, reason = "unproven", False, "ownership_unproven"
     identity = ProcessIdentity(
@@ -174,7 +330,7 @@ def snapshot_processes(
     *,
     table: Sequence[ProcessEntry] | None = None,
     runs: Sequence[Mapping[str, Any]] | None = None,
-    env_index: Mapping[int, Any] | None = None,
+    env_index: Mapping[int, str] | None = None,
     self_pid: int | None = None,
     env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
@@ -291,14 +447,13 @@ def terminate_process(
     expected_run_id: str = "",
     table: Sequence[ProcessEntry] | None = None,
     runs: Sequence[Mapping[str, Any]] | None = None,
-    env_index: Mapping[int, Any] | None = None,
+    env_index: Mapping[int, str] | None = None,
     self_pid: int | None = None,
     env: Mapping[str, str] | None = None,
     grace: float | None = None,
     signaller: Callable[[int, int], str] | None = None,
     alive_check: Callable[[int], bool] | None = None,
     sleeper: Callable[[float], None] | None = None,
-    start_reader: Callable[[int], str | None] | None = None,
 ) -> TerminateOutcome:
     """TERM→grace→KILL only when identity and ownership re-check pass."""
     env = os.environ if env is None else env
@@ -312,7 +467,6 @@ def terminate_process(
     signaller = _signal_pid if signaller is None else signaller
     alive_check = _pid_alive if alive_check is None else alive_check
     sleeper = time.sleep if sleeper is None else sleeper
-    start_reader = read_process_start_token if start_reader is None else start_reader
     grace = grace_seconds(env) if grace is None else grace
 
     entry = next((e for e in table if e.pid == pid), None)
@@ -321,17 +475,9 @@ def terminate_process(
             ok=False, outcome="not_found", pid=pid, detail="pid_not_in_table"
         )
 
-    try:
-        live_start = str(start_reader(entry.pid) or "")
-    except Exception:  # noqa: BLE001
-        live_start = ""
+    live_start = process_start_token(entry.pid, entry.command)
     live_hash = command_sha256(entry.command)
-    if (
-        not entry.start_token
-        or live_start != entry.start_token
-        or live_start != expected_start
-        or live_hash != expected_command_sha256
-    ):
+    if live_start != expected_start or live_hash != expected_command_sha256:
         return TerminateOutcome(
             ok=False,
             outcome="stale_selection",
@@ -339,7 +485,6 @@ def terminate_process(
             detail="start_token_or_command_hash_mismatch",
             receipt={
                 "expected_start": expected_start,
-                "snapshot_start": entry.start_token,
                 "live_start": live_start,
                 "expected_command_sha256": expected_command_sha256,
                 "live_command_sha256": live_hash,
@@ -376,21 +521,6 @@ def terminate_process(
         "run_id": row.get("run_id") or expected_run_id,
         "steps": [],
     }
-    try:
-        signal_start = str(start_reader(pid) or "")
-    except Exception:  # noqa: BLE001
-        signal_start = ""
-    if not signal_start or signal_start != expected_start:
-        receipt["outcome"] = "identity_changed"
-        receipt["expected_start"] = expected_start
-        receipt["live_start"] = signal_start or "unavailable"
-        return TerminateOutcome(
-            ok=False,
-            outcome="stale_selection",
-            pid=pid,
-            detail="birth_identity_changed_before_term",
-            receipt=receipt,
-        )
     term = signaller(pid, signal.SIGTERM)
     receipt["steps"].append({"signal": "TERM", "result": term})
     if term == "already_gone":
@@ -404,22 +534,6 @@ def terminate_process(
     if not alive_check(pid):
         receipt["outcome"] = "terminated"
         return TerminateOutcome(ok=True, outcome="terminated", pid=pid, receipt=receipt)
-
-    try:
-        kill_start = str(start_reader(pid) or "")
-    except Exception:  # noqa: BLE001
-        kill_start = ""
-    if not kill_start or kill_start != expected_start:
-        receipt["outcome"] = "identity_changed"
-        receipt["expected_start"] = expected_start
-        receipt["live_start"] = kill_start or "unavailable"
-        return TerminateOutcome(
-            ok=False,
-            outcome="stale_selection",
-            pid=pid,
-            detail="birth_identity_changed_before_kill",
-            receipt=receipt,
-        )
 
     kill = signaller(pid, signal.SIGKILL)
     receipt["steps"].append({"signal": "KILL", "result": kill})

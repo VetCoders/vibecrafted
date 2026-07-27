@@ -38,10 +38,6 @@ from .settlement import (
     emit_settlement_event,
     tui_key_for,
 )
-from .settlement_history import (
-    RunSettlementHistory,
-    advance_run_settlement_history,
-)
 
 TRUST_VERDICTS = ("pass", "pass-with-gaps", "block")
 EVIDENCE_GRADES = ("strong", "medium", "weak")
@@ -1378,9 +1374,10 @@ def _projection_fields_for_receipt(
     fields: Mapping[str, Any],
     receipt: TrustReceiptV1,
 ) -> dict[str, Any]:
-    """Normalize the 4a9 v1 outbox plan with newly required live identity."""
+    """Normalize legacy outbox plans without preserving snapshot authority."""
 
     normalized = dict(fields)
+    normalized.pop("settlement_history", None)
     normalized.setdefault("run_id", receipt.run_id)
     normalized.setdefault("root", receipt.repo_root)
     normalized.setdefault("repo_root", receipt.repo_root)
@@ -1559,15 +1556,6 @@ def _recover_trust_outbox(
         ),
         receipt,
     )
-    raw_history = fields.get("settlement_history")
-    if raw_history is not None:
-        history = RunSettlementHistory.from_payload(raw_history)
-        if (
-            history.latest_revision != receipt.settlement_revision
-            or history.latest_tui != receipt.settlement_tui
-        ):
-            raise ValueError("trust settlement outbox history plan mismatch")
-        expected_fields["settlement_history"] = history.to_payload()
     if fields != expected_fields:
         raise ValueError("trust settlement outbox projection plan mismatch")
     claims = entry_payload.get("claims")
@@ -1606,6 +1594,10 @@ def _recover_trust_outbox(
     if not snapshot:
         snapshot = dict(meta)
         snapshot["run_id"] = run_id
+    meta_had_embedded_history = "settlement_history" in meta
+    snapshot_had_embedded_history = "settlement_history" in snapshot
+    meta.pop("settlement_history", None)
+    snapshot.pop("settlement_history", None)
     for label, payload in (("meta", meta), ("snapshot", snapshot)):
         _validate_projection_identity(
             payload,
@@ -1629,11 +1621,19 @@ def _recover_trust_outbox(
     )
     _after_trust_transition("journal")
 
-    if not _projection_matches_plan(meta, receipt=receipt, fields=fields):
+    if meta_had_embedded_history or not _projection_matches_plan(
+        meta,
+        receipt=receipt,
+        fields=fields,
+    ):
         meta.update(dict(fields))
         control_plane._write_json_durable(meta_path, meta)
         _after_trust_transition("meta")
-    if not _projection_matches_plan(snapshot, receipt=receipt, fields=fields):
+    if snapshot_had_embedded_history or not _projection_matches_plan(
+        snapshot,
+        receipt=receipt,
+        fields=fields,
+    ):
         snapshot.update(dict(fields))
         control_plane._write_json_durable(snapshot_path, snapshot)
         _after_trust_transition("snapshot")
@@ -1897,16 +1897,6 @@ def _persist_trust_settlement(
         settlement=settlement,
         receipt=receipt,
     )
-    current_projection = dict(snapshot)
-    current_projection.update(fields)
-    history = advance_run_settlement_history(
-        snapshot,
-        current_projection,
-        event.to_payload(),
-    )
-    if history is None:
-        raise ValueError("trust settlement history plan missing")
-    fields["settlement_history"] = history
 
     # The prepared outbox is durable before the first irreversible side effect.
     # Recovery replays this exact plan: journal, projections, then notification.

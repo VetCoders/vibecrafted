@@ -231,14 +231,8 @@ const BRIEF_SECTIONS: &[&str] = &[
     "report",
 ];
 
-const FRONTMATTER_REQUIRED: &[&str] = &[
-    "plan_id",
-    "session_id",
-    "role",
-    "agent",
-    "date",
-    "project",
-];
+const FRONTMATTER_REQUIRED: &[&str] =
+    &["plan_id", "session_id", "role", "agent", "date", "project"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 struct CheckpointStore {
@@ -509,9 +503,7 @@ impl ScaffoldArtifactStore {
     ///
     /// Refuses cleanly when the path is not a directory or has no `manifest.json`
     /// — never panics or stack-traces for non-plan inputs.
-    pub fn doctor_plan_root(
-        plan_root: impl AsRef<Path>,
-    ) -> ScaffoldResult<ScaffoldDoctorReport> {
+    pub fn doctor_plan_root(plan_root: impl AsRef<Path>) -> ScaffoldResult<ScaffoldDoctorReport> {
         doctor_plan_root(plan_root)
     }
 
@@ -721,9 +713,7 @@ fn validate_identity(
 
 /// R1 — plan root must be `…/artifacts/<org>/<repo>/<day>/plans/<plan_id>` matching the manifest.
 fn validate_plan_root_identity(root: &Path, manifest: &ScaffoldManifest) -> Result<(), String> {
-    let canonical = root
-        .canonicalize()
-        .unwrap_or_else(|_| root.to_path_buf());
+    let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let components: Vec<String> = canonical
         .components()
         .filter_map(|component| match component {
@@ -1195,9 +1185,7 @@ fn validate_brief_naming(
     let path = artifact.path.as_str();
     let ok = path.starts_with("briefs/")
         && path.ends_with(".md")
-        && path
-            .strip_prefix("briefs/")
-            .is_some_and(brief_filename_ok);
+        && path.strip_prefix("briefs/").is_some_and(brief_filename_ok);
     if !ok {
         doctor_error(
             errors,
@@ -1335,9 +1323,7 @@ fn validate_acceptance_contract(
             Some("R8"),
             Some(&artifact.id),
             Some(&artifact.path),
-            &format!(
-                "{unstated} acceptance bullet(s) lack state markers ([ ]/[~]/[?]/[!]/[x])"
-            ),
+            &format!("{unstated} acceptance bullet(s) lack state markers ([ ]/[~]/[?]/[!]/[x])"),
         );
     }
     if without_verifier > 0 {

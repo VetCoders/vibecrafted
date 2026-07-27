@@ -132,8 +132,8 @@ Lokalne dla repo `.vibecrafted/plans` i `.vibecrafted/reports` to tylko wygodne 
 ## Komendy spawnowania
 
 Użyj przenośnych skryptów z `runtime/scripts/`. Obsługują one generowanie
-artefaktów, wybór trybu uruchomienia (widoczny Terminal lub headless) oraz konfigurację
-środowiska wykonania automatycznie.
+artefaktów, wybór trybu uruchomienia (domyślnie headless; terminal tylko na
+wyraźne żądanie) oraz automatyczną konfigurację środowiska wykonania.
 
 ### Codex (domyślny do implementacji)
 
@@ -141,23 +141,24 @@ artefaktów, wybór trybu uruchomienia (widoczny Terminal lub headless) oraz kon
 ARTIFACT_DAY="$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>"
 PLAN="$ARTIFACT_DAY/plans/<ts>_<agent-task>.md"
 
-bash runtime/scripts/codex_spawn.sh "$PLAN" --mode implement --runtime terminal
+bash runtime/scripts/codex_spawn.sh "$PLAN" --mode implement
 ```
 
 ### Claude (do złożonych zadań rozumowania)
 
 ```bash
-bash agents//claude_spawn.sh "$PLAN" --mode review --runtime terminal
+bash agents//claude_spawn.sh "$PLAN" --mode review
 ```
 
 ### Gemini
 
 ```bash
-bash agents//agy_spawn.sh "$PLAN" --mode implement --runtime terminal  # gemini deprecated; agy is the Google-family runtime
+bash agents//agy_spawn.sh "$PLAN" --mode implement  # gemini deprecated; agy is the Google-family runtime
 ```
 
-> Skrypty domyślnie używają widocznego trybu Terminala na macOS i przełączają się na headless,
-> gdy automatyzacja Terminala jest niedostępna.
+> Skrypty domyślnie uruchamiają odłączone procesy headless na każdej platformie.
+> Przekaż `--runtime terminal` tylko dla ścieżki providera, która dowodowo
+> wymaga TTY.
 
 Jeśli zainstalowana jest opcjonalna warstwa pomocnicza zsh, te same akcje stają się:
 

@@ -75,8 +75,11 @@ Zanim ten workflow wykona analizę specyficzną dla repo, planowanie, implementa
 
 Chodzi o znalezienie zaczepów: węzłów nośnych, twins (duplikaty), martwego kodu, dryfu, entrypointów runtime'u oraz pułapek o dużym zasięgu zmiany. Jeśli task jest jawnie nie-repo lub no-code, zadeklaruj w raporcie wyjątek no-repo. W przeciwnym razie brak dowodów z `vc-init`/Loctree to porażka procesu.
 
-Standardowy launcher (`vibecrafted start` / `vc-start`, następnie `vc-<launcher> <agent> --file|--prompt ...`).
-Poza Zellij framework podłącza/tworzy sesję operatora.
+Standardowy launcher: `vibecrafted dou <agent>` / `vc-dou` (zobacz
+[Delegation Matrix](../DELEGATION_MATRIX.md)). Worker domyślnie działa jako
+odłączony proces headless; `vibecrafted start` / `vc-start` to opcjonalna
+obserwacja i konfiguracja interaktywnej User Session, a nie wymagany host
+procesu.
 
 ```bash
 vibecrafted dou claude --prompt 'Audit launch readiness'

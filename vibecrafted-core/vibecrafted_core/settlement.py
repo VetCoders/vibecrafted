@@ -716,6 +716,14 @@ def emit_settlement_event(
     """Append a prepared settlement revision after its snapshot is durable."""
 
     from .events import append_event
+    from .settlement_ledger import _append_settlement_fact
+
+    # V2 is the authority-bearing settlement surface. Preserve its fact in the
+    # permanent hash chain before publishing the bounded notification stream.
+    # A ledger failure is fail-closed: no transient event may claim a fact that
+    # the immutable history did not durably accept.
+    if isinstance(event, SettlementEventV2):
+        _append_settlement_fact(event)
 
     previous = event.previous.verdict if event.previous else "unsettled"
     return append_event(

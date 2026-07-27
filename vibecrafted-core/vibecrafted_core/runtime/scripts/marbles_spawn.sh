@@ -20,7 +20,7 @@ Options:
   --prompt <text>     Inline prompt string; captures the rest of the command line
   --count <n>         Number of loops (default: 3)
   --rotation <mode>   single, duo, trio, or multi (default: single)
-  --runtime <rt>      terminal, headless (default: terminal)
+  --runtime <rt>      terminal, headless (default: headless)
   --root <dir>        Repository root
   --no-watch          Skip watcher UI and run chaining directly
   --skill-name <name> Loop skill name (default: marbles)
@@ -35,7 +35,7 @@ task=""
 prompt=""
 count=3
 rotation="single"
-runtime="terminal"
+runtime="headless"
 root=""
 use_watcher=1
 loop_skill_name="${VIBECRAFTED_LOOP_SKILL_NAME:-marbles}"

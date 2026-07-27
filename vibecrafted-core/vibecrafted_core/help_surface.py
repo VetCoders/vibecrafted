@@ -372,6 +372,7 @@ Commands:
   init [agent]         Orient an agent in this repo
   <skill> <agent>      Run a workflow with an agent
   resume <agent>       Continue a previous session
+  resume-session       Continue an exact provider session as a tracked run
   status               Today's agent activity
   doctor               Installation health — pass/fail
   receipt              Delivery/runtime receipt (source ↔ installed)
@@ -388,6 +389,38 @@ Examples:
   vibecrafted init claude
   vibecrafted implement codex -p "Ship dark mode"
   vibecrafted marbles claude -p "Loop until clean"
+""".lstrip("\n")
+
+
+def render_resume_session_help() -> str:
+    return """
+⚒  resume-session
+─────────────────────────────────────────
+  Continue one exact provider session as a tracked, detached headless run.
+
+Usage:
+  vibecrafted resume-session <agent> --agent-session-id <id> \\
+    (-p <prompt> | -f <file> | --prompt-stdin) [flags]
+
+Options:
+  --agent-session-id <id>   Exact provider-owned session identifier
+  -p, --prompt <text>       Continuation prompt
+  -f, --prompt-file <path>  Read the continuation prompt from a file
+  --prompt-stdin            Read the prompt from stdin and keep it out of argv
+  --runtime                 Not accepted: this command is always headless
+  --root <path>             Repository root
+  --source-dir <path>       Vibecrafted core source/package root
+  --model <name>            Agent model override where the runner supports it
+  --json                    Machine-readable launch receipt
+
+Contract:
+  Core owns the detached lifetime, control-plane record, transcript, and
+  Guardian-visible process identity. This does not consume automatic-resume
+  authority or pretend to be an interactive User Session.
+
+Example:
+  printf '%s' "continue safely" | vibecrafted resume-session codex \\
+    --agent-session-id 019abc... --prompt-stdin
 """.lstrip("\n")
 
 
@@ -426,7 +459,8 @@ def _option_lines(topic: str) -> list[str]:
     lines = [
         "  -p, --prompt <text>            Inline prompt",
         "  -f, --file <path.md>           Input file as prompt context",
-        "  --runtime <terminal|headless>  Execution surface",
+        "  --prompt-stdin                 Read prompt from stdin; no argv/temp copy",
+        "  --runtime <terminal|headless>  Worker surface (default: headless)",
         "  --root <path>                  Repository root",
         "  --model <name>                 Agent model override",
     ]

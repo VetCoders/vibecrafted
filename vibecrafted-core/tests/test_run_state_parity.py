@@ -384,10 +384,13 @@ LIVE_LIVENESS_PLACEHOLDERS = {"", "pid_gone", "terminal", "lock_present"}
 
 # Keys that are legitimately local to ONE writer and carry no operator/liveness
 # decision. The python dispatcher tracks the worker process directly; the legacy
-# shell frontend echoes its meta source and runtime tag. Schema parity tolerates
-# exactly these — anything else in the symmetric difference is real drift.
+# shell frontend echoes its meta source and runtime tag. The identity-qualified
+# worker receipt is intentionally emitted only by the Python owner that launched
+# and can later signal that process. Schema parity tolerates exactly these —
+# anything else in the symmetric difference is real drift.
 PARITY_PATH_LOCAL_KEYS = frozenset(
     {
+        "worker_identity",
         "worker_pid",
         "worker_pgid",
         "meta",

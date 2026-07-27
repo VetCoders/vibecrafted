@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -26,7 +25,6 @@ def _bash(script: str) -> subprocess.CompletedProcess[str]:
     with tempfile.TemporaryDirectory(prefix="vibecrafted-meta-test-") as state_root:
         env = os.environ.copy()
         env["VIBECRAFTED_HOME"] = str(Path(state_root) / ".vibecrafted")
-        env["VIBECRAFTED_PYTHON"] = sys.executable
         return subprocess.run(
             ["bash", "-lc", _ENV_SANITIZE + script],
             check=True,
@@ -451,9 +449,7 @@ def test_reap_run_never_fails_a_finished_run(tmp_path: Path) -> None:
 
 def test_triage_run_never_fails_a_finished_run(tmp_path: Path) -> None:
     """The shell wrapper is fail-open: no meta, no session, no vc-frame — exit 0."""
-    home = tmp_path / "home" / ".vibecrafted"
-    meta = home / "control_plane" / "runtime_runs" / "r1" / "meta.json"
-    meta.parent.mkdir(parents=True)
+    meta = tmp_path / "agent.meta.json"
     meta.write_text(
         json.dumps({"run_id": "r1", "exit_code": 0}) + "\n", encoding="utf-8"
     )
@@ -466,7 +462,6 @@ def test_triage_run_never_fails_a_finished_run(tmp_path: Path) -> None:
         set -euo pipefail
         unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME
         source "{COMMON_SH}"
-        export VIBECRAFTED_HOME="{home}"
         spawn_triage_run "{meta}"
         echo "survived=$?"
         '''

@@ -276,7 +276,7 @@ PY
 
 spawn_launch() {
   local launcher="$1"
-  local runtime="${2:-terminal}"
+  local runtime="${2:-headless}"
   local dry_run="${3:-0}"
   local pane_name="${4:-$(basename "$launcher" .sh)}"
 
@@ -375,7 +375,7 @@ spawn_launch() {
 spawn_print_launch() {
   local agent="$1"
   local mode="$2"
-  local runtime="${3:-terminal}"
+  local runtime="${3:-headless}"
   local dry_run="${4:-0}"
 
   # ── 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. branded spawn output ──────────────────────────────

@@ -73,6 +73,29 @@ def test_mutation_can_create_post_birth_meta_under_the_same_lock(
     assert read_run_meta(meta, expected_run_id="run-1")["state"] == "spawned"
 
 
+def test_mutation_can_target_artifact_root_without_moving_shared_lock(
+    tmp_path: Path,
+) -> None:
+    control_plane = tmp_path / "control-plane"
+    artifact_root = tmp_path / "artifacts" / "run-1"
+    control_plane.mkdir()
+    artifact_root.mkdir(parents=True)
+    meta = artifact_root / "meta.json"
+
+    assert mutate_run_meta(
+        control_plane,
+        meta_path=meta,
+        mutation_root=artifact_root,
+        run_id="run-1",
+        create=True,
+        mutator=lambda payload: {**payload, "run_id": "run-1", "state": "spawned"},
+    )
+
+    assert read_run_meta(meta, expected_run_id="run-1")["state"] == "spawned"
+    assert list((control_plane / "run_mutation_locks" / "run").glob("*.lock"))
+    assert not (artifact_root / "run_mutation_locks").exists()
+
+
 def test_mutation_rejects_symlinks_and_wrong_run_identity(tmp_path: Path) -> None:
     meta = tmp_path / "runtime_runs" / "run-1" / "meta.json"
     _write_meta(meta)
@@ -107,6 +130,19 @@ def test_mutation_rejects_meta_outside_control_plane_root(tmp_path: Path) -> Non
         mutate_run_meta(
             control_plane,
             meta_path=outside,
+            run_id="run-1",
+            mutator=lambda payload: {**payload, "should_not_land": True},
+        )
+
+    assert "should_not_land" not in read_run_meta(outside, expected_run_id="run-1")
+
+    allowed_artifacts = tmp_path / "allowed-artifacts"
+    allowed_artifacts.mkdir()
+    with pytest.raises(RunMetaMutationError, match="outside the mutation root"):
+        mutate_run_meta(
+            control_plane,
+            meta_path=outside,
+            mutation_root=allowed_artifacts,
             run_id="run-1",
             mutator=lambda payload: {**payload, "should_not_land": True},
         )

@@ -280,6 +280,9 @@ impl ControlPlane {
         if run.stop_reason.is_empty() {
             run.stop_reason = string("stop_reason").to_string();
         }
+        if run.commit_sha.is_empty() {
+            run.commit_sha = string("commit_sha").to_string();
+        }
         if run.agent_session_id.is_empty() {
             run.agent_session_id = string("agent_session_id").to_string();
         }
@@ -415,6 +418,7 @@ impl ControlPlane {
             skill: nonempty_runtime_value(&value("skill"), &value("workflow")),
             mode: value("mode"),
             root: value("root"),
+            commit_sha: value("commit_sha"),
             operator_session: value("operator_session"),
             latest_report: value("report"),
             latest_transcript,
@@ -717,6 +721,14 @@ impl ControlPlane {
             absorb_status(&mut merged, status);
         }
         for run in &mut merged {
+            let operator_stopped = run.state == "stopped" && !run.stop_reason.trim().is_empty();
+            if operator_stopped {
+                run.health = "final".to_string();
+                run.last_error.clear();
+                run.recovery_required = false;
+                run.set_controls(false, false, false);
+                continue;
+            }
             let terminal = run.is_terminal();
             if terminal {
                 run.health = "final".to_string();
@@ -857,6 +869,15 @@ fn absorb_status(merged: &mut Vec<RunStatus>, incoming: RunStatus) {
 }
 
 fn normalize_event(event: &Event, existing: Option<&RunStatus>, now: DateTime<Utc>) -> RunStatus {
+    let accepted_stop_event = event.kind == "audit:stop"
+        && event
+            .payload
+            .get("accepted")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+    let prior_operator_stop =
+        existing.filter(|run| run.state == "stopped" && !run.stop_reason.trim().is_empty());
+    let operator_stop_sticky = accepted_stop_event || prior_operator_stop.is_some();
     let payload_string = |key: &str| {
         event
             .payload
@@ -878,13 +899,7 @@ fn normalize_event(event: &Event, existing: Option<&RunStatus>, now: DateTime<Ut
             state = lifecycle_state.to_string();
         } else if event.kind == "launch" {
             state = "created".to_string();
-        } else if event.kind == "audit:stop"
-            && event
-                .payload
-                .get("accepted")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false)
-        {
+        } else if accepted_stop_event {
             state = "stopped".to_string();
         } else {
             state = existing
@@ -984,6 +999,12 @@ fn normalize_event(event: &Event, existing: Option<&RunStatus>, now: DateTime<Ut
         skill,
         mode,
         root: root.clone(),
+        commit_sha: existing_string(
+            &payload_string("commit_sha"),
+            existing
+                .map(|run| run.commit_sha.as_str())
+                .unwrap_or_default(),
+        ),
         operator_session: operator_session_name(&root, event.run_id.trim()),
         latest_report: existing_string(
             &payload_string("report"),
@@ -1105,6 +1126,23 @@ fn normalize_event(event: &Event, existing: Option<&RunStatus>, now: DateTime<Ut
             .collect(),
     );
     enrich_run_status(&mut status, &payload, false);
+    if operator_stop_sticky {
+        status.state = "stopped".to_string();
+        status.health = "final".to_string();
+        status.last_error.clear();
+        status.recovery_required = false;
+        if status.liveness.is_empty() {
+            status.liveness = "terminal".to_string();
+        }
+        if let Some(stopped) = prior_operator_stop {
+            status.updated_at.clone_from(&stopped.updated_at);
+            status.completed_at.clone_from(&stopped.completed_at);
+            status.exit_code = stopped.exit_code;
+            status.liveness.clone_from(&stopped.liveness);
+            status.stop_reason.clone_from(&stopped.stop_reason);
+        }
+        status.set_controls(false, false, false);
+    }
     status
 }
 
@@ -1471,6 +1509,7 @@ fn normalize_lock(path: &Path, now: DateTime<Utc>) -> Option<RunStatus> {
         skill: skill_from_code(&get("skill")),
         mode,
         root: root.clone(),
+        commit_sha: String::new(),
         operator_session: operator_session_name(&root, run_id),
         latest_report: String::new(),
         latest_transcript: String::new(),
@@ -1599,6 +1638,7 @@ impl MarblesState {
             skill: "marbles".to_string(),
             mode,
             root: self.root.clone(),
+            commit_sha: String::new(),
             operator_session: operator_session_name(&self.root, run_id),
             latest_report: latest.map(|l| l.report.clone()).unwrap_or_default(),
             latest_transcript: latest.map(|l| l.transcript.clone()).unwrap_or_default(),
@@ -1651,6 +1691,117 @@ mod tests {
     use chrono::{Duration, Utc};
     use serde_json::json;
     use std::fs;
+
+    #[test]
+    fn accepted_operator_stop_survives_later_supervisor_failures() {
+        let unique = format!(
+            "control-core-sticky-stop-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let home = std::env::temp_dir().join(unique);
+        let control_plane = home.join("control_plane");
+        let snapshots = control_plane.join("runs");
+        fs::create_dir_all(&snapshots).expect("snapshots");
+        fs::write(
+            snapshots.join("sticky-stop.json"),
+            serde_json::to_vec(&json!({
+                "run_id": "sticky-stop",
+                "state": "failed",
+                "agent": "codex",
+                "skill": "workflow",
+                "mode": "workflow",
+                "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                "updated_at": (Utc::now() - Duration::seconds(4)).to_rfc3339(),
+                "health": "final",
+                "liveness": "terminal",
+                "recovery_required": true,
+                "last_error": "stale snapshot failure"
+            }))
+            .expect("snapshot json"),
+        )
+        .expect("snapshot");
+        let now = Utc::now();
+        let records = [
+            json!({
+                "ts": (now - Duration::seconds(3)).to_rfc3339(),
+                "run_id": "sticky-stop",
+                "kind": "lifecycle:active",
+                "message": "worker active",
+                "payload": {
+                    "state": "active",
+                    "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                    "worker_pid": 987654,
+                    "worker_pgid": 987654,
+                    "liveness": "pid_alive"
+                }
+            }),
+            json!({
+                "ts": (now - Duration::seconds(2)).to_rfc3339(),
+                "run_id": "sticky-stop",
+                "kind": "audit:stop",
+                "message": "run stopped",
+                "payload": {
+                    "accepted": true,
+                    "state": "stopped",
+                    "operator_stop_accepted": true,
+                    "stop_reason": "manual operator stop",
+                    "health": "final",
+                    "liveness": "terminal",
+                    "exit_code": 143
+                }
+            }),
+            json!({
+                "ts": (now - Duration::seconds(1)).to_rfc3339(),
+                "run_id": "sticky-stop",
+                "kind": "lifecycle:failed",
+                "message": "process failed with exit code -15",
+                "payload": {
+                    "state": "failed",
+                    "exit_code": -15,
+                    "liveness": "terminal",
+                    "recovery_required": true,
+                    "error": "supervisor observed SIGTERM"
+                }
+            }),
+            json!({
+                "ts": now.to_rfc3339(),
+                "run_id": "sticky-stop",
+                "kind": "lifecycle:report_missing",
+                "message": "artifact contract failed",
+                "payload": {
+                    "state": "report_missing",
+                    "recovery_required": true,
+                    "errors": ["report_missing"]
+                }
+            }),
+        ];
+        let encoded = records
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(control_plane.join("events.jsonl"), format!("{encoded}\n"))
+            .expect("event stream");
+
+        let view = ControlPlane::new(&home).compute_view(now);
+        let run = view
+            .recent_runs
+            .iter()
+            .find(|run| run.run_id == "sticky-stop")
+            .expect("stopped run");
+
+        assert_eq!(run.state, "stopped");
+        assert_eq!(run.stop_reason, "manual operator stop");
+        assert_eq!(run.exit_code, Some(143));
+        assert!(!run.recovery_required);
+        let controls = run.controls.as_ref().expect("controls");
+        assert!(!controls.await_run);
+        assert!(!controls.stop);
+        assert!(!controls.retry);
+
+        fs::remove_dir_all(home).ok();
+    }
 
     #[test]
     fn event_only_run_survives_rotation_via_snapshot() {

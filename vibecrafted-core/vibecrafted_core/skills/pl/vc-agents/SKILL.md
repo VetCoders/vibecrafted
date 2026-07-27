@@ -79,9 +79,10 @@ vc-<launcher> <agent> \
   --prompt '<prompt>'
 ```
 
-Jeśli `vc-<launcher> <agent>` zostanie wywołany poza Zellij, framework podłączy się do
-istniejącej sesji operatora lub utworzy nową i uruchomi ten workflow w nowej zakładce.
-`vc-agents` definiuje, jak ten workflow rozkłada się na zewnętrznych workerów.
+`vc-<launcher> <agent>` uruchamia odłączonego workera headless niezależnie od
+tego, czy vc-frame działa. User Session może wyświetlać jego transkrypt i stan,
+ale nie hostuje procesu. `vc-agents` definiuje, jak ten run launchera rozkłada
+się na zewnętrznych workerów.
 
 ### Konkretne przykłady dispatchu
 

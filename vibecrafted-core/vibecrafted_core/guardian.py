@@ -1,11 +1,12 @@
-"""Durable f/x/n guardian for terminal Vibecrafted runs.
+"""Event-driven f/x/n guardian for terminal Vibecrafted runs.
 
-Live settlement decisions have one trigger substrate: the vibecrafted-server
-``GET /api/control/events`` SSE stream. For each new typed settlement the
-guardian performs one exact run-projection read before deciding. Independently,
-one bounded local startup sweep repairs terminal triage receipts left behind by
-a dispatcher death. It never tails ``events.jsonl``, polls run lists
-continuously, or starts a vc-frame loop.
+The guardian has one trigger substrate: the vibecrafted-server
+``GET /api/control/events`` SSE stream.  For each new typed settlement it
+durably queues one exact run-triage projection before advancing the stream
+cursor, then performs one exact run-projection read before deciding recovery.
+One bounded local startup sweep repairs terminal receipts orphaned by a dead
+dispatcher; periodic work revisits only that durable outbox.  The guardian
+never tails ``events.jsonl`` or makes Zellij/vc-frame the run owner.
 
 On the first attachment, historical frames are checkpointed without side
 effects until the server's typed ``stream.caught-up`` receipt proves that the
@@ -32,7 +33,6 @@ import fcntl
 import hashlib
 import heapq
 import hmac
-import ipaddress
 import json
 import logging
 import math
@@ -68,8 +68,6 @@ from .settlement import (
 from .settlement_history import SettlementHistoryPublisher
 
 LOGGER = logging.getLogger(__name__)
-_DIRECT_URL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-_DEFAULT_URL_OPENER = urllib.request.build_opener()
 
 GUARDIAN_STATE_SCHEMA = "vibecrafted.guardian-state.v2"
 GUARDIAN_STATE_SCHEMA_V1 = "vibecrafted.guardian-state.v1"
@@ -642,8 +640,8 @@ class PendingRecord:
 Notifier = Callable[[GuardianNotification], None]
 Reconciler = Callable[[SettlementRevision], ReconcileDecision]
 ResumeCallback = Callable[[SettlementRevision, str], object]
-TriageScheduler = Callable[[str], bool]
 HistoryPublisher = Callable[[], object]
+TriageScheduler = Callable[[str], bool]
 UrlOpener = Callable[..., Any]
 ReadyCallback = Callable[[], None]
 GuardEnforcer = Callable[..., object]
@@ -651,31 +649,12 @@ NativeResumer = Callable[..., Mapping[str, object]]
 CursorParser = Callable[[str], CursorToken | None]
 
 
-def _guardian_urlopen(
-    request: str | urllib.request.Request,
-    *,
-    timeout: float,
-) -> Any:
-    """Bypass ambient proxies only for the guardian's loopback control plane."""
-    raw_url = request.full_url if isinstance(request, urllib.request.Request) else request
-    hostname = urllib.parse.urlsplit(raw_url).hostname
-    is_loopback = hostname == "localhost"
-    if hostname and not is_loopback:
-        try:
-            is_loopback = ipaddress.ip_address(hostname).is_loopback
-        except ValueError:
-            pass
-    if is_loopback:
-        return _DIRECT_URL_OPENER.open(request, timeout=timeout)
-    return _DEFAULT_URL_OPENER.open(request, timeout=timeout)
+def _ignore_history_publish() -> None:
+    return None
 
 
 def _ignore_triage_schedule(_run_id: str) -> bool:
     return True
-
-
-def _ignore_history_publish() -> None:
-    return None
 
 
 @dataclass(frozen=True)
@@ -2024,6 +2003,7 @@ def _canonical_triage_run_id(run_id: object) -> str:
     candidate = str(run_id or "").strip()
     if (
         not candidate
+        or candidate in {".", ".."}
         or len(candidate.encode("utf-8")) > MAX_RUN_ID_BYTES
         or Path(candidate).name != candidate
         or "/" in candidate
@@ -2122,12 +2102,7 @@ def _quarantine_terminal_triage_outbox(path: Path) -> bool:
 def _bounded_terminal_triage_outbox_occupancy_locked(
     root: Path,
 ) -> tuple[int, bool]:
-    """Count valid jobs within one bounded scheduling scan under the lock.
-
-    Invalid entries are moved to the separate evidence quarantine. ``complete``
-    is false when another directory entry exists beyond the bounded page, so
-    the live SSE path can backpressure instead of walking an unbounded tree.
-    """
+    """Count valid jobs within one bounded scheduling scan under the lock."""
 
     limit = TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT
     if limit <= 0:
@@ -2158,10 +2133,8 @@ def _bounded_terminal_triage_outbox_occupancy_locked(
 def _persist_terminal_triage_outbox(run_id: str) -> Path:
     candidate = _canonical_triage_run_id(run_id)
     path = _terminal_triage_outbox_path(candidate)
-    # The recovery pass is deliberately bounded.  Keep creation and the bound
-    # under the same process lock so the directory can never grow a valid job
-    # beyond the page the scanner is able to inspect.  Existing jobs may always
-    # refresh their timestamp; that is what rotates retryable failures.
+    # Existing jobs may always refresh their generation. New jobs are admitted
+    # only while the bounded recovery page can still cover every valid record.
     with _TERMINAL_TRIAGE_LOCK:
         previous_generation = 0
         try:
@@ -2176,10 +2149,9 @@ def _persist_terminal_triage_outbox(run_id: str) -> Path:
                 ) from exc
             exists = False
         if not exists:
-            (
-                valid_jobs,
-                scan_complete,
-            ) = _bounded_terminal_triage_outbox_occupancy_locked(path.parent)
+            valid_jobs, scan_complete = (
+                _bounded_terminal_triage_outbox_occupancy_locked(path.parent)
+            )
             if valid_jobs >= TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT:
                 raise GuardianStateLimitError(
                     "terminal triage outbox is at its hard recovery capacity"
@@ -2190,8 +2162,10 @@ def _persist_terminal_triage_outbox(run_id: str) -> Path:
                     "within its bounded scheduling scan"
                 )
         generation = max(time.time_ns(), previous_generation + 1)
-        encoded = _terminal_triage_outbox_document(candidate, generation)
-        _atomic_private_write(path, encoded)
+        _atomic_private_write(
+            path,
+            _terminal_triage_outbox_document(candidate, generation),
+        )
     return path
 
 
@@ -2212,7 +2186,7 @@ def _terminal_triage_outbox_document(run_id: str, queued_at_ns: int) -> bytes:
 
 
 def _read_terminal_triage_outbox(path: Path) -> tuple[str, int]:
-    payload = json.loads(_read_private_file(path, maximum=64 * 1024))
+    payload = _strict_json_loads(_read_private_file(path, maximum=64 * 1024))
     if (
         not isinstance(payload, dict)
         or set(payload) != {"schema", "run_id", "queued_at_ns"}
@@ -2277,10 +2251,12 @@ def _reconcile_terminal_triage_run(run_id: str) -> bool:
     """Repair one terminal run and report whether its outbox may be retired."""
 
     try:
-        run_id = _canonical_triage_run_id(run_id)
+        candidate = _canonical_triage_run_id(run_id)
     except GuardianStateError:
         return False
-    meta = vibecrafted_home() / "control_plane" / "runtime_runs" / run_id / "meta.json"
+    meta = (
+        vibecrafted_home() / "control_plane" / "runtime_runs" / candidate / "meta.json"
+    )
     if not meta.is_file() or meta.is_symlink():
         return False
 
@@ -2294,7 +2270,7 @@ def _reconcile_terminal_triage_run(run_id: str) -> bool:
     if outcome.outcome == OUTCOME_ERROR:
         LOGGER.error(
             "terminal triage reconciliation failed for %s: %s",
-            run_id,
+            candidate,
             outcome.reason,
         )
     return triage_outcome_is_complete(outcome)
@@ -2304,14 +2280,16 @@ def _recover_terminal_triage_outbox() -> None:
     """Retry a bounded oldest-first page of durable jobs."""
 
     root = _terminal_triage_outbox_root()
-    # Keep only the oldest attempt page in memory while walking every durable
-    # candidate.  Future writers are hard-capped at SCAN_LIMIT, but a runtime
-    # upgraded from a buggy or manually modified directory may already exceed
-    # it; stopping at an arbitrary filesystem page would starve later jobs
-    # forever.
     newest_first: list[tuple[int, str, Path]] = []
     scanned = 0
-    for path in root.iterdir():
+    scan_saturated = False
+    if TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT <= 0:
+        LOGGER.critical("terminal triage outbox scan limit must be positive")
+        return
+    for entry_index, path in enumerate(root.iterdir(), start=1):
+        if entry_index > TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT:
+            scan_saturated = True
+            break
         if path.name.startswith(".") or path.suffix != ".json":
             continue
         scanned += 1
@@ -2326,12 +2304,12 @@ def _recover_terminal_triage_outbox() -> None:
             heapq.heappush(newest_first, item)
         elif item > newest_first[0]:
             heapq.heapreplace(newest_first, item)
-    if scanned > TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT:
+    if scan_saturated:
         LOGGER.critical(
-            "terminal triage outbox has %s candidates, above hard capacity %s; "
-            "draining the oldest bounded page",
-            scanned,
+            "terminal triage outbox scan reached hard capacity %s after %s "
+            "candidates; draining the oldest bounded page",
             TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT,
+            scanned,
         )
 
     candidates = sorted(
@@ -2346,8 +2324,6 @@ def _recover_terminal_triage_outbox() -> None:
                     expected_generation=queued_at_ns,
                 )
             else:
-                # Rewrite the durable timestamp so persistent failures rotate
-                # behind other pending jobs on the next bounded pass.
                 _refresh_terminal_triage_outbox(
                     run_id,
                     expected_generation=queued_at_ns,
@@ -2422,7 +2398,7 @@ def _enqueue_terminal_triage_job(key: str, run_id: str | None) -> bool:
             _TERMINAL_TRIAGE_JOBS.put_nowait((key, run_id))
         except queue.Full:
             LOGGER.error(
-                "terminal triage queue is full; durable job %s remains for startup sweep",
+                "terminal triage queue is full; durable job %s remains for recovery",
                 key,
             )
             return False
@@ -2461,7 +2437,7 @@ class GuardianRecoveryAdapter:
         self,
         *,
         server_url: str,
-        opener: UrlOpener = _guardian_urlopen,
+        opener: UrlOpener = urllib.request.urlopen,
         timeout: float = 5.0,
         guard_enforcer: GuardEnforcer = _default_guard_enforcer,
         native_resumer: NativeResumer = _default_native_resumer,
@@ -2689,13 +2665,13 @@ class GuardianWorker:
         notifier: Notifier = notify_operator,
         reconciler: Reconciler = fail_closed_reconcile,
         resume: ResumeCallback | None = None,
-        opener: UrlOpener = _guardian_urlopen,
+        opener: UrlOpener = urllib.request.urlopen,
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
         replay_heartbeats: int = DEFAULT_REPLAY_HEARTBEATS,
         ready_callback: ReadyCallback | None = None,
         pending_pass_limit: int = DEFAULT_PENDING_PASS_LIMIT,
-        triage_scheduler: TriageScheduler = _ignore_triage_schedule,
         history_publisher: HistoryPublisher = _ignore_history_publish,
+        triage_scheduler: TriageScheduler = _ignore_triage_schedule,
         clock: Callable[[], float] = time.time,
         cursor_parser: CursorParser = _parse_event_cursor,
         control_parser: ControlParser | None = parse_stream_control,
@@ -2716,8 +2692,8 @@ class GuardianWorker:
         self.replay_heartbeats = replay_heartbeats
         self.ready_callback = ready_callback
         self.pending_pass_limit = pending_pass_limit
-        self.triage_scheduler = triage_scheduler
         self.history_publisher = history_publisher
+        self.triage_scheduler = triage_scheduler
         self.clock = clock
         self.cursor_parser = cursor_parser
         self.control_parser = control_parser
@@ -2862,7 +2838,6 @@ class GuardianWorker:
                     stats.frames += 1
                     event = parse_settlement_revision(item.data)
                     if event is None:
-                        latest_cursor = item.cursor
                         try:
                             if _declares_settlement_event(item.data):
                                 if self.state.quarantine(item.cursor, item.data):
@@ -2873,6 +2848,7 @@ class GuardianWorker:
                                     )
                             elif not self.state.baseline_complete:
                                 self.state.checkpoint(item.cursor)
+                            latest_cursor = item.cursor
                         except (OSError, GuardianStateError):
                             LOGGER.exception(
                                 "guardian could not persist invalid frame evidence at %s",
@@ -2880,10 +2856,6 @@ class GuardianWorker:
                             )
                         continue
 
-                    # Projection publication is deliberately independent of the
-                    # terminal-triage queue. Queue pressure may pause this SSE
-                    # cursor, but it must never freeze the operator's f/x/n rail.
-                    self._publish_history_safely()
                     try:
                         triage_scheduled = self.triage_scheduler(event.run_id)
                     except Exception:
@@ -2893,8 +2865,9 @@ class GuardianWorker:
                             event.run_id,
                         )
                     if not triage_scheduled:
-                        # Do not checkpoint this durable event. Reattach from the
-                        # previous cursor and replay once queue capacity returns.
+                        # The durable stream cursor is still the previous frame.
+                        # Reattachment will replay this settlement after local
+                        # outbox capacity or persistence recovers.
                         stats.action_failures += 1
                         LOGGER.error(
                             "guardian paused settlement consumption before %s r%s "
@@ -2903,7 +2876,11 @@ class GuardianWorker:
                             event.revision,
                         )
                         return stats
-                    latest_cursor = item.cursor
+
+                    # Projection publication is independent of settlement
+                    # recovery and notification. A broken viewer must never
+                    # block the durable Guardian cursor.
+                    self._publish_history_safely()
                     baseline_was_complete = self.state.baseline_complete
                     try:
                         claimed = (
@@ -2918,7 +2895,10 @@ class GuardianWorker:
                             event.revision,
                         )
                         stats.action_failures += 1
-                        continue
+                        # Do not consume later frames after a failed durable
+                        # claim: their cursors would jump over this settlement.
+                        return stats
+                    latest_cursor = item.cursor
                     if not claimed:
                         continue
                     stats.claimed += 1
@@ -3350,40 +3330,35 @@ def _recover_pending_trust_before_attach() -> None:
 
 
 def _recover_untriaged_runs_background() -> None:
-    """Run one bounded local fallback sweep outside the SSE decision path."""
+    """Recover durable jobs, then sweep dispatcher-orphaned terminal runs."""
 
-    from .run_triage import reconcile_untriaged_runs
+    from .run_triage import OUTCOME_ERROR, sweep_untriaged_runs
 
     _recover_terminal_triage_outbox()
     control_plane = vibecrafted_home() / "control_plane"
     try:
-        report = reconcile_untriaged_runs(control_plane)
+        swept = sweep_untriaged_runs(
+            control_plane,
+            limit=TERMINAL_TRIAGE_OUTBOX_ATTEMPT_LIMIT,
+            scan_limit=TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT,
+        )
     except Exception:
         LOGGER.exception(
             "terminal triage startup reconciliation could not scan %s",
             control_plane,
         )
         return
-    for item in report.errors:
-        LOGGER.error(
-            "terminal triage recovery failed for %s: %s",
-            item.run_id,
-            item.reason,
-        )
-    if report.truncated:
-        LOGGER.critical(
-            "terminal triage recovery hit its bounded limit: "
-            "scanned=%s attempted=%s; explicit operator sweep with a higher "
-            "scan limit is required",
-            report.scanned,
-            report.attempted,
-        )
-    if report.ok:
-        LOGGER.info(
-            "terminal triage recovery complete: scanned=%s attempted=%s",
-            report.scanned,
-            report.attempted,
-        )
+    for meta, outcome in swept:
+        if outcome.outcome == OUTCOME_ERROR:
+            LOGGER.error(
+                "terminal triage recovery failed for %s: %s",
+                meta,
+                outcome.reason,
+            )
+    LOGGER.info(
+        "terminal triage recovery complete: attempted=%s",
+        len(swept),
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -3427,8 +3402,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             connect_timeout=args.connect_timeout,
             replay_heartbeats=args.replay_heartbeats,
             ready_callback=ready_callback,
-            triage_scheduler=_schedule_terminal_triage_run,
             history_publisher=settlement_history.request_refresh,
+            triage_scheduler=_schedule_terminal_triage_run,
         )
         backoff = BoundedBackoff(args.backoff_initial, args.backoff_max)
     except ValueError as exc:
@@ -3438,7 +3413,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         with single_instance_lock(args.lock):
             try:
                 _recover_pending_trust_before_attach()
-                _schedule_triage_startup_sweep()
+                if not _schedule_triage_startup_sweep():
+                    LOGGER.error(
+                        "terminal triage startup sweep could not be queued; "
+                        "periodic durable recovery remains active"
+                    )
                 settlement_history.start_periodic_refresh()
                 LOGGER.info(
                     "guardian attaching to %s/api/control/events; "

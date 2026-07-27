@@ -77,7 +77,9 @@ vibecrafted research --file /path/to/research-plan.md
 vc-research codex agy --prompt 'Override lanes for this run'
 ```
 
-If invoked outside vc-frame, the framework attaches/creates the operator session and runs in a new tab. Prefer `--file` for an existing plan, `--prompt` for inline intent.
+Research defaults to detached headless lanes both inside and outside vc-frame.
+Prefer `--file` for an existing plan and `--prompt` for inline intent. Use an
+explicit terminal runtime only for a TTY-required compatibility lane.
 
 **Critical swarm semantics:** one invocation launches the research swarm. Do not call the command once per agent. `vibecrafted research <agent>` is the backward-compatible synthesizer-pick form; it does not mean "research only with this agent." `vc-research <agent1> [agent2 agent3] --prompt/--file ...` is the explicit lane override form for one to three lanes; the first listed agent synthesizes unless `--synthesizer <agent>` is provided.
 
@@ -200,7 +202,10 @@ vc-research --file "$PLAN"
 
 Repo-owned spawn scripts remain the internal engine. Do not document raw `bash skills/...spawn.sh` paths as the operator entrypoint.
 
-The launcher opens one shared vc-frame research tab using `research.kdl`, keeps a common `run_id`, and starts the configured lanes against the same plan. Defaults are claude + codex + agy. Divergence between reports reveals blind spots.
+The launcher keeps one common `run_id` and starts the configured headless lanes
+against the same plan. Defaults are claude + codex + agy. vc-frame may project
+the run; the explicit terminal compatibility lane uses one shared
+`research.kdl` tab. Divergence between reports reveals blind spots.
 
 Supported invocation forms:
 

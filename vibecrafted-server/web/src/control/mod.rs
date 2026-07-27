@@ -59,10 +59,16 @@ pub mod api {
             .route("/api/control/events", get(events_sse))
     }
 
-    /// Constant-time readiness for service supervision. Runtime health must
-    /// not recursively trigger an unbounded control-plane projection.
-    async fn health() -> StatusCode {
-        StatusCode::OK
+    /// Cheap liveness/readiness contract for the local process supervisor.
+    ///
+    /// This deliberately does not read the control plane: retained history can
+    /// make the full state projection expensive without making the HTTP
+    /// process unhealthy.
+    async fn health() -> impl IntoResponse {
+        Json(json!({
+            "schema": "vibecrafted.health.v1",
+            "status": "ok",
+        }))
     }
 
     /// Canonical server projection consumed by both JSON and dashboard SSR.

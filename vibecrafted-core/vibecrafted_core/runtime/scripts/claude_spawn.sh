@@ -10,11 +10,12 @@ usage() {
 Usage: claude_spawn.sh [--mode <mode>] [--runtime <terminal|visible|headless|background|detached>] [--model <model>] [--root <repo-root>] [--dry-run] <plan.md>
 
 Portable Claude spawn wrapper.
+Defaults to headless. Pass --runtime terminal for a visible vc-frame worker pane.
 EOF_USAGE
 }
 
 mode="implement"
-runtime="terminal"
+runtime="headless"
 model="${CLAUDE_SPAWN_MODEL:-}"
 root=""
 plan_file=""

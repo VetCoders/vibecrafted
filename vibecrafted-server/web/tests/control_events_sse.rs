@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use std::net::SocketAddr;
 
-use axum::body::Body;
+use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use futures_util::StreamExt;
 use leptos::config::{Env, LeptosOptions};
@@ -142,6 +142,35 @@ fn test_app() -> axum::Router {
         .reload_port(0)
         .build();
     control_routes().with_state(opts)
+}
+
+#[tokio::test]
+async fn health_is_constant_and_independent_of_control_plane_history() {
+    let home = TempHome::new("health");
+    fs::remove_dir_all(home.control_plane()).expect("remove control plane");
+
+    let response = test_app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/health")
+                .body(Body::empty())
+                .expect("health request"),
+        )
+        .await
+        .expect("health response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 1024)
+        .await
+        .expect("health body");
+    let payload: serde_json::Value = serde_json::from_slice(&body).expect("health JSON");
+    assert_eq!(
+        payload,
+        serde_json::json!({
+            "schema": "vibecrafted.health.v1",
+            "status": "ok",
+        })
+    );
 }
 
 async fn collect_sse_until(

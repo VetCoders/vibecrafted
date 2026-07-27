@@ -331,6 +331,7 @@ def _run_marbles_prompt(
     env.pop("VC_FRAME", None)
     env.pop("VC_FRAME_PANE_ID", None)
     env.pop("VC_FRAME_SESSION_NAME", None)
+    env["VETCODERS_SPAWN_RUNTIME"] = "terminal"
     env["VIBECRAFTED_RUN_ID"] = "marb-014520"
     operator_session = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
 
@@ -372,7 +373,7 @@ def test_vc_marbles_preserves_prompt_as_single_argument_inside_vc_frame(
         crafted_home
         / "artifacts"
         / _org_repo()
-        / datetime.now().astimezone().strftime("%Y_%m%d")
+        / datetime.now(timezone.utc).strftime("%Y_%m%d")
         / "tmp"
     )
 
@@ -422,6 +423,7 @@ def test_vc_marbles_inside_vc_frame_prints_launch_receipt(tmp_path: Path) -> Non
     env["VC_FRAME"] = "operator"
     env["VC_FRAME_PANE_ID"] = "terminal_7"
     env["VC_FRAME_SESSION_NAME"] = "ambient-session"
+    env["VETCODERS_SPAWN_RUNTIME"] = "terminal"
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     result = subprocess.run(
@@ -442,7 +444,7 @@ def test_vc_marbles_inside_vc_frame_prints_launch_receipt(tmp_path: Path) -> Non
     assert "inspect: vc-marbles inspect marb-" in result.stdout
 
 
-def test_vc_marbles_uses_no_watch_for_headless_runtime(tmp_path: Path) -> None:
+def test_vc_marbles_defaults_to_headless_and_uses_no_watch(tmp_path: Path) -> None:
     home = tmp_path / "home"
     crafted_home = home / ".vibecrafted"
     fake_bin = tmp_path / "bin"
@@ -469,7 +471,7 @@ def test_vc_marbles_uses_no_watch_for_headless_runtime(tmp_path: Path) -> None:
     env["VIBECRAFTED_ROOT"] = str(isolated_root)
     env["CAPTURE_FILE"] = str(capture_file)
     env["VC_FRAME_CAPTURE_FILE"] = str(vc_frame_capture)
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    env.pop("VETCODERS_SPAWN_RUNTIME", None)
     env["VC_FRAME"] = "operator"
     env["VC_FRAME_PANE_ID"] = "terminal_7"
     env["VC_FRAME_SESSION_NAME"] = "ambient-session"
@@ -510,7 +512,7 @@ def test_vc_marbles_preserves_prompt_as_single_argument_in_operator_session(
         crafted_home
         / "artifacts"
         / _org_repo()
-        / datetime.now().astimezone().strftime("%Y_%m%d")
+        / datetime.now(timezone.utc).strftime("%Y_%m%d")
         / "tmp"
     )
 

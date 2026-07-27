@@ -9,35 +9,19 @@ from vibecrafted_core import run_reaper
 
 
 def entry(
-    pid: int,
-    ppid: int = 1,
-    pgid: int | None = None,
-    command: str = "node agent",
-    start_token: str | None = None,
-) -> run_reaper.ProcessEntry:
+    pid: int, ppid: int = 1, pgid: int | None = None, command: str = "node agent"
+):
     return run_reaper.ProcessEntry(
-        pid=pid,
-        ppid=ppid,
-        pgid=pid if pgid is None else pgid,
-        command=command,
-        start_token=start_token or f"birth:{pid}",
+        pid=pid, ppid=ppid, pgid=pid if pgid is None else pgid, command=command
     )
 
 
 TERMINAL_RUN = {
     "run_id": "impl-test-0001",
-    "session_id": "019fa010-1010-7010-8010-101010101010",
     "state": "completed",
     "exit_code": 0,
     "worker_pgid": 4242,
 }
-
-
-def identity() -> run_reaper.ProcessEnvIdentity:
-    return run_reaper.ProcessEnvIdentity(
-        run_id=str(TERMINAL_RUN["run_id"]),
-        session_id=str(TERMINAL_RUN["session_id"]),
-    )
 
 
 def test_snapshot_marks_owned_process_killable():
@@ -45,7 +29,7 @@ def test_snapshot_marks_owned_process_killable():
     snap = pc.snapshot_processes(
         table=table,
         runs=[TERMINAL_RUN],
-        env_index={900: identity()},
+        env_index={900: TERMINAL_RUN["run_id"]},
         self_pid=1000,
         env={},
     )
@@ -59,12 +43,56 @@ def test_snapshot_marks_owned_process_killable():
     assert rows[900]["start_token"]
 
 
+def test_process_identity_receipt_rejects_reused_pid_or_wrong_run():
+    original = [entry(904, pgid=5004, command="python worker.py")]
+    receipt = pc.process_identity_receipt(
+        904,
+        run_id="impl-owned",
+        table=original,
+    )
+
+    assert receipt is not None
+    current, reason, identity = pc.validate_process_identity(
+        receipt,
+        expected_pid=904,
+        expected_pgid=5004,
+        expected_run_id="impl-owned",
+        table=original,
+        env_index={904: "impl-owned"},
+    )
+    assert current is True
+    assert reason == "process_identity_current"
+    assert identity is not None
+
+    reused, reason, _identity = pc.validate_process_identity(
+        receipt,
+        expected_pid=904,
+        expected_pgid=5004,
+        expected_run_id="impl-owned",
+        table=[entry(904, pgid=5004, command="python unrelated.py")],
+        env_index={904: "impl-owned"},
+    )
+    assert reused is False
+    assert reason == "process_identity_mismatch"
+
+    wrong_run, reason, _identity = pc.validate_process_identity(
+        receipt,
+        expected_pid=904,
+        expected_pgid=5004,
+        expected_run_id="impl-owned",
+        table=original,
+        env_index={904: "some-other-run"},
+    )
+    assert wrong_run is False
+    assert reason == "process_run_id_mismatch"
+
+
 def test_snapshot_protects_vc_frame():
     table = [entry(901, pgid=4242, command="/usr/local/bin/vc-frame attach foo")]
     snap = pc.snapshot_processes(
         table=table,
         runs=[TERMINAL_RUN],
-        env_index={901: identity()},
+        env_index={901: TERMINAL_RUN["run_id"]},
         self_pid=1000,
         env={},
     )
@@ -75,6 +103,7 @@ def test_snapshot_protects_vc_frame():
 
 def test_terminate_rejects_stale_start_token():
     table = [entry(902, pgid=4242, command="node worker")]
+    live = pc.process_start_token(902, "node worker")
     live_hash = pc.command_sha256("node worker")
     signals: list[tuple[int, int]] = []
 
@@ -89,24 +118,24 @@ def test_terminate_rejects_stale_start_token():
         expected_run_id=TERMINAL_RUN["run_id"],
         table=table,
         runs=[TERMINAL_RUN],
-        env_index={902: identity()},
+        env_index={902: TERMINAL_RUN["run_id"]},
         self_pid=1000,
         env={},
         signaller=signaller,
         alive_check=lambda _pid: True,
         sleeper=lambda _s: None,
-        start_reader=lambda pid: f"birth:{pid}",
         grace=0,
     )
     assert outcome.ok is False
     assert outcome.outcome == "stale_selection"
     assert signals == []
+    _ = live  # document that live token differs
 
 
 def test_terminate_allows_owned_process():
     cmd = "node worker"
     table = [entry(903, pgid=4242, command=cmd)]
-    start = table[0].start_token
+    start = pc.process_start_token(903, cmd)
     cmd_hash = pc.command_sha256(cmd)
     signals: list[tuple[int, int]] = []
 
@@ -129,48 +158,14 @@ def test_terminate_allows_owned_process():
         expected_run_id=TERMINAL_RUN["run_id"],
         table=table,
         runs=[TERMINAL_RUN],
-        env_index={903: identity()},
+        env_index={903: TERMINAL_RUN["run_id"]},
         self_pid=1000,
         env={},
         signaller=signaller,
         alive_check=alive_check,
         sleeper=sleeper,
-        start_reader=lambda pid: f"birth:{pid}",
         grace=0.01,
     )
     assert outcome.ok is True
     assert outcome.outcome in {"terminated", "killed"}
     assert signals[0] == (903, signal.SIGTERM)
-
-
-def test_terminate_blocks_pid_reuse_between_term_and_kill():
-    cmd = "node worker"
-    table = [entry(904, pgid=4242, command=cmd)]
-    births = iter(("birth:904", "birth:904", "birth:REUSED"))
-    signals: list[tuple[int, int]] = []
-
-    def signaller(pid: int, sig: int) -> str:
-        signals.append((pid, sig))
-        return "signalled"
-
-    outcome = pc.terminate_process(
-        pid=904,
-        expected_start="birth:904",
-        expected_command_sha256=pc.command_sha256(cmd),
-        expected_run_id=TERMINAL_RUN["run_id"],
-        table=table,
-        runs=[TERMINAL_RUN],
-        env_index={904: identity()},
-        self_pid=1000,
-        env={},
-        signaller=signaller,
-        alive_check=lambda _pid: True,
-        sleeper=lambda _seconds: None,
-        start_reader=lambda _pid: next(births),
-        grace=0,
-    )
-
-    assert outcome.ok is False
-    assert outcome.outcome == "stale_selection"
-    assert outcome.detail == "birth_identity_changed_before_kill"
-    assert signals == [(904, signal.SIGTERM)]

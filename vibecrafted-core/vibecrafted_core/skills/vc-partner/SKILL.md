@@ -171,12 +171,12 @@ contract:
 
 Do not delegate before the problem and success contract are explicit.
 
-When you do dispatch a lane while sitting with the operator, dispatch it
-**visibly**: with a live vc-frame session (`VC_FRAME_SESSION_NAME` set) the CLI
-`vibecrafted <skill> <agent> --file` opens the worker as a vc-frame tab you both
-watch. Never go headless into a live session — the MCP `vc_run_launch`/`vc_launch`
-default to `headless` and need an explicit `runtime="visible"`. Shared steering
-means the operator sees the work happen, not a status relay after the fact.
+When you dispatch a lane while sitting with the operator, keep the worker
+**headless and observable**. CLI and MCP use the same detached default even when
+`VC_FRAME_SESSION_NAME` is live. Share the durable transcript, `observe`,
+`await`, and Guardian state; vc-frame may project those surfaces but must not
+own the worker process. Use `terminal` / `visible` only for a provider path
+proven to require a TTY.
 
 ## Partner Journal
 

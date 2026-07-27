@@ -105,6 +105,88 @@ def test_resolve_run_raises_loud_when_still_launching(
     assert excinfo.value.run_id == run_id
 
 
+def test_operator_stop_is_sticky_over_late_failure_and_artifact_aliases(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    run_id = "sticky-stop-projection"
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T12:00:00+00:00",
+            "run_id": run_id,
+            "kind": "lifecycle:active",
+            "message": "worker active",
+            "payload": {
+                "state": "active",
+                "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                "agent": "codex",
+                "skill": "workflow",
+                "mode": "workflow",
+                "worker_pid": 987654321,
+                "worker_pgid": 987654321,
+                "liveness": "pid_alive",
+            },
+        }
+    )
+    control_plane.record_stop_transition(
+        run_id,
+        accepted=True,
+        reason="manual operator stop",
+        target="worker_pgid",
+        target_pid=987654321,
+        target_pgid=987654321,
+        signal_sent=True,
+        alive_after_grace=False,
+        exit_code=143,
+    )
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T12:00:02+00:00",
+            "run_id": run_id,
+            "kind": "lifecycle:failed",
+            "message": "process failed with exit code -15",
+            "payload": {
+                "state": "failed",
+                "exit_code": -15,
+                "liveness": "terminal",
+                "recovery_required": True,
+                "error": "supervisor observed SIGTERM",
+            },
+        }
+    )
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T12:00:03+00:00",
+            "run_id": run_id,
+            "kind": "lifecycle:artifact_seen",
+            "message": "artifacts inspected",
+            "payload": {
+                "state": "artifact_seen",
+                "event_kind": "artifact",
+                "errors": ["report_missing"],
+                "warnings": ["meta_missing"],
+                "recovery_required": True,
+            },
+        }
+    )
+
+    run = control_plane.lookup_run(run_id)
+
+    assert run is not None
+    assert run["state"] == "stopped"
+    assert run["operator_stop_accepted"] is True
+    assert run["stop_reason"] == "manual operator stop"
+    assert run["exit_code"] == 143
+    assert run["artifact_ok"] is True
+    assert run["artifact_errors"] == []
+    assert run["artifact_gate"] == "stopped"
+    assert run["recovery_required"] is False
+    assert run["last_error"] == ""
+    assert run["lifecycle"]["stop"] is False
+    assert run["lifecycle"]["recovery_required"] is False
+
+
 def test_sync_state_preserves_runtime_observe_fields(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

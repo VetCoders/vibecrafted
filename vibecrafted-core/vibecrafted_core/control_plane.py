@@ -12,7 +12,7 @@ import stat
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +46,6 @@ from .settlement import (
     settle_payload,
     settlement_from_payload,
 )
-from .settlement_history import advance_run_settlement_history
 
 ACTIVE_STATES = {
     "created",
@@ -427,18 +426,14 @@ def _write_run_snapshot(
         if current != expected:
             return dict(current or {})
 
+        # Per-run snapshots are projections, never f/x/n history authorities.
+        # Scrub the short-lived 052c embedded ledger on the next successful CAS.
+        payload.pop("settlement_history", None)
         event = prepare_settlement_event(run_id, current, payload)
         revision = _coerce_int(payload.get("settlement_revision"))
         nested = payload.get("settlement")
         if revision is not None and isinstance(nested, dict):
             nested["revision"] = revision
-        history = advance_run_settlement_history(
-            current,
-            payload,
-            event.to_payload() if event is not None else None,
-        )
-        if history is not None:
-            payload["settlement_history"] = history
 
         settlement = settlement_from_payload(payload)
         runtime_meta = _runtime_run_dir(run_id) / "meta.json"
@@ -634,6 +629,14 @@ def _operator_state(run: dict[str, Any]) -> str:
     return "running"
 
 
+def _accepted_operator_stop_payload(run: dict[str, Any] | None) -> bool:
+    return bool(
+        isinstance(run, dict)
+        and str(run.get("state") or "") == "stopped"
+        and run.get("operator_stop_accepted") is True
+    )
+
+
 def _artifact_projection(
     run: dict[str, Any], previous: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -644,10 +647,17 @@ def _artifact_projection(
     errors = [str(item) for item in (run.get("artifact_errors") or []) if str(item)]
     artifact_ok = run.get("artifact_ok")
     terminal_state = state in {"report_validated", "completed", "closed"}
+    operator_stopped = _accepted_operator_stop_payload(run)
     has_live_identity = bool(str(run.get("session_id") or "").strip())
     defer_report_gate = state in ACTIVE_STATES and has_live_identity
 
-    if report and not defer_report_gate:
+    if operator_stopped:
+        # Completion evidence is intentionally not owed after an operator stop.
+        # Later supervisor artifact errors remain observable in the event log,
+        # but cannot turn accepted terminal intent into report_missing/failed.
+        errors = []
+        artifact_ok = True
+    elif report and not defer_report_gate:
         report_path = Path(report)
         try:
             if not report_path.exists():
@@ -683,7 +693,9 @@ def _artifact_projection(
     else:
         artifact_ok = bool(artifact_ok) and len(errors) == 0
 
-    if errors:
+    if operator_stopped:
+        gate = "stopped"
+    elif errors:
         gate = "failed"
     elif state in {"report_validated", "completed", "closed"}:
         gate = "validated"
@@ -696,7 +708,12 @@ def _artifact_projection(
     result["transcript_bytes"] = transcript_bytes
     result["transcript_growth"] = transcript_growth
     result["heartbeat_at"] = str(run.get("heartbeat_at") or run.get("updated_at") or "")
-    if terminal_state and artifact_ok and not errors:
+    if operator_stopped:
+        result["health"] = "final"
+        result["liveness"] = str(result.get("liveness") or "terminal")
+        result["recovery_required"] = False
+        result["last_error"] = ""
+    elif terminal_state and artifact_ok and not errors:
         if _coerce_int(result.get("exit_code")) is None:
             result["exit_code"] = 0
         if not str(result.get("completed_at") or ""):
@@ -1535,12 +1552,18 @@ def _normalize_agent_meta(path: Path) -> RunStatus | None:
         "worker_command",
         "worker_pid",
         "worker_pgid",
+        "worker_identity",
+        "launcher_identity",
         "heartbeat_at",
         "meta",
         "artifact_ok",
         "artifact_errors",
+        "artifact_warnings",
         "artifact_gate",
         "operator_state",
+        "operator_stop_accepted",
+        "operator_stop_at",
+        "stop_reason",
         "trust_receipt",
     ):
         if key in payload and payload.get(key) not in (None, ""):
@@ -1669,6 +1692,32 @@ def _merge_event_stream(
 
         payload = dict(event.get("payload") or {})
         kind = str(event.get("kind") or "")
+        artifact_event = (
+            str(payload.get("event_kind") or "") == "artifact"
+            or "meta_exists" in payload
+            or "report_exists" in payload
+            or "transcript_exists" in payload
+        )
+        if artifact_event and "artifact_errors" not in payload and "errors" in payload:
+            raw_errors = payload.get("errors")
+            payload["artifact_errors"] = (
+                list(raw_errors)
+                if isinstance(raw_errors, (list, tuple))
+                else ([raw_errors] if raw_errors else [])
+            )
+        if (
+            artifact_event
+            and "artifact_warnings" not in payload
+            and "warnings" in payload
+        ):
+            raw_warnings = payload.get("warnings")
+            payload["artifact_warnings"] = (
+                list(raw_warnings)
+                if isinstance(raw_warnings, (list, tuple))
+                else ([raw_warnings] if raw_warnings else [])
+            )
+        if artifact_event and "artifact_ok" not in payload:
+            payload["artifact_ok"] = not bool(payload.get("artifact_errors"))
         # Settlement events are a durable notification about a snapshot that
         # has already been written. Re-projecting them as lifecycle evidence
         # would resurrect an archived run as active/unknown on the next sync.
@@ -1755,11 +1804,16 @@ def _merge_event_stream(
             "worker_command",
             "worker_pid",
             "worker_pgid",
+            "worker_identity",
+            "launcher_identity",
             "heartbeat_at",
             "meta",
             "artifact_ok",
             "artifact_errors",
+            "artifact_warnings",
             "recovery_required",
+            "operator_stop_accepted",
+            "operator_stop_at",
             "stop_reason",
             "stop_signal",
             "stop_target",
@@ -1840,7 +1894,7 @@ def _merge_status(existing: RunStatus | None, incoming: RunStatus) -> RunStatus:
         existing if existing_dt is not None and existing_dt >= incoming_dt else incoming
     )
     preferred = latest
-    return RunStatus(
+    merged_status = RunStatus(
         run_id=preferred.run_id,
         state=preferred.state,
         agent=preferred.agent or existing.agent,
@@ -1872,6 +1926,40 @@ def _merge_status(existing: RunStatus | None, incoming: RunStatus) -> RunStatus:
         if preferred.total_loops is not None
         else existing.total_loops,
         extra={**existing.extra, **incoming.extra},
+    )
+    stop_owner = next(
+        (
+            candidate
+            for candidate in (incoming, existing)
+            if candidate.state == "stopped"
+            and candidate.extra.get("operator_stop_accepted") is True
+        ),
+        None,
+    )
+    if stop_owner is None:
+        return merged_status
+
+    stop_extra = {
+        **merged_status.extra,
+        **stop_owner.extra,
+        "operator_stop_accepted": True,
+        "recovery_required": False,
+        "artifact_ok": True,
+        "artifact_errors": [],
+        "artifact_gate": "stopped",
+        "operator_state": "stopped",
+    }
+    return replace(
+        merged_status,
+        state="stopped",
+        last_error="",
+        updated_at=stop_owner.updated_at or merged_status.updated_at,
+        health="final",
+        source=stop_owner.source,
+        exit_code=stop_owner.exit_code,
+        liveness=stop_owner.liveness or "terminal",
+        completed_at=stop_owner.completed_at or merged_status.completed_at,
+        extra=stop_extra,
     )
 
 
@@ -2281,7 +2369,6 @@ def record_stop_transition(
     payload: dict[str, Any] = {
         "accepted": accepted,
         "reason": reason,
-        "stop_reason": reason,
         "signal": signal_name,
         "stop_signal": signal_name,
         "target": target,
@@ -2310,6 +2397,8 @@ def record_stop_transition(
             "launcher_pid",
             "worker_pid",
             "worker_pgid",
+            "launcher_identity",
+            "worker_identity",
             "runtime",
             "source_dir",
             "prompt",
@@ -2326,6 +2415,10 @@ def record_stop_transition(
             payload["transcript"] = run["latest_transcript"]
     if accepted:
         payload["state"] = "stopped"
+        payload["operator_stop_accepted"] = True
+        payload["operator_stop_at"] = now
+        payload["stop_reason"] = reason
+        payload["recovery_required"] = False
         payload["health"] = "final"
         payload["liveness"] = (
             "pid_alive_after_stop" if alive_after_grace else "terminal"
@@ -2333,6 +2426,8 @@ def record_stop_transition(
         payload["completed_at"] = now
         if exit_code is not None:
             payload["exit_code"] = exit_code
+    else:
+        payload["stop_rejection_reason"] = reason
 
     event = {
         "ts": now,
@@ -2781,6 +2876,28 @@ def _project_run_payload(
 ) -> dict[str, Any]:
     """Project one run's status to a candidate snapshot payload."""
     incoming = _status_to_payload(status)
+    if previous is not None and _accepted_operator_stop_payload(previous):
+        # Snapshots are also reducer inputs after event rotation. Preserve the
+        # accepted stop even if a stale runtime meta or a later supervisor
+        # failure is the only newer source still on disk.
+        incoming.update(
+            {
+                "state": "stopped",
+                "operator_stop_accepted": True,
+                "operator_stop_at": previous.get("operator_stop_at"),
+                "stop_reason": previous.get("stop_reason"),
+                "recovery_required": False,
+                "health": "final",
+                "liveness": previous.get("liveness") or "terminal",
+                "completed_at": previous.get("completed_at"),
+                "exit_code": previous.get("exit_code"),
+                "last_error": "",
+                "artifact_ok": True,
+                "artifact_errors": [],
+                "artifact_gate": "stopped",
+                "operator_state": "stopped",
+            }
+        )
     # A settled gc park is sticky: the launcher meta that fed this status stays
     # "running" forever, so without this guard every full sync re-parked the
     # same dead run — restamping updated_at/completed_at (which made the drain

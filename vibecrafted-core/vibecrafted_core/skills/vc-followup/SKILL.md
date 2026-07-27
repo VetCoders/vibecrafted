@@ -118,8 +118,9 @@ vibecrafted followup <agent> --file '/path/to/context.md'
 vc-followup <agent> --prompt '<prompt>'
 ```
 
-If `vc-followup <agent>` is invoked outside vc-frame, the framework will attach
-or create the operator session and run that launcher skill in a new tab.
+`vc-followup <agent>` defaults to a detached headless worker both inside and
+outside vc-frame. Observe it through its receipt, transcript, and awaitable run
+state.
 
 ## Repository Work Doctrine
 

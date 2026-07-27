@@ -251,11 +251,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             ]
         )
 
-    # Operator invariant: stage workers fly VISIBLY, in vc-frame tabs, whenever
-    # a live operator session can host them. Route through the same resolution
-    # the rest of the fleet uses (cli._default_runtime → "terminal" on live
-    # session/TTY, "headless" only as the degrade-not-die fallback) instead of
-    # hardcoding headless. Continuations inherit spec.runtime via the baton.
+    # Stage workers are headless by default so their lifecycle does not depend on
+    # vc-frame/Zellij. An explicit --runtime terminal remains an operator opt-in,
+    # and continuations inherit the selected runtime via the baton.
     from .cli import _default_runtime
 
     root = args.root or str(Path.cwd())

@@ -162,7 +162,7 @@ PY
 }
 
 spawn_validate_runtime() {
-  local runtime="${1:-terminal}"
+  local runtime="${1:-headless}"
   case "$runtime" in
     terminal|visible|headless|background|detached)
       return 0

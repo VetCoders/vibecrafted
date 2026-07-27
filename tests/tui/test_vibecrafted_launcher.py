@@ -33,6 +33,104 @@ def _write_fake_agent(bin_dir: Path, name: str, capture_file: Path) -> None:
     script.chmod(0o755)
 
 
+def _write_fake_core_python(path: Path) -> None:
+    """Capture a tracked core launch without importing core or spawning an agent."""
+    path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'if [[ "${1:-}" == "-c" ]]; then',
+                '  if [[ "${2:-}" == *"package_root"* ]]; then',
+                '    printf "%s\\n" "$FAKE_CORE_SOURCE_DIR"',
+                "  fi",
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "-m" && "${2:-}" == "vibecrafted_core.cli" ]]; then',
+                "  shift 2",
+                '  printf "%s\\0" "$@" > "$FAKE_CORE_ARGV_FILE"',
+                '  cat > "$FAKE_CORE_PROMPT_FILE"',
+                "  printf '%s\\n' \\",
+                "    '=============== MANUAL EXPLICIT RESUME RECEIPT ===============' \\",
+                "    'run_id:             rsme-fixture-1' \\",
+                '    "agent_session_id:   ${FAKE_CORE_SESSION_ID}" \\',
+                "    'resume_mode:        manual_explicit'",
+                "  exit 0",
+                "fi",
+                'printf "unexpected fake-core invocation: %s\\n" "$*" >&2',
+                "exit 98",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def _read_nul_argv(path: Path) -> list[str]:
+    return [item.decode("utf-8") for item in path.read_bytes().split(b"\0") if item]
+
+
+def _tracked_resume_fixture(
+    tmp_path: Path,
+    *,
+    session_id: str,
+) -> tuple[dict[str, str], Path, Path, Path]:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    provider_called = tmp_path / "provider-called"
+    core_argv = tmp_path / "core-argv.bin"
+    core_prompt = tmp_path / "core-prompt.txt"
+    core_source = tmp_path / "core-source"
+    fake_core = tmp_path / "fake-core-python"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    core_source.mkdir()
+    _write_fake_agent(fake_bin, "codex", provider_called)
+    _write_fake_core_python(fake_core)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    env["CAPTURE_FILE"] = str(provider_called)
+    env["VIBECRAFTED_PYTHON"] = str(fake_core)
+    env["FAKE_CORE_ARGV_FILE"] = str(core_argv)
+    env["FAKE_CORE_PROMPT_FILE"] = str(core_prompt)
+    env["FAKE_CORE_SOURCE_DIR"] = str(core_source)
+    env["FAKE_CORE_SESSION_ID"] = session_id
+    return env, provider_called, core_argv, core_prompt
+
+
+def _assert_tracked_resume(
+    result: subprocess.CompletedProcess[str],
+    *,
+    provider_called: Path,
+    core_argv: Path,
+    core_prompt: Path,
+    session_id: str,
+    prompt: str,
+) -> None:
+    assert "MANUAL EXPLICIT RESUME RECEIPT" in result.stdout
+    assert f"agent_session_id:   {session_id}" in result.stdout
+    payload = _read_nul_argv(core_argv)
+    assert payload[:6] == [
+        "resume-session",
+        "codex",
+        "--agent-session-id",
+        session_id,
+        "--prompt-stdin",
+        "--root",
+    ]
+    assert payload[6] == str(REPO_ROOT)
+    assert payload[7] == "--source-dir"
+    assert Path(payload[8]).name == "core-source"
+    assert core_prompt.read_text(encoding="utf-8") == prompt
+    assert not provider_called.exists()
+
+
 def _write_fake_python(bin_dir: Path, capture_file: Path) -> None:
     script = bin_dir / "python3"
     script.write_text(
@@ -107,6 +205,7 @@ def _write_fake_vc_frame_with_live_session(
 
 
 def _write_gc_vc_frame(bin_dir: Path, capture_file: Path, listing: str) -> None:
+    capture_file.touch()
     script = bin_dir / "vc-frame"
     script.write_text(
         "\n".join(
@@ -1949,45 +2048,39 @@ def test_start_subcommand_launches_operator_entrypoint_layout(tmp_path: Path) ->
 def test_resume_subcommand_forwards_session_and_prompt_to_agent(
     tmp_path: Path,
 ) -> None:
-    home = tmp_path / "home"
-    fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "codex-args.txt"
+    session_id = "resume-session-123"
+    prompt = "Continue the fix"
+    env, provider_called, core_argv, core_prompt = _tracked_resume_fixture(
+        tmp_path,
+        session_id=session_id,
+    )
 
-    home.mkdir()
-    fake_bin.mkdir()
-    _write_fake_agent(fake_bin, "codex", capture_file)
-
-    env = os.environ.copy()
-    env["HOME"] = str(home)
-    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
-    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-    env["CAPTURE_FILE"] = str(capture_file)
-
-    subprocess.run(
+    result = subprocess.run(
         [
             "bash",
             str(LAUNCHER),
             "resume",
             "codex",
             "--session",
-            "resume-session-123",
+            session_id,
             "--prompt",
-            "Continue the fix",
+            prompt,
         ],
         check=True,
         cwd=REPO_ROOT,
         env=env,
+        capture_output=True,
+        text=True,
     )
 
-    payload = capture_file.read_text(encoding="utf-8").splitlines()
-    assert payload == [
-        "exec",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "resume",
-        "resume-session-123",
-        "Continue the fix",
-    ]
+    _assert_tracked_resume(
+        result,
+        provider_called=provider_called,
+        core_argv=core_argv,
+        core_prompt=core_prompt,
+        session_id=session_id,
+        prompt=prompt,
+    )
 
 
 def test_resume_subcommand_wraps_headless_codex_in_vc_frame_worker_session(
@@ -2049,88 +2142,76 @@ def test_resume_subcommand_wraps_headless_codex_in_vc_frame_worker_session(
 def test_resume_wrapper_symlink_forwards_session_and_prompt_to_agent(
     tmp_path: Path,
 ) -> None:
-    home = tmp_path / "home"
-    fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "codex-args.txt"
+    session_id = "resume-session-456"
+    prompt = "Continue from wrapper"
     wrapper = tmp_path / "vc-resume"
-
-    home.mkdir()
-    fake_bin.mkdir()
     wrapper.symlink_to(LAUNCHER)
-    _write_fake_agent(fake_bin, "codex", capture_file)
+    env, provider_called, core_argv, core_prompt = _tracked_resume_fixture(
+        tmp_path,
+        session_id=session_id,
+    )
 
-    env = os.environ.copy()
-    env["HOME"] = str(home)
-    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
-    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-    env["CAPTURE_FILE"] = str(capture_file)
-
-    subprocess.run(
+    result = subprocess.run(
         [
             "bash",
             str(wrapper),
             "codex",
             "--session",
-            "resume-session-456",
+            session_id,
             "--prompt",
-            "Continue from wrapper",
+            prompt,
         ],
         check=True,
         cwd=REPO_ROOT,
         env=env,
+        capture_output=True,
+        text=True,
     )
 
-    payload = capture_file.read_text(encoding="utf-8").splitlines()
-    assert payload == [
-        "exec",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "resume",
-        "resume-session-456",
-        "Continue from wrapper",
-    ]
+    _assert_tracked_resume(
+        result,
+        provider_called=provider_called,
+        core_argv=core_argv,
+        core_prompt=core_prompt,
+        session_id=session_id,
+        prompt=prompt,
+    )
 
 
 def test_resume_wrapper_accepts_positional_session_id(tmp_path: Path) -> None:
     """`vc-resume <agent> <session_id> [prompt...]` works without --session."""
-    home = tmp_path / "home"
-    fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "codex-args.txt"
+    session_id = "resume-session-456"
+    prompt = "Continue from wrapper"
     wrapper = tmp_path / "vc-resume"
-
-    home.mkdir()
-    fake_bin.mkdir()
     wrapper.symlink_to(LAUNCHER)
-    _write_fake_agent(fake_bin, "codex", capture_file)
+    env, provider_called, core_argv, core_prompt = _tracked_resume_fixture(
+        tmp_path,
+        session_id=session_id,
+    )
 
-    env = os.environ.copy()
-    env["HOME"] = str(home)
-    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
-    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-    env["CAPTURE_FILE"] = str(capture_file)
-
-    subprocess.run(
+    result = subprocess.run(
         [
             "bash",
             str(wrapper),
             "codex",
-            "resume-session-456",
-            "Continue from wrapper",
+            session_id,
+            prompt,
         ],
         check=True,
         cwd=REPO_ROOT,
         env=env,
+        capture_output=True,
+        text=True,
     )
 
-    payload = capture_file.read_text(encoding="utf-8").splitlines()
-    assert payload == [
-        "exec",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "resume",
-        "resume-session-456",
-        "Continue from wrapper",
-    ]
+    _assert_tracked_resume(
+        result,
+        provider_called=provider_called,
+        core_argv=core_argv,
+        core_prompt=core_prompt,
+        session_id=session_id,
+        prompt=prompt,
+    )
 
 
 def test_resume_wrapper_accepts_bare_positional_session_id(tmp_path: Path) -> None:
@@ -2337,7 +2418,7 @@ def test_dashboard_switch_outside_vc_frame_uses_attach(tmp_path: Path) -> None:
     assert "target-session" in payload
 
 
-def test_dashboard_gc_defaults_to_dry_run(tmp_path: Path) -> None:
+def test_dashboard_gc_ignores_untyped_listing_in_dry_run(tmp_path: Path) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
     capture_file = tmp_path / "vc_frame-args.txt"
@@ -2362,11 +2443,15 @@ def test_dashboard_gc_defaults_to_dry_run(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert not capture_file.exists()
+    payload = capture_file.read_text(encoding="utf-8")
+    assert "list-sessions" not in payload
+    assert "kill-session" not in payload
     assert "vc_frame-tab-gc: dry-run; candidates=0 closed=0" in result.stdout
 
 
-def test_dashboard_gc_apply_never_selects_untyped_session_text(tmp_path: Path) -> None:
+def test_dashboard_gc_apply_without_proof_does_not_kill_sessions(
+    tmp_path: Path,
+) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
     capture_file = tmp_path / "vc_frame-args.txt"
@@ -2408,13 +2493,13 @@ def test_dashboard_gc_apply_never_selects_untyped_session_text(tmp_path: Path) -
     )
 
     assert result.returncode == 0, result.stderr
-    assert not capture_file.exists()
+    payload = capture_file.read_text(encoding="utf-8")
+    assert "list-sessions" not in payload
+    assert "kill-session" not in payload
     assert "vc_frame-tab-gc: applied; candidates=0 closed=0" in result.stdout
 
 
-def test_dashboard_gc_include_live_fails_closed_without_typed_session_identity(
-    tmp_path: Path,
-) -> None:
+def test_dashboard_gc_include_live_fails_closed(tmp_path: Path) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
     capture_file = tmp_path / "vc_frame-args.txt"
@@ -2465,8 +2550,13 @@ def test_dashboard_gc_include_live_fails_closed_without_typed_session_identity(
     )
 
     assert result.returncode == 2
-    assert "no typed incarnation selector" in result.stderr
-    assert not capture_file.exists()
+    payload = capture_file.read_text(encoding="utf-8")
+    assert payload == ""
+    assert result.stdout == ""
+    assert (
+        "--include-live is unsafe: vc-frame kill-session has no typed "
+        "incarnation selector"
+    ) in result.stderr
 
 
 def test_run_helper_blocks_self_looping_path_resolution(tmp_path: Path) -> None:
@@ -2498,6 +2588,94 @@ def test_run_helper_blocks_self_looping_path_resolution(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "resolved back to vibecrafted itself" in result.stderr
     assert "missing function definition to vetcoders.sh" in result.stderr
+
+
+def test_server_service_uses_one_installed_generation(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    stale_bin = tmp_path / "stale-bin"
+    current_bin = tmp_path / "current-bin"
+    launcher_copy = tmp_path / "vibecrafted-deck"
+    capture_file = tmp_path / "supervisor-args.txt"
+
+    home.mkdir()
+    stale_bin.mkdir()
+    current_bin.mkdir()
+    _write_trimmed_launcher(launcher_copy)
+
+    stale_launcher = stale_bin / "vibecrafted"
+    stale_launcher.write_text("#!/usr/bin/env bash\nexit 99\n", encoding="utf-8")
+    stale_launcher.chmod(0o755)
+
+    current_launcher = current_bin / "vibecrafted"
+    current_launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    current_launcher.chmod(0o755)
+
+    current_supervisor = current_bin / "vc-server-supervisor"
+    current_supervisor.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "{",
+                '  printf "%s\\n" "$0"',
+                '  printf "%s\\n" "$@"',
+                '  printf "PYTHONPATH=%s\\n" "${PYTHONPATH:-}"',
+                '  printf "PYTHONHOME=%s\\n" "${PYTHONHOME:-}"',
+                '} > "$CAPTURE_FILE"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    current_supervisor.chmod(0o755)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{stale_bin}:{current_bin}:/usr/bin:/bin"
+    env["CAPTURE_FILE"] = str(capture_file)
+    env["PYTHONPATH"] = "inherited-sentinel"
+    env["PYTHONHOME"] = "inherited-home-sentinel"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{launcher_copy}"; _server_supervisor_cli service status --json',
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = capture_file.read_text(encoding="utf-8").splitlines()
+    assert Path(payload[0]).resolve() == current_supervisor.resolve()
+    assert payload[1:4] == ["service", "status", "--json"]
+    assert payload[payload.index("--launcher") + 1] == str(current_launcher.resolve())
+    assert payload[payload.index("--supervisor-bin") + 1] == str(
+        current_supervisor.resolve()
+    )
+    assert str(stale_launcher) not in payload
+    assert payload[-2:] == ["PYTHONPATH=", "PYTHONHOME="]
+
+    current_launcher.unlink()
+    capture_file.unlink()
+    missing_sibling = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{launcher_copy}"; _server_supervisor_cli service status --json',
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert missing_sibling.returncode == 78
+    assert "Cannot resolve an absolute Vibecrafted launcher" in missing_sibling.stderr
+    assert not capture_file.exists()
 
 
 def _write_fake_claude_stream_agent(bin_dir: Path, final_message: str) -> None:

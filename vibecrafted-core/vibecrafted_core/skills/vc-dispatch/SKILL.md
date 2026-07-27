@@ -103,15 +103,14 @@ pin deliberately, and treat a missing pin as a smell to resolve before launch.
 2. **Dispatch**: one prompt file (never argv — `ps`-public, ARG_MAX, broken
    newlines), four layers per the checklist. Launch:
    `bash -c 'ulimit -f unlimited; vibecrafted <skill> <agent> --file <p.md>'`
-   (shells may carry soft `ulimit -f` → SIGXFSZ/exit 153). **Visible by default:**
-   when a vc-frame session is live (`VC_FRAME_SESSION_NAME` set) the CLI launcher
-   auto-selects the `terminal` runtime and the worker opens as a vc-frame tab the
-   operator watches. Do NOT dispatch headless into a live session — that strands
-   an invisible orphan and forces hand-relayed status. The MCP launchers
-   (`vc_run_launch` / `vc_launch`) default `runtime="headless"` and do NOT detect
-   the session, so when dispatching through MCP pass `runtime="visible"`
-   explicitly, or use the CLI. Headless is the unattended/cron lane only. Record
-   the receipt (run_id, report, transcript, meta) in the tracker.
+   (shells may carry soft `ulimit -f` → SIGXFSZ/exit 153). **Headless by
+   default:** CLI and MCP workers run in a detached process session even when a
+   vc-frame User Session is live. Observe them through run state, transcript,
+   `observe`, and `await`; a vc-frame tab may project those surfaces but must not
+   own the worker process. Use `--runtime terminal` / `runtime="visible"` only
+   for an explicit provider TTY exception, with the known compatibility cost
+   that the worker remains coupled to that terminal. Record the receipt
+   (run_id, report, transcript, meta) in the tracker.
 3. **Spanko**: await through artifacts, never by staring at a pane. Use the
    dedicated command as the standard dispatcher loop. Canonical supervisor
    contract (see `docs/runtime/AGENT_OPS.md`): After dispatch, arm

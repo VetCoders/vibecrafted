@@ -168,9 +168,10 @@ lub małego bounded researchu wewnątrz sesji operatora.
 
 - telemetria — każde odpalenie launchera zapisuje `meta.json` + transkrypt
   - ścieżkę raportu, natywne subagenty nie
-- obserwowalność — obserwowany przez operatora pane terminala (Zellij /
-  tmux / screen) wyświetla tylko dispatchy odpalone z launchera; natywne
-  subagenty odpalają w ciemno (reguła NIGDY HEADLESS)
+- obserwowalność — receipt, stan control-plane, transkrypt i raport pozostają
+  dostępne, gdy odłączone workery działają headless; vc-frame może wyświetlać
+  te powierzchnie, ale nie hostuje workera. Natywne subagenty nie rejestrują
+  tego samego kontraktu runu floty
 - odzyskiwanie — zacięty dispatch z launchera ma znaną doktrynę
   odzyskiwania w `./AWAIT.md`; stall natywnego subagenta jest niewidoczny
 
