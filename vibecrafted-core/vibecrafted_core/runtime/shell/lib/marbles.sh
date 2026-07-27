@@ -251,10 +251,34 @@ for item in sessions:
     if stamp is None or stamp >= cutoff:
         filtered.append(item)
 
-candidate: dict | None = None
+def locally_resumable(item: dict) -> bool:
+    # aicx retains extracts long after providers prune their local session
+    # store; a native resume of a pruned session dies with "No conversation
+    # found". Only sessions the provider still holds are launch targets.
+    src = str(item.get("source_path") or "")
+    if src:
+        return pathlib.Path(src).exists()
+    if agent == "claude":
+        sid = str(item.get("session_id") or "")
+        return bool(sid) and any(
+            pathlib.Path.home().glob(f".claude/projects/*/{sid}.jsonl")
+        )
+    return True
+
+
+resumable_same_agent: list[dict] = []
 for item in filtered:
     if str(item.get("agent") or "") != agent:
         continue
+    if locally_resumable(item):
+        resumable_same_agent.append(item)
+    else:
+        degradations.append(
+            f"native_candidate_missing_local:{item.get('session_id')}"
+        )
+
+candidate: dict | None = None
+for item in resumable_same_agent:
     repo = str(item.get("repo_path") or "")
     try:
         if repo and pathlib.Path(repo).resolve() == root_path:
@@ -262,11 +286,8 @@ for item in filtered:
             break
     except OSError:
         pass
-if candidate is None:
-    for item in filtered:
-        if str(item.get("agent") or "") == agent:
-            candidate = item
-            break
+if candidate is None and resumable_same_agent:
+    candidate = resumable_same_agent[0]
 
 # Prefer aicx tail (default window 48h, fast snapshot) before full intents.
 # Overlay is best-effort and often slow on large repos — never block resume.
