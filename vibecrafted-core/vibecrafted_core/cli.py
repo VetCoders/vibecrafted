@@ -218,6 +218,46 @@ def _build_parser() -> argparse.ArgumentParser:
         help="count would-rewrite only; do not write snapshots",
     )
     settle.add_argument("--json", action="store_true")
+    settlements = sub.add_parser(
+        "settlements",
+        help=(
+            "read-only settlement ledger query "
+            "(summary | list | inspect); never invents f"
+        ),
+    )
+    settlements_sub = settlements.add_subparsers(dest="settlements_action")
+    settlements_summary = settlements_sub.add_parser(
+        "summary",
+        help="durable f/x/n lower-bound plus revalidation inventory",
+    )
+    settlements_summary.add_argument("--json", action="store_true")
+    settlements_list = settlements_sub.add_parser(
+        "list",
+        help="list or group latest-by-run settlements",
+    )
+    settlements_list.add_argument(
+        "--bucket",
+        choices=("f", "x", "n"),
+        help="filter to TUI bucket f, x, or n",
+    )
+    settlements_list.add_argument(
+        "--revalidatable",
+        action="store_true",
+        help="only runs with report+transcript still on disk",
+    )
+    settlements_list.add_argument(
+        "--group",
+        default="",
+        help="comma-separated fields: agent,skill,reason,root,state,verdict",
+    )
+    settlements_list.add_argument("--limit", type=int, default=None)
+    settlements_list.add_argument("--json", action="store_true")
+    settlements_inspect = settlements_sub.add_parser(
+        "inspect",
+        help="inspect one run_id from the ledger + control-plane enrichment",
+    )
+    settlements_inspect.add_argument("run_id")
+    settlements_inspect.add_argument("--json", action="store_true")
     procs = sub.add_parser(
         "procs",
         help="identity-qualified process snapshot/terminate for vc-procs TUI",
@@ -817,6 +857,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "receipt",
         "resume-session",
         "settle",
+        "settlements",
         "stop",
     } | set(LAUNCHERS)
     agent_python_verbs = {"observe", "await", "stop"}
@@ -979,6 +1020,65 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
         return _cmd_resettle(args)
+    if args.command == "settlements":
+        from .settlements_query import (
+            SettlementsQueryError,
+            inspect_settlement,
+            list_settlements,
+            render_settlements_inspect_text,
+            render_settlements_list_text,
+            render_settlements_summary_text,
+            settlements_summary,
+        )
+
+        action = getattr(args, "settlements_action", None)
+        if action is None:
+            print(
+                "usage: vibecrafted settlements summary [--json]\n"
+                "       vibecrafted settlements list "
+                "[--bucket f|x|n] [--revalidatable] "
+                "[--group agent,skill,reason,root] [--limit N] [--json]\n"
+                "       vibecrafted settlements inspect <run_id> [--json]",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            if action == "summary":
+                payload = settlements_summary()
+                if getattr(args, "json", False):
+                    print(json.dumps(payload, ensure_ascii=False, indent=2))
+                else:
+                    print(render_settlements_summary_text(payload))
+                return 0
+            if action == "list":
+                payload = list_settlements(
+                    bucket=getattr(args, "bucket", None),
+                    revalidatable=bool(getattr(args, "revalidatable", False)),
+                    group=getattr(args, "group", None) or None,
+                    limit=getattr(args, "limit", None),
+                )
+                if getattr(args, "json", False):
+                    print(json.dumps(payload, ensure_ascii=False, indent=2))
+                else:
+                    print(render_settlements_list_text(payload))
+                return 0
+            if action == "inspect":
+                payload = inspect_settlement(str(args.run_id))
+                if getattr(args, "json", False):
+                    print(
+                        json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+                    )
+                else:
+                    print(render_settlements_inspect_text(payload))
+                return 0
+        except SettlementsQueryError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(
+            "usage: vibecrafted settlements {summary|list|inspect}",
+            file=sys.stderr,
+        )
+        return 2
     if args.command == "procs":
         from .process_control import main as procs_main
 

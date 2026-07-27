@@ -376,6 +376,7 @@ Commands:
   status               Today's agent activity
   doctor               Installation health — pass/fail
   receipt              Delivery/runtime receipt (source ↔ installed)
+  settlements          Read-only f/x/n ledger query (summary|list|inspect)
   update               Update to the latest release
   help [topic|--all]   This deck · full reference
 
