@@ -401,13 +401,29 @@ jq -e '.liveness == "terminal"' "$codex_meta" >/dev/null || die "codex meta miss
 log "launcher resume smoke"
 resume_capture="$workspace/resume-codex.txt"
 resume_prompt_capture="$workspace/resume-codex-prompt.txt"
+resume_output="$(
+  env -u VIBECRAFTED_RUN_ID -u VIBECRAFTED_OPERATOR_SESSION \
+    -u VC_FRAME -u VC_FRAME_PANE_ID -u VC_FRAME_SESSION_NAME \
+    -u ZELLIJ -u ZELLIJ_PANE_ID -u ZELLIJ_SESSION_NAME \
+    HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" \
+    FAKE_CODEX_CAPTURE="$resume_capture" \
+    FAKE_CODEX_STDIN_CAPTURE="$resume_prompt_capture" \
+    "$home_dir/.local/bin/vibecrafted" resume codex \
+      --session fake-session-001 --prompt "resume smoke"
+)"
+printf '%s\n' "$resume_output"
+resume_run_id="$(
+  printf '%s\n' "$resume_output" |
+    sed -n 's/^run_id:[[:space:]]*//p' |
+    tail -n 1
+)"
+[[ -n "$resume_run_id" ]] || die "resume receipt did not expose a run_id"
 env -u VIBECRAFTED_RUN_ID -u VIBECRAFTED_OPERATOR_SESSION \
   -u VC_FRAME -u VC_FRAME_PANE_ID -u VC_FRAME_SESSION_NAME \
   -u ZELLIJ -u ZELLIJ_PANE_ID -u ZELLIJ_SESSION_NAME \
   HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" \
-  FAKE_CODEX_CAPTURE="$resume_capture" \
-  FAKE_CODEX_STDIN_CAPTURE="$resume_prompt_capture" \
-  "$home_dir/.local/bin/vibecrafted" resume codex --session fake-session-001 --prompt "resume smoke"
+  "$home_dir/.local/bin/vibecrafted" codex await \
+    --run-id "$resume_run_id" --timeout 20 --interval 0.1 --status-interval 20
 require_file "$resume_capture"
 require_file "$resume_prompt_capture"
 assert_contains "$resume_capture" 'resume'

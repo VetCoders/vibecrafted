@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -219,6 +221,79 @@ def test_resume_session_prints_dedicated_receipt(
     assert "claude-session-7" in output
     assert "runtime-manual-2" in output
     assert "resume_mode:        manual_explicit" in output
+
+
+def test_lifecycle_deck_inherits_verified_installer_lease(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    if os.name != "posix":
+        pytest.skip("installer lease descriptors are a POSIX contract")
+
+    import fcntl
+
+    tools_home = tmp_path / "tools"
+    deck = tools_home / "vibecrafted-current" / "scripts" / "vibecrafted"
+    deck.parent.mkdir(parents=True)
+    deck.write_text(
+        "#!/bin/sh\n"
+        'exec "$VIBECRAFTED_TEST_PYTHON" -c '
+        "'import os; "
+        'os.fstat(int(os.environ["VIBECRAFTED_INSTALL_LEASE_FD"]))'
+        "'\n",
+        encoding="utf-8",
+    )
+    deck.chmod(0o755)
+    lock_path = tools_home / ".vibecrafted-install.lock"
+    descriptor = os.open(
+        lock_path,
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools_home))
+    monkeypatch.setenv("VIBECRAFTED_INSTALL_LEASE_FD", str(descriptor))
+    monkeypatch.setenv("VIBECRAFTED_TEST_PYTHON", sys.executable)
+
+    try:
+        assert cli.main(["server", "service", "install"]) == 0
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def test_lifecycle_deck_refuses_unverified_installer_descriptor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    if os.name != "posix":
+        pytest.skip("installer lease descriptors are a POSIX contract")
+
+    tools_home = tmp_path / "tools"
+    deck = tools_home / "vibecrafted-current" / "scripts" / "vibecrafted"
+    deck.parent.mkdir(parents=True)
+    deck.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+    (tools_home / ".vibecrafted-install.lock").touch(mode=0o600)
+    descriptor = os.open("/dev/null", os.O_RDONLY)
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools_home))
+    monkeypatch.setenv("VIBECRAFTED_INSTALL_LEASE_FD", str(descriptor))
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("an unverified descriptor must never reach the deck")
+        ),
+    )
+
+    try:
+        assert cli.main(["server", "service", "install"]) == 75
+    finally:
+        os.close(descriptor)
+
+    assert "installer coordination descriptor does not own" in capsys.readouterr().err
 
 
 def test_resettle_names_automatic_sources_and_explicit_override(

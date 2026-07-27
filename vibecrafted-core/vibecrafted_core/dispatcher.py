@@ -48,6 +48,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="require at least one byte of captured stdout/stderr",
     )
     run.add_argument(
+        "--salvage-report-from-stream",
+        action="store_true",
+        help=(
+            "for verified native resume adapters, salvage a successful "
+            "provider stream into the canonical report"
+        ),
+    )
+    run.add_argument(
         "--tee-output",
         action="store_true",
         help="also write worker stdout/stderr to this terminal while capturing transcript",
@@ -107,6 +115,7 @@ async def _run(args: argparse.Namespace) -> int:
         require_report=not args.no_require_report,
         require_transcript_output=args.require_transcript_output,
         tee_output=args.tee_output,
+        salvage_report_from_stream=args.salvage_report_from_stream,
     )
     validation = handle.artifact_validation
     artifact_errors = list(validation.errors if validation is not None else ())

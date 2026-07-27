@@ -865,6 +865,49 @@ def test_dispatcher_cli_fails_missing_report_contract(
     assert "launcher_template: true" in template
 
 
+def test_dispatcher_cli_salvages_verified_native_resume_stream(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    report = tmp_path / "resume-report.md"
+    transcript = tmp_path / "resume.log"
+    script = tmp_path / "native_resume.py"
+    script.write_text(
+        'print(\'{"type":"thread.started","thread_id":"codex-thread-42"}\')\n'
+        'print(\'{"type":"item.completed","item":{"type":"agent_message",'
+        '"text":"Native resume completed."}}\')\n',
+        encoding="utf-8",
+    )
+
+    rc = dispatcher.main(
+        [
+            "run",
+            "--run-id",
+            "disp-native-resume",
+            "--root",
+            str(tmp_path),
+            "--report",
+            str(report),
+            "--transcript",
+            str(transcript),
+            "--salvage-report-from-stream",
+            "--json",
+            "--",
+            sys.executable,
+            str(script),
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["artifact_ok"] is True
+    assert payload["state"] == "report_validated"
+    report_text = report.read_text(encoding="utf-8")
+    assert "fallback_report: true" in report_text
+    assert "Native resume completed." in report_text
+    assert "Runtime fallback" in report_text
+
+
 def test_dispatcher_cli_records_lifecycle_worker_death(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

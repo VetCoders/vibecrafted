@@ -3410,3 +3410,23 @@ def test_dispatcher_command_carries_lifecycle_state_flag() -> None:
 
     without_state = workflow._dispatcher_command(**base)
     assert "--lifecycle-state" not in without_state
+
+
+def test_dispatcher_command_salvages_only_verified_native_resume_streams() -> None:
+    base = {
+        "run_id": "resume-child",
+        "root": "/tmp/repo",
+        "meta_path": Path("/tmp/meta.json"),
+        "report_path": Path("/tmp/report.md"),
+        "transcript_path": Path("/tmp/transcript.log"),
+        "worker_command": ["codex", "exec", "resume", "native-id", "-"],
+    }
+
+    native_resume = workflow._dispatcher_command(
+        **base,
+        salvage_report_from_stream=True,
+    )
+    ordinary_worker = workflow._dispatcher_command(**base)
+
+    assert "--salvage-report-from-stream" in native_resume
+    assert "--salvage-report-from-stream" not in ordinary_worker

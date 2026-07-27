@@ -308,6 +308,7 @@ def _dispatcher_command(
     emit_json: bool = True,
     quiet: bool = False,
     lifecycle_state_path: str = "",
+    salvage_report_from_stream: bool = False,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -334,6 +335,8 @@ def _dispatcher_command(
         )
     if lifecycle_state_path:
         command.extend(["--lifecycle-state", lifecycle_state_path])
+    if salvage_report_from_stream:
+        command.append("--salvage-report-from-stream")
     if tee_output:
         command.append("--tee-output")
     if quiet:
@@ -1641,6 +1644,7 @@ def launch_workflow(
         emit_json=spec.runtime not in {"terminal", "visible"},
         quiet=spec.runtime in {"terminal", "visible"},
         lifecycle_state_path=spec.lifecycle_state_path,
+        salvage_report_from_stream=bool((launch_meta or {}).get("native_resume")),
     )
     launch_dir = control_plane_home() / "launches"
     launch_dir.mkdir(parents=True, exist_ok=True)

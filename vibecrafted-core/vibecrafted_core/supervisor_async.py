@@ -56,6 +56,11 @@ def _json_text_fragment(event: dict[str, object]) -> str:
     event_type = str(event.get("type") or "")
     if event_type == "thought":
         return ""
+    if event_type == "item.completed":
+        item = event.get("item")
+        if isinstance(item, dict) and item.get("type") == "agent_message":
+            text = item.get("text")
+            return text if isinstance(text, str) else ""
     if event_type == "text":
         value = event.get("data")
         return value if isinstance(value, str) else ""
@@ -560,6 +565,7 @@ class AsyncSupervisor:
         require_report: bool = True,
         require_transcript_output: bool = False,
         tee_output: bool = False,
+        salvage_report_from_stream: bool = False,
     ) -> AsyncRunHandle:
         handle = await self.spawn(
             run_id=run_id,
@@ -623,7 +629,10 @@ class AsyncSupervisor:
             if tee_output:
                 _write_terminal(_terminal_footer(handle))
             return handle
-        self._write_report_fallback(handle)
+        self._write_report_fallback(
+            handle,
+            salvage_report_from_stream=salvage_report_from_stream,
+        )
         self._write_meta_summary(handle)
         if handle.exit_code == 0:
             await self._transition(
@@ -808,12 +817,19 @@ class AsyncSupervisor:
         await handle.process.wait()
         self._sync_stream_summary(handle, parser)
 
-    def _write_report_fallback(self, handle: AsyncRunHandle) -> None:
+    def _write_report_fallback(
+        self,
+        handle: AsyncRunHandle,
+        *,
+        salvage_report_from_stream: bool = False,
+    ) -> None:
         report = handle.report_path
         if report is None:
             return
         if not report.exists():
-            if handle.exit_code != 0 or handle.agent != "grok":
+            if handle.exit_code != 0 or (
+                handle.agent != "grok" and not salvage_report_from_stream
+            ):
                 return
             transcript_text = ""
             if handle.transcript_path is not None and handle.transcript_path.exists():
@@ -844,7 +860,7 @@ class AsyncSupervisor:
         fields, _, has_frontmatter = parse_report_text(text)
         if (
             handle.exit_code == 0
-            and handle.agent == "grok"
+            and (handle.agent == "grok" or salvage_report_from_stream)
             and has_frontmatter
             and fields.get("launcher_template", "").strip().lower()
             in {"1", "true", "yes", "on"}

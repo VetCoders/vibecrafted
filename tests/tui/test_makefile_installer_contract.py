@@ -723,6 +723,9 @@ def test_make_install_verifies_server_supervisor_entrypoint() -> None:
     installer_text = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
         encoding="utf-8"
     )
+    cli_text = (
+        REPO_ROOT / "vibecrafted-core" / "vibecrafted_core" / "cli.py"
+    ).read_text(encoding="utf-8")
     install_tools_block = text.split("install-tools:", 1)[1].split(
         "\n# install-all owns", 1
     )[0]
@@ -746,6 +749,9 @@ def test_make_install_verifies_server_supervisor_entrypoint() -> None:
     assert "install-bundle-tools:" in text
     assert "install-tools-held" in install_tools_block
     assert "VIBECRAFTED_INSTALL_LEASE_FD" in install_tools_block
+    assert "def _installer_lease_pass_fds(" in cli_text
+    assert "lease_pass_fds = _installer_lease_pass_fds(tools_home)" in cli_text
+    assert "pass_fds=lease_pass_fds" in cli_text
     assert "staging runtime under the cross-process installer lease" in (
         install_tools_block
     )

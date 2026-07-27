@@ -2678,6 +2678,68 @@ def test_server_service_uses_one_installed_generation(tmp_path: Path) -> None:
     assert not capture_file.exists()
 
 
+def test_server_service_preserves_high_installer_lease_fd_through_launcher(
+    tmp_path: Path,
+) -> None:
+    import fcntl
+
+    home = tmp_path / "home"
+    current_bin = tmp_path / "current-bin"
+    current_launcher = current_bin / "vibecrafted"
+    current_supervisor = current_bin / "vc-server-supervisor"
+    capture_file = tmp_path / "lease-capture.txt"
+    lease_file = tmp_path / "tools-install.lock"
+
+    home.mkdir()
+    current_bin.mkdir()
+    current_launcher.write_text(LAUNCHER.read_text(encoding="utf-8"), encoding="utf-8")
+    current_launcher.chmod(0o755)
+    current_supervisor.write_text(
+        "\n".join(
+            [
+                f"#!{sys.executable}",
+                "import os",
+                "from pathlib import Path",
+                'descriptor = int(os.environ["VIBECRAFTED_INSTALL_LEASE_FD"])',
+                "metadata = os.fstat(descriptor)",
+                'Path(os.environ["CAPTURE_FILE"]).write_text(',
+                '    f"fd={descriptor} size={metadata.st_size}\\n",',
+                '    encoding="utf-8",',
+                ")",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    current_supervisor.chmod(0o755)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{current_bin}:/usr/bin:/bin"
+    env["CAPTURE_FILE"] = str(capture_file)
+    descriptor = os.open(lease_file, os.O_RDWR | os.O_CREAT, 0o600)
+    inherited_descriptor = fcntl.fcntl(descriptor, fcntl.F_DUPFD, 64)
+    try:
+        os.set_inheritable(inherited_descriptor, True)
+        env["VIBECRAFTED_INSTALL_LEASE_FD"] = str(inherited_descriptor)
+        result = subprocess.run(
+            [str(current_launcher), "server", "service", "install"],
+            cwd=REPO_ROOT,
+            env=env,
+            pass_fds=(inherited_descriptor,),
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        os.close(inherited_descriptor)
+        os.close(descriptor)
+
+    assert result.returncode == 0, result.stderr
+    assert capture_file.read_text(
+        encoding="utf-8"
+    ) == f"fd={inherited_descriptor} size=0\n"
+
+
 def _write_fake_claude_stream_agent(bin_dir: Path, final_message: str) -> None:
     script = bin_dir / "claude"
     stream = "\n".join(
