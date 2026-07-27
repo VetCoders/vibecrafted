@@ -460,6 +460,9 @@ def test_triage_run_never_fails_a_finished_run(tmp_path: Path) -> None:
     result = _bash(
         f'''
         set -euo pipefail
+        export HOME="{tmp_path / "home"}"
+        mkdir -p "$HOME"
+        unset VIBECRAFTED_HOME VIBECRAFTED_CONTROL_PLANE
         unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME
         source "{COMMON_SH}"
         spawn_triage_run "{meta}"

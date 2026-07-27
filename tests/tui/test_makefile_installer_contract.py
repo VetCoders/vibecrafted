@@ -471,6 +471,10 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
     assert "make --no-print-directory install-server" not in manifest
     assert "make --no-print-directory install-bundle-tools" in manifest
     assert "build-server-release" in makefile
+    server_build_block = makefile.split("\nbuild-server-release:", 1)[1].split(
+        "\ninstall-server-payload:", 1
+    )[0]
+    assert "cargo build --release --locked -p $(SERVER_PACKAGE)" in server_build_block
     assert "install-server-payload" in makefile
 
 

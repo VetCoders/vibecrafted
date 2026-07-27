@@ -229,6 +229,16 @@ PLAN
 cat > "$fake_bin/codex" <<'EOF_CODEX'
 #!/usr/bin/env bash
 set -euo pipefail
+case "${1:-}" in
+  --version)
+    echo "codex-cli 0.999.0-portable-fixture"
+    exit 0
+    ;;
+  --help)
+    echo "Usage: codex [exec|resume]"
+    exit 0
+    ;;
+esac
 report=""
 json_mode=0
 if [[ -n "${FAKE_CODEX_CAPTURE:-}" ]]; then
@@ -246,7 +256,11 @@ while [[ $# -gt 0 ]]; do
   esac
   shift || true
 done
-cat >/dev/null || true
+if [[ -n "${FAKE_CODEX_STDIN_CAPTURE:-}" ]]; then
+  cat > "$FAKE_CODEX_STDIN_CAPTURE"
+else
+  cat >/dev/null || true
+fi
 if (( json_mode )); then
   printf '{"type":"thread.started","thread_id":"fake-session-001"}\n'
   printf '{"type":"item.started","item":{"type":"command_execution","command":"ls"}}\n'
@@ -386,15 +400,19 @@ jq -e '.liveness == "terminal"' "$codex_meta" >/dev/null || die "codex meta miss
 
 log "launcher resume smoke"
 resume_capture="$workspace/resume-codex.txt"
+resume_prompt_capture="$workspace/resume-codex-prompt.txt"
 env -u VIBECRAFTED_RUN_ID -u VIBECRAFTED_OPERATOR_SESSION \
   -u VC_FRAME -u VC_FRAME_PANE_ID -u VC_FRAME_SESSION_NAME \
   -u ZELLIJ -u ZELLIJ_PANE_ID -u ZELLIJ_SESSION_NAME \
-  HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" FAKE_CODEX_CAPTURE="$resume_capture" \
+  HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" \
+  FAKE_CODEX_CAPTURE="$resume_capture" \
+  FAKE_CODEX_STDIN_CAPTURE="$resume_prompt_capture" \
   "$home_dir/.local/bin/vibecrafted" resume codex --session fake-session-001 --prompt "resume smoke"
 require_file "$resume_capture"
+require_file "$resume_prompt_capture"
 assert_contains "$resume_capture" 'resume'
 assert_contains "$resume_capture" 'fake-session-001'
-assert_contains "$resume_capture" 'resume smoke'
+assert_contains "$resume_prompt_capture" 'resume smoke'
 
 log "helper bash smoke"
 # shellcheck disable=SC2016

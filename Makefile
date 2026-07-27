@@ -749,7 +749,7 @@ build-server-release:
 	fi; \
 	set -e; \
 	echo "[server] building release package ($(SERVER_PACKAGE))"; \
-	ulimit -f unlimited; ( cd $(SERVER_DIR) && cargo build --release -p $(SERVER_PACKAGE) --no-default-features --features ssr $(INSTALL_QUIET) )
+	ulimit -f unlimited; ( cd $(SERVER_DIR) && cargo build --release --locked -p $(SERVER_PACKAGE) --no-default-features --features ssr $(INSTALL_QUIET) )
 
 install-server-payload:
 	@set -eu; \
