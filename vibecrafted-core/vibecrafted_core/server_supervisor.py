@@ -1469,9 +1469,7 @@ def _launchctl_start_diagnostics() -> tuple[str, bool]:
     pid = int(numeric["pid"]) if numeric["pid"] != "-" else None
     runs = int(numeric["runs"]) if numeric["runs"] != "-" else None
     last_exit = (
-        int(numeric["last-exit-code"])
-        if numeric["last-exit-code"] != "-"
-        else None
+        int(numeric["last-exit-code"]) if numeric["last-exit-code"] != "-" else None
     )
     process_observed = (
         (pid is not None and pid > 1)

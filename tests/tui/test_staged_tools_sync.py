@@ -1549,10 +1549,7 @@ def test_service_install_executes_exact_staged_supervisor_from_repo_cwd(
     launcher = bin_dir / "vibecrafted"
     supervisor_binary = bin_dir / "vc-server-supervisor"
     launch_agent = (
-        home
-        / "Library"
-        / "LaunchAgents"
-        / "io.vetcoders.vibecrafted.server.plist"
+        home / "Library" / "LaunchAgents" / "io.vetcoders.vibecrafted.server.plist"
     )
     record = tmp_path / "service-install-record.json"
     source_version = "1.0.0+gcheckout"

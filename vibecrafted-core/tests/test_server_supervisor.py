@@ -172,9 +172,7 @@ def test_launchctl_start_diagnostics_allowlists_only_process_state(
 
     detail, process_observed = supervisor._launchctl_start_diagnostics()
 
-    assert detail == (
-        "launchctl(state=waiting,pid=-,runs=1,last-exit-code=78)"
-    )
+    assert detail == ("launchctl(state=waiting,pid=-,runs=1,last-exit-code=78)")
     assert process_observed
     assert "SECRET_TOKEN" not in detail
     assert "do-not-leak" not in detail
@@ -897,9 +895,8 @@ def test_start_service_reports_job_that_never_started(
     ) as failure:
         supervisor.start_service(config)
 
-    assert (
-        "launchctl(state=waiting,pid=-,runs=0,last-exit-code=-)"
-        in str(failure.value)
+    assert "launchctl(state=waiting,pid=-,runs=0,last-exit-code=-)" in str(
+        failure.value
     )
     assert failure.value.exit_code == supervisor.EX_TEMPFAIL
 
@@ -1026,9 +1023,7 @@ def test_hermetic_service_upgrade_restarts_into_new_provenance(
         payload = plistlib.loads(config.paths.launch_agent_file.read_bytes())
         environment = os.environ.copy()
         environment.update(payload["EnvironmentVariables"])
-        environment["PYTHONPATH"] = str(
-            Path(supervisor.__file__).resolve().parents[1]
-        )
+        environment["PYTHONPATH"] = str(Path(supervisor.__file__).resolve().parents[1])
         service_process = subprocess.Popen(
             payload["ProgramArguments"],
             env=environment,
