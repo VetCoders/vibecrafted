@@ -2577,6 +2577,10 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
                 '  printf -- "--CALL--\\n"',
                 '  printf "%s\\n" "$@"',
                 '} >> "$CAPTURE_FILE"',
+                'if [[ "$*" == "action new-tab --help" ]]; then',
+                "  printf '%s\\n' 'Usage: vc-frame action new-tab [--after-base] [--no-focus]'",
+                "  exit 0",
+                "fi",
             ]
         )
         + "\n",
@@ -2622,6 +2626,8 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
         "--json",
     ]
     assert workflow_call[:4] == ["--session", host_session, "action", "new-tab"]
+    assert "--after-base" in workflow_call
+    assert "--no-focus" in workflow_call
     assert "--name" in workflow_call
     assert run_id in workflow_call
     assert "workflow" not in workflow_call[workflow_call.index("--name") + 1]

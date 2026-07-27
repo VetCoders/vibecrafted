@@ -561,13 +561,20 @@ _vetcoders_spawn_into_operator_session() {
   # it, instead of drifting to the rail's far end. Probe the binary — a stale
   # install without the flag degrades to the old append placement.
   local placement_flag=""
-  if "$vc_frame_bin" action new-tab --help 2>&1 | command grep -q -- '--after-base'; then
+  local focus_flag=""
+  local new_tab_help=""
+  new_tab_help="$("$vc_frame_bin" action new-tab --help 2>&1 || true)"
+  if [[ "$new_tab_help" == *"--after-base"* ]]; then
     placement_flag="--after-base"
+  fi
+  if [[ -n "${VIBECRAFTED_WORKER_SESSION:-}" && "$new_tab_help" == *"--no-focus"* ]]; then
+    focus_flag="--no-focus"
   fi
   # G3: check exit + stderr; one create-background on session-not-found.
   if _vetcoders_vc_frame_session_action "$vc_frame_bin" "$session_name" \
     action new-tab \
     ${placement_flag:+"$placement_flag"} \
+    ${focus_flag:+"$focus_flag"} \
     --name "$tab_name" \
     --cwd "$root_dir" \
     -- "$cmd_script"; then

@@ -19,8 +19,13 @@ def _write_capture_command(bin_dir: Path, name: str, capture_file: Path) -> None
     for script_name in script_names:
         script = bin_dir / script_name
         script.write_text(
-            '#!/usr/bin/env bash\nset -euo pipefail\nprintf "%s\\n" "$@" > "$CAPTURE_FILE"'
-            + "\n",
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            'if [[ "$*" == "action new-tab --help" ]]; then\n'
+            '  printf "%s\\n" "${FAKE_VC_FRAME_NEW_TAB_HELP:-}"\n'
+            "  exit 0\n"
+            "fi\n"
+            'printf "%s\\n" "$@" > "$CAPTURE_FILE"' + "\n",
             encoding="utf-8",
         )
         script.chmod(0o755)
@@ -541,6 +546,7 @@ def test_operator_spawn_success_prints_actionable_receipt(tmp_path: Path) -> Non
             "VIBECRAFTED_OPERATOR_SESSION": "receipt-session",
             "VIBECRAFTED_ROOT": str(REPO_ROOT),
             "VIBECRAFTED_RUN_ID": "impl-receipt-1",
+            "FAKE_VC_FRAME_NEW_TAB_HELP": "--after-base --no-focus",
         }
     )
     for name in (
@@ -577,7 +583,66 @@ def test_operator_spawn_success_prints_actionable_receipt(tmp_path: Path) -> Non
         "target=receipt-session/codex-init "
         "watch=vc-frame attach receipt-session"
     ) in result.stdout
-    assert "action\nnew-tab" in capture_file.read_text(encoding="utf-8")
+    captured = capture_file.read_text(encoding="utf-8")
+    assert "action\nnew-tab" in captured
+    assert "--after-base" in captured
+    assert "--no-focus" not in captured
+
+
+def test_worker_session_spawn_uses_no_focus_when_supported(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "vc_frame-args.txt"
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_capture_command(fake_bin, "vc-frame", capture_file)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+            "CAPTURE_FILE": str(capture_file),
+            "VIBECRAFTED_OPERATOR_SESSION": "operator-seat",
+            "VIBECRAFTED_WORKER_SESSION": "worker-host",
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+            "VIBECRAFTED_RUN_ID": "impl-worker-1",
+            "FAKE_VC_FRAME_NEW_TAB_HELP": "--after-base --no-focus",
+        }
+    )
+    for name in (
+        "VC_FRAME",
+        "VC_FRAME_PANE_ID",
+        "VC_FRAME_SESSION_NAME",
+        "ZELLIJ",
+        "ZELLIJ_SESSION_NAME",
+        "ZELLIJ_PANE_ID",
+    ):
+        env.pop(name, None)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "--noprofile",
+            "--norc",
+            "-c",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                '_vetcoders_spawn_into_operator_session "resume-codex" "true"'
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    captured = capture_file.read_text(encoding="utf-8")
+    assert "--session\nworker-host\naction\nnew-tab" in captured
+    assert "--after-base" in captured
+    assert "--no-focus" in captured
 
 
 def test_operator_spawn_failure_is_loud_and_preserves_status(tmp_path: Path) -> None:

@@ -552,7 +552,12 @@ _vetcoders_research() {
     export VIBECRAFTED_STORE_ROOT="$root"
     # shellcheck disable=SC2031
     export VIBECRAFTED_RESEARCH_RUN_DIR="$run_dir"
-    "$vc_frame_bin" --session "$session_name" action new-tab --layout "$layout_file" >/dev/null
+    local focus_flag=""
+    if "$vc_frame_bin" action new-tab --help 2>&1 | command grep -q -- '--no-focus'; then
+      focus_flag="--no-focus"
+    fi
+    "$vc_frame_bin" --session "$session_name" action new-tab \
+      ${focus_flag:+"$focus_flag"} --layout "$layout_file" >/dev/null
     launch_label="Research swarm"
     [[ "$research_mode" == "override" ]] && launch_label="Research override (${research_agents[*]})"
     printf '%s launched in shared tab (run_id=%s).\n' "$launch_label" "$run_id"
