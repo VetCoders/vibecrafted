@@ -236,7 +236,7 @@ def test_make_install_stages_vc_frame_from_published_runtime() -> None:
 
     assert 'PYTHONPATH="$$stable_root/vibecrafted-core"' in install_block
     assert '"$$tool_python" -c' in install_block
-    assert 'from runtime_paths import vibecrafted_tools_home' in install_block
+    assert "from runtime_paths import vibecrafted_tools_home" in install_block
     assert install_block.index('export PATH="$$HOME/.local/bin:$$PATH"') < (
         install_block.index("uv tool dir")
     )
@@ -741,9 +741,7 @@ def test_make_install_verifies_server_supervisor_entrypoint() -> None:
     ) < handoff_block.index("_run_install_child_with_lifecycle_guard")
     assert handoff_block.index(
         "_run_install_child_with_lifecycle_guard"
-    ) < handoff_block.index(
-        "activate_runtime_service_after_install"
-    )
+    ) < handoff_block.index("activate_runtime_service_after_install")
     assert handoff_block.index(
         "activate_runtime_service_after_install"
     ) < handoff_block.index("_complete_current_tools_handoff_locked")
@@ -776,7 +774,9 @@ def test_make_install_enables_service_after_server_payload() -> None:
     assert '(cd / && "$$launcher" server service restart)' in service_block
 
 
-def test_public_install_server_uses_transaction_and_payload_target_is_internal() -> None:
+def test_public_install_server_uses_transaction_and_payload_target_is_internal() -> (
+    None
+):
     text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     install_server_block = text.rsplit("\ninstall-server:", 1)[1].split(
         "\ninstall-server-service:", 1

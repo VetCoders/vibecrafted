@@ -332,9 +332,9 @@ print(json.dumps({"executable": executable, "argv": argv, "nonce": nonce}))
 
 def test_server_healthcheck_uses_constant_time_endpoint() -> None:
     launcher = LAUNCHER.read_text(encoding="utf-8")
-    health_block = launcher.split(
-        'elif operation in {"health", "health-wait"}:', 1
-    )[1].split('elif operation == "port-free":', 1)[0]
+    health_block = launcher.split('elif operation in {"health", "health-wait"}:', 1)[
+        1
+    ].split('elif operation == "port-free":', 1)[0]
 
     assert "/api/health" in health_block
     assert "/api/control/state" not in health_block

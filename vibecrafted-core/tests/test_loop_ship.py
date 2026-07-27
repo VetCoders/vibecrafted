@@ -299,6 +299,7 @@ def test_spanko_stall_routes_stop_through_identity_authority_and_runs_recovery(
             },
         },
     )
+
     def fake_stop(run_id: str) -> dict[str, object]:
         stopped.append(run_id)
         return {

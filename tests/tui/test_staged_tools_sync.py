@@ -646,11 +646,7 @@ def test_loaded_runtime_home_is_attributed_from_launchd_environment(
         lambda *_arguments: subprocess.CompletedProcess(
             ["launchctl", "print"],
             0,
-            (
-                "environment = {\n"
-                f"    VIBECRAFTED_HOME => {shared_home}\n"
-                "}\n"
-            ),
+            (f"environment = {{\n    VIBECRAFTED_HOME => {shared_home}\n}}\n"),
             "",
         ),
     )
@@ -2387,9 +2383,7 @@ def test_service_activation_waits_for_exact_managed_pair_health(
         pair_healthy=True,
         supervisor_pid=8181,
     )
-    observations: list[
-        tuple[Path, installer._RuntimeServiceStatus, str] | OSError
-    ] = [
+    observations: list[tuple[Path, installer._RuntimeServiceStatus, str] | OSError] = [
         (launcher, stopped, "stopped"),
         installer._RuntimeServiceTransition("supervisor is starting"),
         (launcher, stopped, "stopped"),
@@ -2419,10 +2413,13 @@ def test_service_activation_waits_for_exact_managed_pair_health(
     )
     monkeypatch.setattr(installer.time, "sleep", lambda _seconds: None)
 
-    with installer._tools_install_lease(
-        current,
-        operation="test-bounded-service-activation",
-    ) as descriptor, installer._inherited_tools_install_lease(descriptor):
+    with (
+        installer._tools_install_lease(
+            current,
+            operation="test-bounded-service-activation",
+        ) as descriptor,
+        installer._inherited_tools_install_lease(descriptor),
+    ):
         installer.activate_runtime_service_after_install(shared_home)
 
     assert observations == []
@@ -2449,9 +2446,7 @@ def test_service_activation_does_not_retry_invalid_identity(
         pair_healthy=False,
         supervisor_pid=None,
     )
-    observations: list[
-        tuple[Path, installer._RuntimeServiceStatus, str] | OSError
-    ] = [
+    observations: list[tuple[Path, installer._RuntimeServiceStatus, str] | OSError] = [
         (launcher, stopped, "stopped"),
         OSError("invalid service identity"),
         (launcher, stopped, "stopped"),
@@ -2479,14 +2474,16 @@ def test_service_activation_does_not_retry_invalid_identity(
         ),
     )
 
-    with installer._tools_install_lease(
-        current,
-        operation="test-invalid-service-activation",
-    ) as descriptor, installer._inherited_tools_install_lease(
-        descriptor
-    ), pytest.raises(
-        OSError,
-        match="invalid service identity",
+    with (
+        installer._tools_install_lease(
+            current,
+            operation="test-invalid-service-activation",
+        ) as descriptor,
+        installer._inherited_tools_install_lease(descriptor),
+        pytest.raises(
+            OSError,
+            match="invalid service identity",
+        ),
     ):
         installer.activate_runtime_service_after_install(shared_home)
 
@@ -2555,13 +2552,14 @@ def test_runtime_service_probe_honors_transaction_deadline(
     monkeypatch.setenv("VIBECRAFTED_HOME", str(shared_home))
     monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
 
-    with installer._tools_install_lease(
-        current,
-        operation="test-service-probe-deadline",
-    ) as descriptor, installer._inherited_tools_install_lease(descriptor):
-        token = installer._RUNTIME_SERVICE_COMMAND_DEADLINE.set(
-            time.monotonic() + 0.1
-        )
+    with (
+        installer._tools_install_lease(
+            current,
+            operation="test-service-probe-deadline",
+        ) as descriptor,
+        installer._inherited_tools_install_lease(descriptor),
+    ):
+        token = installer._RUNTIME_SERVICE_COMMAND_DEADLINE.set(time.monotonic() + 0.1)
         started = time.monotonic()
         try:
             with pytest.raises(subprocess.TimeoutExpired):
@@ -2613,11 +2611,13 @@ def test_activation_rejects_healthy_service_with_stale_endpoint_arguments(
         lambda _shared_home: (launcher, healthy, "running"),
     )
 
-    with installer._tools_install_lease(
-        current,
-        operation="test-stale-activation-config",
-    ) as descriptor, installer._inherited_tools_install_lease(descriptor), pytest.raises(
-        OSError, match="stale endpoint"
+    with (
+        installer._tools_install_lease(
+            current,
+            operation="test-stale-activation-config",
+        ) as descriptor,
+        installer._inherited_tools_install_lease(descriptor),
+        pytest.raises(OSError, match="stale endpoint"),
     ):
         installer.activate_runtime_service_after_install(shared_home)
 
@@ -2660,10 +2660,13 @@ def test_activation_accepts_production_plist_without_legacy_interval(
         ),
     )
 
-    with installer._tools_install_lease(
-        current,
-        operation="test-production-activation-config",
-    ) as descriptor, installer._inherited_tools_install_lease(descriptor):
+    with (
+        installer._tools_install_lease(
+            current,
+            operation="test-production-activation-config",
+        ) as descriptor,
+        installer._inherited_tools_install_lease(descriptor),
+    ):
         installer.activate_runtime_service_after_install(
             shared_home,
             service_arguments=(
@@ -2775,9 +2778,7 @@ def test_operator_interrupt_during_activation_rolls_back_full_transaction(
                     "stop",
                 )
             )
-        publication_waits.append(
-            (published_at, classifier, lifecycle_fence_depth)
-        )
+        publication_waits.append((published_at, classifier, lifecycle_fence_depth))
 
     monkeypatch.setattr(
         installer,
@@ -2846,9 +2847,7 @@ def test_operator_interrupt_during_activation_rolls_back_full_transaction(
         installer._argv_is_legacy_service_action_mutator,
         1,
     )
-    assert not list(
-        (shared_home / "install-transactions").glob("runtime-payload-*")
-    )
+    assert not list((shared_home / "install-transactions").glob("runtime-payload-*"))
 
 
 def test_runtime_cutover_uncertain_activation_keeps_new_pointer_published(
@@ -3097,9 +3096,7 @@ def test_operator_interrupt_after_child_mutation_rolls_back_transaction(
 
     assert current.resolve() == old_target.resolve()
     assert server_bin.read_text(encoding="utf-8") == "#!/bin/sh\nprintf old-server\n"
-    assert not list(
-        (shared_home / "install-transactions").glob("runtime-payload-*")
-    )
+    assert not list((shared_home / "install-transactions").glob("runtime-payload-*"))
 
 
 @pytest.mark.parametrize("failure_stage", ["publication", "manual-drain"])
@@ -3468,11 +3465,7 @@ def test_runtime_payload_restore_reverses_partial_multi_entry_swap(
         **kwargs,
     ) -> None:
         nonlocal injected
-        if (
-            not injected
-            and destination == second.name
-            and ".restore-" in source
-        ):
+        if not injected and destination == second.name and ".restore-" in source:
             injected = True
             raise OSError("injected second payload publish failure")
         real_replace(source, destination, *args, **kwargs)
@@ -3540,9 +3533,7 @@ def test_runtime_payload_capture_interrupt_removes_partial_backup(
             (first, second),
         )
 
-    assert not list(
-        (shared_home / "install-transactions").glob("runtime-payload-*")
-    )
+    assert not list((shared_home / "install-transactions").glob("runtime-payload-*"))
 
 
 def test_runtime_payload_restore_anchors_parent_against_mid_replace_symlink_swap(
@@ -3570,11 +3561,7 @@ def test_runtime_payload_restore_anchors_parent_against_mid_replace_symlink_swap
         **kwargs,
     ) -> None:
         nonlocal attacked
-        if (
-            not attacked
-            and source == payload.name
-            and ".displaced-" in destination
-        ):
+        if not attacked and source == payload.name and ".displaced-" in destination:
             payload_root.rename(detached_root)
             payload_root.symlink_to(external_root, target_is_directory=True)
             attacked = True
@@ -3679,9 +3666,7 @@ def test_runtime_payload_capture_rejects_write_after_entry_open(
         installer._capture_runtime_payload_backup(shared_home, (payload,))
 
     assert injected is True
-    assert not list(
-        (shared_home / "install-transactions").glob("runtime-payload-*")
-    )
+    assert not list((shared_home / "install-transactions").glob("runtime-payload-*"))
 
 
 def test_runtime_payload_capture_collectively_seals_all_sources(
@@ -3726,9 +3711,7 @@ def test_runtime_payload_capture_collectively_seals_all_sources(
         )
 
     assert second_changed is True
-    assert not list(
-        (shared_home / "install-transactions").glob("runtime-payload-*")
-    )
+    assert not list((shared_home / "install-transactions").glob("runtime-payload-*"))
 
 
 def test_runtime_payload_restore_rejects_staged_change_at_publication(
@@ -3751,11 +3734,7 @@ def test_runtime_payload_restore_rejects_staged_change_at_publication(
         **kwargs,
     ) -> None:
         nonlocal injected
-        if (
-            not injected
-            and ".restore-" in source
-            and destination == payload.name
-        ):
+        if not injected and ".restore-" in source and destination == payload.name:
             (payload.parent / source).write_text(
                 "changed-after-digest\n",
                 encoding="utf-8",
@@ -3804,20 +3783,12 @@ def test_runtime_payload_restore_uses_snapshot_after_displaced_open_writer(
         **kwargs,
     ) -> None:
         nonlocal first_changed, second_failed
-        if (
-            not first_changed
-            and ".restore-" in source
-            and destination == first.name
-        ):
+        if not first_changed and ".restore-" in source and destination == first.name:
             os.lseek(held_writer, 0, os.SEEK_SET)
             os.write(held_writer, b"changed-through-open-writer\n")
             os.ftruncate(held_writer, len(b"changed-through-open-writer\n"))
             first_changed = True
-        if (
-            not second_failed
-            and ".restore-" in source
-            and destination == second.name
-        ):
+        if not second_failed and ".restore-" in source and destination == second.name:
             second_failed = True
             raise OSError("injected second publish failure")
         real_replace(source, destination, *args, **kwargs)
@@ -3870,11 +3841,7 @@ def test_runtime_payload_restore_snapshots_all_entries_before_first_publish(
     ) -> None:
         nonlocal second_changed
         real_replace(source, destination, *args, **kwargs)
-        if (
-            not second_changed
-            and ".restore-" in source
-            and destination == first.name
-        ):
+        if not second_changed and ".restore-" in source and destination == first.name:
             second.write_text("second-concurrent\n", encoding="utf-8")
             second_changed = True
 
@@ -3972,11 +3939,7 @@ def test_runtime_payload_discard_preserves_replacement_root(
         **kwargs,
     ) -> None:
         nonlocal injected
-        if (
-            not injected
-            and source == backup.root.name
-            and ".discard-" in destination
-        ):
+        if not injected and source == backup.root.name and ".discard-" in destination:
             backup.root.rename(detached)
             backup.root.mkdir()
             (backup.root / "replacement.txt").write_text(
@@ -4104,9 +4067,7 @@ def test_stale_complete_handoff_cannot_suppress_payload_rollback(
 
     assert result == 126
     assert current.resolve() == old_target.resolve()
-    assert server_bin.read_text(encoding="utf-8") == (
-        "#!/bin/sh\nprintf old-server\n"
-    )
+    assert server_bin.read_text(encoding="utf-8") == ("#!/bin/sh\nprintf old-server\n")
 
 
 def test_lifecycle_fence_helper_exit_after_ready_is_fatal(
@@ -4256,14 +4217,14 @@ def test_server_service_mutations_serialize_through_lifecycle_lock(
     log = tmp_path / "service-mutations.log"
     deck = tmp_path / "vibecrafted"
     source = (REPO_ROOT / "scripts" / "vibecrafted").read_text(encoding="utf-8")
-    harness = r'''
+    harness = r"""
 _server_supervisor_cli() {
   printf 'enter %s\n' "$*" >> "$VIBECRAFTED_TEST_SERVICE_LOG"
   sleep 0.4
   printf 'exit %s\n' "$*" >> "$VIBECRAFTED_TEST_SERVICE_LOG"
 }
 main "$@"
-'''
+"""
     assert source.endswith('main "$@"\n')
     _write_executable(deck, source.removesuffix('main "$@"\n') + harness)
     environment = os.environ.copy()
@@ -4271,9 +4232,7 @@ main "$@"
         {
             "HOME": str(home),
             "VIBECRAFTED_HOME": str(shared_home),
-            "VIBECRAFTED_RUNTIME_HOME": str(
-                home / ".local" / "share" / "vibecrafted"
-            ),
+            "VIBECRAFTED_RUNTIME_HOME": str(home / ".local" / "share" / "vibecrafted"),
             "VIBECRAFTED_TOOLS_HOME": str(
                 home / ".local" / "share" / "vibecrafted" / "tools"
             ),
@@ -4296,9 +4255,7 @@ main "$@"
         text=True,
     )
     time.sleep(0.15)
-    assert log.read_text(encoding="utf-8").splitlines() == [
-        "enter service install"
-    ]
+    assert log.read_text(encoding="utf-8").splitlines() == ["enter service install"]
     first_stdout, first_stderr = first.communicate(timeout=10)
     second_stdout, second_stderr = second.communicate(timeout=10)
 
@@ -4460,7 +4417,7 @@ def test_install_child_allows_bounded_natural_descendant_drain(
         "ready = Path(sys.argv[1])\n"
         "code = (\n"
         "    'from pathlib import Path; import sys, time\\n'\n"
-        "    'Path(sys.argv[1]).write_text(\"ready\\\\n\", encoding=\"utf-8\")\\n'\n"
+        '    \'Path(sys.argv[1]).write_text("ready\\\\n", encoding="utf-8")\\n\'\n'
         "    'time.sleep(0.25)\\n'\n"
         ")\n"
         "subprocess.Popen([sys.executable, '-c', code, str(ready)])\n"
@@ -5130,10 +5087,13 @@ def test_inherited_install_publishes_generation_when_current_is_source(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
 
-    with installer._tools_install_lease(
-        current,
-        operation="test-root-bootstrap",
-    ) as descriptor, installer._inherited_tools_install_lease(descriptor):
+    with (
+        installer._tools_install_lease(
+            current,
+            operation="test-root-bootstrap",
+        ) as descriptor,
+        installer._inherited_tools_install_lease(descriptor),
+    ):
         refreshed = installer.refresh_current_tools(
             source,
             home / ".vibecrafted",

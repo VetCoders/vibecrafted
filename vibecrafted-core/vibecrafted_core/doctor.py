@@ -275,8 +275,7 @@ def _vc_frame_delivery_findings(
         generated / "themes",
     )
     materialized = all(
-        path.is_file() if path.suffix else path.is_dir()
-        for path in materialized_paths
+        path.is_file() if path.suffix else path.is_dir() for path in materialized_paths
     )
     if use_repo:
         findings.append(

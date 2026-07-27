@@ -458,7 +458,9 @@ exit 73
         assert process.returncode == 73, stdout + stderr
         assert current.is_symlink()
         assert current.resolve() == live_target.resolve()
-        assert (live_target / "identity.txt").read_text(encoding="utf-8") == "still-live\n"
+        assert (live_target / "identity.txt").read_text(
+            encoding="utf-8"
+        ) == "still-live\n"
         assert not candidate_root.exists()
     finally:
         release.touch(exist_ok=True)

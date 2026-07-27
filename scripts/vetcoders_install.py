@@ -2951,8 +2951,7 @@ def _runtime_loaded_service_home() -> Path | None:
     )
     if not raw_home:
         raise OSError(
-            "loaded fixed-label runtime service has no attributable "
-            "VIBECRAFTED_HOME"
+            "loaded fixed-label runtime service has no attributable VIBECRAFTED_HOME"
         )
     return Path(raw_home).expanduser().resolve(strict=False)
 
@@ -2967,10 +2966,7 @@ def _canonical_operator_home() -> Path:
 
 def _assert_runtime_loaded_service_owner(shared_home: Path) -> Path | None:
     loaded_home = _runtime_loaded_service_home()
-    if (
-        loaded_home is not None
-        and loaded_home != shared_home.resolve(strict=False)
-    ):
+    if loaded_home is not None and loaded_home != shared_home.resolve(strict=False):
         raise OSError(
             "fixed-label runtime service belongs to foreign home "
             f"{loaded_home}; expected {shared_home.resolve(strict=False)}"
@@ -3943,13 +3939,9 @@ def rollback_runtime_install(
                     raise OSError(
                         "runtime rollback has no exact lifecycle generation handoff"
                     )
-                lifecycle_target_raw = (
-                    handoff["old_target"] or handoff["new_target"]
-                )
+                lifecycle_target_raw = handoff["old_target"] or handoff["new_target"]
                 if not lifecycle_target_raw:
-                    raise OSError(
-                        "runtime rollback has no exact lifecycle generation"
-                    )
+                    raise OSError("runtime rollback has no exact lifecycle generation")
                 lifecycle_deck = _runtime_lifecycle_deck_for_generation(
                     Path(lifecycle_target_raw)
                 )
@@ -4224,9 +4216,7 @@ def _darwin_process_ids() -> tuple[int, ...]:
         0,
     )
     if estimated <= 0:
-        raise OSError(
-            f"cannot size Darwin process census (errno {ctypes.get_errno()})"
-        )
+        raise OSError(f"cannot size Darwin process census (errno {ctypes.get_errno()})")
     capacity = max(1024, estimated // ctypes.sizeof(ctypes.c_int) + 256)
     for _ in range(4):
         buffer = (ctypes.c_int * capacity)()
@@ -4244,7 +4234,9 @@ def _darwin_process_ids() -> tuple[int, ...]:
         if received < ctypes.sizeof(buffer):
             count = received // ctypes.sizeof(ctypes.c_int)
             return tuple(
-                sorted({int(buffer[index]) for index in range(count) if buffer[index] > 1})
+                sorted(
+                    {int(buffer[index]) for index in range(count) if buffer[index] > 1}
+                )
             )
         capacity *= 2
     raise OSError("Darwin process census kept exceeding its bounded buffer")
@@ -4299,14 +4291,17 @@ def _darwin_process_arguments(pid: int, *, pointer_size: int) -> tuple[str, ...]
     for _ in range(3):
         required_size = ctypes.c_size_t(0)
         ctypes.set_errno(0)
-        if libc.sysctl(
-            mib,
-            len(mib),
-            None,
-            ctypes.byref(required_size),
-            None,
-            0,
-        ) != 0:
+        if (
+            libc.sysctl(
+                mib,
+                len(mib),
+                None,
+                ctypes.byref(required_size),
+                None,
+                0,
+            )
+            != 0
+        ):
             observed_errno = ctypes.get_errno()
             if observed_errno == errno.ESRCH:
                 raise ProcessLookupError(pid)
@@ -4320,14 +4315,17 @@ def _darwin_process_arguments(pid: int, *, pointer_size: int) -> tuple[str, ...]
         buffer = ctypes.create_string_buffer(capacity)
         received_size = ctypes.c_size_t(capacity)
         ctypes.set_errno(0)
-        if libc.sysctl(
-            mib,
-            len(mib),
-            buffer,
-            ctypes.byref(received_size),
-            None,
-            0,
-        ) == 0:
+        if (
+            libc.sysctl(
+                mib,
+                len(mib),
+                buffer,
+                ctypes.byref(received_size),
+                None,
+                0,
+            )
+            == 0
+        ):
             actual_size = int(received_size.value)
             if not 4 <= actual_size <= capacity:
                 raise OSError(f"invalid Darwin process argument payload for {pid}")
@@ -4436,9 +4434,7 @@ def _legacy_service_mutator_census() -> tuple[_LegacyServiceMutator, ...]:
         except ProcessLookupError:
             continue
         if first_birth != second_birth or first_argv != second_argv:
-            raise OSError(
-                f"Darwin process {pid} changed during legacy mutator census"
-            )
+            raise OSError(f"Darwin process {pid} changed during legacy mutator census")
         if _argv_is_service_mutator(first_argv):
             _, seconds, microseconds = first_birth[0].split(":")
             records.append(
@@ -4902,12 +4898,9 @@ def run_with_tools_install_lease(
                             shared_home
                         )
                         snapshot = _runtime_service_snapshot(shared_home)
-                        if (
-                            not gate.required
-                            and (
-                                snapshot is not None
-                                or launch_agent_backup.contents is not None
-                            )
+                        if not gate.required and (
+                            snapshot is not None
+                            or launch_agent_backup.contents is not None
                         ):
                             raise OSError(
                                 "runtime service evidence appeared before the "
@@ -5032,8 +5025,7 @@ def run_with_tools_install_lease(
                             restored = rollback_runtime_install(
                                 shared_home,
                                 service_was_active=(
-                                    service_was_active
-                                    and legacy_quiescence_proven
+                                    service_was_active and legacy_quiescence_proven
                                 ),
                                 service_activation_attempted=False,
                                 lifecycle_deck=lifecycle_deck,
@@ -5147,9 +5139,7 @@ def run_with_tools_install_lease(
                             deck=lifecycle_deck,
                         ) as activation_guard:
                             activation_guard.assert_owned()
-                            if (
-                                darwin_service and not legacy_service_lock_contract
-                            ):
+                            if darwin_service and not legacy_service_lock_contract:
                                 try:
                                     if publication_boundary is None:
                                         raise OSError(
@@ -5198,10 +5188,7 @@ def run_with_tools_install_lease(
                             activation_guard.assert_owned()
                             if require_tools_handoff:
                                 prepared = _read_tools_handoff(shared_home)
-                                if (
-                                    prepared is None
-                                    or prepared["state"] != "prepared"
-                                ):
+                                if prepared is None or prepared["state"] != "prepared":
                                     raise OSError(
                                         "install child completed without a prepared "
                                         "runtime generation handoff"
@@ -5242,8 +5229,7 @@ def run_with_tools_install_lease(
                         if rollback_was_already_unsafe:
                             raise
                         safe_to_reactivate = (
-                            legacy_service_lock_contract
-                            or legacy_quiescence_proven
+                            legacy_service_lock_contract or legacy_quiescence_proven
                         )
                         try:
                             restored = rollback_runtime_install(
@@ -5512,13 +5498,8 @@ def _runtime_payload_open_absolute_directory(
             os.close(descriptor)
             descriptor = child
         metadata = os.fstat(descriptor)
-        if (
-            not stat.S_ISDIR(metadata.st_mode)
-            or metadata.st_uid != os.geteuid()
-        ):
-            raise OSError(
-                f"runtime payload directory is not user-owned: {path}"
-            )
+        if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            raise OSError(f"runtime payload directory is not user-owned: {path}")
         return descriptor
     except BaseException:
         os.close(descriptor)
@@ -5533,10 +5514,7 @@ def _runtime_payload_directory_matches_fd(path: Path, descriptor: int) -> bool:
     try:
         expected = os.fstat(descriptor)
         observed = os.fstat(current)
-        return (
-            expected.st_dev == observed.st_dev
-            and expected.st_ino == observed.st_ino
-        )
+        return expected.st_dev == observed.st_dev and expected.st_ino == observed.st_ino
     finally:
         os.close(current)
 
@@ -5576,9 +5554,7 @@ def _runtime_payload_open_entry_at(
     name = _runtime_payload_safe_name(name)
     before = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     kind = _runtime_payload_kind(before, label=name)
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(
-        os, "O_NOFOLLOW", 0
-    )
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     if kind == "directory":
         flags |= getattr(os, "O_DIRECTORY", 0)
     descriptor = os.open(name, flags, dir_fd=parent_fd)
@@ -5715,10 +5691,7 @@ def _runtime_payload_remove_at(
             for child in os.listdir(descriptor):
                 _runtime_payload_remove_at(descriptor, child)
         observed = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-        if (
-            observed.st_dev != metadata.st_dev
-            or observed.st_ino != metadata.st_ino
-        ):
+        if observed.st_dev != metadata.st_dev or observed.st_ino != metadata.st_ino:
             raise OSError(f"runtime payload removal target changed: {name}")
     finally:
         os.close(descriptor)
@@ -5745,9 +5718,7 @@ def _runtime_payload_copy_node(
 ) -> None:
     destination_name = _runtime_payload_safe_name(destination_name)
     source_before = os.fstat(source_fd)
-    if (
-        _runtime_payload_kind(source_before, label=destination_name) != kind
-    ):
+    if _runtime_payload_kind(source_before, label=destination_name) != kind:
         raise OSError("runtime payload source changed type while copying")
     created = False
     destination_fd = -1
@@ -5890,8 +5861,7 @@ def _validate_runtime_payload_backup(backup: _RuntimePayloadBackup) -> None:
                 or entry.digest is None
             ):
                 raise OSError(
-                    f"runtime payload backup escaped its transaction root: "
-                    f"{entry.path}"
+                    f"runtime payload backup escaped its transaction root: {entry.path}"
                 )
             descriptor, kind, _ = _runtime_payload_open_entry_at(
                 root_fd,
@@ -5902,9 +5872,7 @@ def _validate_runtime_payload_backup(backup: _RuntimePayloadBackup) -> None:
             finally:
                 os.close(descriptor)
             if kind != entry.kind or observed != entry.digest:
-                raise OSError(
-                    f"runtime payload backup digest changed for {entry.path}"
-                )
+                raise OSError(f"runtime payload backup digest changed for {entry.path}")
     finally:
         os.close(root_fd)
 
@@ -5925,9 +5893,7 @@ def _stage_runtime_payload_restore(
         backup_root_fd,
         entry.backup.name,
     )
-    staged_name = (
-        f".{entry.path.name}.restore-{os.getpid()}-{os.urandom(6).hex()}"
-    )
+    staged_name = f".{entry.path.name}.restore-{os.getpid()}-{os.urandom(6).hex()}"
     staged_fd = -1
     try:
         if source_kind != entry.kind:
@@ -5944,9 +5910,7 @@ def _stage_runtime_payload_restore(
         )
         staged_digest = _runtime_payload_digest_fd(staged_fd, staged_kind)
         if staged_kind != entry.kind or staged_digest != entry.digest:
-            raise OSError(
-                f"runtime payload staged digest changed for {entry.path}"
-            )
+            raise OSError(f"runtime payload staged digest changed for {entry.path}")
         return staged_name, staged_fd, staged_kind
     except BaseException:
         if staged_fd >= 0:
@@ -6009,9 +5973,7 @@ def _runtime_payload_validate_capture_sources(
         if _runtime_payload_stat_signature(
             source.opened
         ) != _runtime_payload_stat_signature(os.fstat(source.source_fd)):
-            raise OSError(
-                f"runtime payload changed after opening: {source.path}"
-            )
+            raise OSError(f"runtime payload changed after opening: {source.path}")
         _runtime_payload_assert_retained_entry(
             source.parent_fd,
             source.path.name,
@@ -6036,9 +5998,10 @@ def _capture_runtime_payload_backup(
         for inner in expanded:
             if outer != inner and outer in inner.parents:
                 raise OSError("runtime payload transaction contains nested paths")
-    root_parent = Path(
-        os.path.abspath(os.fspath(shared_home.expanduser()))
-    ) / "install-transactions"
+    root_parent = (
+        Path(os.path.abspath(os.fspath(shared_home.expanduser())))
+        / "install-transactions"
+    )
     root_parent_fd = _runtime_payload_open_absolute_directory(
         root_parent,
         create=True,
@@ -6078,11 +6041,9 @@ def _capture_runtime_payload_backup(
                     continue
                 source_descriptors.callback(os.close, source_parent_fd)
                 try:
-                    source_fd, kind, source_opened = (
-                        _runtime_payload_open_entry_at(
-                            source_parent_fd,
-                            path.name,
-                        )
+                    source_fd, kind, source_opened = _runtime_payload_open_entry_at(
+                        source_parent_fd,
+                        path.name,
                     )
                 except FileNotFoundError:
                     sources.append(
@@ -6101,9 +6062,7 @@ def _capture_runtime_payload_backup(
                 if _runtime_payload_stat_signature(
                     source_opened
                 ) != _runtime_payload_stat_signature(os.fstat(source_fd)):
-                    raise OSError(
-                        f"runtime payload changed before capture: {path}"
-                    )
+                    raise OSError(f"runtime payload changed before capture: {path}")
                 sources.append(
                     _RuntimePayloadCaptureSource(
                         path,
@@ -6129,8 +6088,7 @@ def _capture_runtime_payload_backup(
                     continue
                 if source.source_fd is None or source.digest is None:
                     raise OSError(
-                        f"runtime payload capture source is incomplete: "
-                        f"{source.path}"
+                        f"runtime payload capture source is incomplete: {source.path}"
                     )
                 backup_name = f"{index}-{source.path.name}"
                 _runtime_payload_copy_node(
@@ -6159,8 +6117,7 @@ def _capture_runtime_payload_backup(
                     os.close(backup_fd)
                 if backup_kind != source.kind or digest != source.digest:
                     raise OSError(
-                        f"runtime payload backup changed during capture: "
-                        f"{source.path}"
+                        f"runtime payload backup changed during capture: {source.path}"
                     )
                 entries.append(
                     _RuntimePayloadEntryBackup(
@@ -6212,8 +6169,7 @@ def _restore_runtime_payload_backup_open(
                 staged_fd=staged_fd,
                 staged_kind=staged_kind,
                 displaced_name=(
-                    f".{entry.path.name}.displaced-{os.getpid()}-"
-                    f"{os.urandom(6).hex()}"
+                    f".{entry.path.name}.displaced-{os.getpid()}-{os.urandom(6).hex()}"
                 ),
             )
             operations.append(operation)
@@ -6242,11 +6198,9 @@ def _restore_runtime_payload_backup_open(
                 entry.path.name,
             ):
                 continue
-            current_fd, current_kind, current_opened = (
-                _runtime_payload_open_entry_at(
-                    operation.parent_fd,
-                    entry.path.name,
-                )
+            current_fd, current_kind, current_opened = _runtime_payload_open_entry_at(
+                operation.parent_fd,
+                entry.path.name,
             )
             try:
                 current_digest = _runtime_payload_digest_fd(
@@ -6260,8 +6214,7 @@ def _restore_runtime_payload_backup_open(
                         f"runtime payload changed before snapshot: {entry.path}"
                     )
                 operation.precall_name = (
-                    f".{entry.path.name}.precall-{os.getpid()}-"
-                    f"{os.urandom(6).hex()}"
+                    f".{entry.path.name}.precall-{os.getpid()}-{os.urandom(6).hex()}"
                 )
                 _runtime_payload_copy_node(
                     current_fd,
@@ -6364,8 +6317,7 @@ def _restore_runtime_payload_backup_open(
                 if operation.precall_name is None:
                     if current_exists:
                         raise OSError(
-                            f"runtime payload appeared during publication: "
-                            f"{entry.path}"
+                            f"runtime payload appeared during publication: {entry.path}"
                         )
                     current_digest: str | None = None
                 else:
@@ -6392,8 +6344,7 @@ def _restore_runtime_payload_backup_open(
                         != current_digest
                     ):
                         raise OSError(
-                            f"runtime payload changed during publication: "
-                            f"{entry.path}"
+                            f"runtime payload changed during publication: {entry.path}"
                         )
                 if current_exists:
                     try:
@@ -6404,11 +6355,9 @@ def _restore_runtime_payload_backup_open(
                             dst_dir_fd=operation.parent_fd,
                         )
                     finally:
-                        operation.current_displaced = (
-                            _runtime_payload_name_exists_at(
-                                operation.parent_fd,
-                                operation.displaced_name,
-                            )
+                        operation.current_displaced = _runtime_payload_name_exists_at(
+                            operation.parent_fd,
+                            operation.displaced_name,
                         )
                     if (
                         current_fd < 0
@@ -6420,8 +6369,7 @@ def _restore_runtime_payload_backup_open(
                         != current_digest
                     ):
                         raise OSError(
-                            f"runtime payload changed after displacement: "
-                            f"{entry.path}"
+                            f"runtime payload changed after displacement: {entry.path}"
                         )
                     _runtime_payload_assert_directory_current(
                         entry.path.parent,
@@ -6504,9 +6452,7 @@ def _restore_runtime_payload_backup_open(
                 or operation.staged_kind is None
                 or entry.digest is None
             ):
-                raise OSError(
-                    f"runtime payload final seal is incomplete: {entry.path}"
-                )
+                raise OSError(f"runtime payload final seal is incomplete: {entry.path}")
             _runtime_payload_assert_retained_entry(
                 operation.parent_fd,
                 entry.path.name,
@@ -6580,8 +6526,7 @@ def _restore_runtime_payload_backup_open(
                         )
                 elif operation.precall_fd is not None:
                     raise OSError(
-                        f"runtime payload absent snapshot is inconsistent: "
-                        f"{entry.path}"
+                        f"runtime payload absent snapshot is inconsistent: {entry.path}"
                     )
             except BaseException as rollback_exc:
                 if not isinstance(rollback_exc, Exception):
@@ -6665,9 +6610,7 @@ def _discard_runtime_payload_backup(backup: _RuntimePayloadBackup | None) -> Non
     except FileNotFoundError:
         return
     root_fd = -1
-    quarantine_name = (
-        f".{backup.root.name}.discard-{os.getpid()}-{os.urandom(6).hex()}"
-    )
+    quarantine_name = f".{backup.root.name}.discard-{os.getpid()}-{os.urandom(6).hex()}"
     quarantined = False
     try:
         try:
@@ -6680,8 +6623,7 @@ def _discard_runtime_payload_backup(backup: _RuntimePayloadBackup | None) -> Non
         try:
             if (
                 root_kind != "directory"
-                or (root_metadata.st_dev, root_metadata.st_ino)
-                != backup.root_identity
+                or (root_metadata.st_dev, root_metadata.st_ino) != backup.root_identity
             ):
                 raise OSError("runtime payload backup root identity changed")
             os.replace(
@@ -6690,15 +6632,12 @@ def _discard_runtime_payload_backup(backup: _RuntimePayloadBackup | None) -> Non
                 src_dir_fd=parent_fd,
                 dst_dir_fd=parent_fd,
             )
-            quarantined = (
-                not _runtime_payload_name_exists_at(
-                    parent_fd,
-                    backup.root.name,
-                )
-                and _runtime_payload_name_exists_at(
-                    parent_fd,
-                    quarantine_name,
-                )
+            quarantined = not _runtime_payload_name_exists_at(
+                parent_fd,
+                backup.root.name,
+            ) and _runtime_payload_name_exists_at(
+                parent_fd,
+                quarantine_name,
             )
             quarantine_fd, quarantine_kind, quarantine_metadata = (
                 _runtime_payload_open_entry_at(
@@ -6717,9 +6656,7 @@ def _discard_runtime_payload_backup(backup: _RuntimePayloadBackup | None) -> Non
                     or quarantine_metadata.st_dev != root_metadata.st_dev
                     or quarantine_metadata.st_ino != root_metadata.st_ino
                 ):
-                    raise OSError(
-                        "runtime payload backup changed during discard"
-                    )
+                    raise OSError("runtime payload backup changed during discard")
             finally:
                 os.close(quarantine_fd)
             _runtime_payload_remove_at(
