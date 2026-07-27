@@ -303,20 +303,20 @@ pub mod api {
     ) -> Vec<ScaffoldPlanCard> {
         plans
             .into_iter()
-            .map(|plan| {
-                let issue_count = store
-                    .doctor(&plan.org, &plan.repo, &plan.day, &plan.plan_id)
-                    .map(|report| report.errors.len().max(1))
-                    .unwrap_or(1);
-                let reviewable = store
-                    .workspace(&plan.org, &plan.repo, &plan.day, Some(&plan.plan_id))
-                    .is_ok();
-                ScaffoldPlanCard {
-                    plan,
-                    reviewable,
-                    issue_count,
-                }
-            })
+            .map(
+                |plan| match store.doctor(&plan.org, &plan.repo, &plan.day, &plan.plan_id) {
+                    Ok(report) => ScaffoldPlanCard {
+                        plan,
+                        reviewable: report.workspace_reviewable(),
+                        issue_count: report.errors.len(),
+                    },
+                    Err(_) => ScaffoldPlanCard {
+                        plan,
+                        reviewable: false,
+                        issue_count: 1,
+                    },
+                },
+            )
             .collect()
     }
 

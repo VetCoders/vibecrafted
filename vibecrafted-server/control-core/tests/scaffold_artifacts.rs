@@ -335,6 +335,13 @@ fn global_catalog_lists_scaffold_truth_and_ignores_unrelated_manifests() {
         br#"{"schema":"loctree.context-atlas.v1","files":[]}"#,
     )
     .expect("unrelated manifest");
+    let invalid_sibling = plan_root(&home, "invalid-sibling");
+    fs::create_dir_all(&invalid_sibling).expect("invalid sibling root");
+    fs::write(
+        invalid_sibling.join("manifest.json"),
+        br#"{"plan_id":"invalid-sibling"}"#,
+    )
+    .expect("invalid sibling manifest");
 
     let store = ScaffoldArtifactStore::new(&home);
     let catalog = store.catalog();
@@ -346,6 +353,22 @@ fn global_catalog_lists_scaffold_truth_and_ignores_unrelated_manifests() {
         ["plan-a", "plan-b"]
     );
     assert!(catalog.iter().all(|plan| plan.artifact_count == 4));
+    assert_eq!(
+        store
+            .plans("vetcoders", "vibecrafted", "2026_0720")
+            .expect("valid plans survive an invalid sibling")
+            .iter()
+            .map(|plan| plan.plan_id.as_str())
+            .collect::<Vec<_>>(),
+        ["plan-a", "plan-b"]
+    );
+    assert_eq!(
+        store
+            .workspace("vetcoders", "vibecrafted", "2026_0720", Some("plan-a"))
+            .expect("valid workspace survives an invalid sibling")
+            .plan_id,
+        "plan-a"
+    );
     assert!(matches!(
         store.latest_workspace(),
         Err(ScaffoldError::SelectionRequired { plan_ids })

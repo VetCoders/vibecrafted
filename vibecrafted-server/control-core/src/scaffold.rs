@@ -214,6 +214,17 @@ pub struct ScaffoldDoctorReport {
     pub errors: Vec<ScaffoldDoctorError>,
 }
 
+impl ScaffoldDoctorReport {
+    /// Whether the editor can safely construct a workspace from this report.
+    ///
+    /// Contract-quality findings remain visible without making the artifact
+    /// package unreadable. Structural/path failures fail closed.
+    #[must_use]
+    pub fn workspace_reviewable(&self) -> bool {
+        !self.errors.iter().any(workspace_fatal_error)
+    }
+}
+
 /// Canonical 12 brief section markers (heading-substring, case-insensitive).
 /// Matches vc-scaffold Phase 5 + the fixture convention (Verification as #6).
 const BRIEF_SECTIONS: &[&str] = &[
@@ -287,7 +298,9 @@ impl ScaffoldArtifactStore {
             {
                 continue;
             }
-            let manifest = read_manifest(&root)?;
+            let Ok(manifest) = read_manifest(&root) else {
+                continue;
+            };
             if manifest.org != org || manifest.repo != repo || manifest.day != day {
                 continue;
             }
@@ -662,7 +675,6 @@ fn workspace_fatal_error(error: &ScaffoldDoctorError) -> bool {
             | "missing_manifest_artifact"
             | "path_escape"
             | "writable_symlink"
-            | "identity_mismatch"
     )
 }
 
@@ -1646,5 +1658,32 @@ mod tests {
             validate_relative_markdown_path("briefs/cut.md").expect("safe"),
             PathBuf::from("briefs/cut.md")
         );
+    }
+
+    #[test]
+    fn workspace_health_keeps_identity_drift_visible_but_nonfatal() {
+        let mut report = ScaffoldDoctorReport {
+            valid: false,
+            plan_id: "plan-a".into(),
+            plan_root: "/tmp/plan-a".into(),
+            artifact_ids: Vec::new(),
+            errors: vec![ScaffoldDoctorError {
+                code: "identity_mismatch".into(),
+                rule: Some("R1".into()),
+                artifact_id: None,
+                path: None,
+                message: "path casing differs".into(),
+            }],
+        };
+        assert!(report.workspace_reviewable());
+
+        report.errors.push(ScaffoldDoctorError {
+            code: "missing_required_artifact".into(),
+            rule: Some("R2".into()),
+            artifact_id: Some("driver".into()),
+            path: Some("DRIVER.md".into()),
+            message: "missing".into(),
+        });
+        assert!(!report.workspace_reviewable());
     }
 }
