@@ -3,6 +3,17 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+# Portable simulates a stranger's clean machine. A live Vibecrafted worker
+# shell exports runtime identity plus PYTHONPATH pinned at the HOST install;
+# leaked into the sandboxed bootstrap they make uv-tool import the host's
+# vibecrafted_core and trip the install-tools drift FATAL. Strip them all
+# up front instead of per-invocation.
+unset PYTHONPATH
+for _ambient_var in $(compgen -e | grep -E '^(VIBECRAFTED_|VC_FRAME|ZELLIJ)'); do
+  unset "$_ambient_var"
+done
+unset _ambient_var
+
 log() {
   printf '[portable] %s\n' "$*"
 }

@@ -331,7 +331,9 @@ def test_guardian_real_server_fxn_exactly_once(
     codex_log = tmp_path / "codex-invocations.jsonl"
     journal = vc_home / "trust" / "journal.jsonl"
     guardian_dir = vc_home / "guardian-proof"
-    guardian_dir.mkdir()
+    # Guardian fail-closes unless its directory is 0700; an operator umask of
+    # 022 would otherwise leave 0755 and red this proof only outside CI.
+    guardian_dir.mkdir(mode=0o700)
     guardian_state = guardian_dir / "state.json"
     guardian_lock = guardian_dir / "guardian.lock"
     ready_file = guardian_dir / "ready.json"
