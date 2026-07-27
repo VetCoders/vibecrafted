@@ -10,10 +10,11 @@
 //! Routes:
 //! * `GET /api/health` — constant-time process readiness; never scans the
 //!   control plane.
-//! * `GET /api/control/state` — merged [`StateView`](control_core::StateView)
-//!   (canonical settlement board, active/recent runs, warnings, event tail),
-//!   computed in Rust from retained snapshots plus the three raw live sources
-//!   and lifecycle projections.
+//! * `GET /api/control/state` — cached [`StateView`](control_core::StateView)
+//!   (canonical settlement board, active/recent runs, warnings, event tail)
+//!   read from the Python-owned snapshots. The raw self-sufficient merge stays
+//!   available to TUI/diagnostic consumers, but is too expensive for an HTTP
+//!   request over a long-lived control plane.
 //! * `GET /api/control/runs` — every `runs/<id>.json` snapshot, newest-first.
 //!   Each run serialises optional delivery-proof axes (`execution_state`,
 //!   `proof_state`, `delivery_state`) and optional `seal` when present on the
@@ -33,6 +34,11 @@ mod events_sse;
 
 #[cfg(feature = "ssr")]
 pub mod api {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+
     use axum::Json;
     use axum::Router;
     use axum::extract::Path;
@@ -45,6 +51,18 @@ pub mod api {
     use serde_json::json;
 
     use super::events_sse::events_sse;
+
+    const STATE_CACHE_TTL: Duration = Duration::from_secs(15);
+
+    #[derive(Clone)]
+    struct StateCacheEntry {
+        control_plane: PathBuf,
+        refreshed_at: Instant,
+        payload: StateEnvelope,
+    }
+
+    static STATE_CACHE: OnceLock<Mutex<Option<StateCacheEntry>>> = OnceLock::new();
+    static STATE_REFRESHING: AtomicBool = AtomicBool::new(false);
 
     /// The control-plane read router, keyed to the same `LeptosOptions` state the
     /// app router carries so it merges without a state-type mismatch.
@@ -85,8 +103,8 @@ pub mod api {
         pub(crate) settlement_counts: SettlementBoard,
     }
 
-    pub(crate) fn state_payload(plane: &ControlPlane, now: DateTime<Utc>) -> StateEnvelope {
-        let view = plane.compute_view(now);
+    fn build_state_payload(plane: &ControlPlane, now: DateTime<Utc>) -> StateEnvelope {
+        let view = plane.read_state_view();
         StateEnvelope {
             control_plane: plane.control_plane_home().display().to_string(),
             generated_at: now.to_rfc3339(),
@@ -99,12 +117,67 @@ pub mod api {
         }
     }
 
-    /// Merged control-plane state view. The self-sufficient path: merges
-    /// `*.meta.json` + `*.lock` + `marbles/**/state.json` in Rust.
+    fn state_cache() -> &'static Mutex<Option<StateCacheEntry>> {
+        STATE_CACHE.get_or_init(|| Mutex::new(None))
+    }
+
+    fn cached_state_payload(plane: &ControlPlane) -> Option<StateEnvelope> {
+        let control_plane = plane.control_plane_home();
+        state_cache()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .filter(|entry| entry.control_plane == control_plane)
+            .map(|entry| entry.payload.clone())
+    }
+
+    fn cache_is_stale(plane: &ControlPlane) -> bool {
+        let control_plane = plane.control_plane_home();
+        state_cache()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .filter(|entry| entry.control_plane == control_plane)
+            .is_none_or(|entry| entry.refreshed_at.elapsed() >= STATE_CACHE_TTL)
+    }
+
+    fn store_state_payload(plane: &ControlPlane, payload: StateEnvelope) {
+        *state_cache()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(StateCacheEntry {
+            control_plane: plane.control_plane_home(),
+            refreshed_at: Instant::now(),
+            payload,
+        });
+    }
+
+    pub(crate) fn state_payload(plane: &ControlPlane, now: DateTime<Utc>) -> StateEnvelope {
+        if let Some(payload) = cached_state_payload(plane) {
+            return payload;
+        }
+        let payload = build_state_payload(plane, now);
+        store_state_payload(plane, payload.clone());
+        payload
+    }
+
+    /// Snapshot-backed state view. A complete projection is cached in-process;
+    /// stale data is returned immediately while one background refresh reads
+    /// the durable snapshots. This keeps filesystem latency out of HTTP.
     async fn state() -> impl IntoResponse {
         let plane = ControlPlane::from_env();
-        let now = Utc::now();
-        Json(state_payload(&plane, now))
+        let payload = state_payload(&plane, Utc::now());
+        if cache_is_stale(&plane)
+            && STATE_REFRESHING
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
+            tokio::task::spawn_blocking(move || {
+                let payload = build_state_payload(&plane, Utc::now());
+                store_state_payload(&plane, payload);
+                STATE_REFRESHING.store(false, Ordering::Release);
+            });
+        }
+        Json(payload)
     }
 
     /// Every `runs/<id>.json` snapshot, newest-first.

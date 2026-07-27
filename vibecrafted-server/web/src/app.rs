@@ -632,6 +632,13 @@ mod tests {
         write_snapshot(&runs_dir, "failed", "failed", "x");
         write_snapshot(&runs_dir, "invalid", "invalid", "x");
         write_snapshot(&runs_dir, "attention", "needs_attention", "n");
+        let locks_dir = home.join("locks");
+        fs::create_dir_all(&locks_dir).expect("locks dir");
+        fs::write(
+            locks_dir.join("raw-only.lock"),
+            "run_id=raw-only\nstatus=running\nagent=codex\n",
+        )
+        .expect("write raw lock");
 
         let plane = ControlPlane::new(&home);
         let now = chrono::DateTime::parse_from_rfc3339("2026-07-22T12:30:00+00:00")
@@ -645,6 +652,14 @@ mod tests {
             console_dashboard(dashboard).to_html()
         });
         let board = &api["settlement_counts"];
+        assert!(
+            api["recent_runs"]
+                .as_array()
+                .expect("recent runs")
+                .iter()
+                .all(|run| run["run_id"] != "raw-only"),
+            "the HTTP/SSR projection must use Python-owned snapshots, not rescan raw locks"
+        );
 
         for key in [
             "active",
