@@ -1570,7 +1570,17 @@ def start_service(config: SupervisorConfig) -> None:
                 result.returncode or 1,
             )
     probe = probe_supervisor(config.paths)
-    if loaded and not _probe_matches_identity(
+    if not loaded:
+        # `bootstrap` registers the job, but launchd may defer its first
+        # RunAtLoad execution.  A plain kickstart closes that startup race
+        # without `-k`, which would terminate a supervisor that already won it.
+        result = _launchctl(["kickstart", _launch_target()])
+        if result.returncode != 0:
+            raise SupervisorError(
+                f"launchctl kickstart failed: {result.stderr.strip()}",
+                result.returncode or 1,
+            )
+    elif not _probe_matches_identity(
         probe,
         identity,
         service_managed=True,

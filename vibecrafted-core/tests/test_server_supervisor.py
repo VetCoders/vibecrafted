@@ -439,7 +439,14 @@ def test_start_service_does_not_kill_a_freshly_bootstrapped_supervisor(
     )
 
     supervisor.start_service(config)
-    assert [call[0] for call in calls] == ["bootstrap"]
+    assert calls == [
+        [
+            "bootstrap",
+            supervisor._launch_domain(),
+            str(config.paths.launch_agent_file),
+        ],
+        ["kickstart", supervisor._launch_target()],
+    ]
 
     calls.clear()
     monkeypatch.setattr(
@@ -865,8 +872,10 @@ def test_hermetic_service_upgrade_restarts_into_new_provenance(
             loaded = False
             stop_process()
         elif action == "kickstart":
-            stop_process()
-            start_process()
+            if "-k" in args:
+                stop_process()
+            if service_process is None or service_process.poll() is not None:
+                start_process()
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: loaded)
