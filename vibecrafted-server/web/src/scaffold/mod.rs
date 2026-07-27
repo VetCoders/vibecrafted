@@ -74,7 +74,6 @@ pub mod api {
     struct ScaffoldPlanCard {
         plan: ScaffoldPlanSummary,
         reviewable: bool,
-        issue_count: usize,
     }
 
     pub fn scaffold_routes() -> Router<leptos::config::LeptosOptions> {
@@ -303,20 +302,15 @@ pub mod api {
     ) -> Vec<ScaffoldPlanCard> {
         plans
             .into_iter()
-            .map(
-                |plan| match store.doctor(&plan.org, &plan.repo, &plan.day, &plan.plan_id) {
-                    Ok(report) => ScaffoldPlanCard {
-                        plan,
-                        reviewable: report.workspace_reviewable(),
-                        issue_count: report.errors.len(),
-                    },
-                    Err(_) => ScaffoldPlanCard {
-                        plan,
-                        reviewable: false,
-                        issue_count: 1,
-                    },
-                },
-            )
+            .map(|plan| ScaffoldPlanCard {
+                reviewable: store.is_plan_reviewable(
+                    &plan.org,
+                    &plan.repo,
+                    &plan.day,
+                    &plan.plan_id,
+                ),
+                plan,
+            })
             .collect()
     }
 
@@ -503,19 +497,11 @@ pub mod api {
         );
         let search = format!("{} {} {} {}", plan.org, plan.repo, plan.day, plan.plan_id);
         let (state_class, access) = if !card.reviewable {
-            (
-                " plan-card-blocked",
-                format!("blocked · {}", card.issue_count),
-            )
-        } else if card.issue_count > 0 {
-            (
-                " plan-card-warn",
-                format!("open · {} findings", card.issue_count),
-            )
+            (" plan-card-blocked", "blocked")
         } else if plan.legacy_read_only {
-            ("", "read only".to_string())
+            ("", "read only")
         } else {
-            ("", "ready".to_string())
+            ("", "open")
         };
         format!(
             r#"<a class="plan-card{}" href="{}" data-search="{}">
@@ -891,7 +877,7 @@ a{color:inherit}
 .plan-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:12px}
 .plan-card{min-height:290px;display:flex;flex-direction:column;justify-content:space-between;gap:28px;padding:22px;border:1px solid var(--line);border-radius:9px;background:linear-gradient(145deg,var(--panel),#111415);text-decoration:none;transition:transform .18s ease,border-color .18s ease,background .18s ease}
 .plan-card:hover,.plan-card:focus-visible{transform:translateY(-3px);border-color:var(--teal);background:var(--panel-lift);outline:none}
-.plan-card-blocked{border-color:rgba(255,138,138,.28);background:linear-gradient(145deg,#1b1617,#111415)}.plan-card-blocked .plan-access{border-color:rgba(255,138,138,.35);color:var(--bad)}.plan-card-warn .plan-access{border-color:rgba(255,209,102,.28);color:var(--warn)}
+.plan-card-blocked{border-color:rgba(255,138,138,.28);background:linear-gradient(145deg,#1b1617,#111415)}.plan-card-blocked .plan-access{border-color:rgba(255,138,138,.35);color:var(--bad)}
 .plan-card[hidden]{display:none}.plan-card-top,.plan-card-meta,.plan-open{display:flex;align-items:center;justify-content:space-between;gap:16px}
 .plan-number{color:var(--amber);font:12px ui-monospace,SFMono-Regular,Menlo,monospace}.plan-access{border:1px solid var(--line);border-radius:99px;padding:4px 8px;color:var(--muted);font:9px ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase;letter-spacing:.1em}
 .plan-card-title p{margin:0 0 9px;color:var(--teal);font:11px ui-monospace,SFMono-Regular,Menlo,monospace}.plan-card-title h3{max-width:470px;margin:0;font:400 28px/1.03 Georgia,'Times New Roman',serif;letter-spacing:-.025em}
@@ -1067,7 +1053,6 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
                     legacy_read_only: false,
                 },
                 reviewable: true,
-                issue_count: 0,
             }]);
 
             assert!(html.contains("Choose the truth"));

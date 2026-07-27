@@ -364,6 +364,35 @@ impl ScaffoldArtifactStore {
         self.workspace(&plan.org, &plan.repo, &plan.day, Some(&plan.plan_id))
     }
 
+    /// Cheap structural verdict used by catalog surfaces.
+    ///
+    /// This intentionally avoids the full doctor/content pass. The editor
+    /// reads and validates content only after an operator selects one plan.
+    #[must_use]
+    pub fn is_plan_reviewable(&self, org: &str, repo: &str, day: &str, plan_id: &str) -> bool {
+        let Ok(root) = self.plan_root(org, repo, day, plan_id) else {
+            return false;
+        };
+        let Ok(manifest) = read_manifest(&root) else {
+            return false;
+        };
+        if validate_identity(&manifest, org, repo, day, plan_id).is_err() {
+            return false;
+        }
+
+        let mut ids = BTreeSet::new();
+        let mut paths = BTreeSet::new();
+        manifest.artifacts.iter().all(|artifact| {
+            if !ids.insert(&artifact.id) || !paths.insert(&artifact.path) {
+                return false;
+            }
+            let Ok(path) = declared_path(&root, artifact) else {
+                return false;
+            };
+            path.is_file() && (!artifact.editable || !path_has_symlink(&root, &path))
+        })
+    }
+
     pub fn workspace(
         &self,
         org: &str,

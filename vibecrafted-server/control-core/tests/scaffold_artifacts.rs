@@ -383,6 +383,14 @@ fn global_catalog_lists_scaffold_truth_and_ignores_unrelated_manifests() {
             .plan_id,
         "plan-a"
     );
+    assert!(store.is_plan_reviewable("vetcoders", "vibecrafted", "2026_0720", "plan-a"));
+    fs::remove_file(plan_root(&home, "plan-a").join("DRIVER.md")).expect("remove driver");
+    assert!(!store.is_plan_reviewable("vetcoders", "vibecrafted", "2026_0720", "plan-a"));
+    fs::write(
+        plan_root(&home, "plan-a").join("DRIVER.md"),
+        driver_body("plan-a"),
+    )
+    .expect("restore driver");
     assert!(matches!(
         store.latest_workspace(),
         Err(ScaffoldError::SelectionRequired { plan_ids })
