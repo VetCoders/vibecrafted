@@ -243,7 +243,7 @@ def _bounded_text_read(
 
 def _event_to_payload(event: Any) -> dict[str, Any]:
     return {
-        "cursor": int(getattr(event, "cursor", 0) or 0),
+        "cursor": str(getattr(event, "cursor", "0") or "0"),
         "ts": str(getattr(event, "ts", "") or ""),
         "run_id": str(getattr(event, "run_id", "") or ""),
         "kind": str(getattr(event, "kind", "") or ""),
@@ -252,26 +252,36 @@ def _event_to_payload(event: Any) -> dict[str, Any]:
     }
 
 
+def _event_cursor_from_payload(cursor: dict[str, Any] | None) -> str:
+    payload = dict(cursor or {})
+    if "event_cursor" in payload:
+        value = str(payload.get("event_cursor") or "0").strip()
+        return value or "0"
+    # Explicit one-release compatibility bridge. The core subscriber upgrades
+    # legacy zero or emits a resnapshot gap for an ambiguous non-zero offset.
+    if "event_offset" in payload:
+        return str(_clamp_int(payload.get("event_offset"), 0, 2**63 - 1))
+    return "0"
+
+
 def _read_run_events_delta(
-    run_id: str, *, event_offset: int = 0, max_events: int = OBSERVE_MAX_EVENTS
-) -> tuple[list[dict[str, Any]], int]:
+    run_id: str,
+    *,
+    event_cursor: str | int | None = "0",
+    max_events: int = OBSERVE_MAX_EVENTS,
+) -> tuple[list[dict[str, Any]], str]:
     target = str(run_id or "").strip()
     limit = _clamp_int(max_events, OBSERVE_MAX_EVENTS, OBSERVE_MAX_EVENTS)
-    cursor = _clamp_int(event_offset, 0, 2**63 - 1)
-    stream = _control_plane.event_stream_path()
-    try:
-        stream_size = stream.stat().st_size
-    except OSError:
-        return [], cursor
+    cursor = str(event_cursor or "0")
 
     events: list[dict[str, Any]] = []
     next_cursor = cursor
     for event in _control_plane.subscribe_events(since_cursor=cursor):
         payload = _event_to_payload(event)
-        next_cursor = max(next_cursor, int(payload["cursor"]))
+        next_cursor = str(payload["cursor"])
         if limit > 0 and payload["run_id"] == target and len(events) < limit:
             events.append(payload)
-        if (limit > 0 and len(events) >= limit) or next_cursor >= stream_size:
+        if limit > 0 and len(events) >= limit:
             break
     return events, next_cursor
 
@@ -329,7 +339,7 @@ def _observe_run_once(
 ) -> dict[str, Any]:
     target = str(run_id or "").strip()
     cursor_payload = dict(cursor or {})
-    event_offset = _clamp_int(cursor_payload.get("event_offset"), 0, 2**63 - 1)
+    event_cursor = _event_cursor_from_payload(cursor_payload)
     transcript_offset = (
         None
         if "transcript_offset" not in cursor_payload
@@ -337,9 +347,9 @@ def _observe_run_once(
     )
     with _override_vibecrafted_home(home):
         run = _control_plane.lookup_run(target)
-        events, next_event_offset = _read_run_events_delta(
+        events, next_event_cursor = _read_run_events_delta(
             target,
-            event_offset=event_offset,
+            event_cursor=event_cursor,
             max_events=max_events,
         )
         transcript_path = str(
@@ -374,7 +384,7 @@ def _observe_run_once(
         "state": state,
         "operator_state": (run or {}).get("operator_state", "") if run else "",
         "cursor": {
-            "event_offset": next_event_offset,
+            "event_cursor": next_event_cursor,
             "transcript_offset": int(transcript["next_offset"]),
         },
         "events": events,
@@ -395,9 +405,7 @@ def _observe_run(
     wait_seconds: float = 0.0,
 ) -> dict[str, Any]:
     wait = _clamp_float(wait_seconds, 0.0, OBSERVE_MAX_WAIT_SECONDS)
-    start_event_offset = _clamp_int(
-        dict(cursor or {}).get("event_offset"), 0, 2**63 - 1
-    )
+    start_event_cursor = _event_cursor_from_payload(cursor)
     deadline = time.monotonic() + wait
     while True:
         payload = _observe_run_once(
@@ -410,7 +418,7 @@ def _observe_run(
         if (
             wait <= 0
             or payload["events"]
-            or int(payload["cursor"]["event_offset"]) > start_event_offset
+            or str(payload["cursor"]["event_cursor"]) != start_event_cursor
             or int(payload["transcript"]["bytes"]) > 0
             or payload["terminal"]
             or time.monotonic() >= deadline
@@ -1017,7 +1025,7 @@ def build_server() -> Any:
         """Bounded transcript read for one run from the current control plane."""
         return _observe_run_once(
             run_id,
-            cursor={"event_offset": 0, "transcript_offset": 0},
+            cursor={"event_cursor": "0", "transcript_offset": 0},
             max_bytes=OBSERVE_MAX_BYTES,
             max_events=0,
         )["transcript"]
@@ -1025,14 +1033,14 @@ def build_server() -> Any:
     @mcp.resource("vibecrafted://runs/{run_id}/events")
     def run_events(run_id: str) -> dict[str, Any]:
         """Bounded event read for one run from the current control plane."""
-        events, next_offset = _read_run_events_delta(
+        events, next_cursor = _read_run_events_delta(
             run_id,
-            event_offset=0,
+            event_cursor="0",
             max_events=OBSERVE_MAX_EVENTS,
         )
         return {
             "run_id": run_id,
-            "cursor": {"event_offset": next_offset},
+            "cursor": {"event_cursor": next_cursor},
             "events": events,
         }
 

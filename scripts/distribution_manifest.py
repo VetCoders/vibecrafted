@@ -36,7 +36,9 @@ REQUIRED_FILES = (
     "vibecrafted-mcp/pyproject.toml",
     "plugins/iterm2/pyproject.toml",
     "vibecrafted-app/Cargo.toml",
+    "vibecrafted-app/Cargo.lock",
     "vibecrafted-server/Cargo.toml",
+    "vibecrafted-server/Cargo.lock",
 )
 
 REQUIRED_DIRECTORIES = (
@@ -165,6 +167,12 @@ FORBIDDEN_COMPONENTS = frozenset(
 )
 
 FORBIDDEN_SUFFIXES = (".pyc", ".pyo", ".swp", "~")
+REQUIRED_LOCKFILES = frozenset(
+    {
+        "vibecrafted-app/Cargo.lock",
+        "vibecrafted-server/Cargo.lock",
+    }
+)
 CANONICAL_RUNTIME = Path("vibecrafted-core/vibecrafted_core/runtime")
 CANONICAL_SKILLS = Path("vibecrafted-core/vibecrafted_core/skills")
 # Repo-root aliases that are symlinks into the canonical package tree. Some
@@ -192,6 +200,8 @@ def path_is_forbidden(relative: str | Path) -> bool:
     relative_path = _relative_path(relative)
     if not relative_path.parts:
         return True
+    if relative_path.as_posix() in REQUIRED_LOCKFILES:
+        return False
     return any(part in FORBIDDEN_COMPONENTS for part in relative_path.parts) or (
         relative_path.name.endswith(FORBIDDEN_SUFFIXES)
     )

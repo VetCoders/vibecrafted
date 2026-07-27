@@ -168,6 +168,48 @@ PY
     assert final["session_id"] == "telemetry-session-001"
 
 
+def test_finalize_handoff_returns_regular_meta_for_triage(tmp_path: Path) -> None:
+    """The shell handoff carries the canonical meta, never its compat symlink."""
+
+    home = tmp_path / "home" / ".vibecrafted"
+    reports = home / "artifacts" / "Vetcoders" / "demo" / "2026_0726" / "reports"
+    reports.mkdir(parents=True)
+    meta = reports / "announced.meta.json"
+    report = reports / "announced.md"
+    transcript = reports / "announced.transcript.log"
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME
+        source "{COMMON_SH}"
+        export VIBECRAFTED_HOME="{home}"
+        export SPAWN_RUN_ID=handoff-test-001
+        export SPAWN_SKILL_CODE=impl
+        printf '# Report\\n\\nDone.\\n' > "{report}"
+        printf 'session: canonical-handoff-001\\nwork done\\n' > "{transcript}"
+        spawn_write_meta "{meta}" launching codex implement "{tmp_path}" plan.md "{report}" "{transcript}" l.sh
+        spawn_finish_meta "{meta}" completed 0
+        final_meta="$(spawn_finalize_artifacts "{meta}" "{report}" "{transcript}")"
+        [[ -f "$final_meta" && ! -L "$final_meta" ]]
+        spawn_triage_run "$final_meta"
+        printf 'FINAL_META=%s\\n' "$final_meta"
+        '''
+    )
+
+    marker = next(
+        line for line in result.stdout.splitlines() if line.startswith("FINAL_META=")
+    )
+    final_meta = Path(marker.removeprefix("FINAL_META="))
+    assert meta.is_symlink()
+    assert meta.resolve() == final_meta.resolve()
+    assert final_meta.is_file()
+    assert not final_meta.is_symlink()
+    payload = json.loads(final_meta.read_text(encoding="utf-8"))
+    assert payload["triage"] == "skipped"
+    assert payload["triage_reason"] == "no_session"
+
+
 def test_generated_launcher_walks_full_lifecycle(tmp_path: Path) -> None:
     # Plan verifier (VC-vbcr-stabilize-031): a trivial run must pass through
     # "running" while the agent command executes and land on a terminal state.
@@ -347,6 +389,12 @@ def test_triage_run_is_the_last_step_of_a_generated_launcher() -> None:
     launcher_src = (
         REPO_ROOT / "runtime" / "scripts" / "lib" / "launcher.sh"
     ).read_text(encoding="utf-8")
+    assert (
+        launcher_src.count(
+            'meta="$(spawn_finalize_artifacts "$meta" "$report" "$transcript")"'
+        )
+        == 2
+    )
 
     for branch, tail in (
         ("success", 'spawn_triage_run "$meta"\nelse'),
@@ -412,6 +460,9 @@ def test_triage_run_never_fails_a_finished_run(tmp_path: Path) -> None:
     result = _bash(
         f'''
         set -euo pipefail
+        export HOME="{tmp_path / "home"}"
+        mkdir -p "$HOME"
+        unset VIBECRAFTED_HOME VIBECRAFTED_CONTROL_PLANE
         unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME
         source "{COMMON_SH}"
         spawn_triage_run "{meta}"

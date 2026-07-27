@@ -200,8 +200,9 @@ EOF_LAUNCH
     printf '%s\n' "$success_hook" >> "$launcher"
   fi
   cat >> "$launcher" <<'EOF_LAUNCH'
-  # Final artifact closure is Python-owned; this shell call is the stable wrapper.
-  spawn_finalize_artifacts "$meta" "$report" "$transcript"
+  # Final artifact closure may canonicalize the filename. Carry the returned
+  # regular path forward; the announced path is now only a compatibility symlink.
+  meta="$(spawn_finalize_artifacts "$meta" "$report" "$transcript")"
   if [[ -n "$startup_watch_pid" ]]; then
     wait "$startup_watch_pid" 2>/dev/null || true
   fi
@@ -218,8 +219,9 @@ EOF_LAUNCH
     printf '%s\n' "$failure_hook" >> "$launcher"
   fi
   cat >> "$launcher" <<'EOF_LAUNCH'
-  # Final artifact closure is Python-owned; this shell call is the stable wrapper.
-  spawn_finalize_artifacts "$meta" "$report" "$transcript"
+  # Final artifact closure may canonicalize the filename. Carry the returned
+  # regular path forward; the announced path is now only a compatibility symlink.
+  meta="$(spawn_finalize_artifacts "$meta" "$report" "$transcript")"
   if [[ -n "$startup_watch_pid" ]]; then
     wait "$startup_watch_pid" 2>/dev/null || true
   fi
@@ -274,7 +276,7 @@ PY
 
 spawn_launch() {
   local launcher="$1"
-  local runtime="${2:-terminal}"
+  local runtime="${2:-headless}"
   local dry_run="${3:-0}"
   local pane_name="${4:-$(basename "$launcher" .sh)}"
 
@@ -373,7 +375,7 @@ spawn_launch() {
 spawn_print_launch() {
   local agent="$1"
   local mode="$2"
-  local runtime="${3:-terminal}"
+  local runtime="${3:-headless}"
   local dry_run="${4:-0}"
 
   # ── 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. branded spawn output ──────────────────────────────

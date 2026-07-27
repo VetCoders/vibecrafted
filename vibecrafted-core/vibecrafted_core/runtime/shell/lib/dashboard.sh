@@ -100,7 +100,6 @@ _vetcoders_launch_dashboard() {
 
   local layout_name layout_file session_name repo_source repo_vc_frame_dir state inside_vc_frame current_session vc_frame_bin
   _vetcoders_normalize_ambient_context
-  _vetcoders_auto_gc_dead_vc_frame_sessions
   layout_name="$(_vetcoders_dashboard_layout_name "${first_arg}")" || return 1
   (( $# )) && shift
 

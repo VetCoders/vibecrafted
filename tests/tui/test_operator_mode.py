@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,8 +19,13 @@ def _write_capture_command(bin_dir: Path, name: str, capture_file: Path) -> None
     for script_name in script_names:
         script = bin_dir / script_name
         script.write_text(
-            '#!/usr/bin/env bash\nset -euo pipefail\nprintf "%s\\n" "$@" > "$CAPTURE_FILE"'
-            + "\n",
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            'if [[ "$*" == "action new-tab --help" ]]; then\n'
+            '  printf "%s\\n" "${FAKE_VC_FRAME_NEW_TAB_HELP:-}"\n'
+            "  exit 0\n"
+            "fi\n"
+            'printf "%s\\n" "$@" > "$CAPTURE_FILE"' + "\n",
             encoding="utf-8",
         )
         script.chmod(0o755)
@@ -93,6 +99,27 @@ def _write_stateful_vc_frame(
     vc_frame = bin_dir / "vc-frame"
     vc_frame.write_text(script.read_text(encoding="utf-8"), encoding="utf-8")
     vc_frame.chmod(0o755)
+
+
+def _write_implicit_gc_probe_vc_frame(bin_dir: Path) -> None:
+    script = bin_dir / "vc-frame"
+    script.write_text(
+        """#!/usr/bin/env python3
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+capture = Path(os.environ["CAPTURE_FILE"])
+with capture.open("a", encoding="utf-8") as fh:
+    fh.write("VC_FRAME " + " ".join(args) + "\\n")
+if args[:1] == ["list-sessions"]:
+    print("abandoned-evidence [Created 72h ago] (EXITED - attach to resurrect)")
+sys.exit(0)
+""",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
 
 
 def _write_fake_osascript(
@@ -185,6 +212,221 @@ def test_operator_console_first_screen_is_actionable() -> None:
 
     for fragment in expected_fragments:
         assert fragment in payload
+
+
+def test_vc_start_does_not_run_implicit_session_gc(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "capture.log"
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_implicit_gc_probe_vc_frame(fake_bin)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+            "XDG_CONFIG_HOME": str(tmp_path / "xdg"),
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+            "CAPTURE_FILE": str(capture_file),
+            "VIBECRAFTED_TEST_ALLOW_NON_TTY_VC_FRAME": "1",
+        }
+    )
+    for name in (
+        "VC_FRAME",
+        "VC_FRAME_PANE_ID",
+        "VC_FRAME_SESSION_NAME",
+        "VIBECRAFTED_OPERATOR_SESSION",
+        "VIBECRAFTED_OPERATOR_MODE",
+    ):
+        env.pop(name, None)
+
+    result = subprocess.run(
+        ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-start'],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = capture_file.read_text(encoding="utf-8")
+    assert "VC_FRAME list-sessions" not in payload
+    assert "VC_FRAME kill-session abandoned-evidence" not in payload
+
+
+def test_explicit_gc_apply_never_selects_untyped_sessions(tmp_path: Path) -> None:
+    """EXITED/stale session text is not authority for an untyped kill-session."""
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "capture.log"
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_implicit_gc_probe_vc_frame(fake_bin)
+    script = (
+        REPO_ROOT / "runtime" / "vc-operator" / "mission-control" / "vc-frame-gc.sh"
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+            "CAPTURE_FILE": str(capture_file),
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(script), "--apply", "--max-age-hours", "1"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = capture_file.read_text(encoding="utf-8") if capture_file.exists() else ""
+    assert "VC_FRAME list-sessions" not in payload
+    assert "VC_FRAME kill-session" not in payload
+
+    refused = subprocess.run(
+        ["bash", str(script), "--apply", "--include-live"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert refused.returncode == 2
+    assert "no typed incarnation selector" in refused.stderr
+    payload = capture_file.read_text(encoding="utf-8") if capture_file.exists() else ""
+    assert "VC_FRAME kill-session" not in payload
+
+
+def test_prepare_operator_runtime_does_not_run_gc_for_headless(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "capture.log"
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_implicit_gc_probe_vc_frame(fake_bin)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+            "CAPTURE_FILE": str(capture_file),
+        }
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f'source "{HELPER_SCRIPT}"; _vetcoders_prepare_operator_runtime headless',
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = capture_file.read_text(encoding="utf-8") if capture_file.exists() else ""
+    assert "VC_FRAME list-sessions" not in payload
+    assert "VC_FRAME kill-session abandoned-evidence" not in payload
+
+
+def test_generic_skill_does_not_run_implicit_session_gc(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "capture.log"
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_implicit_gc_probe_vc_frame(fake_bin)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+            "CAPTURE_FILE": str(capture_file),
+        }
+    )
+    command = (
+        f'source "{HELPER_SCRIPT}"; '
+        "_vetcoders_dispatch_skill_prompt() { :; }; "
+        "_vetcoders_print_launch_receipt() { :; }; "
+        "_vetcoders_maybe_spawn_await_pane() { :; }; "
+        'codex-followup --runtime headless --prompt "Check runtime"'
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", command],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = capture_file.read_text(encoding="utf-8") if capture_file.exists() else ""
+    assert "VC_FRAME list-sessions" not in payload
+    assert "VC_FRAME kill-session abandoned-evidence" not in payload
+
+
+def test_operator_console_does_not_run_implicit_session_gc(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    mission_control = tmp_path / "mission-control"
+    capture_file = tmp_path / "capture.log"
+    fake_shell = tmp_path / "fake-shell"
+    home.mkdir()
+    fake_bin.mkdir()
+    mission_control.mkdir()
+    _write_implicit_gc_probe_vc_frame(fake_bin)
+    fake_shell.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_shell.chmod(0o755)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+            "CAPTURE_FILE": str(capture_file),
+            "SHELL": str(fake_shell),
+        }
+    )
+    source_mission_control = REPO_ROOT / "runtime" / "vc-operator" / "mission-control"
+    operator_console = mission_control / "operator-console.sh"
+    gc_script = mission_control / "vc-frame-gc.sh"
+    shutil.copy2(source_mission_control / operator_console.name, operator_console)
+    shutil.copy2(source_mission_control / gc_script.name, gc_script)
+    operator_console.chmod(0o755)
+    gc_script.chmod(0o755)
+
+    result = subprocess.run(
+        [str(operator_console)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = capture_file.read_text(encoding="utf-8") if capture_file.exists() else ""
+    assert "VC_FRAME list-sessions" not in payload
+    assert "VC_FRAME kill-session abandoned-evidence" not in payload
 
 
 def test_helper_exports_vc_skill_wrappers() -> None:
@@ -304,6 +546,7 @@ def test_operator_spawn_success_prints_actionable_receipt(tmp_path: Path) -> Non
             "VIBECRAFTED_OPERATOR_SESSION": "receipt-session",
             "VIBECRAFTED_ROOT": str(REPO_ROOT),
             "VIBECRAFTED_RUN_ID": "impl-receipt-1",
+            "FAKE_VC_FRAME_NEW_TAB_HELP": "--after-base --no-focus",
         }
     )
     for name in (
@@ -340,7 +583,66 @@ def test_operator_spawn_success_prints_actionable_receipt(tmp_path: Path) -> Non
         "target=receipt-session/codex-init "
         "watch=vc-frame attach receipt-session"
     ) in result.stdout
-    assert "action\nnew-tab" in capture_file.read_text(encoding="utf-8")
+    captured = capture_file.read_text(encoding="utf-8")
+    assert "action\nnew-tab" in captured
+    assert "--after-base" in captured
+    assert "--no-focus" not in captured
+
+
+def test_worker_session_spawn_uses_no_focus_when_supported(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "vc_frame-args.txt"
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_capture_command(fake_bin, "vc-frame", capture_file)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+            "CAPTURE_FILE": str(capture_file),
+            "VIBECRAFTED_OPERATOR_SESSION": "operator-seat",
+            "VIBECRAFTED_WORKER_SESSION": "worker-host",
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+            "VIBECRAFTED_RUN_ID": "impl-worker-1",
+            "FAKE_VC_FRAME_NEW_TAB_HELP": "--after-base --no-focus",
+        }
+    )
+    for name in (
+        "VC_FRAME",
+        "VC_FRAME_PANE_ID",
+        "VC_FRAME_SESSION_NAME",
+        "ZELLIJ",
+        "ZELLIJ_SESSION_NAME",
+        "ZELLIJ_PANE_ID",
+    ):
+        env.pop(name, None)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "--noprofile",
+            "--norc",
+            "-c",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                '_vetcoders_spawn_into_operator_session "resume-codex" "true"'
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    captured = capture_file.read_text(encoding="utf-8")
+    assert "--session\nworker-host\naction\nnew-tab" in captured
+    assert "--after-base" in captured
+    assert "--no-focus" in captured
 
 
 def test_operator_spawn_failure_is_loud_and_preserves_status(tmp_path: Path) -> None:
@@ -438,7 +740,7 @@ def test_vc_init_missing_vc_frame_message_has_fresh_install_path_hint(
     )
 
 
-def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right(
+def test_explicit_terminal_marbles_from_operator_mode_spawns_fresh_tab(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -457,12 +759,18 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
     env["VC_FRAME"] = "operator"
     env["VIBECRAFTED_RUN_ID"] = "marb-014520"
     env["VIBECRAFTED_MARBLES_RUN_ID"] = "marb-014520"
-    env["VC_FRAME_SESSION_NAME"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+    expected_session = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+    env["VC_FRAME_SESSION_NAME"] = expected_session
     subprocess.run(
         [
             "bash",
-            "-lc",
-            f'source "{HELPER_SCRIPT}"; codex-marbles --prompt "Check runtime" --count 2',
+            "--noprofile",
+            "--norc",
+            "-c",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                'codex-marbles --runtime terminal --prompt "Check runtime" --count 2'
+            ),
         ],
         check=True,
         cwd=REPO_ROOT,
@@ -474,16 +782,16 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
     # fresh marbles tab, never a pane in the operator's active session.
     assert payload[:4] == [
         "--session",
-        "vibecrafted-marb-014520",
+        expected_session,
         "action",
         "new-tab",
     ]
     assert "--name" in payload
     assert "marbles" in " ".join(payload) or "marb-014520" in payload
-    assert "vibecrafted-marb-014520" in payload or "marb-014520" in payload
+    assert expected_session in payload
 
 
-def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
+def test_explicit_terminal_marbles_inside_vc_frame_prefers_bundled_vc_frame(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -505,7 +813,8 @@ def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
     env["VC_FRAME"] = "operator"
     env["VIBECRAFTED_RUN_ID"] = "marb-014520"
     env["VIBECRAFTED_MARBLES_RUN_ID"] = "marb-014520"
-    env["VC_FRAME_SESSION_NAME"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+    expected_session = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+    env["VC_FRAME_SESSION_NAME"] = expected_session
 
     result = subprocess.run(
         [
@@ -515,7 +824,7 @@ def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
             "-c",
             (
                 f'source "{HELPER_SCRIPT}"; '
-                'codex-marbles --prompt "Check runtime" --count 2 && '
+                'codex-marbles --runtime terminal --prompt "Check runtime" --count 2 && '
                 'printf "PATH=%s\\n" "$PATH"'
             ),
         ],
@@ -530,11 +839,11 @@ def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
     assert result.stderr == ""
     payload = capture_file.read_text(encoding="utf-8")
     # Bundled vc-frame must create the tab in the dedicated marbles host.
-    assert "--session\nvibecrafted-marb-014520\naction\nnew-tab\n" in payload
+    assert f"--session\n{expected_session}\naction\nnew-tab\n" in payload
     assert result.stdout.endswith(f"PATH={os.defpath}\n")
 
 
-def test_marbles_manual_spawn_emits_probe_without_l1_transcript_tail(
+def test_explicit_terminal_marbles_manual_spawn_omits_l1_transcript_tail(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -557,6 +866,7 @@ def test_marbles_manual_spawn_emits_probe_without_l1_transcript_tail(
     fake_bin.mkdir()
     reports_dir.mkdir(parents=True)
     _write_capture_command(fake_bin, "vc-frame", capture_file)
+    _write_capture_command(fake_bin, "codex", capture_file)
     (fake_bin / "osascript").write_text(
         "#!/usr/bin/env bash\nexit 0\n",
         encoding="utf-8",
@@ -592,8 +902,13 @@ def test_marbles_manual_spawn_emits_probe_without_l1_transcript_tail(
     result = subprocess.run(
         [
             "bash",
-            "-lc",
-            f'source "{HELPER_SCRIPT}"; codex-marbles --prompt "Check runtime" --count 2',
+            "--noprofile",
+            "--norc",
+            "-c",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                'codex-marbles --runtime terminal --prompt "Check runtime" --count 2'
+            ),
         ],
         check=True,
         cwd=REPO_ROOT,
@@ -606,6 +921,7 @@ def test_marbles_manual_spawn_emits_probe_without_l1_transcript_tail(
     assert "line 6" not in result.stdout
     assert "line 20" not in result.stdout
     assert result.stderr == ""
+    assert "action\nnew-tab" in capture_file.read_text(encoding="utf-8")
 
 
 def test_spawn_script_prefers_repo_runtime_over_installed_copy(tmp_path: Path) -> None:
@@ -743,7 +1059,9 @@ def test_vc_dashboard_recreates_dead_run_id_session_without_layout_suffix(
     assert f"{expected_session}-marbles" not in payload
 
 
-def test_skill_bootstraps_operator_session_before_spawning(tmp_path: Path) -> None:
+def test_explicit_terminal_skill_bootstraps_operator_session_before_spawning(
+    tmp_path: Path,
+) -> None:
     home = tmp_path / "home"
     fake_bin = home / ".local" / "bin"
     capture_file = tmp_path / "capture.log"
@@ -778,7 +1096,10 @@ def test_skill_bootstraps_operator_session_before_spawning(tmp_path: Path) -> No
         [
             "bash",
             "-lc",
-            f'source "{HELPER_SCRIPT}"; codex-followup --prompt "Check runtime"',
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                'codex-followup --runtime terminal --prompt "Check runtime"'
+            ),
         ],
         check=True,
         cwd=REPO_ROOT,
@@ -791,7 +1112,7 @@ def test_skill_bootstraps_operator_session_before_spawning(tmp_path: Path) -> No
     assert f"--session {_expected_operator_session()}" in payload
     assert "--new-session-with-layout" in payload
     assert "vc-spawn-cmd" in payload
-    assert re.search(r"\bfwup-\d{6}-\d+\b", payload)
+    assert re.search(r"\bfwup-\d{6}-\d{6}-\d{5}\b", payload)
 
 
 def test_skill_bootstraps_fresh_operator_session_when_existing_one_is_dead(

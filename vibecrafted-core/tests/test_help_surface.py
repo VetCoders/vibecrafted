@@ -3,6 +3,7 @@ from __future__ import annotations
 from vibecrafted_core.cli import LAUNCHERS
 from vibecrafted_core.help_surface import (
     WORKFLOW_HELP,
+    render_resume_session_help,
     render_root_help,
     render_workflow_help,
 )
@@ -21,6 +22,13 @@ def test_help_surface_covers_every_public_launcher() -> None:
         assert f"launch vc-{launcher} through core runtime" not in output
 
 
+def test_worker_help_declares_headless_as_the_default_surface() -> None:
+    output = render_workflow_help("implement")
+
+    assert "--runtime <terminal|headless>" in output
+    assert "Worker surface (default: headless)" in output
+
+
 def test_root_help_uses_the_registered_ship_cycle() -> None:
     output = render_root_help("test-version")
 
@@ -31,6 +39,16 @@ def test_root_help_uses_the_registered_ship_cycle() -> None:
     ) in output
     assert "More workflows: vibecrafted help --all" in output
     assert "Vibecrafted core command surface" not in output
+    assert "resume-session" in output
+
+
+def test_resume_session_help_matches_the_tracked_headless_contract() -> None:
+    output = render_resume_session_help()
+
+    assert "--agent-session-id <id>" in output
+    assert "--prompt-stdin" in output
+    assert "always headless" in output
+    assert "Guardian-visible process identity" in output
 
 
 def test_marbles_help_locks_the_sequential_orchestrator_contract() -> None:

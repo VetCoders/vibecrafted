@@ -193,8 +193,15 @@ pub struct ScaffoldChange {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScaffoldDoctorError {
+    /// Stable machine code, e.g. `driver_contract`, `frontmatter_missing`.
     pub code: String,
+    /// Acceptance-rule id R1..R11 when the code maps to the skill gate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
     pub artifact_id: Option<String>,
+    /// Relative path inside the plan root when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     pub message: String,
 }
 
@@ -202,9 +209,41 @@ pub struct ScaffoldDoctorError {
 pub struct ScaffoldDoctorReport {
     pub valid: bool,
     pub plan_id: String,
+    pub plan_root: String,
     pub artifact_ids: Vec<String>,
     pub errors: Vec<ScaffoldDoctorError>,
 }
+
+impl ScaffoldDoctorReport {
+    /// Whether the editor can safely construct a workspace from this report.
+    ///
+    /// Contract-quality findings remain visible without making the artifact
+    /// package unreadable. Structural/path failures fail closed.
+    #[must_use]
+    pub fn workspace_reviewable(&self) -> bool {
+        !self.errors.iter().any(workspace_fatal_error)
+    }
+}
+
+/// Canonical 12 brief section markers (heading-substring, case-insensitive).
+/// Matches vc-scaffold Phase 5 + the fixture convention (Verification as #6).
+const BRIEF_SECTIONS: &[&str] = &[
+    "mission",
+    "context",
+    "files",
+    "acceptance",
+    "gates",
+    "verification",
+    "out of scope",
+    "living tree",
+    "loctree",
+    "recovery",
+    "branch",
+    "report",
+];
+
+const FRONTMATTER_REQUIRED: &[&str] =
+    &["plan_id", "session_id", "role", "agent", "date", "project"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 struct CheckpointStore {
@@ -259,7 +298,9 @@ impl ScaffoldArtifactStore {
             {
                 continue;
             }
-            let manifest = read_manifest(&root)?;
+            let Ok(manifest) = read_manifest(&root) else {
+                continue;
+            };
             if manifest.org != org || manifest.repo != repo || manifest.day != day {
                 continue;
             }
@@ -277,34 +318,79 @@ impl ScaffoldArtifactStore {
         Ok(plans)
     }
 
-    pub fn latest_workspace(&self) -> ScaffoldResult<ScaffoldWorkspace> {
-        let mut manifests = Vec::new();
-        collect_manifest_paths(&self.home.join("artifacts"), &mut manifests);
-        if manifests.len() != 1 {
-            let plan_ids = manifests
-                .iter()
-                .filter_map(|path| {
-                    read_manifest(path.parent()?)
-                        .ok()
-                        .map(|manifest| manifest.plan_id)
+    /// Every valid manifest-backed scaffold plan visible to the runtime.
+    ///
+    /// The artifacts tree can also contain unrelated `manifest.json` files
+    /// (for example Loctree context atlases). Those are deliberately ignored:
+    /// this catalog is scaffold truth, not a filename census.
+    #[must_use]
+    pub fn catalog(&self) -> Vec<ScaffoldPlanSummary> {
+        let mut manifest_paths = Vec::new();
+        collect_scaffold_manifest_paths(&self.home.join("artifacts"), &mut manifest_paths);
+        let mut plans = manifest_paths
+            .into_iter()
+            .filter_map(|path| {
+                let root = path.parent()?;
+                let manifest = read_manifest(root).ok()?;
+                Some(ScaffoldPlanSummary {
+                    plan_id: manifest.plan_id,
+                    org: manifest.org,
+                    repo: manifest.repo,
+                    day: manifest.day,
+                    plan_root: root.display().to_string(),
+                    artifact_count: manifest.artifacts.len(),
+                    legacy_read_only: false,
                 })
-                .collect();
+            })
+            .collect::<Vec<_>>();
+        plans.sort_by(|left, right| {
+            right
+                .day
+                .cmp(&left.day)
+                .then_with(|| left.org.cmp(&right.org))
+                .then_with(|| left.repo.cmp(&right.repo))
+                .then_with(|| left.plan_id.cmp(&right.plan_id))
+        });
+        plans
+    }
+
+    pub fn latest_workspace(&self) -> ScaffoldResult<ScaffoldWorkspace> {
+        let plans = self.catalog();
+        if plans.len() != 1 {
+            let plan_ids = plans.into_iter().map(|plan| plan.plan_id).collect();
             return Err(ScaffoldError::SelectionRequired { plan_ids });
         }
-        let root = manifests
-            .remove(0)
-            .parent()
-            .map(Path::to_path_buf)
-            .ok_or_else(|| ScaffoldError::InvalidManifest {
-                message: "manifest has no plan root".into(),
-            })?;
-        let manifest = read_manifest(&root)?;
-        self.workspace(
-            &manifest.org,
-            &manifest.repo,
-            &manifest.day,
-            Some(&manifest.plan_id),
-        )
+        let plan = &plans[0];
+        self.workspace(&plan.org, &plan.repo, &plan.day, Some(&plan.plan_id))
+    }
+
+    /// Cheap structural verdict used by catalog surfaces.
+    ///
+    /// This intentionally avoids the full doctor/content pass. The editor
+    /// reads and validates content only after an operator selects one plan.
+    #[must_use]
+    pub fn is_plan_reviewable(&self, org: &str, repo: &str, day: &str, plan_id: &str) -> bool {
+        let Ok(root) = self.plan_root(org, repo, day, plan_id) else {
+            return false;
+        };
+        let Ok(manifest) = read_manifest(&root) else {
+            return false;
+        };
+        if validate_identity(&manifest, org, repo, day, plan_id).is_err() {
+            return false;
+        }
+
+        let mut ids = BTreeSet::new();
+        let mut paths = BTreeSet::new();
+        manifest.artifacts.iter().all(|artifact| {
+            if !ids.insert(&artifact.id) || !paths.insert(&artifact.path) {
+                return false;
+            }
+            let Ok(path) = declared_path(&root, artifact) else {
+                return false;
+            };
+            path.is_file() && (!artifact.editable || !path_has_symlink(&root, &path))
+        })
     }
 
     pub fn workspace(
@@ -455,7 +541,28 @@ impl ScaffoldArtifactStore {
         let root = self.plan_root(org, repo, day, plan_id)?;
         let manifest = read_manifest(&root)?;
         validate_identity(&manifest, org, repo, day, plan_id)?;
-        Ok(validate_manifest_plan(&root, &manifest))
+        let mut report = validate_manifest_plan(&root, &manifest);
+        // Path identity (R1) when invoked via store coordinates.
+        if let Err(message) = validate_plan_root_identity(&root, &manifest) {
+            doctor_error(
+                &mut report.errors,
+                "identity_mismatch",
+                Some("R1"),
+                None,
+                None,
+                &message,
+            );
+            report.valid = report.errors.is_empty();
+        }
+        Ok(report)
+    }
+
+    /// Doctor a plan by absolute plan root (`…/plans/<plan_id>/`).
+    ///
+    /// Refuses cleanly when the path is not a directory or has no `manifest.json`
+    /// — never panics or stack-traces for non-plan inputs.
+    pub fn doctor_plan_root(plan_root: impl AsRef<Path>) -> ScaffoldResult<ScaffoldDoctorReport> {
+        doctor_plan_root(plan_root)
     }
 
     pub fn write_artifact(
@@ -606,6 +713,41 @@ fn read_manifest(root: &Path) -> ScaffoldResult<ScaffoldManifest> {
     )?)?)
 }
 
+/// Free-function entry used by the `scaffold-doctor` binary and server.
+pub fn doctor_plan_root(plan_root: impl AsRef<Path>) -> ScaffoldResult<ScaffoldDoctorReport> {
+    let root = plan_root.as_ref();
+    if !root.is_dir() {
+        return Err(ScaffoldError::InvalidManifest {
+            message: format!(
+                "refusing: not a plan directory (path does not exist or is not a directory): {}",
+                root.display()
+            ),
+        });
+    }
+    if !root.join("manifest.json").is_file() {
+        return Err(ScaffoldError::InvalidManifest {
+            message: format!(
+                "refusing: no manifest.json under {} — not a scaffold plan root",
+                root.display()
+            ),
+        });
+    }
+    let manifest = read_manifest(root)?;
+    let mut report = validate_manifest_plan(root, &manifest);
+    if let Err(message) = validate_plan_root_identity(root, &manifest) {
+        doctor_error(
+            &mut report.errors,
+            "identity_mismatch",
+            Some("R1"),
+            None,
+            None,
+            &message,
+        );
+        report.valid = report.errors.is_empty();
+    }
+    Ok(report)
+}
+
 fn validate_identity(
     manifest: &ScaffoldManifest,
     org: &str,
@@ -626,6 +768,46 @@ fn validate_identity(
     Ok(())
 }
 
+/// R1 — plan root must be `…/artifacts/<org>/<repo>/<day>/plans/<plan_id>` matching the manifest.
+fn validate_plan_root_identity(root: &Path, manifest: &ScaffoldManifest) -> Result<(), String> {
+    let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let components: Vec<String> = canonical
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => Some(value.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    let expected = [
+        "artifacts",
+        manifest.org.as_str(),
+        manifest.repo.as_str(),
+        manifest.day.as_str(),
+        "plans",
+        manifest.plan_id.as_str(),
+    ];
+    let tail_ok = components
+        .windows(expected.len())
+        .any(|window| window.iter().map(String::as_str).eq(expected));
+    if !tail_ok {
+        return Err(format!(
+            "plan root identity mismatch: path {} must end with artifacts/{}/{}/{}/plans/{}",
+            root.display(),
+            manifest.org,
+            manifest.repo,
+            manifest.day,
+            manifest.plan_id
+        ));
+    }
+    if manifest.schema_version != SCAFFOLD_SCHEMA_VERSION {
+        return Err(format!(
+            "unsupported schema_version {:?} (expected {SCAFFOLD_SCHEMA_VERSION})",
+            manifest.schema_version
+        ));
+    }
+    Ok(())
+}
+
 fn validate_manifest_plan(root: &Path, manifest: &ScaffoldManifest) -> ScaffoldDoctorReport {
     let mut errors = Vec::new();
     let mut ids = BTreeSet::new();
@@ -636,12 +818,17 @@ fn validate_manifest_plan(root: &Path, manifest: &ScaffoldManifest) -> ScaffoldD
         .map(|artifact| artifact.id.as_str())
         .collect();
     let mut role_counts = BTreeMap::new();
+    let mut needs_design_cuts = Vec::new();
+    let mut design_doc_count = 0usize;
+
     for artifact in &manifest.artifacts {
         if !ids.insert(artifact.id.clone()) {
             doctor_error(
                 &mut errors,
                 "duplicate_artifact_id",
+                Some("R3"),
                 Some(&artifact.id),
+                Some(&artifact.path),
                 "duplicate artifact id",
             );
         }
@@ -649,17 +836,24 @@ fn validate_manifest_plan(root: &Path, manifest: &ScaffoldManifest) -> ScaffoldD
             doctor_error(
                 &mut errors,
                 "duplicate_artifact_path",
+                Some("R3"),
                 Some(&artifact.id),
+                Some(&artifact.path),
                 "duplicate artifact path",
             );
         }
         *role_counts.entry(artifact.role.as_str()).or_insert(0usize) += 1;
+        if artifact.role == ScaffoldArtifactRole::DesignDoc {
+            design_doc_count += 1;
+        }
         for dependency in &artifact.dependencies {
             if !declared_ids.contains(dependency.as_str()) {
                 doctor_error(
                     &mut errors,
                     "unknown_dependency",
+                    Some("R3"),
                     Some(&artifact.id),
+                    Some(&artifact.path),
                     &format!("unknown dependency: {dependency}"),
                 );
             }
@@ -675,15 +869,19 @@ fn validate_manifest_plan(root: &Path, manifest: &ScaffoldManifest) -> ScaffoldD
                     doctor_error(
                         &mut errors,
                         code,
+                        Some("R2"),
                         Some(&artifact.id),
+                        Some(&artifact.path),
                         "manifest artifact is missing from disk",
                     );
-                } else if path.is_file() {
+                } else {
                     if artifact.editable && path_has_symlink(root, &path) {
                         doctor_error(
                             &mut errors,
                             "writable_symlink",
+                            Some("R4"),
                             Some(&artifact.id),
+                            Some(&artifact.path),
                             "editable artifact path contains a symlink",
                         );
                     }
@@ -691,40 +889,61 @@ fn validate_manifest_plan(root: &Path, manifest: &ScaffoldManifest) -> ScaffoldD
                         doctor_error(
                             &mut errors,
                             "empty_contract",
+                            Some("R2"),
                             Some(&artifact.id),
+                            Some(&artifact.path),
                             "declared artifact is empty",
                         );
                     }
                     if let Ok(content) = fs::read_to_string(&path) {
                         validate_frontmatter(artifact, &content, &mut errors);
                         validate_role_contract(artifact, &content, &mut errors);
+                        if artifact.role == ScaffoldArtifactRole::Brief {
+                            validate_brief_naming(artifact, &mut errors);
+                            validate_brief_sections(artifact, &content, &mut errors);
+                            validate_acceptance_contract(artifact, &content, &mut errors);
+                            if brief_needs_design(&content) {
+                                needs_design_cuts.push(artifact.id.clone());
+                            }
+                        }
                     }
                 }
             }
             Err(error) => doctor_error(
                 &mut errors,
                 "path_escape",
+                Some("R4"),
                 Some(&artifact.id),
+                Some(&artifact.path),
                 &error.to_string(),
             ),
         }
     }
+
+    // R9 — exactly one DRIVER
     if role_counts.get("driver").copied() != Some(1) {
         doctor_error(
             &mut errors,
             "driver_contract",
+            Some("R9"),
+            None,
             None,
             "manifest must declare exactly one driver",
         );
     }
+    // R6 — exactly one wave-atlas
     if role_counts.get("wave-atlas").copied() != Some(1) {
         doctor_error(
             &mut errors,
             "atlas_contract",
+            Some("R6"),
+            None,
             None,
             "manifest must declare exactly one wave-atlas",
         );
     }
+
+    // R5 — briefs on disk ↔ manifest
     let mut briefs_on_disk = Vec::new();
     collect_markdown(&root.join("briefs"), &mut briefs_on_disk);
     for path in briefs_on_disk {
@@ -733,15 +952,34 @@ fn validate_manifest_plan(root: &Path, manifest: &ScaffoldManifest) -> ScaffoldD
                 doctor_error(
                     &mut errors,
                     "brief_absent_from_manifest",
+                    Some("R5"),
                     None,
-                    &format!("brief is absent from manifest: {relative}"),
+                    Some(&relative),
+                    &format!("brief on disk is not declared in manifest: {relative}"),
                 );
             }
         }
     }
+
+    // R10 — design docs for needs_design cuts
+    if !needs_design_cuts.is_empty() && design_doc_count == 0 {
+        doctor_error(
+            &mut errors,
+            "design_doc_missing",
+            Some("R10"),
+            None,
+            None,
+            &format!(
+                "cuts marked needs_design require a design-doc artifact; flagged: {}",
+                needs_design_cuts.join(", ")
+            ),
+        );
+    }
+
     ScaffoldDoctorReport {
         valid: errors.is_empty(),
         plan_id: manifest.plan_id.clone(),
+        plan_root: root.display().to_string(),
         artifact_ids: manifest
             .artifacts
             .iter()
@@ -754,55 +992,112 @@ fn validate_manifest_plan(root: &Path, manifest: &ScaffoldManifest) -> ScaffoldD
 fn doctor_error(
     errors: &mut Vec<ScaffoldDoctorError>,
     code: &str,
+    rule: Option<&str>,
     artifact_id: Option<&str>,
+    path: Option<&str>,
     message: &str,
 ) {
     errors.push(ScaffoldDoctorError {
         code: code.into(),
+        rule: rule.map(str::to_string),
         artifact_id: artifact_id.map(str::to_string),
+        path: path.map(str::to_string),
         message: message.into(),
     });
 }
 
+fn parse_frontmatter(content: &str) -> Option<BTreeMap<String, String>> {
+    if !content.starts_with("---\n") && !content.starts_with("---\r\n") {
+        return None;
+    }
+    let rest = content
+        .strip_prefix("---\r\n")
+        .or_else(|| content.strip_prefix("---\n"))?;
+    let body = rest
+        .split_once("\n---")
+        .map(|(front, _)| front)
+        .unwrap_or(rest);
+    let mut map = BTreeMap::new();
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = trimmed.split_once(':') {
+            map.insert(key.trim().to_string(), value.trim().to_string());
+        }
+    }
+    Some(map)
+}
+
+/// R11 — every markdown artifact must open with YAML frontmatter carrying the
+/// six required keys. Mixed packages (some with, some without) refuse.
 fn validate_frontmatter(
     artifact: &ScaffoldArtifactDeclaration,
     content: &str,
     errors: &mut Vec<ScaffoldDoctorError>,
 ) {
-    if !content.starts_with("---\n") {
-        return;
-    }
-    let Some(frontmatter) = content[4..].split("\n---").next() else {
+    let Some(frontmatter) = parse_frontmatter(content) else {
+        doctor_error(
+            errors,
+            "frontmatter_missing",
+            Some("R11"),
+            Some(&artifact.id),
+            Some(&artifact.path),
+            "markdown artifact lacks YAML frontmatter (mixed or bare packages refuse)",
+        );
         return;
     };
-    for key in ["id", "artifact_id"] {
-        if let Some(value) = frontmatter
-            .lines()
-            .find_map(|line| line.strip_prefix(&format!("{key}:")))
-            .map(str::trim)
+    let mut missing = Vec::new();
+    for key in FRONTMATTER_REQUIRED {
+        if frontmatter
+            .get(*key)
+            .map(|value| value.is_empty())
+            .unwrap_or(true)
         {
-            if value != artifact.id {
-                doctor_error(
-                    errors,
-                    "frontmatter_drift",
-                    Some(&artifact.id),
-                    &format!("frontmatter {key} does not match manifest id"),
-                );
-            }
+            missing.push(*key);
         }
     }
-    if let Some(role) = frontmatter
-        .lines()
-        .find_map(|line| line.strip_prefix("role:"))
-        .map(str::trim)
-    {
-        if role != artifact.role.as_str() {
+    if !missing.is_empty() {
+        doctor_error(
+            errors,
+            "frontmatter_incomplete",
+            Some("R11"),
+            Some(&artifact.id),
+            Some(&artifact.path),
+            &format!("frontmatter missing required keys: {}", missing.join(", ")),
+        );
+    }
+    if let Some(role) = frontmatter.get("role") {
+        let role = role.trim();
+        let role_ok = role == artifact.role.as_str()
+            || (artifact.role == ScaffoldArtifactRole::Other && role == "mission");
+        if !role_ok {
             doctor_error(
                 errors,
                 "frontmatter_drift",
+                Some("R11"),
                 Some(&artifact.id),
-                "frontmatter role does not match manifest role",
+                Some(&artifact.path),
+                &format!(
+                    "frontmatter role `{role}` does not match manifest role `{}`",
+                    artifact.role.as_str()
+                ),
             );
+        }
+    }
+    for key in ["id", "artifact_id"] {
+        if let Some(value) = frontmatter.get(key) {
+            if value != &artifact.id {
+                doctor_error(
+                    errors,
+                    "frontmatter_drift",
+                    Some("R11"),
+                    Some(&artifact.id),
+                    Some(&artifact.path),
+                    &format!("frontmatter {key} does not match manifest id"),
+                );
+            }
         }
     }
 }
@@ -812,34 +1107,348 @@ fn validate_role_contract(
     content: &str,
     errors: &mut Vec<ScaffoldDoctorError>,
 ) {
+    match artifact.role {
+        ScaffoldArtifactRole::Driver => validate_driver_contract(artifact, content, errors),
+        ScaffoldArtifactRole::WaveAtlas => validate_atlas_contract(artifact, content, errors),
+        ScaffoldArtifactRole::Tracker => validate_tracker_contract(artifact, content, errors),
+        _ => {}
+    }
+}
+
+/// R9 — DRIVER carries all five: full paths · why-graph · ready commands ·
+/// `[ ]→[x]` rule verbatim · status snapshot (dou-index).
+fn validate_driver_contract(
+    artifact: &ScaffoldArtifactDeclaration,
+    content: &str,
+    errors: &mut Vec<ScaffoldDoctorError>,
+) {
     let lower = content.to_ascii_lowercase();
-    let (code, required_tokens): (&str, &[&str]) = match artifact.role {
-        ScaffoldArtifactRole::Driver => (
-            "driver_contract",
-            &["why", "vibecrafted ", "[ ]", "[x]", "dou-index"],
-        ),
-        ScaffoldArtifactRole::WaveAtlas => ("atlas_contract", &["wave", "dependenc"]),
-        ScaffoldArtifactRole::Brief => ("brief_contract", &["mission", "acceptance", "verifier"]),
-        ScaffoldArtifactRole::Tracker => ("tracker_contract", &["state", "[ ]"]),
-        _ => return,
-    };
-    let missing = required_tokens
-        .iter()
-        .filter(|token| !lower.contains(**token))
-        .copied()
-        .collect::<Vec<_>>();
+    let mut missing = Vec::new();
+    // 1. Full absolute paths
+    let has_abs_path = content.lines().any(|line| {
+        let t = line.trim();
+        t.contains("/Users/")
+            || t.contains("/home/")
+            || t.contains("/Volumes/")
+            || t.contains("~/.vibecrafted/")
+            || t.contains("$HOME/")
+            || (t.contains("`/") && t.contains('/'))
+    }) || lower.contains("pełne ścieżki")
+        || lower.contains("full absolute")
+        || lower.contains("absolute path");
+    if !has_abs_path {
+        missing.push("full absolute paths");
+    }
+    // 2. Dependency graph WITH why on edges
+    let has_graph = lower.contains("why")
+        || lower.contains("dlaczego")
+        || lower.contains("graf")
+        || lower.contains("dependenc");
+    if !has_graph {
+        missing.push("dependency graph with why");
+    }
+    // 3. Ready commands
+    if !lower.contains("vibecrafted ") {
+        missing.push("ready vibecrafted commands");
+    }
+    // 4. Literal [ ]→[x] rule (unicode arrow preferred; ASCII fallback accepted only with
+    // the full alphabet line nearby is still not enough — require the unicode form OR both
+    // `[~]→[x]` / `[ ]→[x]` as skill quotes).
+    let has_rule = content.contains("[ ]→[x]")
+        || content.contains("[~]→[x]")
+        || (content.contains("[ ]->[x]") && content.contains("delivery-verifier"));
+    if !has_rule {
+        missing.push("`[ ]→[x]` rule verbatim");
+    }
+    // 5. Live status snapshot + dou-index
+    if !lower.contains("dou-index") {
+        missing.push("status snapshot (dou-index)");
+    }
     if !missing.is_empty() {
         doctor_error(
             errors,
-            code,
+            "driver_contract",
+            Some("R9"),
             Some(&artifact.id),
+            Some(&artifact.path),
+            &format!("DRIVER.md missing required parts: {}", missing.join(", ")),
+        );
+    }
+}
+
+/// R6 — atlas has wave atlas + dependency graph.
+fn validate_atlas_contract(
+    artifact: &ScaffoldArtifactDeclaration,
+    content: &str,
+    errors: &mut Vec<ScaffoldDoctorError>,
+) {
+    let lower = content.to_ascii_lowercase();
+    let has_wave = lower.contains("wave")
+        || lower.contains("fala")
+        || lower.contains("| cut |")
+        || lower.contains("| **w");
+    let has_graph = lower.contains("dependenc")
+        || lower.contains("graf")
+        || lower.contains("zależy")
+        || content.contains("→")
+        || content.contains("->");
+    let mut missing = Vec::new();
+    if !has_wave {
+        missing.push("wave atlas table");
+    }
+    if !has_graph {
+        missing.push("dependency graph");
+    }
+    if !missing.is_empty() {
+        doctor_error(
+            errors,
+            "atlas_contract",
+            Some("R6"),
+            Some(&artifact.id),
+            Some(&artifact.path),
+            &format!("wave-atlas missing: {}", missing.join(", ")),
+        );
+    }
+}
+
+fn validate_tracker_contract(
+    artifact: &ScaffoldArtifactDeclaration,
+    content: &str,
+    errors: &mut Vec<ScaffoldDoctorError>,
+) {
+    let lower = content.to_ascii_lowercase();
+    // Tracker needs a state alphabet / checkbox column — "stan" is the PL synonym.
+    let has_state = lower.contains("state")
+        || lower.contains("stan")
+        || content.contains("[ ]")
+        || content.contains("[x]");
+    if !has_state {
+        doctor_error(
+            errors,
+            "tracker_contract",
+            Some("R6"),
+            Some(&artifact.id),
+            Some(&artifact.path),
+            "tracker lacks state markers ([ ] / state / stan column)",
+        );
+    }
+}
+
+/// R7 — briefs/<wave>-<slot>_<slug>.md
+fn validate_brief_naming(
+    artifact: &ScaffoldArtifactDeclaration,
+    errors: &mut Vec<ScaffoldDoctorError>,
+) {
+    let path = artifact.path.as_str();
+    let ok = path.starts_with("briefs/")
+        && path.ends_with(".md")
+        && path.strip_prefix("briefs/").is_some_and(brief_filename_ok);
+    if !ok {
+        doctor_error(
+            errors,
+            "brief_naming",
+            Some("R7"),
+            Some(&artifact.id),
+            Some(&artifact.path),
+            "brief path must match briefs/<wave>-<slot>_<slug>.md",
+        );
+    }
+}
+
+fn brief_filename_ok(name: &str) -> bool {
+    // <wave>-<slot>_<slug>.md  e.g. W1-01_enclave-root.md or 1-01_foo.md
+    let Some(stem) = name.strip_suffix(".md") else {
+        return false;
+    };
+    let Some((left, slug)) = stem.split_once('_') else {
+        return false;
+    };
+    if slug.is_empty()
+        || !slug
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return false;
+    }
+    let Some((wave, slot)) = left.split_once('-') else {
+        return false;
+    };
+    if wave.is_empty() || slot.is_empty() {
+        return false;
+    }
+    let wave_ok = wave.chars().all(|c| c.is_ascii_alphanumeric());
+    let slot_ok = slot.chars().all(|c| c.is_ascii_digit());
+    wave_ok && slot_ok
+}
+
+/// R7 — all 12 brief sections present as headings.
+fn validate_brief_sections(
+    artifact: &ScaffoldArtifactDeclaration,
+    content: &str,
+    errors: &mut Vec<ScaffoldDoctorError>,
+) {
+    let headings: Vec<String> = content
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') {
+                Some(trimmed.to_ascii_lowercase())
+            } else {
+                None
+            }
+        })
+        .collect();
+    let mut missing = Vec::new();
+    for section in BRIEF_SECTIONS {
+        let found = headings.iter().any(|heading| heading.contains(section));
+        if !found {
+            missing.push(*section);
+        }
+    }
+    if !missing.is_empty() {
+        doctor_error(
+            errors,
+            "brief_sections",
+            Some("R7"),
+            Some(&artifact.id),
+            Some(&artifact.path),
             &format!(
-                "{} is missing contract markers: {}",
-                artifact.role.as_str(),
+                "brief missing required section headings: {}",
                 missing.join(", ")
             ),
         );
     }
+}
+
+/// R8 — acceptance bullets are atomic (checkbox state) and verifier-backed
+/// (Gates section carries a runnable delivery-verifier, or each bullet names one).
+fn validate_acceptance_contract(
+    artifact: &ScaffoldArtifactDeclaration,
+    content: &str,
+    errors: &mut Vec<ScaffoldDoctorError>,
+) {
+    let acceptance = section_body(content, "acceptance");
+    let gates = section_body(content, "gates");
+    let Some(acceptance) = acceptance else {
+        doctor_error(
+            errors,
+            "acceptance_contract",
+            Some("R8"),
+            Some(&artifact.id),
+            Some(&artifact.path),
+            "brief has no Acceptance section",
+        );
+        return;
+    };
+    let bullets: Vec<&str> = acceptance
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with('-'))
+        .collect();
+    if bullets.is_empty() {
+        doctor_error(
+            errors,
+            "acceptance_contract",
+            Some("R8"),
+            Some(&artifact.id),
+            Some(&artifact.path),
+            "Acceptance section has no bullets",
+        );
+        return;
+    }
+    let mut unstated = 0usize;
+    let mut without_verifier = 0usize;
+    let gates_has_verifier = gates.as_deref().is_some_and(has_verifier_command);
+    for bullet in &bullets {
+        let has_state = bullet.contains("[ ]")
+            || bullet.contains("[x]")
+            || bullet.contains("[~]")
+            || bullet.contains("[?]")
+            || bullet.contains("[!]");
+        if !has_state {
+            unstated += 1;
+        }
+        let bullet_has_verifier = has_verifier_command(bullet);
+        if !bullet_has_verifier && !gates_has_verifier {
+            without_verifier += 1;
+        }
+    }
+    if unstated > 0 {
+        doctor_error(
+            errors,
+            "acceptance_contract",
+            Some("R8"),
+            Some(&artifact.id),
+            Some(&artifact.path),
+            &format!("{unstated} acceptance bullet(s) lack state markers ([ ]/[~]/[?]/[!]/[x])"),
+        );
+    }
+    if without_verifier > 0 {
+        doctor_error(
+            errors,
+            "acceptance_contract",
+            Some("R8"),
+            Some(&artifact.id),
+            Some(&artifact.path),
+            &format!(
+                "{without_verifier} acceptance bullet(s) lack a delivery-verifier (inline or in Gates)"
+            ),
+        );
+    }
+}
+
+fn has_verifier_command(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("pytest")
+        || lower.contains("cargo ")
+        || lower.contains("vibecrafted ")
+        || lower.contains("python3 ")
+        || lower.contains("python ")
+        || lower.contains("bash ")
+        || lower.contains(".sh")
+        || lower.contains("make ")
+        || lower.contains("pre-commit")
+        || lower.contains("verify")
+        || lower.contains("delivery-verifier")
+        || lower.contains("verifier")
+}
+
+fn section_body(content: &str, needle: &str) -> Option<String> {
+    let needle = needle.to_ascii_lowercase();
+    let lines: Vec<&str> = content.lines().collect();
+    let mut start = None;
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim().to_ascii_lowercase();
+        if trimmed.starts_with('#') && trimmed.contains(&needle) {
+            start = Some(index + 1);
+            break;
+        }
+    }
+    let start = start?;
+    let mut body = Vec::new();
+    for line in lines.iter().skip(start) {
+        let trimmed = line.trim();
+        if trimmed.starts_with("## ") {
+            break;
+        }
+        body.push(*line);
+    }
+    Some(body.join("\n"))
+}
+
+fn brief_needs_design(content: &str) -> bool {
+    if let Some(frontmatter) = parse_frontmatter(content) {
+        if frontmatter
+            .get("needs_design")
+            .is_some_and(|value| matches!(value.as_str(), "true" | "yes" | "1"))
+        {
+            return true;
+        }
+    }
+    content.lines().any(|line| {
+        let t = line.trim().to_ascii_lowercase();
+        t == "needs_design: true" || t.contains("**needs_design**") || t.contains("`needs_design`")
+    })
 }
 
 fn declared_path(root: &Path, artifact: &ScaffoldArtifactDeclaration) -> ScaffoldResult<PathBuf> {
@@ -897,16 +1506,30 @@ fn validate_path_segment(value: &str, label: &str) -> ScaffoldResult<()> {
     Ok(())
 }
 
-fn collect_manifest_paths(root: &Path, output: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(root) else {
+fn collect_scaffold_manifest_paths(artifacts_root: &Path, output: &mut Vec<PathBuf>) {
+    let Ok(orgs) = fs::read_dir(artifacts_root) else {
         return;
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-            collect_manifest_paths(&path, output);
-        } else if path.file_name().and_then(|name| name.to_str()) == Some("manifest.json") {
-            output.push(path);
+    for org in orgs.flatten().filter(|entry| entry.path().is_dir()) {
+        let Ok(repos) = fs::read_dir(org.path()) else {
+            continue;
+        };
+        for repo in repos.flatten().filter(|entry| entry.path().is_dir()) {
+            let Ok(days) = fs::read_dir(repo.path()) else {
+                continue;
+            };
+            for day in days.flatten().filter(|entry| entry.path().is_dir()) {
+                let plans_root = day.path().join("plans");
+                let Ok(plans) = fs::read_dir(plans_root) else {
+                    continue;
+                };
+                for plan in plans.flatten().filter(|entry| entry.path().is_dir()) {
+                    let manifest = plan.path().join("manifest.json");
+                    if manifest.is_file() {
+                        output.push(manifest);
+                    }
+                }
+            }
         }
     }
 }
@@ -1078,5 +1701,32 @@ mod tests {
             validate_relative_markdown_path("briefs/cut.md").expect("safe"),
             PathBuf::from("briefs/cut.md")
         );
+    }
+
+    #[test]
+    fn workspace_health_keeps_identity_drift_visible_but_nonfatal() {
+        let mut report = ScaffoldDoctorReport {
+            valid: false,
+            plan_id: "plan-a".into(),
+            plan_root: "/tmp/plan-a".into(),
+            artifact_ids: Vec::new(),
+            errors: vec![ScaffoldDoctorError {
+                code: "identity_mismatch".into(),
+                rule: Some("R1".into()),
+                artifact_id: None,
+                path: None,
+                message: "path casing differs".into(),
+            }],
+        };
+        assert!(report.workspace_reviewable());
+
+        report.errors.push(ScaffoldDoctorError {
+            code: "missing_required_artifact".into(),
+            rule: Some("R2".into()),
+            artifact_id: Some("driver".into()),
+            path: Some("DRIVER.md".into()),
+            message: "missing".into(),
+        });
+        assert!(!report.workspace_reviewable());
     }
 }

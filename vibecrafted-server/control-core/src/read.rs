@@ -23,8 +23,9 @@ use chrono::{DateTime, Utc};
 use crate::events::EventStream;
 use crate::model::{
     AgentMeta, DeliverySealRef, Event, FINAL_STATES, Health, LifecycleRun, LifecycleRunSummary,
-    RECENT_RUN_LIMIT, RUN_STALL_SECONDS, RunStatus, SettlementBoard, coerce_int_value,
-    is_final_state, merge_status, operator_session_name, parse_iso, skill_from_code, state_health,
+    RECENT_RUN_LIMIT, RUN_STALL_SECONDS, RunStatus, SettlementBoard, SettlementTui,
+    SettlementVerdict, TrustReceiptV1, coerce_int_value, is_final_state, merge_status,
+    operator_session_name, parse_iso, skill_from_code, state_health,
 };
 
 /// Resolve `~`-prefixed paths against `$HOME`. Other paths pass through.
@@ -185,8 +186,9 @@ impl ControlPlane {
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
-            if let Some(run) = read_json::<RunStatus>(&path) {
+            if let Some(run) = read_run_status(&path, false) {
                 if !run.run_id.is_empty() {
+                    let run = self.attach_runtime_recovery_if_present(run, false);
                     runs.push(self.attach_seal_if_present(run));
                 }
             }
@@ -204,16 +206,18 @@ impl ControlPlane {
             return None;
         }
         let direct = self.run_snapshot_dir().join(format!("{target}.json"));
-        if let Some(run) = read_json::<RunStatus>(&direct) {
+        if let Some(run) = read_run_status(&direct, true) {
             if run.run_id == target {
+                let run = self.attach_runtime_recovery_if_present(run, true);
                 return Some(self.attach_seal_if_present(run));
             }
         }
-        if let Some(run) = self
+        if let Some(mut run) = self
             .load_snapshots()
             .into_iter()
             .find(|run| run.run_id == target)
         {
+            refresh_worker_liveness(&mut run);
             return Some(run);
         }
         // Read-follows-write: a still-launching run lives in runtime_runs/ before
@@ -233,6 +237,91 @@ impl ControlPlane {
     fn attach_seal_if_present(&self, mut run: RunStatus) -> RunStatus {
         if run.seal.is_none() {
             run.seal = self.read_seal_ref(&run.run_id);
+        }
+        run
+    }
+
+    /// Join explicit supervisor recovery evidence from runtime `meta.json`
+    /// onto a Python snapshot. The legacy snapshot `session_id` is preserved
+    /// but never used as a fallback for either explicit identity.
+    fn attach_runtime_recovery_if_present(
+        &self,
+        mut run: RunStatus,
+        probe_worker_alive: bool,
+    ) -> RunStatus {
+        let path = self.runtime_run_dir(&run.run_id).join("meta.json");
+        let Some(payload) = read_json::<serde_json::Value>(&path) else {
+            if probe_worker_alive {
+                refresh_worker_liveness(&mut run);
+            }
+            return run;
+        };
+        let string = |key: &str| {
+            payload
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+        };
+        if run.worker_pid.is_none() {
+            run.worker_pid = payload.get("worker_pid").and_then(coerce_int_value);
+        }
+        if run.worker_pgid.is_none() {
+            run.worker_pgid = payload.get("worker_pgid").and_then(coerce_int_value);
+        }
+        if run.worker_alive.is_none() {
+            run.worker_alive = payload
+                .get("worker_alive")
+                .and_then(serde_json::Value::as_bool);
+        }
+        run.recovery_required |= payload
+            .get("recovery_required")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        if run.stop_reason.is_empty() {
+            run.stop_reason = string("stop_reason").to_string();
+        }
+        if run.commit_sha.is_empty() {
+            run.commit_sha = string("commit_sha").to_string();
+        }
+        if run.agent_session_id.is_empty() {
+            run.agent_session_id = string("agent_session_id").to_string();
+        }
+        if run.runtime_session_id.is_empty() {
+            run.runtime_session_id = string("runtime_session_id").to_string();
+        }
+        if run.resume_of.is_empty() {
+            run.resume_of = string("resume_of").to_string();
+        }
+        if run.attempt.is_none() {
+            run.attempt = payload.get("attempt").and_then(json_u64);
+        }
+        if run.trust_receipt.is_none() {
+            run.trust_receipt = payload
+                .get("trust_receipt")
+                .and_then(|value| serde_json::from_value::<TrustReceiptV1>(value.clone()).ok());
+        }
+
+        let terminal = run.is_terminal();
+        let await_run = !terminal
+            && run
+                .controls
+                .as_ref()
+                .map(|controls| controls.await_run)
+                .unwrap_or(true);
+        let retry_from_meta = terminal
+            && (run.skill == "marbles"
+                || !string("prompt").trim().is_empty()
+                || !string("file").trim().is_empty());
+        let retry = retry_from_meta || run.controls.as_ref().is_some_and(|controls| controls.retry);
+        let stop = !terminal
+            && run
+                .controls
+                .as_ref()
+                .map(|controls| controls.stop)
+                .unwrap_or(run.worker_alive == Some(true));
+        run.set_controls(await_run, stop, retry);
+        if probe_worker_alive {
+            refresh_worker_liveness(&mut run);
         }
         run
     }
@@ -274,6 +363,16 @@ impl ControlPlane {
                 .unwrap_or_default()
                 .to_string()
         };
+        let integer = |key: &str| {
+            meta.as_ref()
+                .and_then(|payload| payload.get(key))
+                .and_then(coerce_int_value)
+        };
+        let boolean = |key: &str| {
+            meta.as_ref()
+                .and_then(|payload| payload.get(key))
+                .and_then(serde_json::Value::as_bool)
+        };
         let state = {
             let status = value("status");
             if status.is_empty() {
@@ -312,13 +411,14 @@ impl ControlPlane {
                 updated
             }
         };
-        Some(RunStatus {
+        let mut status = RunStatus {
             run_id: target.to_string(),
             state,
             agent: value("agent"),
             skill: nonempty_runtime_value(&value("skill"), &value("workflow")),
             mode: value("mode"),
             root: value("root"),
+            commit_sha: value("commit_sha"),
             operator_session: value("operator_session"),
             latest_report: value("report"),
             latest_transcript,
@@ -339,15 +439,47 @@ impl ControlPlane {
             session_id: value("session_id"),
             current_loop: None,
             total_loops: None,
-            settlement_verdict: None,
-            settlement_tui: None,
+            worker_pid: integer("worker_pid"),
+            worker_pgid: integer("worker_pgid"),
+            worker_alive: boolean("worker_alive"),
+            recovery_required: boolean("recovery_required").unwrap_or(false),
+            stop_reason: value("stop_reason"),
+            agent_session_id: value("agent_session_id"),
+            runtime_session_id: value("runtime_session_id"),
+            resume_of: value("resume_of"),
+            attempt: meta
+                .as_ref()
+                .and_then(|payload| payload.get("attempt"))
+                .and_then(json_u64),
+            settlement_verdict: settlement_verdict(&value("settlement_verdict")),
+            settlement_tui: settlement_tui(&value("settlement_tui")),
+            settlement_reason: value("settlement_reason"),
+            settlement_source: value("settlement_source"),
+            settlement_at: value("settlement_at"),
+            settlement_claim_digest: value("settlement_claim_digest"),
+            settlement_waived: boolean("settlement_waived"),
+            settlement_revision: meta
+                .as_ref()
+                .and_then(|payload| payload.get("settlement_revision"))
+                .and_then(json_u64),
+            trust_receipt: meta
+                .as_ref()
+                .and_then(|payload| payload.get("trust_receipt"))
+                .and_then(|value| serde_json::from_value::<TrustReceiptV1>(value.clone()).ok()),
+            controls: None,
             // No delivery section on a still-launching runtime dir unless a
             // seal file is later attached by attach_seal_if_present.
             execution_state: None,
             proof_state: None,
             delivery_state: None,
             seal: None,
-        })
+        };
+        enrich_run_status(
+            &mut status,
+            meta.as_ref().unwrap_or(&serde_json::Value::Null),
+            true,
+        );
+        Some(status)
     }
 
     /// Every run currently materialised under `runtime_runs/` as a read-only
@@ -517,12 +649,29 @@ impl ControlPlane {
         // process state, but they must never be used to invent a settlement.
         let retained_snapshots = self.load_snapshots();
         let settlement_counts = SettlementBoard::from_snapshots(&retained_snapshots);
-        let mut merged: Vec<RunStatus> = Vec::new();
+        // Snapshots are also the durable run baseline. Event rotation is
+        // allowed only after Python has projected the generation into these
+        // files, so starting from an empty vector would make an event-only run
+        // disappear as soon as its generation aged out. Fresher raw evidence
+        // below is folded with the normal timestamp-aware merge.
+        let mut merged = retained_snapshots.clone();
+        for snapshot in &mut merged {
+            snapshot.health = if snapshot.is_terminal() {
+                "final".to_string()
+            } else {
+                state_health(&snapshot.state, &snapshot.updated_at, now)
+                    .as_str()
+                    .to_string()
+            };
+        }
 
         for path in self.iter_meta_files() {
-            if let Some(meta) = read_json::<AgentMeta>(&path) {
-                if let Some(status) = meta.normalize(now) {
-                    absorb_status(&mut merged, status);
+            if let Some(payload) = read_json::<serde_json::Value>(&path) {
+                if let Ok(meta) = serde_json::from_value::<AgentMeta>(payload.clone()) {
+                    if let Some(mut status) = meta.normalize(now) {
+                        enrich_run_status(&mut status, &payload, false);
+                        absorb_status(&mut merged, status);
+                    }
                 }
             }
         }
@@ -560,14 +709,52 @@ impl ControlPlane {
             if event.run_id.trim().is_empty() {
                 continue;
             }
+            // Settlement outbox records describe an already-persisted snapshot.
+            // They are notification evidence, never process/liveness state:
+            // normalising one as a generic event would resurrect a terminal
+            // run as `unknown` or `active`.
+            if event.kind == "settlement.changed" {
+                continue;
+            }
             let existing = merged.iter().find(|run| run.run_id == event.run_id);
             let status = normalize_event(event, existing, now);
             absorb_status(&mut merged, status);
         }
         for run in &mut merged {
-            if live_worker_runs.contains(&run.run_id) && !run.is_terminal() {
-                run.health = "active".to_string();
+            let operator_stopped = run.state == "stopped" && !run.stop_reason.trim().is_empty();
+            if operator_stopped {
+                run.health = "final".to_string();
+                run.last_error.clear();
+                run.recovery_required = false;
+                run.set_controls(false, false, false);
+                continue;
             }
+            let terminal = run.is_terminal();
+            if terminal {
+                run.health = "final".to_string();
+            } else if live_worker_runs.contains(&run.run_id) {
+                run.worker_alive = Some(true);
+                run.health = "active".to_string();
+            } else {
+                if run.worker_pid.is_some() || run.worker_pgid.is_some() {
+                    run.worker_alive = Some(false);
+                }
+            }
+            let await_run = !terminal
+                && run
+                    .controls
+                    .as_ref()
+                    .map(|controls| controls.await_run)
+                    .unwrap_or(true);
+            let stop = !terminal
+                && run.worker_alive == Some(true)
+                && run
+                    .controls
+                    .as_ref()
+                    .map(|controls| controls.stop)
+                    .unwrap_or(true);
+            let retry = run.controls.as_ref().is_some_and(|controls| controls.retry);
+            run.set_controls(await_run, stop, retry);
         }
         // runtime_runs/: a just-launched run no richer source has surfaced yet.
         // Read-follows-write — keeps the dashboard from a silent gap before the
@@ -591,22 +778,6 @@ impl ControlPlane {
                     run.health = "unknown".to_string();
                 }
                 merged.push(run);
-            }
-        }
-
-        // Persisted terminal snapshots are the completion authority over the
-        // runtime_runs/ read-follows-write fallback. Runtime directories
-        // intentionally outlive workers, so their mere existence cannot
-        // resurrect a finished run. Other richer sources keep their existing
-        // merge semantics.
-        for snapshot in retained_snapshots
-            .iter()
-            .filter(|snapshot| snapshot.is_terminal())
-        {
-            if let Some(idx) = merged.iter().position(|run| {
-                run.run_id == snapshot.run_id && run.source.as_str() == "runtime_runs"
-            }) {
-                merged[idx] = snapshot.clone();
             }
         }
 
@@ -698,6 +869,15 @@ fn absorb_status(merged: &mut Vec<RunStatus>, incoming: RunStatus) {
 }
 
 fn normalize_event(event: &Event, existing: Option<&RunStatus>, now: DateTime<Utc>) -> RunStatus {
+    let accepted_stop_event = event.kind == "audit:stop"
+        && event
+            .payload
+            .get("accepted")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+    let prior_operator_stop =
+        existing.filter(|run| run.state == "stopped" && !run.stop_reason.trim().is_empty());
+    let operator_stop_sticky = accepted_stop_event || prior_operator_stop.is_some();
     let payload_string = |key: &str| {
         event
             .payload
@@ -719,13 +899,7 @@ fn normalize_event(event: &Event, existing: Option<&RunStatus>, now: DateTime<Ut
             state = lifecycle_state.to_string();
         } else if event.kind == "launch" {
             state = "created".to_string();
-        } else if event.kind == "audit:stop"
-            && event
-                .payload
-                .get("accepted")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false)
-        {
+        } else if accepted_stop_event {
             state = "stopped".to_string();
         } else {
             state = existing
@@ -774,6 +948,16 @@ fn normalize_event(event: &Event, existing: Option<&RunStatus>, now: DateTime<Ut
         .get("launcher_pid")
         .and_then(coerce_int_value)
         .or_else(|| existing.and_then(|run| run.launcher_pid));
+    let worker_pid = event
+        .payload
+        .get("worker_pid")
+        .and_then(coerce_int_value)
+        .or_else(|| existing.and_then(|run| run.worker_pid));
+    let worker_pgid = event
+        .payload
+        .get("worker_pgid")
+        .and_then(coerce_int_value)
+        .or_else(|| existing.and_then(|run| run.worker_pgid));
     let payload_error = existing_string(&payload_string("error"), &payload_string("last_error"));
     let last_error = if !payload_error.is_empty() {
         payload_error
@@ -802,13 +986,25 @@ fn normalize_event(event: &Event, existing: Option<&RunStatus>, now: DateTime<Ut
         state_health(&state, activity_at, now).as_str().to_string()
     };
 
-    RunStatus {
+    let event_settlement_verdict = settlement_verdict(&payload_string("settlement_verdict"))
+        .or_else(|| existing.and_then(|run| run.settlement_verdict));
+    let event_settlement_tui = settlement_tui(&payload_string("settlement_tui"))
+        .or_else(|| existing.and_then(|run| run.settlement_tui));
+    let payload_bool = |key: &str| event.payload.get(key).and_then(serde_json::Value::as_bool);
+    let payload_u64 = |key: &str| event.payload.get(key).and_then(json_u64);
+    let mut status = RunStatus {
         run_id: event.run_id.trim().to_string(),
         state: state.clone(),
         agent,
         skill,
         mode,
         root: root.clone(),
+        commit_sha: existing_string(
+            &payload_string("commit_sha"),
+            existing
+                .map(|run| run.commit_sha.as_str())
+                .unwrap_or_default(),
+        ),
         operator_session: operator_session_name(&root, event.run_id.trim()),
         latest_report: existing_string(
             &payload_string("report"),
@@ -850,13 +1046,104 @@ fn normalize_event(event: &Event, existing: Option<&RunStatus>, now: DateTime<Ut
         ),
         current_loop: existing.and_then(|run| run.current_loop),
         total_loops: existing.and_then(|run| run.total_loops),
-        settlement_verdict: None,
-        settlement_tui: None,
+        worker_pid,
+        worker_pgid,
+        worker_alive: payload_bool("worker_alive")
+            .or_else(|| existing.and_then(|run| run.worker_alive)),
+        recovery_required: payload_bool("recovery_required")
+            .unwrap_or_else(|| existing.is_some_and(|run| run.recovery_required)),
+        stop_reason: existing_string(
+            &payload_string("stop_reason"),
+            existing
+                .map(|run| run.stop_reason.as_str())
+                .unwrap_or_default(),
+        ),
+        agent_session_id: existing_string(
+            &payload_string("agent_session_id"),
+            existing
+                .map(|run| run.agent_session_id.as_str())
+                .unwrap_or_default(),
+        ),
+        runtime_session_id: existing_string(
+            &payload_string("runtime_session_id"),
+            existing
+                .map(|run| run.runtime_session_id.as_str())
+                .unwrap_or_default(),
+        ),
+        resume_of: existing_string(
+            &payload_string("resume_of"),
+            existing
+                .map(|run| run.resume_of.as_str())
+                .unwrap_or_default(),
+        ),
+        attempt: payload_u64("attempt").or_else(|| existing.and_then(|run| run.attempt)),
+        settlement_verdict: event_settlement_verdict,
+        settlement_tui: event_settlement_tui,
+        settlement_reason: existing_string(
+            &payload_string("settlement_reason"),
+            existing
+                .map(|run| run.settlement_reason.as_str())
+                .unwrap_or_default(),
+        ),
+        settlement_source: existing_string(
+            &payload_string("settlement_source"),
+            existing
+                .map(|run| run.settlement_source.as_str())
+                .unwrap_or_default(),
+        ),
+        settlement_at: existing_string(
+            &payload_string("settlement_at"),
+            existing
+                .map(|run| run.settlement_at.as_str())
+                .unwrap_or_default(),
+        ),
+        settlement_claim_digest: existing_string(
+            &payload_string("settlement_claim_digest"),
+            existing
+                .map(|run| run.settlement_claim_digest.as_str())
+                .unwrap_or_default(),
+        ),
+        settlement_waived: payload_bool("settlement_waived")
+            .or_else(|| existing.and_then(|run| run.settlement_waived)),
+        settlement_revision: payload_u64("settlement_revision")
+            .or_else(|| existing.and_then(|run| run.settlement_revision)),
+        trust_receipt: event
+            .payload
+            .get("trust_receipt")
+            .and_then(|value| serde_json::from_value::<TrustReceiptV1>(value.clone()).ok())
+            .or_else(|| existing.and_then(|run| run.trust_receipt.clone())),
+        controls: None,
         execution_state: None,
         proof_state: None,
         delivery_state: None,
         seal: None,
+    };
+    let payload = serde_json::Value::Object(
+        event
+            .payload
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    );
+    enrich_run_status(&mut status, &payload, false);
+    if operator_stop_sticky {
+        status.state = "stopped".to_string();
+        status.health = "final".to_string();
+        status.last_error.clear();
+        status.recovery_required = false;
+        if status.liveness.is_empty() {
+            status.liveness = "terminal".to_string();
+        }
+        if let Some(stopped) = prior_operator_stop {
+            status.updated_at.clone_from(&stopped.updated_at);
+            status.completed_at.clone_from(&stopped.completed_at);
+            status.exit_code = stopped.exit_code;
+            status.liveness.clone_from(&stopped.liveness);
+            status.stop_reason.clone_from(&stopped.stop_reason);
+        }
+        status.set_controls(false, false, false);
     }
+    status
 }
 
 fn json_scalar_string(value: &serde_json::Value) -> String {
@@ -939,6 +1226,167 @@ fn warnings_for_runs(runs: &[RunStatus]) -> Vec<String> {
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
     let text = fs::read_to_string(path).ok()?;
     serde_json::from_str(&text).ok()
+}
+
+fn read_run_status(path: &Path, probe_worker_alive: bool) -> Option<RunStatus> {
+    let payload = read_json::<serde_json::Value>(path)?;
+    let mut run = serde_json::from_value::<RunStatus>(payload.clone()).ok()?;
+    enrich_run_status(&mut run, &payload, probe_worker_alive);
+    Some(run)
+}
+
+fn object_bool(
+    object: Option<&serde_json::Map<String, serde_json::Value>>,
+    key: &str,
+) -> Option<bool> {
+    object
+        .and_then(|values| values.get(key))
+        .and_then(serde_json::Value::as_bool)
+}
+
+fn nested_string(payload: &serde_json::Value, object: &str, key: &str) -> String {
+    payload
+        .get(object)
+        .and_then(serde_json::Value::as_object)
+        .and_then(|values| values.get(key))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn json_u64(value: &serde_json::Value) -> Option<u64> {
+    match value {
+        serde_json::Value::Number(number) => number.as_u64(),
+        serde_json::Value::String(raw) => raw.trim().parse::<u64>().ok(),
+        _ => None,
+    }
+}
+
+fn settlement_verdict(value: &str) -> Option<SettlementVerdict> {
+    match value.trim().to_lowercase().as_str() {
+        "finalized" => Some(SettlementVerdict::Finalized),
+        "failed" => Some(SettlementVerdict::Failed),
+        "needs_attention" => Some(SettlementVerdict::NeedsAttention),
+        "invalid" => Some(SettlementVerdict::Invalid),
+        _ => None,
+    }
+}
+
+fn settlement_tui(value: &str) -> Option<SettlementTui> {
+    match value.trim().to_lowercase().as_str() {
+        "f" => Some(SettlementTui::F),
+        "x" => Some(SettlementTui::X),
+        "n" => Some(SettlementTui::N),
+        _ => None,
+    }
+}
+
+fn enrich_run_status(run: &mut RunStatus, payload: &serde_json::Value, probe_worker_alive: bool) {
+    if probe_worker_alive && (run.worker_pid.is_some() || run.worker_pgid.is_some()) {
+        run.worker_alive = Some(
+            [run.worker_pid, run.worker_pgid]
+                .into_iter()
+                .flatten()
+                .any(pid_is_alive),
+        );
+    }
+
+    let settlement = payload
+        .get("settlement")
+        .and_then(serde_json::Value::as_object);
+    if run.settlement_verdict.is_none() {
+        run.settlement_verdict = settlement
+            .and_then(|values| values.get("verdict"))
+            .and_then(serde_json::Value::as_str)
+            .and_then(settlement_verdict);
+    }
+    if run.settlement_tui.is_none() {
+        run.settlement_tui = settlement
+            .and_then(|values| values.get("tui"))
+            .and_then(serde_json::Value::as_str)
+            .and_then(settlement_tui);
+    }
+    if run.settlement_reason.is_empty() {
+        run.settlement_reason = nested_string(payload, "settlement", "reason");
+    }
+    if run.settlement_source.is_empty() {
+        run.settlement_source = nested_string(payload, "settlement", "source");
+    }
+    if run.settlement_at.is_empty() {
+        run.settlement_at = nested_string(payload, "settlement", "settled_at");
+    }
+    if run.settlement_claim_digest.is_empty() {
+        run.settlement_claim_digest = nested_string(payload, "settlement", "claim_digest");
+    }
+    if run.settlement_waived.is_none() {
+        run.settlement_waived = settlement
+            .and_then(|values| values.get("waived"))
+            .and_then(serde_json::Value::as_bool);
+    }
+    if run.settlement_revision.is_none() {
+        run.settlement_revision = settlement
+            .and_then(|values| values.get("revision"))
+            .and_then(json_u64);
+    }
+
+    let controls = payload
+        .get("controls")
+        .and_then(serde_json::Value::as_object);
+    let lifecycle = payload
+        .get("lifecycle")
+        .and_then(serde_json::Value::as_object);
+    if !run.recovery_required {
+        run.recovery_required = object_bool(lifecycle, "recovery_required").unwrap_or(false);
+    }
+    let await_run = object_bool(controls, "await")
+        .or_else(|| object_bool(lifecycle, "await"))
+        .unwrap_or_else(|| !run.is_terminal());
+    let stop = object_bool(controls, "stop")
+        .or_else(|| object_bool(lifecycle, "stop"))
+        .unwrap_or_else(|| !run.is_terminal() && run.worker_alive == Some(true));
+    let retry = object_bool(controls, "retry")
+        .or_else(|| object_bool(lifecycle, "resume"))
+        .unwrap_or_else(|| {
+            run.is_terminal()
+                && (run.skill == "marbles"
+                    || payload
+                        .get("prompt")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|value| !value.trim().is_empty())
+                    || payload
+                        .get("file")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|value| !value.trim().is_empty()))
+        });
+    run.set_controls(await_run, stop, retry);
+}
+
+fn refresh_worker_liveness(run: &mut RunStatus) {
+    if run.worker_pid.is_none() && run.worker_pgid.is_none() {
+        return;
+    }
+    run.worker_alive = Some(
+        [run.worker_pid, run.worker_pgid]
+            .into_iter()
+            .flatten()
+            .any(pid_is_alive),
+    );
+    let terminal = run.is_terminal();
+    let await_run = !terminal
+        && run
+            .controls
+            .as_ref()
+            .map(|controls| controls.await_run)
+            .unwrap_or(true);
+    let stop = !terminal
+        && run.worker_alive == Some(true)
+        && run
+            .controls
+            .as_ref()
+            .map(|controls| controls.stop)
+            .unwrap_or(true);
+    let retry = run.controls.as_ref().is_some_and(|controls| controls.retry);
+    run.set_controls(await_run, stop, retry);
 }
 
 fn nonempty_runtime_value(primary: &str, fallback: &str) -> String {
@@ -1054,13 +1502,14 @@ fn normalize_lock(path: &Path, now: DateTime<Utc>) -> Option<RunStatus> {
             a
         }
     };
-    Some(RunStatus {
+    let mut status = RunStatus {
         run_id: run_id.to_string(),
         state: state.clone(),
         agent,
         skill: skill_from_code(&get("skill")),
         mode,
         root: root.clone(),
+        commit_sha: String::new(),
         operator_session: operator_session_name(&root, run_id),
         latest_report: String::new(),
         latest_transcript: String::new(),
@@ -1077,13 +1526,32 @@ fn normalize_lock(path: &Path, now: DateTime<Utc>) -> Option<RunStatus> {
         session_id: String::new(),
         current_loop: None,
         total_loops: None,
+        worker_pid: None,
+        worker_pgid: None,
+        worker_alive: None,
+        recovery_required: false,
+        stop_reason: String::new(),
+        agent_session_id: String::new(),
+        runtime_session_id: String::new(),
+        resume_of: String::new(),
+        attempt: None,
         settlement_verdict: None,
         settlement_tui: None,
+        settlement_reason: String::new(),
+        settlement_source: String::new(),
+        settlement_at: String::new(),
+        settlement_claim_digest: String::new(),
+        settlement_waived: None,
+        settlement_revision: None,
+        trust_receipt: None,
+        controls: None,
         execution_state: None,
         proof_state: None,
         delivery_state: None,
         seal: None,
-    })
+    };
+    status.set_controls(true, false, false);
+    Some(status)
 }
 
 /// Raw `marbles/**/state.json`. Only the fields used by
@@ -1162,13 +1630,15 @@ impl MarblesState {
             state_health(&state, &updated_at, now)
         };
         let _ = RUN_STALL_SECONDS; // documented threshold lives in state_health
-        Some(RunStatus {
+        let terminal = is_final_state(&state);
+        let mut status = RunStatus {
             run_id: run_id.to_string(),
             state,
             agent,
             skill: "marbles".to_string(),
             mode,
             root: self.root.clone(),
+            commit_sha: String::new(),
             operator_session: operator_session_name(&self.root, run_id),
             latest_report: latest.map(|l| l.report.clone()).unwrap_or_default(),
             latest_transcript: latest.map(|l| l.transcript.clone()).unwrap_or_default(),
@@ -1185,22 +1655,222 @@ impl MarblesState {
             session_id: String::new(),
             current_loop: self.current_loop,
             total_loops: self.total_loops,
+            worker_pid: None,
+            worker_pgid: None,
+            worker_alive: None,
+            recovery_required: false,
+            stop_reason: String::new(),
+            agent_session_id: String::new(),
+            runtime_session_id: String::new(),
+            resume_of: String::new(),
+            attempt: None,
             settlement_verdict: None,
             settlement_tui: None,
+            settlement_reason: String::new(),
+            settlement_source: String::new(),
+            settlement_at: String::new(),
+            settlement_claim_digest: String::new(),
+            settlement_waived: None,
+            settlement_revision: None,
+            trust_receipt: None,
+            controls: None,
             execution_state: None,
             proof_state: None,
             delivery_state: None,
             seal: None,
-        })
+        };
+        status.set_controls(!terminal, false, terminal);
+        Some(status)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::ControlPlane;
+    use crate::events::STREAM_SEGMENT_SCHEMA;
     use chrono::{Duration, Utc};
     use serde_json::json;
     use std::fs;
+
+    #[test]
+    fn accepted_operator_stop_survives_later_supervisor_failures() {
+        let unique = format!(
+            "control-core-sticky-stop-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let home = std::env::temp_dir().join(unique);
+        let control_plane = home.join("control_plane");
+        let snapshots = control_plane.join("runs");
+        fs::create_dir_all(&snapshots).expect("snapshots");
+        fs::write(
+            snapshots.join("sticky-stop.json"),
+            serde_json::to_vec(&json!({
+                "run_id": "sticky-stop",
+                "state": "failed",
+                "agent": "codex",
+                "skill": "workflow",
+                "mode": "workflow",
+                "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                "updated_at": (Utc::now() - Duration::seconds(4)).to_rfc3339(),
+                "health": "final",
+                "liveness": "terminal",
+                "recovery_required": true,
+                "last_error": "stale snapshot failure"
+            }))
+            .expect("snapshot json"),
+        )
+        .expect("snapshot");
+        let now = Utc::now();
+        let records = [
+            json!({
+                "ts": (now - Duration::seconds(3)).to_rfc3339(),
+                "run_id": "sticky-stop",
+                "kind": "lifecycle:active",
+                "message": "worker active",
+                "payload": {
+                    "state": "active",
+                    "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                    "worker_pid": 987654,
+                    "worker_pgid": 987654,
+                    "liveness": "pid_alive"
+                }
+            }),
+            json!({
+                "ts": (now - Duration::seconds(2)).to_rfc3339(),
+                "run_id": "sticky-stop",
+                "kind": "audit:stop",
+                "message": "run stopped",
+                "payload": {
+                    "accepted": true,
+                    "state": "stopped",
+                    "operator_stop_accepted": true,
+                    "stop_reason": "manual operator stop",
+                    "health": "final",
+                    "liveness": "terminal",
+                    "exit_code": 143
+                }
+            }),
+            json!({
+                "ts": (now - Duration::seconds(1)).to_rfc3339(),
+                "run_id": "sticky-stop",
+                "kind": "lifecycle:failed",
+                "message": "process failed with exit code -15",
+                "payload": {
+                    "state": "failed",
+                    "exit_code": -15,
+                    "liveness": "terminal",
+                    "recovery_required": true,
+                    "error": "supervisor observed SIGTERM"
+                }
+            }),
+            json!({
+                "ts": now.to_rfc3339(),
+                "run_id": "sticky-stop",
+                "kind": "lifecycle:report_missing",
+                "message": "artifact contract failed",
+                "payload": {
+                    "state": "report_missing",
+                    "recovery_required": true,
+                    "errors": ["report_missing"]
+                }
+            }),
+        ];
+        let encoded = records
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(control_plane.join("events.jsonl"), format!("{encoded}\n"))
+            .expect("event stream");
+
+        let view = ControlPlane::new(&home).compute_view(now);
+        let run = view
+            .recent_runs
+            .iter()
+            .find(|run| run.run_id == "sticky-stop")
+            .expect("stopped run");
+
+        assert_eq!(run.state, "stopped");
+        assert_eq!(run.stop_reason, "manual operator stop");
+        assert_eq!(run.exit_code, Some(143));
+        assert!(!run.recovery_required);
+        let controls = run.controls.as_ref().expect("controls");
+        assert!(!controls.await_run);
+        assert!(!controls.stop);
+        assert!(!controls.retry);
+
+        fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn event_only_run_survives_rotation_via_snapshot() {
+        let unique = format!(
+            "control-core-snapshot-after-rotation-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let home = std::env::temp_dir().join(unique);
+        let control_plane = home.join("control_plane");
+        let snapshots = control_plane.join("runs");
+        fs::create_dir_all(&snapshots).expect("snapshots");
+        let now = Utc::now();
+        fs::write(
+            snapshots.join("event-only.json"),
+            serde_json::to_vec(&json!({
+                "run_id": "event-only",
+                "state": "active",
+                "agent": "codex",
+                "skill": "implement",
+                "mode": "implement",
+                "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                "operator_session": "vibecrafted-event-only",
+                "latest_report": "",
+                "latest_transcript": "",
+                "last_error": "",
+                "updated_at": now.to_rfc3339(),
+                "started_at": now.to_rfc3339(),
+                "health": "active",
+                "source": "event-stream",
+                "lock_present": false
+            }))
+            .expect("snapshot json"),
+        )
+        .expect("snapshot");
+        fs::write(
+            control_plane.join("events.jsonl"),
+            format!(
+                "{}\n",
+                json!({
+                    "ts": now.to_rfc3339(),
+                    "run_id": "",
+                    "kind": "stream.segment",
+                    "message": "rotated generation",
+                    "payload": {
+                        "schema": STREAM_SEGMENT_SCHEMA,
+                        "epoch": "epoch-snapshot",
+                        "generation": 1
+                    }
+                })
+            ),
+        )
+        .expect("header-only active generation");
+
+        let view = ControlPlane::new(&home).compute_view(now);
+
+        assert!(
+            view.recent_runs
+                .iter()
+                .any(|run| run.run_id == "event-only"),
+            "durable snapshot must outlive its rotated event generation"
+        );
+        assert!(
+            view.active_runs
+                .iter()
+                .any(|run| run.run_id == "event-only")
+        );
+        fs::remove_dir_all(home).ok();
+    }
 
     #[test]
     fn active_truth_separates_stalls_and_quarantines_pytest_events() {
@@ -1288,6 +1958,88 @@ mod tests {
         );
         assert_eq!(view.settlement_counts.active, 1);
         assert_eq!(view.settlement_counts.total_settled, 0);
+
+        fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn lookup_run_projects_typed_trust_receipt_from_runtime_meta() {
+        let unique = format!(
+            "control-core-trust-receipt-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let home = std::env::temp_dir().join(unique);
+        let control_plane = home.join("control_plane");
+        let runtime = control_plane.join("runtime_runs/receipt-run");
+        let snapshots = control_plane.join("runs");
+        fs::create_dir_all(&runtime).expect("runtime");
+        fs::create_dir_all(&snapshots).expect("snapshots");
+        let receipt = json!({
+            "schema": "vibecrafted.trust-receipt.v1",
+            "receipt_id": "a".repeat(64),
+            "repo_root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+            "run_id": "receipt-run",
+            "commit_sha": "b".repeat(40),
+            "trust_verdict": "pass-with-gaps",
+            "settlement_verdict": "needs_attention",
+            "settlement_tui": "n",
+            "settlement_revision": 9,
+            "claim_digest": "c".repeat(64)
+        });
+        fs::write(
+            runtime.join("meta.json"),
+            serde_json::to_vec(&json!({
+                "run_id": "receipt-run",
+                "status": "failed",
+                "exit_code": 9,
+                "agent": "codex",
+                "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                "settlement_verdict": "needs_attention",
+                "settlement_tui": "n",
+                "settlement_source": "trust",
+                "settlement_revision": 9,
+                "trust_receipt": receipt
+            }))
+            .expect("meta json"),
+        )
+        .expect("meta");
+        fs::write(
+            snapshots.join("receipt-run.json"),
+            serde_json::to_vec(&json!({
+                "run_id": "receipt-run",
+                "state": "failed",
+                "agent": "codex",
+                "skill": "implement",
+                "mode": "workflow",
+                "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                "operator_session": "vibecrafted-receipt-run",
+                "latest_report": "",
+                "latest_transcript": "",
+                "last_error": "",
+                "updated_at": "2026-07-26T00:00:00Z",
+                "started_at": "2026-07-26T00:00:00Z",
+                "health": "final",
+                "source": "agent-meta",
+                "lock_present": false,
+                "exit_code": 9,
+                "settlement_verdict": "needs_attention",
+                "settlement_tui": "n",
+                "settlement_source": "trust",
+                "settlement_revision": 9
+            }))
+            .expect("snapshot json"),
+        )
+        .expect("snapshot");
+
+        let run = ControlPlane::new(&home)
+            .lookup_run("receipt-run")
+            .expect("run");
+        let projected = run.trust_receipt.expect("typed trust receipt");
+        assert_eq!(projected.schema, "vibecrafted.trust-receipt.v1");
+        assert_eq!(projected.receipt_id, "a".repeat(64));
+        assert_eq!(projected.commit_sha, "b".repeat(40));
+        assert_eq!(projected.settlement_revision, 9);
 
         fs::remove_dir_all(home).ok();
     }

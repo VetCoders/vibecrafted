@@ -21,6 +21,7 @@ from .report_contract import (
     materialize_launcher_report_template,
     stamp_launcher_report_identity,
 )
+from .runtime_transcript import write_runtime_transcript_manifest
 from .settlement import BareMarkdownError, require_bound_markdown
 from .telemetry import estimate_cost_usd
 
@@ -1050,6 +1051,10 @@ def finalize_artifacts(
 
     if str(transcript):
         _normalize_markdown_artifact(transcript, footer_payload)
+        write_runtime_transcript_manifest(
+            transcript,
+            run_id=str(payload.get("run_id") or ""),
+        )
     if (
         str(report)
         and report.exists()
@@ -1478,7 +1483,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         finish_meta(args.meta, args.status, args.exit_code)
         return 0
     if args.command == "finalize-artifacts":
-        finalize_artifacts(args.meta, args.report, args.transcript)
+        final_meta = finalize_artifacts(args.meta, args.report, args.transcript)
+        if final_meta is None:
+            return 1
+        print(final_meta.resolve(strict=True))
         return 0
     if args.command == "prepare-report":
         materialize_launcher_report_template(

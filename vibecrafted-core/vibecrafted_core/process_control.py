@@ -22,6 +22,7 @@ from .run_reaper import (
     _is_protected,
     _pid_alive,
     _signal_pid,
+    build_env_index,
     build_process_table,
     grace_seconds,
     plan_reap,
@@ -59,11 +60,14 @@ __all__ = [
     "ProcessIdentity",
     "ProcessSnapshotRow",
     "TerminateOutcome",
+    "capture_process_identity",
     "command_sha256",
     "main",
+    "process_identity_receipt",
     "process_start_token",
     "snapshot_processes",
     "terminate_process",
+    "validate_process_identity",
 ]
 
 
@@ -132,6 +136,117 @@ class ProcessIdentity:
     start_token: str
     command_sha256: str
     command: str
+
+
+def capture_process_identity(
+    pid: int,
+    *,
+    table: Sequence[ProcessEntry] | None = None,
+) -> ProcessIdentity | None:
+    """Capture the current OS identity behind one PID, or ``None`` if gone.
+
+    A caller may persist the returned start token and command hash, then require
+    an exact re-capture before signalling. This is deliberately stronger than
+    storing a PID/PGID, both of which the kernel may reuse.
+    """
+
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return None
+    current_table = build_process_table() if table is None else table
+    entry = next((row for row in current_table if row.pid == pid), None)
+    if entry is None:
+        return None
+    return ProcessIdentity(
+        pid=entry.pid,
+        ppid=entry.ppid,
+        pgid=entry.pgid,
+        start_token=process_start_token(entry.pid, entry.command),
+        command_sha256=command_sha256(entry.command),
+        command=entry.command,
+    )
+
+
+def process_identity_receipt(
+    pid: int,
+    *,
+    run_id: str,
+    table: Sequence[ProcessEntry] | None = None,
+) -> dict[str, Any] | None:
+    """Return the non-secret process identity persisted in run events/meta."""
+
+    identity = capture_process_identity(pid, table=table)
+    if identity is None:
+        return None
+    return {
+        "pid": identity.pid,
+        "ppid": identity.ppid,
+        "pgid": identity.pgid,
+        "start_token": identity.start_token,
+        "command_sha256": identity.command_sha256,
+        "run_id": str(run_id or "").strip(),
+    }
+
+
+def validate_process_identity(
+    receipt: Mapping[str, Any] | None,
+    *,
+    expected_pid: int,
+    expected_pgid: int | None,
+    expected_run_id: str,
+    table: Sequence[ProcessEntry] | None = None,
+    env_index: Mapping[int, str] | None = None,
+) -> tuple[bool, str, ProcessIdentity | None]:
+    """Re-capture and validate a persisted identity before any signal.
+
+    ``SPAWN_RUN_ID`` evidence is best-effort on macOS. If the OS exposes it, it
+    must match; when it does not, the mandatory receipt run id plus start token,
+    command hash, PID, and PGID still have to match exactly.
+    """
+
+    if not isinstance(receipt, Mapping):
+        return False, "process_identity_unavailable", None
+    try:
+        receipt_pid = int(receipt.get("pid") or 0)
+        receipt_pgid = int(receipt.get("pgid") or 0)
+    except (TypeError, ValueError):
+        return False, "process_identity_invalid", None
+    receipt_run_id = str(receipt.get("run_id") or "").strip()
+    expected_run = str(expected_run_id or "").strip()
+    expected_start = str(receipt.get("start_token") or "").strip()
+    expected_hash = str(receipt.get("command_sha256") or "").strip()
+    if (
+        receipt_pid <= 0
+        or receipt_pid != expected_pid
+        or not expected_run
+        or receipt_run_id != expected_run
+        or not expected_start
+        or len(expected_hash) != 64
+    ):
+        return False, "process_identity_mismatch", None
+    if expected_pgid is not None and (
+        expected_pgid <= 0 or receipt_pgid != expected_pgid
+    ):
+        return False, "process_identity_mismatch", None
+
+    identity = capture_process_identity(expected_pid, table=table)
+    if identity is None:
+        return False, "process_identity_gone", None
+    if (
+        identity.pid != receipt_pid
+        or identity.pgid != receipt_pgid
+        or identity.start_token != expected_start
+        or identity.command_sha256 != expected_hash
+    ):
+        return False, "process_identity_mismatch", identity
+
+    discovered = (
+        build_env_index().get(expected_pid)
+        if env_index is None
+        else env_index.get(expected_pid)
+    )
+    if discovered and str(discovered).strip() != expected_run:
+        return False, "process_run_id_mismatch", identity
+    return True, "process_identity_current", identity
 
 
 @dataclass(frozen=True)

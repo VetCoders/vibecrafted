@@ -11,14 +11,14 @@ Usage: codex_spawn.sh [--mode <mode>] [--runtime <terminal|visible|headless|back
 
 Modes are labels for the artifact metadata, e.g. implement, review, or plan.
 Runtime modes:
-- terminal / visible: launch via Terminal.app
+- terminal / visible: launch in a vc-frame worker pane
 - headless / background / detached: run launcher as detached background process
-- default: terminal
+- default: headless
 EOF_USAGE
 }
 
 mode="implement"
-runtime="terminal"
+runtime="headless"
 model="${CODEX_MODEL:-}"
 root=""
 plan_file=""

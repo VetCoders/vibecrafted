@@ -142,8 +142,11 @@ def test_install_sh_stages_archives_through_distribution_manifest() -> None:
     assert 'manifest_helper="$source_dir/scripts/distribution_manifest.py"' in text
     assert '"$manifest_helper" stage' in text
     assert '--source "$source_dir"' in text
-    assert '--destination "$incoming_dir"' in text
-    assert 'mv "$source_dir" "$incoming_dir"' not in text
+    assert 'candidate_root="$tmpdir/candidate"' in text
+    assert '--destination "$candidate_root"' in text
+    assert 'ln -sfn "$staged_dir" "$current_link"' not in text
+    assert 'rm -rf "$staged_dir"' not in text
+    assert 'mv "$source_dir"' not in text
 
 
 def test_install_sh_attended_pipe_requires_explicit_yes_before_staging(
@@ -184,7 +187,7 @@ def test_install_sh_attended_pipe_requires_explicit_yes_before_staging(
     )
     assert exit_code == 0
     assert "⚒ 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. →" in output
-    assert "unpack · stage ·" in output
+    assert "unpack · verify · transact ·" in output
     assert "Proceed? [y/N]" in output
     assert "Cancelled." in output
     assert not staged_root.exists()
@@ -240,7 +243,7 @@ def test_install_sh_yes_skips_attended_prompt_for_pipe_bootstrap(
     assert "Running     compact installer" not in output
     assert "Non-interactive bootstrap detected" not in output
     assert "Launching installer:" not in output
-    assert staged_root.is_symlink()
+    assert not staged_root.exists()
     assert make_capture.read_text(encoding="utf-8") == "install-auto RUNTIME=none\n"
 
 
@@ -299,7 +302,7 @@ def test_install_sh_runtime_flag_dispatches_staged_runtime_helper(
     staged_root = (
         home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
     )
-    assert staged_root.is_symlink()
+    assert not staged_root.exists()
     assert make_capture.read_text(encoding="utf-8") == "install-auto RUNTIME=wezterm\n"
 
 
@@ -360,14 +363,110 @@ def test_install_sh_archive_install_runs_local_make_target(tmp_path: Path) -> No
     staged_root = (
         home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
     )
-    assert staged_root.is_symlink()
-    assert make_capture.read_text(encoding="utf-8").splitlines() == [
-        "--no-print-directory",
-        "-C",
-        str(staged_root),
-        "install",
-    ]
+    make_args = make_capture.read_text(encoding="utf-8").splitlines()
+    assert make_args[:2] == ["--no-print-directory", "-C"]
+    candidate_root = Path(make_args[2])
+    assert candidate_root.name == "candidate"
+    assert candidate_root.parent.name.startswith("vibecrafted-bootstrap.")
+    assert make_args[3:] == ["install"]
+    assert not candidate_root.exists()
+    assert not staged_root.exists()
     assert not python_capture.exists()
+
+
+def test_install_sh_same_ref_handoff_never_mutates_live_pointer(
+    tmp_path: Path,
+) -> None:
+    """A bootstrap candidate must stay private until the leased installer
+    publishes it.
+
+    Block the candidate command at the transaction handoff, then prove that a
+    same-ref live generation and `vibecrafted-current` remain byte-for-byte
+    available both while the handoff is blocked and after it fails.
+    """
+    source_dir = tmp_path / "source"
+    scripts_dir = source_dir / "scripts"
+    archive_path = tmp_path / "vibecrafted-bootstrap.tar.gz"
+    fake_bin = tmp_path / "bin"
+    home = tmp_path / "home"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    live_target = tools / "vibecrafted-main"
+    current = tools / "vibecrafted-current"
+    ready = tmp_path / "make-ready"
+    release = tmp_path / "make-release"
+    candidate_capture = tmp_path / "candidate-root.txt"
+
+    scripts_dir.mkdir(parents=True)
+    fake_bin.mkdir()
+    live_target.mkdir(parents=True)
+    (live_target / "identity.txt").write_text("still-live\n", encoding="utf-8")
+    current.symlink_to(live_target)
+
+    (source_dir / "Makefile").write_text("install:\n\t@echo no\n", encoding="utf-8")
+    (scripts_dir / "placeholder").write_text("", encoding="utf-8")
+    _write_distribution_manifest_stub(source_dir)
+    with tarfile.open(archive_path, "w:gz") as archive:
+        archive.add(source_dir, arcname="vibecrafted-main")
+
+    _write_executable(
+        fake_bin / "make",
+        """#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == "--no-print-directory" && "$2" == "-C" ]]
+printf '%s\\n' "$3" > "$CANDIDATE_CAPTURE"
+: > "$MAKE_READY"
+while [[ ! -e "$MAKE_RELEASE" ]]; do
+  sleep 0.02
+done
+exit 73
+""",
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["XDG_CONFIG_HOME"] = str(home / ".config")
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
+    env["PATH"] = f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
+    env["CANDIDATE_CAPTURE"] = str(candidate_capture)
+    env["MAKE_READY"] = str(ready)
+    env["MAKE_RELEASE"] = str(release)
+
+    process = subprocess.Popen(
+        ["bash", str(INSTALL_SH), "--archive-file", str(archive_path), "install"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not ready.exists() and process.poll() is None:
+            assert time.monotonic() < deadline, "bootstrap never reached handoff"
+            time.sleep(0.02)
+
+        assert process.poll() is None, process.communicate()
+        candidate_root = Path(candidate_capture.read_text(encoding="utf-8").strip())
+        assert candidate_root.name == "candidate"
+        assert candidate_root.is_dir()
+        assert current.is_symlink()
+        assert current.resolve() == live_target.resolve()
+        assert (current / "identity.txt").read_text(encoding="utf-8") == "still-live\n"
+
+        release.touch()
+        stdout, stderr = process.communicate(timeout=10)
+        assert process.returncode == 73, stdout + stderr
+        assert current.is_symlink()
+        assert current.resolve() == live_target.resolve()
+        assert (live_target / "identity.txt").read_text(
+            encoding="utf-8"
+        ) == "still-live\n"
+        assert not candidate_root.exists()
+    finally:
+        release.touch(exist_ok=True)
+        if process.poll() is None:
+            process.terminate()
+            process.communicate(timeout=10)
 
 
 def test_install_sh_gui_bootstrap_runs_local_guided_installer(tmp_path: Path) -> None:
@@ -427,12 +526,14 @@ def test_install_sh_gui_bootstrap_runs_local_guided_installer(tmp_path: Path) ->
     staged_root = (
         home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
     )
-    assert staged_root.is_symlink()
-    assert python_capture.read_text(encoding="utf-8").splitlines() == [
-        str(staged_root / "scripts" / "installer_gui.py"),
-        "--source",
-        str(staged_root),
-    ]
+    python_args = python_capture.read_text(encoding="utf-8").splitlines()
+    candidate_root = Path(python_args[2])
+    assert Path(python_args[0]) == candidate_root / "scripts" / "installer_gui.py"
+    assert python_args[1] == "--source"
+    assert candidate_root.name == "candidate"
+    assert candidate_root.parent.name.startswith("vibecrafted-bootstrap.")
+    assert not candidate_root.exists()
+    assert not staged_root.exists()
     assert not make_capture.exists()
 
 

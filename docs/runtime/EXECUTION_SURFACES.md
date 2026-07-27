@@ -32,18 +32,23 @@ Use this for headless execution, scripts, and agent subprocesses.
 Before invoking a command, agents verify it with `command -v`. They do not
 assume an interactive PATH or sourced shell helpers.
 
-## 3. Active vc-frame Agent Session
+## 3. Active vc-frame User Session
 
-Use this when the operator already has a visible Vibecrafted session.
+Use this when the operator needs a real interactive agent TUI or wants to
+observe durable worker state.
 
 - Surface: `vibecrafted start`, `vibecrafted dashboard`, and slash-command style
   workflow prompts inside the active agent pane.
 - State: vc-frame session state plus Vibecrafted control-plane events.
-- Strength: visible orchestration and operator observation.
+- Strength: human-owned PTY for `init`, `operator`, and bare interactive
+  `resume`; visible projection of worker transcripts and settlement state.
 - Limit: this is a live terminal surface, not a portable subprocess contract.
 
-Use this surface for operator-visible work. Use the installed binary surface for
-automation that must survive without shell functions or an active pane.
+Ordinary workflow workers still launch through the installed headless runtime,
+even when this session is live. vc-frame observes them; it does not own their
+processes. Closing a viewer or the whole User Session must not stop a headless
+worker. Use an explicit `terminal` / `visible` worker runtime only for a
+provider path proven to require a TTY.
 
 ## 4. Sandbox Execution
 

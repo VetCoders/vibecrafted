@@ -275,25 +275,42 @@ def _write_observe_fixture(
     event_stream = home / "control_plane" / "events.jsonl"
     event_stream.parent.mkdir(parents=True, exist_ok=True)
     event_stream.write_text(
-        json.dumps(
-            {
-                "ts": now,
-                "run_id": run_id,
-                "kind": "launch",
-                "message": "launched",
-                "payload": {
-                    "state": "active",
-                    "agent": "codex",
-                    "skill": "implement",
-                    "mode": "implement",
-                    "root": str(tmp_path),
-                    "session_id": "session-observe",
-                    "launcher_pid": os.getpid(),
-                    "heartbeat_at": now,
-                    "report": str(report),
-                    "transcript": str(transcript),
-                },
-            }
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "ts": now,
+                        "run_id": "",
+                        "kind": "stream.segment",
+                        "message": "event stream generation 0",
+                        "payload": {
+                            "schema": "vibecrafted.event-stream-segment.v1",
+                            "epoch": "mcp-observe-fixture",
+                            "generation": 0,
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "ts": now,
+                        "run_id": run_id,
+                        "kind": "launch",
+                        "message": "launched",
+                        "payload": {
+                            "state": "active",
+                            "agent": "codex",
+                            "skill": "implement",
+                            "mode": "implement",
+                            "root": str(tmp_path),
+                            "session_id": "session-observe",
+                            "launcher_pid": os.getpid(),
+                            "heartbeat_at": now,
+                            "report": str(report),
+                            "transcript": str(transcript),
+                        },
+                    }
+                ),
+            ]
         )
         + "\n",
         encoding="utf-8",
@@ -600,7 +617,7 @@ def test_vc_run_status_and_await_use_control_plane_meta(
                 "skill_code": "impl",
                 "exit_code": 0,
                 "liveness": "terminal",
-                "launcher_pid": 4242,
+                "launcher_pid": 1_073_741_824,
                 "completed_at": "2026-05-19T00:00:01+00:00",
                 "session_id": "session-xyz",
             }
@@ -636,7 +653,7 @@ def test_vc_run_status_and_await_use_control_plane_meta(
 
     assert status_payload["found"] is True
     assert status_payload["run"]["session_id"] == "session-xyz"
-    assert status_payload["run"]["launcher_pid"] == 4242
+    assert status_payload["run"]["launcher_pid"] == 1_073_741_824
     assert await_payload["completed"] is True
     assert await_payload["run"]["exit_code"] == 0
 
@@ -671,10 +688,9 @@ def test_vc_run_observe_returns_bounded_cursor_deltas(
     assert first["operator_state"] == "running"
     launch_events = [event for event in first["events"] if event["kind"] == "launch"]
     assert len(launch_events) == 1
-    assert all(event["cursor"] > 0 for event in first["events"])
-    assert first["cursor"]["event_offset"] == max(
-        event["cursor"] for event in first["events"]
-    )
+    assert all(event["cursor"].startswith("v2:") for event in first["events"])
+    assert first["cursor"]["event_cursor"] == first["events"][-1]["cursor"]
+    assert "event_offset" not in first["cursor"]
     assert first["transcript"]["offset"] == 0
     assert first["transcript"]["next_offset"] == 4
     assert first["transcript"]["bytes"] == 4
@@ -707,7 +723,7 @@ def test_vc_run_observe_returns_bounded_cursor_deltas(
                 "run_id": fixture["run_id"],
                 "home": fixture["home"],
                 "cursor": {
-                    "event_offset": first["cursor"]["event_offset"],
+                    "event_cursor": first["cursor"]["event_cursor"],
                     "transcript_offset": 10,
                 },
                 "max_bytes": 4,
@@ -719,6 +735,33 @@ def test_vc_run_observe_returns_bounded_cursor_deltas(
     assert at_end["transcript"]["bytes"] == 0
     assert at_end["transcript"]["text"] == ""
     assert at_end["cursor"]["transcript_offset"] == 10
+
+
+def test_mcp_observe_persists_opaque_event_cursor(tmp_path: Path) -> None:
+    fixture = _write_observe_fixture(tmp_path, run_id="opaque-cursor-run")
+
+    migrated = server._observe_run_once(
+        fixture["run_id"],
+        home=fixture["home"],
+        cursor={"event_offset": 0, "transcript_offset": 0},
+    )
+
+    assert "event_offset" not in migrated["cursor"]
+    opaque = migrated["cursor"]["event_cursor"]
+    assert isinstance(opaque, str)
+    assert opaque.startswith("v2:mcp-observe-fixture:0:")
+    assert migrated["events"][0]["cursor"].startswith("v2:mcp-observe-fixture:0:")
+    assert int(opaque.rsplit(":", 1)[1]) >= int(
+        migrated["events"][0]["cursor"].rsplit(":", 1)[1]
+    )
+
+    resumed = server._observe_run_once(
+        fixture["run_id"],
+        home=fixture["home"],
+        cursor={"event_cursor": opaque, "transcript_offset": 0},
+    )
+    assert resumed["events"] == []
+    assert resumed["cursor"]["event_cursor"] == opaque
 
 
 def test_vc_run_observe_defaults_to_recent_tail_for_long_transcript(

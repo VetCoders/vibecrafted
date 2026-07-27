@@ -3,13 +3,29 @@ from __future__ import annotations
 import datetime as dt
 import fcntl
 import json
+import multiprocessing
 import os
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import pytest
 from vibecrafted_core import control_plane
+
+
+def _append_event_in_process(home: str, ready: Any) -> None:
+    os.environ["VIBECRAFTED_HOME"] = home
+    ready.set()
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T06:30:00+00:00",
+            "run_id": "append-during-rotation",
+            "kind": "state",
+            "message": "must land exactly once",
+            "payload": {"state": "active"},
+        }
+    )
 
 
 def _write_meta(home: Path, payload: dict[str, object]) -> Path:
@@ -87,6 +103,88 @@ def test_resolve_run_raises_loud_when_still_launching(
     assert run_id in message
     assert "await" in message
     assert excinfo.value.run_id == run_id
+
+
+def test_operator_stop_is_sticky_over_late_failure_and_artifact_aliases(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    run_id = "sticky-stop-projection"
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T12:00:00+00:00",
+            "run_id": run_id,
+            "kind": "lifecycle:active",
+            "message": "worker active",
+            "payload": {
+                "state": "active",
+                "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                "agent": "codex",
+                "skill": "workflow",
+                "mode": "workflow",
+                "worker_pid": 987654321,
+                "worker_pgid": 987654321,
+                "liveness": "pid_alive",
+            },
+        }
+    )
+    control_plane.record_stop_transition(
+        run_id,
+        accepted=True,
+        reason="manual operator stop",
+        target="worker_pgid",
+        target_pid=987654321,
+        target_pgid=987654321,
+        signal_sent=True,
+        alive_after_grace=False,
+        exit_code=143,
+    )
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T12:00:02+00:00",
+            "run_id": run_id,
+            "kind": "lifecycle:failed",
+            "message": "process failed with exit code -15",
+            "payload": {
+                "state": "failed",
+                "exit_code": -15,
+                "liveness": "terminal",
+                "recovery_required": True,
+                "error": "supervisor observed SIGTERM",
+            },
+        }
+    )
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T12:00:03+00:00",
+            "run_id": run_id,
+            "kind": "lifecycle:artifact_seen",
+            "message": "artifacts inspected",
+            "payload": {
+                "state": "artifact_seen",
+                "event_kind": "artifact",
+                "errors": ["report_missing"],
+                "warnings": ["meta_missing"],
+                "recovery_required": True,
+            },
+        }
+    )
+
+    run = control_plane.lookup_run(run_id)
+
+    assert run is not None
+    assert run["state"] == "stopped"
+    assert run["operator_stop_accepted"] is True
+    assert run["stop_reason"] == "manual operator stop"
+    assert run["exit_code"] == 143
+    assert run["artifact_ok"] is True
+    assert run["artifact_errors"] == []
+    assert run["artifact_gate"] == "stopped"
+    assert run["recovery_required"] is False
+    assert run["last_error"] == ""
+    assert run["lifecycle"]["stop"] is False
+    assert run["lifecycle"]["recovery_required"] is False
 
 
 def test_sync_state_preserves_runtime_observe_fields(
@@ -532,9 +630,7 @@ def test_sync_state_gc_terminalizes_old_stalled_dead_launcher(
     assert run["health"] == "final"
     assert run["liveness"] == "pid_gone"
     assert run["completed_at"] == now.isoformat()
-    assert (
-        "garbage-collected: dead launcher, heartbeat stale >3600s" in run["last_error"]
-    )
+    assert "garbage-collected: dead launcher, no activity >3600s" in run["last_error"]
     assert all(item["run_id"] != "just-old-stalled" for item in snapshot["active_runs"])
 
     persisted = json.loads(
@@ -1415,6 +1511,65 @@ def test_await_run_idle_stall_fires_when_worker_is_dead(
     assert payload["worker_alive"] is False
 
 
+def test_await_run_rearms_when_stalled_projection_recovers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`stalled` is an observation, not a terminal verdict.
+
+    Await must stay armed when a false stall clears and only return after the
+    later terminal transition. This is the operator notification contract: a
+    transient watchdog flag cannot silently disarm supervision.
+    """
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    states = [
+        {
+            "run_id": "wflw-rearm-7",
+            "state": "stalled",
+            "health": "stalled",
+            "liveness": "pid_gone",
+            "updated_at": "2026-07-25T08:33:00+00:00",
+            "recovery_required": True,
+        },
+        {
+            "run_id": "wflw-rearm-7",
+            "state": "active",
+            "health": "active",
+            "liveness": "pid_gone",
+            "updated_at": "2026-07-25T08:34:00+00:00",
+        },
+        {
+            "run_id": "wflw-rearm-7",
+            "state": "completed",
+            "health": "final",
+            "liveness": "terminal",
+            "updated_at": "2026-07-25T08:35:00+00:00",
+            "completed_at": "2026-07-25T08:35:00+00:00",
+            "exit_code": 0,
+        },
+    ]
+    snapshots = iter(
+        {"active_runs": [], "recent_runs": [run], "stalled_runs": []} for run in states
+    )
+    monkeypatch.setattr(
+        control_plane, "sync_state", lambda *, only_run_id=None: next(snapshots)
+    )
+    observed: list[str] = []
+
+    payload = control_plane.await_run(
+        "wflw-rearm-7",
+        timeout_seconds=1,
+        interval_seconds=0.01,
+        hard_cap_seconds=5,
+        on_poll=lambda run: observed.append(str((run or {}).get("state") or "")),
+    )
+
+    assert observed == ["stalled", "active", "completed"]
+    assert payload["completed"] is True
+    assert payload["timed_out"] is False
+    assert payload["reason"] == "terminal"
+    assert payload["attempts"] == 3
+
+
 def test_await_run_returns_report_delivered_when_worker_is_gone(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1699,6 +1854,14 @@ def test_sync_state_projects_event_stream_lifecycle(
                             "prompt": "go",
                             "report": str(tmp_path / "report.md"),
                             "transcript": str(tmp_path / "run.log"),
+                            "agent_session_id": "claude-native-parent",
+                            "runtime_session_id": "runtime-child",
+                            "parent_runtime_session_id": "runtime-parent",
+                            "resume_of": "wflw-parent",
+                            "resume_root": "wflw-root",
+                            "attempt": 2,
+                            "native_resume": True,
+                            "resume_idempotency_key": ("settlement:wflw-parent:7"),
                         },
                     }
                 ),
@@ -1725,6 +1888,14 @@ def test_sync_state_projects_event_stream_lifecycle(
     assert run["operator_state"] == "blocked"
     assert run["artifact_gate"] == "failed"
     assert "report_missing" in run["artifact_errors"]
+    assert run["agent_session_id"] == "claude-native-parent"
+    assert run["runtime_session_id"] == "runtime-child"
+    assert run["parent_runtime_session_id"] == "runtime-parent"
+    assert run["resume_of"] == "wflw-parent"
+    assert run["resume_root"] == "wflw-root"
+    assert run["attempt"] == 2
+    assert run["native_resume"] is True
+    assert run["resume_idempotency_key"] == "settlement:wflw-parent:7"
 
 
 def test_sync_state_surfaces_failure_card_on_contract_failure(
@@ -2016,16 +2187,15 @@ def test_sync_state_keeps_retained_snapshot_only_runs_on_board(
     assert board["settlement_counts"]["x"] == 1
 
 
-def test_sync_state_rotates_oversized_event_stream_and_keeps_tail(
+def test_sync_state_rotates_oversized_stream_without_tail_replay(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     home = tmp_path / ".vibecrafted"
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
     monkeypatch.setenv("VIBECRAFTED_EVENTS_ROTATE_BYTES", "512")
-    events = home / "control_plane" / "events.jsonl"
-    events.parent.mkdir(parents=True, exist_ok=True)
-    lines = [
-        json.dumps(
+    events = control_plane.event_stream_path()
+    for index in range(40):
+        control_plane._append_event(
             {
                 "ts": f"2026-05-19T00:00:{index:02d}+00:00",
                 "run_id": "impl-rotate-1",
@@ -2034,26 +2204,288 @@ def test_sync_state_rotates_oversized_event_stream_and_keeps_tail(
                 "payload": {"state": "active", "agent": "codex"},
             }
         )
-        for index in range(40)
-    ]
-    events.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     board = control_plane.sync_state()
 
     archive = control_plane._events_archive_dir()
     rotated = list(archive.glob("events-*.jsonl"))
     assert len(rotated) == 1
-    # Tail re-seeded: the fresh stream keeps the last records for the board.
-    fresh_text = events.read_text(encoding="utf-8")
-    fresh = fresh_text.strip().splitlines()
-    # Tail re-seed happens after projection appended its own transition events,
-    # so the fresh stream holds the last pre-rotation records, not the whole log.
-    assert 0 < len(fresh) <= control_plane.EVENT_TAIL_LIMIT
-    assert "tick 39" in fresh_text
-    assert 'tick 0"' not in fresh_text
+    archived_text = rotated[0].read_text(encoding="utf-8")
+    assert "tick 39" in archived_text
+    assert 'tick 0"' in archived_text
+    # The new segment is a header only. Tail copying would duplicate effects
+    # during an archived-generation reconnect.
+    fresh = [
+        json.loads(line) for line in events.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [event["kind"] for event in fresh] == ["stream.segment"]
+    assert fresh[0]["payload"]["schema"] == control_plane.EVENT_SEGMENT_SCHEMA
+    assert fresh[0]["payload"]["generation"] == 1
+    assert any(
+        event["message"] == "tick 39"
+        for event in control_plane.read_event_tail(control_plane.EVENT_TAIL_LIMIT)
+    )
     # The run projected before rotation stays resolvable from its snapshot.
     assert control_plane.lookup_run("impl-rotate-1") is not None
     assert any(run.get("run_id") == "impl-rotate-1" for run in board["recent_runs"])
+
+
+def test_append_during_rotation_lands_once_in_new_generation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_EVENTS_ROTATE_BYTES", "1")
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T06:29:00+00:00",
+            "run_id": "before-rotation",
+            "kind": "state",
+            "message": "old generation",
+            "payload": {},
+        }
+    )
+
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    process = context.Process(
+        target=_append_event_in_process,
+        args=(str(home), ready),
+    )
+    with control_plane._event_lock(exclusive=True):
+        process.start()
+        assert ready.wait(timeout=5)
+        time.sleep(0.1)
+        assert process.is_alive(), "append must wait behind rotation EX"
+        rotated_path = control_plane._rotate_event_stream_locked()
+        assert rotated_path is not None
+    process.join(timeout=10)
+    assert process.exitcode == 0
+
+    records: list[dict[str, object]] = []
+    paths = list(control_plane._events_archive_dir().glob("events-*.jsonl"))
+    paths.append(control_plane.event_stream_path())
+    for path in paths:
+        records.extend(
+            json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+        )
+    raced = [
+        record for record in records if record.get("run_id") == "append-during-rotation"
+    ]
+    assert len(raced) == 1
+    assert raced[0]["message"] == "must land exactly once"
+    active = [
+        json.loads(line)
+        for line in control_plane.event_stream_path()
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert active[0]["kind"] == "stream.segment"
+    assert active[0]["payload"]["generation"] == 1
+    assert active[1]["run_id"] == "append-during-rotation"
+
+
+def test_short_event_append_rolls_back_before_later_writer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T07:00:00+00:00",
+            "run_id": "before-short-write",
+            "kind": "unit",
+            "message": "complete before",
+            "payload": {},
+        }
+    )
+    real_write = control_plane.os.write
+
+    def short_write(fd: int, data: bytes) -> int:
+        prefix = data[: max(1, len(data) // 2)]
+        return real_write(fd, prefix)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(control_plane.os, "write", short_write)
+        with pytest.raises(OSError, match="short atomic event append"):
+            control_plane._append_event(
+                {
+                    "ts": "2026-07-26T07:00:01+00:00",
+                    "run_id": "short-write",
+                    "kind": "unit",
+                    "message": "must roll back",
+                    "payload": {},
+                }
+            )
+
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T07:00:02+00:00",
+            "run_id": "after-short-write",
+            "kind": "unit",
+            "message": "complete after",
+            "payload": {},
+        }
+    )
+    records = [
+        json.loads(line)
+        for line in control_plane.event_stream_path()
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert [record.get("run_id") for record in records[1:]] == [
+        "before-short-write",
+        "after-short-write",
+    ]
+
+
+def test_next_event_repairs_incomplete_tail_left_by_dead_writer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T07:01:00+00:00",
+            "run_id": "before-dead-writer",
+            "kind": "unit",
+            "message": "complete before",
+            "payload": {},
+        }
+    )
+    stream = control_plane.event_stream_path()
+    with control_plane._event_lock(exclusive=True):
+        fd = control_plane.os.open(stream, control_plane.os.O_WRONLY | os.O_APPEND)
+        try:
+            control_plane.os.write(fd, b'{"run_id":"dead-writer"')
+            control_plane.os.fsync(fd)
+        finally:
+            control_plane.os.close(fd)
+
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T07:01:01+00:00",
+            "run_id": "after-dead-writer",
+            "kind": "unit",
+            "message": "complete after",
+            "payload": {},
+        }
+    )
+    records = [
+        json.loads(line) for line in stream.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record.get("run_id") for record in records[1:]] == [
+        "before-dead-writer",
+        "after-dead-writer",
+    ]
+
+
+def test_legacy_subscriber_hides_segment_header(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(control_plane.time, "sleep", lambda _seconds: None)
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T06:30:00+00:00",
+            "run_id": "legacy-subscriber",
+            "kind": "unit",
+            "message": "visible event",
+            "payload": {},
+        }
+    )
+
+    events = list(control_plane.subscribe_events())
+
+    assert [(event.kind, event.run_id) for event in events] == [
+        ("stream.boundary", ""),
+        ("unit", "legacy-subscriber"),
+    ]
+    assert events[0].payload["from"] == "0"
+    assert events[0].payload["to"].startswith("v2:")
+    assert events[1].cursor.startswith("v2:")
+
+
+def test_python_subscriber_rotation_larger_and_smaller_emits_gap_or_continues(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setenv("VIBECRAFTED_EVENTS_ROTATE_BYTES", "1")
+    monkeypatch.setenv("VIBECRAFTED_EVENTS_ARCHIVE_MAX_FILES", "8")
+    monkeypatch.setenv("VIBECRAFTED_EVENTS_ARCHIVE_MAX_BYTES", str(8 * 1024 * 1024))
+
+    def _append(message: str) -> None:
+        control_plane._append_event(
+            {
+                "ts": "2026-07-26T06:30:00+00:00",
+                "run_id": "subscriber-rotation",
+                "kind": "unit",
+                "message": message,
+                "payload": {},
+            }
+        )
+
+    _append("old")
+    initial = list(control_plane.subscribe_events())
+    saved = next(event.cursor for event in initial if event.message == "old")
+    with control_plane._event_lock(exclusive=True):
+        assert control_plane._rotate_event_stream_locked() is not None
+    _append("larger-" + ("x" * 2000))
+
+    larger = list(control_plane.subscribe_events(saved))
+    assert any(event.kind == "stream.boundary" for event in larger)
+    larger_event = next(event for event in larger if event.kind == "unit")
+    assert larger_event.message.startswith("larger-")
+
+    with control_plane._event_lock(exclusive=True):
+        assert control_plane._rotate_event_stream_locked() is not None
+    _append("small")
+    smaller = list(control_plane.subscribe_events(larger_event.cursor))
+
+    assert any(event.kind == "stream.boundary" for event in smaller)
+    assert [event.message for event in smaller if event.kind == "unit"] == ["small"]
+    assert all(event.kind != "stream.gap" for event in larger + smaller)
+
+
+def test_retention_prunes_and_expired_cursor_emits_gap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setenv("VIBECRAFTED_EVENTS_ROTATE_BYTES", "1")
+    monkeypatch.setenv("VIBECRAFTED_EVENTS_ARCHIVE_MAX_FILES", "1")
+    monkeypatch.setenv("VIBECRAFTED_EVENTS_ARCHIVE_MAX_BYTES", str(8 * 1024 * 1024))
+
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T06:30:00+00:00",
+            "run_id": "retention",
+            "kind": "unit",
+            "message": "generation-zero",
+            "payload": {},
+        }
+    )
+    initial = list(control_plane.subscribe_events())
+    expired = next(event.cursor for event in initial if event.kind == "unit")
+    with control_plane._event_lock(exclusive=True):
+        assert control_plane._rotate_event_stream_locked() is not None
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T06:31:00+00:00",
+            "run_id": "retention",
+            "kind": "unit",
+            "message": "generation-one",
+            "payload": {},
+        }
+    )
+    with control_plane._event_lock(exclusive=True):
+        assert control_plane._rotate_event_stream_locked() is not None
+
+    archives = list(control_plane._events_archive_dir().glob("events-*.jsonl"))
+    assert len(archives) == 1
+    recovered = list(control_plane.subscribe_events(expired))
+    gaps = [event for event in recovered if event.kind == "stream.gap"]
+    assert len(gaps) == 1
+    assert gaps[0].payload["reason"] == "generation_expired_or_unknown"
+    assert gaps[0].payload["action"] == "resnapshot"
+    assert gaps[0].cursor.startswith("v2:")
 
 
 def test_lock_busy_message_names_install_doctor_sync(
@@ -2113,3 +2545,213 @@ def test_await_status_with_run_id_is_lockless_during_board_sync(
     finally:
         fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
         holder.close()
+
+
+# --- stall-detector truth: silence is not death, finalization is terminal ----
+# Field evidence 2026-07-25 (work-260725-111347-98000, work-260725-103320-02000,
+# work-260725-052543-65000, impl-260725-032908-13000): every one of these runs
+# carried heartbeat_at == started_at, exit_code None and completed_at "", while
+# its report was already on disk. Three separate edges were missing.
+
+
+def test_await_run_refuses_untouched_launcher_template_as_delivery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A pre-seeded identity shell is transport scaffolding, never a handoff.
+
+    The launcher materializes the report path at spawn time, so `size > 0` was
+    true from the run's first second. Await read that as ``report_delivered``
+    and answered rc=0 the moment the worker died — a green verdict on a run
+    that never wrote a word. Delivery now requires worker evidence.
+    """
+    from vibecrafted_core.report_contract import materialize_launcher_report_template
+
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "100000")
+    report = tmp_path / "shell-report.md"
+    assert materialize_launcher_report_template(
+        report, run_id="wflw-template-7", agent="grok", skill="workflow"
+    )
+    assert report.stat().st_size > 0
+    _write_meta(
+        home,
+        {
+            "run_id": "wflw-template-7",
+            "status": "running",
+            "agent": "grok",
+            "mode": "workflow",
+            "skill_code": "wflw",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:00:00+00:00",
+            "worker_pid": 999999999,
+            "worker_pgid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+
+    payload = control_plane.await_run(
+        "wflw-template-7",
+        timeout_seconds=0.2,
+        interval_seconds=0.05,
+        hard_cap_seconds=5,
+        report_path=str(report),
+    )
+
+    assert payload["reason"] != "report_delivered"
+    assert payload["completed"] is False
+    assert payload["await_rc"] != 0
+
+    # A worker that actually wrote into the shell IS a delivery, including an
+    # honest non-success claim — the contract only rejects the untouched shell.
+    report.write_text(
+        "---\n"
+        "run_id: wflw-template-7\n"
+        "agent: grok\n"
+        "skill: workflow\n"
+        "status: blocked\n"
+        "finalized: false\n"
+        "---\n\n"
+        "Blocked on a missing credential.\n",
+        encoding="utf-8",
+    )
+    delivered = control_plane.await_run(
+        "wflw-template-7",
+        timeout_seconds=5,
+        interval_seconds=0.05,
+        hard_cap_seconds=5,
+        report_path=str(report),
+    )
+    assert delivered["completed"] is True
+    assert delivered["reason"] == "report_delivered"
+
+
+def test_sync_state_closes_stalled_run_when_report_attests_completion(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Finalization is a terminal transition, even from `stalled`.
+
+    Live case work-260725-111347-98000: the report was finalized, the commit
+    landed, the worker exited — and the control plane held `state=stalled`
+    forever because exit_code and completed_at were never recorded. The
+    worker's own `finalized: true` + `claim` attestation is the terminal proof.
+    """
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "1")
+    monkeypatch.setenv("VIBECRAFTED_RUN_GC_GRACE_SECONDS", "999999999")
+    report = tmp_path / "finalized-report.md"
+    report.write_text(
+        "---\n"
+        "run_id: wflw-finalized-9\n"
+        "agent: grok\n"
+        "skill: workflow\n"
+        "status: completed\n"
+        # Mirrors work-260725-111347-98000: the top-level lifecycle status is
+        # complete, but the agent used an unrecognized evidence adjective in
+        # claim_status. That must not erase the explicit completion status.
+        "claim_status: verified\n"
+        "finalized: true\n"
+        "claim: literal boost shipped and gates are green\n"
+        "---\n\n"
+        "## Report\n",
+        encoding="utf-8",
+    )
+    _write_meta(
+        home,
+        {
+            "run_id": "wflw-finalized-9",
+            "status": "running",
+            "agent": "grok",
+            "mode": "workflow",
+            "skill_code": "wflw",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:02:00+00:00",
+            "heartbeat_at": "2026-05-19T00:00:00+00:00",
+            "report": str(report),
+            "launcher_pid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] == "completed"
+    assert run["health"] == "final"
+    assert run["liveness"] == "terminal"
+    assert run["completed_at"]
+    assert not run.get("recovery_required")
+    assert all(item["run_id"] != "wflw-finalized-9" for item in snapshot["active_runs"])
+
+
+def test_sync_state_keeps_run_alive_while_transcript_is_still_growing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Silence in the token stream during a long tool call is not death.
+
+    Live case work-260725-103320-02000: the agent was mid `cargo build` (10+
+    min of no tokens) and the detector called it stalled. `heartbeat_at` is
+    stamped once, at first output, so it cannot carry a run's liveness alone —
+    a growing transcript is the proof that the worker is still speaking.
+    """
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "120")
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text(
+        "release build finished. Let me check if install ran", "utf-8"
+    )
+    # Mirrors the live record exactly: projection kept updated_at fresh while
+    # heartbeat_at stayed frozen at the run's first output 43 minutes earlier.
+    now = dt.datetime.now(dt.timezone.utc)
+    _write_meta(
+        home,
+        {
+            "run_id": "wflw-building-3",
+            "status": "running",
+            "agent": "grok",
+            "mode": "workflow",
+            "skill_code": "wflw",
+            "root": str(tmp_path),
+            "updated_at": now.isoformat(),
+            # Ancient heartbeat: stamped once at first output, never refreshed.
+            "heartbeat_at": (now - dt.timedelta(minutes=43)).isoformat(),
+            "transcript": str(transcript),
+            "launcher_pid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] != "stalled"
+    assert run["health"] != "stalled"
+    assert run["liveness"] != "pid_gone"
+    assert not run.get("recovery_required")
+
+
+def test_append_last_error_collapses_repeated_watchdog_notes() -> None:
+    """The reconciler must not rewrite its own sentence on every projection.
+
+    Live records carried a dozen copies of the same note, differing only in the
+    stale-seconds count, which pushed the real first cause off the operator's
+    screen.
+    """
+    chain = ""
+    for age in (126, 9153, 9158, 9536, 9616):
+        chain = control_plane._append_last_error(
+            chain,
+            f"launcher_pid 63148 is not alive; no worker activity for {age}s "
+            f"(threshold 120s); no live launcher proof; recovery_required",
+        )
+
+    assert chain.count("launcher_pid 63148 is not alive") == 1
+    assert "9616s" in chain
+    assert "9153s" not in chain
+
+    # Distinct causes are still preserved, and the chain stays bounded.
+    chain = control_plane._append_last_error(chain, "artifact contract failed")
+    assert "artifact contract failed" in chain
+    assert "no worker activity for 9616s" in chain

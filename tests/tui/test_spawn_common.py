@@ -17,6 +17,8 @@ CLAUDE_SPAWN_SH = REPO_ROOT / "runtime" / "scripts" / "claude_spawn.sh"
 CODEX_SPAWN_SH = REPO_ROOT / "runtime" / "scripts" / "codex_spawn.sh"
 CODEX_STREAM_BRIDGE = REPO_ROOT / "runtime" / "scripts" / "codex_stream_bridge.py"
 CODEX_STREAM_FILTER = REPO_ROOT / "runtime" / "scripts" / "codex_stream_filter.jq"
+CORE_RUNTIME_HELPER = REPO_ROOT / "runtime" / "helpers" / "vetcoders-runtime-core.sh"
+CORE_PACKAGE_DIR = REPO_ROOT / "vibecrafted-core"
 
 
 # Strip ambient env vars that affect spawn-routing decisions before each
@@ -81,6 +83,36 @@ def _legacy_expected_operator_session(run_id: str | None = None) -> str:
         re.sub(r"[^a-z0-9]+", "-", REPO_ROOT.name.lower()).strip("-") or "vibecrafted"
     )
     return f"{base}-{run_id}" if run_id else base
+
+
+def _write_fake_core_python(path: Path) -> None:
+    """Capture a tracked core launch without importing core or spawning an agent."""
+    path.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "-c" ]]; then
+  if [[ "${2:-}" == *"package_root"* ]]; then
+    printf "%s\\n" "$FAKE_CORE_SOURCE_DIR"
+  fi
+  exit 0
+fi
+if [[ "${1:-}" == "-m" && "${2:-}" == "vibecrafted_core.cli" ]]; then
+  shift 2
+  printf "%s\\0" "$@" > "$FAKE_CORE_ARGV_FILE"
+  cat > "$FAKE_CORE_PROMPT_FILE"
+  printf '%s\\n' '=============== MANUAL EXPLICIT RESUME RECEIPT ===============' 'run_id:             rsme-fixture-1' "agent_session_id:   ${FAKE_CORE_SESSION_ID}" 'resume_mode:        manual_explicit'
+  exit 0
+fi
+printf "unexpected fake-core invocation: %s\\n" "$*" >&2
+exit 98
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def _read_nul_argv(path: Path) -> list[str]:
+    return [item.decode("utf-8") for item in path.read_bytes().split(b"\0") if item]
 
 
 def test_spawn_require_command_adds_curated_agent_tool_paths(tmp_path: Path) -> None:
@@ -198,11 +230,12 @@ def test_spawn_require_command_rejects_non_contract_path_entries(
     home = tmp_path / "home"
     rogue_bin = tmp_path / "rogue" / "bin"
     rogue_bin.mkdir(parents=True)
-    fake_claude = rogue_bin / "claude"
-    fake_claude.write_text(
-        "#!/usr/bin/env bash\nprintf 'rogue-claude\\n'\n", encoding="utf-8"
+    command_name = "vc-test-rogue-agent"
+    fake_agent = rogue_bin / command_name
+    fake_agent.write_text(
+        "#!/usr/bin/env bash\nprintf 'rogue-agent\\n'\n", encoding="utf-8"
     )
-    fake_claude.chmod(0o755)
+    fake_agent.chmod(0o755)
 
     result = subprocess.run(
         [
@@ -214,7 +247,7 @@ def test_spawn_require_command_rejects_non_contract_path_entries(
             export HOME="{home}"
             export PATH="{rogue_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
             source "{COMMON_SH}"
-            spawn_require_command claude
+            spawn_require_command "{command_name}"
             ''',
         ],
         check=False,
@@ -224,7 +257,7 @@ def test_spawn_require_command_rejects_non_contract_path_entries(
     )
 
     assert result.returncode == 1
-    assert "Required command not found: claude" in result.stderr
+    assert f"Required command not found: {command_name}" in result.stderr
 
 
 def test_skill_dry_run_reaches_spawn_launcher_without_launching(tmp_path: Path) -> None:
@@ -1751,6 +1784,13 @@ def test_generated_launcher_adds_uniform_artifact_closure(tmp_path: Path) -> Non
 
 def test_vc_resume_can_infer_agent_from_session_meta(tmp_path: Path) -> None:
     crafted_home = tmp_path / ".vibecrafted"
+    fake_core = tmp_path / "fake-core-python"
+    core_argv = tmp_path / "core-argv.bin"
+    core_prompt = tmp_path / "core-prompt.txt"
+    core_source = tmp_path / "core-source"
+    provider_called = tmp_path / "provider-called"
+    core_source.mkdir()
+    _write_fake_core_python(fake_core)
     meta_dir = (
         crafted_home / "artifacts" / "Vetcoders" / "repo" / "2026_0528" / "reports"
     )
@@ -1764,13 +1804,33 @@ def test_vc_resume_can_infer_agent_from_session_meta(tmp_path: Path) -> None:
         f'''
         set -euo pipefail
         export VIBECRAFTED_HOME="{crafted_home}"
+        export VIBECRAFTED_PYTHON="{fake_core}"
+        export FAKE_CORE_ARGV_FILE="{core_argv}"
+        export FAKE_CORE_PROMPT_FILE="{core_prompt}"
+        export FAKE_CORE_SOURCE_DIR="{core_source}"
+        export FAKE_CORE_SESSION_ID="sess-abc-123"
+        export PROVIDER_CALLED="{provider_called}"
         source "{SHELL_SH}"
-        codex() {{ printf 'codex %s\\n' "$*"; }}
+        codex() {{ : > "$PROVIDER_CALLED"; return 97; }}
         vc-resume --session sess-abc-123 --prompt hello
         '''
     )
 
-    assert "resume sess-abc-123 hello" in result.stdout
+    assert "MANUAL EXPLICIT RESUME RECEIPT" in result.stdout
+    assert "agent_session_id:   sess-abc-123" in result.stdout
+    assert _read_nul_argv(core_argv) == [
+        "resume-session",
+        "codex",
+        "--agent-session-id",
+        "sess-abc-123",
+        "--prompt-stdin",
+        "--root",
+        str(REPO_ROOT),
+        "--source-dir",
+        str(core_source),
+    ]
+    assert core_prompt.read_text(encoding="utf-8") == "hello"
+    assert not provider_called.exists()
 
 
 def test_generated_launcher_marks_meta_failed_before_failure_hook(
@@ -1947,7 +2007,7 @@ def test_spawn_prepare_paths_generates_real_run_context_when_missing(
     payload = dict(
         line.split("=", 1) for line in result.stdout.strip().splitlines() if "=" in line
     )
-    assert re.fullmatch(r"fwup-\d{6}-\d+", payload["RUN_ID"])
+    assert re.fullmatch(r"fwup-\d{6}-\d{6}-\d{5}", payload["RUN_ID"])
     assert payload["SKILL_CODE"] == "fwup"
     lock_path = Path(payload["RUN_LOCK"])
     expected_lock = (
@@ -2517,6 +2577,10 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
                 '  printf -- "--CALL--\\n"',
                 '  printf "%s\\n" "$@"',
                 '} >> "$CAPTURE_FILE"',
+                'if [[ "$*" == "action new-tab --help" ]]; then',
+                "  printf '%s\\n' 'Usage: vc-frame action new-tab [--after-base] [--no-focus]'",
+                "  exit 0",
+                "fi",
             ]
         )
         + "\n",
@@ -2562,6 +2626,8 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
         "--json",
     ]
     assert workflow_call[:4] == ["--session", host_session, "action", "new-tab"]
+    assert "--after-base" in workflow_call
+    assert "--no-focus" in workflow_call
     assert "--name" in workflow_call
     assert run_id in workflow_call
     assert "workflow" not in workflow_call[workflow_call.index("--name") + 1]
@@ -3173,3 +3239,67 @@ def test_g7_receipt_operator_session_is_worker_host(tmp_path: Path) -> None:
         '''
     )
     assert "receipt=proj-bar" in result.stdout
+
+
+def _reserve_run_id(skill: str) -> str:
+    """Mint a canonical run id through the Python allocator (parity oracle)."""
+    out = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; sys.path.insert(0, sys.argv[1]);"
+                " from vibecrafted_core.workflow import reserve_run_id;"
+                " print(reserve_run_id(sys.argv[2]))"
+            ),
+            str(CORE_PACKAGE_DIR),
+            skill,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return out.stdout.strip()
+
+
+def test_shell_run_id_allocators_share_canonical_grammar() -> None:
+    """Both shell run-id allocators mint the same grammar as reserve_run_id.
+
+    Regression for the scaffold run_id split (P1): the shell fallback minted
+    ``prefix-HHMMSS-<pid><entropy>`` (no date, 10-digit tail) while the Python
+    dispatcher minted ``prefix-YYMMDD-HHMMSS-entropy``. The divergent shapes
+    could not be reconciled by observe/await/settlement, orphaning a phantom
+    control-plane record beside the live run. One grammar, one identity space.
+    """
+    result = _bash(
+        f'''
+        set -euo pipefail
+        source "{COMMON_SH}"
+        source "{CORE_RUNTIME_HELPER}"
+        printf 'spawn=%s\\n' "$(spawn_generate_run_id scaf)"
+        printf 'core=%s\\n' "$(_vetcoders_generate_run_id scaf)"
+        '''
+    )
+    lines = dict(
+        line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
+    )
+    spawn_id = lines["spawn"]
+    core_id = lines["core"]
+
+    canonical = re.compile(r"scaf-\d{6}-\d{6}-\d{5}")
+    assert canonical.fullmatch(spawn_id), f"spawn_generate_run_id shape: {spawn_id!r}"
+    assert canonical.fullmatch(core_id), (
+        f"_vetcoders_generate_run_id shape: {core_id!r}"
+    )
+
+    # Both shell allocators agree with the Python allocator that owns the durable
+    # dispatcher identity — three-way grammar parity, no HHMMSS-vs-YYMMDD split.
+    python_id = _reserve_run_id("scaffold")
+    assert canonical.fullmatch(python_id), f"reserve_run_id shape: {python_id!r}"
+
+    # Old shape leaked a concatenated <pid><entropy> tail (3 segments, ~10 digits);
+    # the canonical id is exactly 4 dash-segments with a 5-digit entropy tail.
+    for run_id in (spawn_id, core_id, python_id):
+        segments = run_id.split("-")
+        assert len(segments) == 4, run_id
+        assert len(segments[-1]) == 5 and segments[-1].isdigit(), run_id

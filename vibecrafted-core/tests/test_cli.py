@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import io
+import json
+import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -57,6 +61,18 @@ def test_help_topic_and_direct_flag_render_identically(capsys) -> None:
     assert "L1…LN" in topic_output
 
 
+def test_resume_session_help_topic_matches_direct_flag(capsys) -> None:
+    assert cli.main(["help", "resume-session"]) == 0
+    topic_output = capsys.readouterr().out
+
+    assert cli.main(["resume-session", "--help"]) == 0
+    direct_output = capsys.readouterr().out
+
+    assert topic_output == direct_output
+    assert "--agent-session-id <id>" in topic_output
+    assert "tracked, detached headless run" in topic_output
+
+
 def test_core_parser_accepts_the_short_prompt_and_file_flags() -> None:
     parser = cli._build_parser()
 
@@ -65,6 +81,219 @@ def test_core_parser_accepts_the_short_prompt_and_file_flags() -> None:
 
     assert prompt.prompt == "ship it"
     assert file_input.file == "brief.md"
+
+
+def test_workflow_prompt_stdin_stays_out_of_argv_and_temp_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_launch(spec, source_dir):
+        seen["spec"] = spec
+        seen["source_dir"] = source_dir
+        return {"accepted": True, "run_id": "impl-stdin-1"}
+
+    monkeypatch.setattr(cli, "launch_workflow", fake_launch)
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO("secret prompt from stdin"))
+
+    rc = cli.main(
+        [
+            "implement",
+            "codex",
+            "--prompt-stdin",
+            "--runtime",
+            "headless",
+            "--root",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+
+    assert rc == 0
+    spec = seen["spec"]
+    assert spec.prompt == "secret prompt from stdin"
+    assert spec.file == ""
+
+
+def test_resume_session_reads_prompt_from_stdin_and_prints_json(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_resume(
+        agent: str,
+        agent_session_id: str,
+        source_dir: str | Path,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        seen.update(
+            {
+                "agent": agent,
+                "agent_session_id": agent_session_id,
+                "source_dir": source_dir,
+                **kwargs,
+            }
+        )
+        return {
+            "schema": "vibecrafted.manual_explicit_resume.v1",
+            "accepted": True,
+            "run_id": "rsme-manual-1",
+            "agent": agent,
+            "agent_session_id": agent_session_id,
+            "runtime_session_id": "runtime-manual-1",
+            "resume_mode": "manual_explicit",
+            "skill": "workflow",
+            "root": str(tmp_path),
+            "status": "launching",
+        }
+
+    monkeypatch.setattr(cli, "manual_resume_session", fake_resume)
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO("continue without argv"))
+
+    rc = cli.main(
+        [
+            "resume-session",
+            "codex",
+            "--agent-session-id",
+            "codex-thread-42",
+            "--prompt-stdin",
+            "--root",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+
+    assert rc == 0
+    assert seen["agent"] == "codex"
+    assert seen["agent_session_id"] == "codex-thread-42"
+    assert seen["prompt"] == "continue without argv"
+    assert seen["root"] == str(tmp_path)
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema"] == "vibecrafted.manual_explicit_resume.v1"
+    assert payload["resume_mode"] == "manual_explicit"
+    assert payload["run_id"] == "rsme-manual-1"
+
+
+def test_resume_session_prints_dedicated_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "manual_resume_session",
+        lambda agent, agent_session_id, _source_dir, **_kwargs: {
+            "schema": "vibecrafted.manual_explicit_resume.v1",
+            "accepted": True,
+            "run_id": "rsme-manual-2",
+            "agent": agent,
+            "agent_session_id": agent_session_id,
+            "runtime_session_id": "runtime-manual-2",
+            "resume_mode": "manual_explicit",
+            "skill": "workflow",
+            "root": str(tmp_path),
+            "status": "launching",
+            "control": "/tmp/rsme-manual-2.json",
+            "transcript": "/tmp/rsme-manual-2.log",
+        },
+    )
+
+    rc = cli.main(
+        [
+            "resume-session",
+            "claude",
+            "--agent-session-id",
+            "claude-session-7",
+            "--prompt",
+            "continue",
+            "--root",
+            str(tmp_path),
+        ]
+    )
+
+    assert rc == 0
+    output = capsys.readouterr().out
+    assert "MANUAL EXPLICIT RESUME RECEIPT" in output
+    assert "rsme-manual-2" in output
+    assert "claude-session-7" in output
+    assert "runtime-manual-2" in output
+    assert "resume_mode:        manual_explicit" in output
+
+
+def test_lifecycle_deck_inherits_verified_installer_lease(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    if os.name != "posix":
+        pytest.skip("installer lease descriptors are a POSIX contract")
+
+    import fcntl
+
+    tools_home = tmp_path / "tools"
+    deck = tools_home / "vibecrafted-current" / "scripts" / "vibecrafted"
+    deck.parent.mkdir(parents=True)
+    deck.write_text(
+        "#!/bin/sh\n"
+        'exec "$VIBECRAFTED_TEST_PYTHON" -c '
+        "'import os; "
+        'os.fstat(int(os.environ["VIBECRAFTED_INSTALL_LEASE_FD"]))'
+        "'\n",
+        encoding="utf-8",
+    )
+    deck.chmod(0o755)
+    lock_path = tools_home / ".vibecrafted-install.lock"
+    descriptor = os.open(
+        lock_path,
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools_home))
+    monkeypatch.setenv("VIBECRAFTED_INSTALL_LEASE_FD", str(descriptor))
+    monkeypatch.setenv("VIBECRAFTED_TEST_PYTHON", sys.executable)
+
+    try:
+        assert cli.main(["server", "service", "install"]) == 0
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def test_lifecycle_deck_refuses_unverified_installer_descriptor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    if os.name != "posix":
+        pytest.skip("installer lease descriptors are a POSIX contract")
+
+    tools_home = tmp_path / "tools"
+    deck = tools_home / "vibecrafted-current" / "scripts" / "vibecrafted"
+    deck.parent.mkdir(parents=True)
+    deck.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+    (tools_home / ".vibecrafted-install.lock").touch(mode=0o600)
+    descriptor = os.open("/dev/null", os.O_RDONLY)
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools_home))
+    monkeypatch.setenv("VIBECRAFTED_INSTALL_LEASE_FD", str(descriptor))
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("an unverified descriptor must never reach the deck")
+        ),
+    )
+
+    try:
+        assert cli.main(["server", "service", "install"]) == 75
+    finally:
+        os.close(descriptor)
+
+    assert "installer coordination descriptor does not own" in capsys.readouterr().err
 
 
 def test_resettle_names_automatic_sources_and_explicit_override(
@@ -276,11 +505,12 @@ def test_root_cli_prune_without_agent_defaults_to_claude(monkeypatch, capsys) ->
     assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
 
 
-def test_root_cli_uses_terminal_runtime_when_operator_session_exists(
+def test_root_cli_defaults_headless_but_honors_explicit_terminal(
     monkeypatch, capsys
 ) -> None:
     seen = {}
     monkeypatch.setenv("VIBECRAFTED_OPERATOR_SESSION", "vc-frame")
+    monkeypatch.setattr(cli, "_live_operator_session_exists", lambda _root: False)
 
     def fake_launch(spec, _source_dir):
         seen["runtime"] = spec.runtime
@@ -290,6 +520,20 @@ def test_root_cli_uses_terminal_runtime_when_operator_session_exists(
 
     assert cli.main(["implement", "codex", "--prompt", "ship it"]) == 0
 
+    assert seen["runtime"] == "headless"
+    assert (
+        cli.main(
+            [
+                "implement",
+                "codex",
+                "--prompt",
+                "show it",
+                "--runtime",
+                "terminal",
+            ]
+        )
+        == 0
+    )
     assert seen["runtime"] == "terminal"
     assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
 
@@ -729,3 +973,19 @@ def test_apply_live_liveness_flags_dead_launcher() -> None:
     # No pid recorded → cannot tell, leave the snapshot untouched.
     unknown = cli._apply_live_liveness({"liveness": "heartbeat", "state": "launching"})
     assert unknown["liveness"] == "heartbeat"
+
+
+def test_apply_live_liveness_prefers_live_worker_over_dead_launcher() -> None:
+    import os
+
+    run = cli._apply_live_liveness(
+        {
+            "launcher_pid": 999999999,
+            "worker_pid": os.getpid(),
+            "worker_pgid": os.getpgrp(),
+            "liveness": "heartbeat",
+            "state": "process_spawned",
+        }
+    )
+
+    assert run["liveness"] == "heartbeat"

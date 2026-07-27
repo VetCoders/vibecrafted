@@ -71,14 +71,22 @@ _LAZY_EXPORTS = {
     "DeliveryStore": ".delivery",
     "DeliveryStoreError": ".delivery",
     "ProviderCapability": ".continuity",
+    "SettlementLedgerAppendResult": ".settlement_ledger",
+    "SettlementLedgerCollision": ".settlement_ledger",
+    "SettlementLedgerCorrupt": ".settlement_ledger",
+    "SettlementLedgerError": ".settlement_ledger",
+    "SettlementLedgerOrderError": ".settlement_ledger",
     "append_delivery_event": ".events",
     "capability_registry": ".continuity",
     "probe_provider": ".continuity",
     "read_delivery_axes": ".control_plane",
+    "read_settlement_ledger": ".settlement_ledger",
+    "settlement_ledger_path": ".settlement_ledger",
     "WorkflowLaunchSpec": ".workflow",
     "await_launch_truth": ".workflow",
     "build_launch_command": ".workflow",
     "launch_workflow": ".workflow",
+    "native_resume_run": ".workflow",
     "normalize_launch_spec": ".workflow",
     "retry_run": ".workflow",
     "stop_run": ".workflow",
@@ -113,6 +121,10 @@ def __getattr__(name: str) -> Any:
         from . import control_plane
 
         module = control_plane
+    elif module_name == ".settlement_ledger":
+        from . import settlement_ledger
+
+        module = settlement_ledger
     else:  # pragma: no cover - _LAZY_EXPORTS is the whitelist.
         raise AttributeError(f"module {__name__!r} has no lazy module for {name!r}")
 
@@ -137,6 +149,11 @@ __all__ = [
     "ProviderCapability",
     "RunState",
     "RunStatus",
+    "SettlementLedgerAppendResult",
+    "SettlementLedgerCollision",
+    "SettlementLedgerCorrupt",
+    "SettlementLedgerError",
+    "SettlementLedgerOrderError",
     "ToolCapability",
     "WatchOutcome",
     "WorkflowLaunchSpec",
@@ -159,18 +176,21 @@ __all__ = [
     "lookup_run",
     "mcp_endpoint",
     "mcp_servers_config",
+    "native_resume_run",
     "normalize_launch_spec",
     "port_for_root",
     "probe_provider",
     "probe_tool",
     "read_delivery_axes",
     "read_event_tail",
+    "read_settlement_ledger",
     "read_version_file",
     "repo_full",
     "repo_full_summary",
     "resolve_env_path",
     "retry_run",
     "run_snapshot_dir",
+    "settlement_ledger_path",
     "stop_run",
     "subscribe_events",
     "sync_state",

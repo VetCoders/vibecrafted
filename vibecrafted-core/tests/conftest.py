@@ -27,5 +27,9 @@ def _isolate_vibecrafted_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
     state. Tests that need a specific value set it explicitly via monkeypatch
     after this fixture runs.
     """
-    for key in [name for name in os.environ if name.startswith("VIBECRAFTED_")]:
+    for key in [
+        name
+        for name in os.environ
+        if name.startswith(("VIBECRAFTED_", "VC_FRAME", "ZELLIJ"))
+    ]:
         monkeypatch.delenv(key, raising=False)

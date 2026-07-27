@@ -35,7 +35,9 @@ EXPECTED_REQUIRED = {
     "vibecrafted-mcp/pyproject.toml",
     "plugins/iterm2/pyproject.toml",
     "vibecrafted-app/Cargo.toml",
+    "vibecrafted-app/Cargo.lock",
     "vibecrafted-server/Cargo.toml",
+    "vibecrafted-server/Cargo.lock",
 }
 
 
@@ -109,6 +111,10 @@ def test_validate_payload_rejects_empty_required_runtime_surface(
 def test_forbidden_artifact_filter_is_safe_for_runtime_subtrees() -> None:
     assert not manifest.path_is_forbidden("SKILL.md")
     assert not manifest.path_is_forbidden("scripts/codex_spawn.sh")
+    assert not manifest.path_is_forbidden("vibecrafted-app/Cargo.lock")
+    assert not manifest.path_is_forbidden("vibecrafted-server/Cargo.lock")
+    assert manifest.path_is_forbidden("Cargo.lock")
+    assert manifest.path_is_forbidden("scratch/Cargo.lock")
     assert manifest.path_is_forbidden("tests/test_spawn.py")
     assert manifest.path_is_forbidden("scripts/__pycache__/helper.pyc")
 

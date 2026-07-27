@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from vibecrafted_core import control_plane, dispatcher
+from vibecrafted_core import supervisor_async as supervisor_async_module
 from vibecrafted_core.artifacts import validate_artifacts
 from vibecrafted_core.control_plane import read_event_tail
 from vibecrafted_core.lifecycle import RunState, transition_allowed
@@ -18,6 +19,10 @@ from vibecrafted_core.lifecycle_runner import (
 )
 from vibecrafted_core.report_contract import CLAIM_DIGEST_ENV
 from vibecrafted_core.supervisor_async import AsyncSupervisor
+
+
+def _runtime_meta(tmp_path: Path, run_id: str) -> Path:
+    return tmp_path / "home" / "control_plane" / "runtime_runs" / run_id / "meta.json"
 
 
 def test_lifecycle_transition_table_rejects_backwards_transition() -> None:
@@ -77,6 +82,84 @@ def test_async_supervisor_emits_lifecycle_and_validates_artifacts(
     assert "created" in states
     assert "process_spawned" in states
     assert "report_validated" in states
+
+
+def test_async_supervisor_persists_explicit_artifact_meta_outside_control_plane(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    meta = tmp_path / "artifacts" / "child.meta.json"
+    script = tmp_path / "worker.py"
+    script.write_text("print('artifact child finished')\n", encoding="utf-8")
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id="artifact-meta-child",
+            command=[sys.executable, str(script)],
+            root=tmp_path,
+            meta_path=meta,
+            require_report=False,
+        )
+    )
+
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert handle.exit_code == 0
+    assert payload["run_id"] == "artifact-meta-child"
+    assert payload["status"] == "completed"
+    assert payload["exit_code"] == 0
+    assert list((home / "control_plane" / "run_mutation_locks" / "run").glob("*.lock"))
+    assert not (meta.parent / "run_mutation_locks").exists()
+
+
+def test_async_supervisor_heartbeats_while_worker_stdout_is_silent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A tool call can be quiet for minutes while its worker is healthy.
+
+    Heartbeats must be driven by the live process clock, not by stdout lines:
+    the latter disappear exactly while a long build/test/install is running.
+    """
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    # Tight interval + enough quiet wall time for >=2 timeout-driven pulses on
+    # loaded hosts (0.18s was racey under Python 3.14 asyncio scheduling).
+    monkeypatch.setattr(supervisor_async_module, "_HEARTBEAT_INTERVAL_SECONDS", 0.05)
+    report = tmp_path / "quiet-report.md"
+    transcript = tmp_path / "quiet-transcript.log"
+    script = tmp_path / "quiet-worker.py"
+    script.write_text(
+        "import time\n"
+        "from pathlib import Path\n"
+        "time.sleep(0.40)\n"
+        f"Path({str(report)!r}).write_text('---\\nrun_id: asup-quiet\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n')\n"
+        "print('quiet tool finished')\n",
+        encoding="utf-8",
+    )
+    run_id = "asup-quiet-1"
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id=run_id,
+            command=[sys.executable, str(script)],
+            root=tmp_path,
+            report_path=report,
+            transcript_path=transcript,
+            require_transcript_output=True,
+        )
+    )
+
+    heartbeats = [
+        event
+        for event in read_event_tail(limit=100)
+        if event.get("run_id") == run_id and event.get("message") == "worker heartbeat"
+    ]
+    assert len(heartbeats) >= 2
+    assert all(event.get("payload", {}).get("heartbeat_at") for event in heartbeats)
+    # No output arrived during these pulses, so the lifecycle did not fabricate
+    # FIRST_OUTPUT_SEEN or mutate the handle's state history.
+    assert heartbeats[0]["payload"]["state"] == "process_spawned"
+    assert handle.states.count(RunState.FIRST_OUTPUT_SEEN) == 1
+    assert handle.exit_code == 0
 
 
 def test_dispatcher_cli_runs_full_lifecycle(
@@ -179,7 +262,7 @@ def test_async_supervisor_preseeds_and_stamps_launcher_owned_identity(
     digest = "9e0d59e1dc48bc42"
     monkeypatch.setenv(CLAIM_DIGEST_ENV, digest)
     report = tmp_path / "identity.md"
-    meta = tmp_path / "meta.json"
+    meta = _runtime_meta(tmp_path, "identity-run")
     worker = tmp_path / "codex"
     worker.write_text(
         "#!/usr/bin/env python3\n"
@@ -228,6 +311,48 @@ def test_async_supervisor_preseeds_and_stamps_launcher_owned_identity(
     meta_payload = json.loads(meta.read_text(encoding="utf-8"))
     assert meta_payload["agent_session_id"] == "codex-child"
     assert meta_payload["claim_digest"] == digest
+
+
+def test_async_supervisor_preserves_explicit_resume_identity_without_new_event(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    report = tmp_path / "resume-report.md"
+    transcript = tmp_path / "resume.log"
+    meta = _runtime_meta(tmp_path, "resume-child")
+    worker = tmp_path / "codex"
+    worker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
+        "'# resumed handoff\\n', encoding='utf-8')\n"
+        "print('resumed without identity banner')\n",
+        encoding="utf-8",
+    )
+    worker.chmod(0o755)
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id="resume-child",
+            command=[str(worker)],
+            root=tmp_path,
+            env={
+                "VIBECRAFTED_AGENT": "codex",
+                "VIBECRAFTED_AGENT_SESSION_ID": "codex-native-parent",
+                "VIBECRAFTED_SESSION_ID": "runtime-child",
+            },
+            meta_path=meta,
+            report_path=report,
+            transcript_path=transcript,
+        )
+    )
+
+    assert handle.agent_session_id == "codex-native-parent"
+    assert handle.session_id == "runtime-child"
+    meta_payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert meta_payload["agent_session_id"] == "codex-native-parent"
+    assert meta_payload["runtime_session_id"] == "runtime-child"
 
 
 def test_async_supervisor_preserves_blocked_claim_while_filling_identity(
@@ -441,7 +566,7 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
     monkeypatch.delenv("VIBECRAFTED_AGENT", raising=False)
     report = tmp_path / "dispatch-report.md"
     transcript = tmp_path / "dispatch.log"
-    meta = tmp_path / "dispatch.meta.json"
+    meta = _runtime_meta(tmp_path, "asup-claude-visible")
     claude = tmp_path / "claude"
     claude.write_text(
         "#!/usr/bin/env python3\n"
@@ -511,7 +636,7 @@ def test_async_supervisor_uses_env_model_for_codex_thread_banner(
     monkeypatch.setenv("CODEX_MODEL", "gpt-5.3-codex")
     report = tmp_path / "dispatch-report.md"
     transcript = tmp_path / "dispatch.log"
-    meta = tmp_path / "dispatch.meta.json"
+    meta = _runtime_meta(tmp_path, "asup-codex-visible")
     codex = tmp_path / "codex"
     codex.write_text(
         "#!/usr/bin/env python3\n"
@@ -555,7 +680,7 @@ def test_async_supervisor_records_requested_model_next_to_reported_model(
     monkeypatch.setenv("VIBECRAFTED_MODEL_REQUESTED", "gemini-pro")
     report = tmp_path / "dispatch-report.md"
     transcript = tmp_path / "dispatch.log"
-    meta = tmp_path / "dispatch.meta.json"
+    meta = _runtime_meta(tmp_path, "asup-gemini-model-requested")
     worker = tmp_path / "gemini"
     worker.write_text(
         "#!/usr/bin/env python3\n"
@@ -603,7 +728,7 @@ def test_async_supervisor_salvages_grok_report_from_streaming_json(
     monkeypatch.delenv("VIBECRAFTED_AGENT", raising=False)
     report = tmp_path / "dispatch-report.md"
     transcript = tmp_path / "dispatch.log"
-    meta = tmp_path / "dispatch.meta.json"
+    meta = _runtime_meta(tmp_path, "asup-grok-visible")
     grok = tmp_path / "grok"
     grok.write_text(
         "#!/usr/bin/env python3\n"
@@ -664,7 +789,7 @@ def test_async_supervisor_survives_large_single_json_line_from_mcp(
     monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
     report = tmp_path / "dispatch-report.md"
     transcript = tmp_path / "dispatch.log"
-    meta = tmp_path / "dispatch.meta.json"
+    meta = _runtime_meta(tmp_path, "asup-large-json-line")
     worker = tmp_path / "codex"
     worker.write_text(
         "#!/usr/bin/env python3\n"
@@ -738,6 +863,49 @@ def test_dispatcher_cli_fails_missing_report_contract(
     assert "session_id: pending-unset" in template
     assert "finalized: false" in template
     assert "launcher_template: true" in template
+
+
+def test_dispatcher_cli_salvages_verified_native_resume_stream(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    report = tmp_path / "resume-report.md"
+    transcript = tmp_path / "resume.log"
+    script = tmp_path / "native_resume.py"
+    script.write_text(
+        'print(\'{"type":"thread.started","thread_id":"codex-thread-42"}\')\n'
+        'print(\'{"type":"item.completed","item":{"type":"agent_message",'
+        '"text":"Native resume completed."}}\')\n',
+        encoding="utf-8",
+    )
+
+    rc = dispatcher.main(
+        [
+            "run",
+            "--run-id",
+            "disp-native-resume",
+            "--root",
+            str(tmp_path),
+            "--report",
+            str(report),
+            "--transcript",
+            str(transcript),
+            "--salvage-report-from-stream",
+            "--json",
+            "--",
+            sys.executable,
+            str(script),
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["artifact_ok"] is True
+    assert payload["state"] == "report_validated"
+    report_text = report.read_text(encoding="utf-8")
+    assert "fallback_report: true" in report_text
+    assert "Native resume completed." in report_text
+    assert "Runtime fallback" in report_text
 
 
 def test_dispatcher_cli_records_lifecycle_worker_death(
@@ -981,3 +1149,48 @@ def test_default_no_await_dispatcher_reconciles_finalized_and_refusals(
             assert summary["lifecycle_reconciled"] is True
             assert reloaded["stages"][0]["worker_exit"]["artifact_ok"] is False
             assert not (runtime_dir / "delivery-seal.json").exists()
+
+
+def test_origin_pane_is_stamped_only_from_the_runs_own_tab() -> None:
+    """2026-07-25: dispatched runs stamped the dispatcher's pane ("1") as
+    origin_pane_id; triage aimed dump-screen at it and captured nothing. The
+    pane env is the run's own only when the env also claims the run's tab."""
+    fields = supervisor_async_module._origin_fields_from_env(
+        {
+            "ZELLIJ_SESSION_NAME": "vc-workspace",
+            "ZELLIJ_PANE_ID": "1",
+            "VIBECRAFTED_RUN_ID": "work-260725-020101-07000",
+        }
+    )
+    assert fields["origin_session"] == "vc-workspace"
+    assert fields["origin_tab"] == "work-260725-020101-07000"
+    assert "origin_pane_id" not in fields
+
+
+def test_origin_pane_survives_when_env_sits_in_the_run_tab() -> None:
+    fields = supervisor_async_module._origin_fields_from_env(
+        {
+            "VC_FRAME_SESSION_NAME": "vc-workspace",
+            "VC_FRAME_TAB_NAME": "work-1",
+            "VC_FRAME_PANE_ID": "terminal_7",
+            "VIBECRAFTED_RUN_ID": "work-1",
+        }
+    )
+    assert fields["origin_tab"] == "work-1"
+    assert fields["origin_pane_id"] == "terminal_7"
+
+
+def test_operator_tab_env_never_reaches_the_stamp() -> None:
+    """A leaked operator VC_FRAME_TAB_NAME must not become the run's origin_tab
+    — a meta-stamped tab bypasses plan_triage's foreign-tab refusal, so triage
+    would capture and close the operator's own tab."""
+    fields = supervisor_async_module._origin_fields_from_env(
+        {
+            "VC_FRAME_SESSION_NAME": "vc-workspace",
+            "VC_FRAME_TAB_NAME": "operator-tab",
+            "VC_FRAME_PANE_ID": "terminal_1",
+            "VIBECRAFTED_RUN_ID": "work-2",
+        }
+    )
+    assert fields["origin_tab"] == "work-2"
+    assert "origin_pane_id" not in fields

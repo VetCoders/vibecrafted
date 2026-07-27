@@ -8,16 +8,17 @@ herded: new dispatchers hung forever on an empty pane, and — the heartbeat
 write being behind the same lock — a live-but-lock-starved worker could not
 record liveness and was falsely declared stalled/pid_gone after 120s.
 
-The cure: the per-run path is scoped and lockless; the append path is a single
-atomic ``O_APPEND`` write and takes NO lock; only the rare full-board rebuild in
-``sync_state`` still takes the (now bounded) lock.
+The cure: the per-run path is free of the global lock and uses only its own
+run-id mutation key; the append path uses only the dedicated event lock around
+one bounded ``O_APPEND`` write, rollback, and fsync; only the rare full-board
+rebuild in ``sync_state`` still takes the (now bounded) global lock.
 
 This guard exists because the WRONG fix is the one "the rest of the world" and
 training-data habit both suggest: wrap the append/hot path back in a global
 mutex "for safety". That reintroduces the migraine. If you are here because this
-test failed, do not delete it — the design is deliberate. Append-only JSONL with
-O_APPEND is atomic per line; per-run snapshots are single-writer atomic via
-os.replace. Neither needs the shared lock. See the fix commits and the Kronika.
+test failed, do not delete it — the design is deliberate. Append-only JSONL uses
+its event lock; conflicting snapshots use an independent per-run CAS. Neither
+needs the shared lock. See the fix commits and the Kronika.
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ import vibecrafted_core.events as events_module
 # and never sits on a per-run or append/emit path.
 _SYNC_LOCK_ALLOWED_CALLERS = {"sync_state", "drain_settled_snapshots"}
 
-# Hot-path functions that must NEVER acquire the shared lock. Adding _sync_lock
+# Hot-path functions that must NEVER acquire the shared sync lock. Adding _sync_lock
 # to any of these is the exact regression this guard blocks.
 _HOT_PATH_LOCKLESS = {
     "_append_event",
@@ -93,7 +94,8 @@ def test_sync_lock_is_only_acquired_by_the_board_rebuild() -> None:
     assert not offenders, (
         "control-plane lock doctrine violated: _sync_lock acquired outside "
         f"{sorted(_SYNC_LOCK_ALLOWED_CALLERS)} at {offenders}. The per-run and "
-        "append/emit paths must stay lockless (see this file's docstring / the "
+        "append/emit paths must stay free of the global sync lock (see this "
+        "file's docstring / the "
         "2026-07-12 flock incident). Do not re-serialize them 'for safety'."
     )
 
@@ -111,7 +113,7 @@ def test_hot_path_functions_contain_no_sync_lock() -> None:
             violations.append(f"{node.name}:{lineno}")
     assert not violations, (
         "hot-path function acquired _sync_lock (regression): "
-        f"{violations}. These must stay lockless."
+        f"{violations}. These must stay free of the global sync lock."
     )
 
 
@@ -126,7 +128,7 @@ def test_events_append_is_lockless() -> None:
 
 
 def test_append_event_uses_atomic_o_append() -> None:
-    """The append primitive must use an O_APPEND write, not a lock or rewrite."""
+    """The append primitive must retain its bounded O_APPEND write."""
     tree = ast.parse(_module_path(control_plane_module).read_text(encoding="utf-8"))
     append_fn = next(
         node
@@ -137,6 +139,6 @@ def test_append_event_uses_atomic_o_append() -> None:
         node.attr for node in ast.walk(append_fn) if isinstance(node, ast.Attribute)
     } | {node.id for node in ast.walk(append_fn) if isinstance(node, ast.Name)}
     assert "O_APPEND" in names, (
-        "_append_event no longer uses an O_APPEND write. The atomic append is "
-        "what makes the emit path safe without a lock — keep it."
+        "_append_event no longer uses an O_APPEND write. The bounded append "
+        "inside the dedicated event lock is the stream write contract."
     )

@@ -50,6 +50,7 @@ Reads against the live `~/.vibecrafted/control_plane/` (or `$VIBECRAFTED_HOME`):
 
 | route                                 | returns                                                                                                                 |
 | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/health`                     | constant-time process readiness; does not scan control-plane history                                                    |
 | `GET /api/control/state`              | merged `StateView` — `active_runs`, `recent_runs`, `warnings`, `events`, `generated_at`; includes lifecycle projections |
 | `GET /api/control/runs`               | every `runs/<id>.json` snapshot, newest-first, with `count`                                                             |
 | `GET /api/control/runs/{run_id}`      | a single flat run projection, including lifecycle runs, or `404` JSON                                                   |

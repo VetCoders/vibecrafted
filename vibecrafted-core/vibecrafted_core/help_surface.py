@@ -285,6 +285,44 @@ WORKFLOW_HELP: dict[str, WorkflowHelp] = {
             "vc-scaffold claude --file /path/to/idea.md",
         ),
     ),
+    "trust": WorkflowHelp(
+        "READ-only post-hoc falsification of commit claims on the Living Tree.",
+        (
+            "bound the commit stream and recover intent",
+            "turn commit prose into falsifiable claims (incl. agent fairness)",
+            "attack each claim with direct evidence",
+            "append pass, pass-with-gaps, or block and project f/x/n",
+        ),
+        (
+            'vibecrafted trust codex --prompt "Judge the commits from this run"',
+            "vc-trust claude --file /path/to/trust-brief.md",
+            "python -m vibecrafted_core.trust inspect <sha>",
+        ),
+        (
+            "await mode is named await-primary; completion never implies pass",
+            "agent fairness (Authored-By vs subject agent) is a first-class claim axis",
+            "vc-guard enforces at the gate; trust never blocks dispatch",
+        ),
+    ),
+    "guard": WorkflowHelp(
+        "In-flight enforcer: inventory gates and refuse continuation on trust block.",
+        (
+            "inventory existing commit/push/dispatch gates and coverage gaps",
+            "consume trust journal block on HEAD (never invent settlement letters)",
+            "refuse dispatch/continuation with mandatory remedium",
+            "keep fail-closed, non-interactive-safe doctrine",
+        ),
+        (
+            "python -m vibecrafted_core.guard inventory",
+            "python -m vibecrafted_core.guard check",
+            'vibecrafted guard claude --prompt "Audit gate inventory"',
+        ),
+        (
+            "trust judges after the fact; guard enforces at the gate",
+            "commit-msg enforces message shape, not truth",
+            "settlement f/x/n is written only by trust note",
+        ),
+    ),
     "workflow": WorkflowHelp(
         "Examine → Research → Implement pipeline for repo-impacting work.",
         (
@@ -334,8 +372,11 @@ Commands:
   init [agent]         Orient an agent in this repo
   <skill> <agent>      Run a workflow with an agent
   resume <agent>       Continue a previous session
+  resume-session       Continue an exact provider session as a tracked run
   status               Today's agent activity
   doctor               Installation health — pass/fail
+  receipt              Delivery/runtime receipt (source ↔ installed)
+  settlements          Read-only f/x/n ledger query (summary|list|inspect)
   update               Update to the latest release
   help [topic|--all]   This deck · full reference
 
@@ -349,6 +390,38 @@ Examples:
   vibecrafted init claude
   vibecrafted implement codex -p "Ship dark mode"
   vibecrafted marbles claude -p "Loop until clean"
+""".lstrip("\n")
+
+
+def render_resume_session_help() -> str:
+    return """
+⚒  resume-session
+─────────────────────────────────────────
+  Continue one exact provider session as a tracked, detached headless run.
+
+Usage:
+  vibecrafted resume-session <agent> --agent-session-id <id> \\
+    (-p <prompt> | -f <file> | --prompt-stdin) [flags]
+
+Options:
+  --agent-session-id <id>   Exact provider-owned session identifier
+  -p, --prompt <text>       Continuation prompt
+  -f, --prompt-file <path>  Read the continuation prompt from a file
+  --prompt-stdin            Read the prompt from stdin and keep it out of argv
+  --runtime                 Not accepted: this command is always headless
+  --root <path>             Repository root
+  --source-dir <path>       Vibecrafted core source/package root
+  --model <name>            Agent model override where the runner supports it
+  --json                    Machine-readable launch receipt
+
+Contract:
+  Core owns the detached lifetime, control-plane record, transcript, and
+  Guardian-visible process identity. This does not consume automatic-resume
+  authority or pretend to be an interactive User Session.
+
+Example:
+  printf '%s' "continue safely" | vibecrafted resume-session codex \\
+    --agent-session-id 019abc... --prompt-stdin
 """.lstrip("\n")
 
 
@@ -387,7 +460,8 @@ def _option_lines(topic: str) -> list[str]:
     lines = [
         "  -p, --prompt <text>            Inline prompt",
         "  -f, --file <path.md>           Input file as prompt context",
-        "  --runtime <terminal|headless>  Execution surface",
+        "  --prompt-stdin                 Read prompt from stdin; no argv/temp copy",
+        "  --runtime <terminal|headless>  Worker surface (default: headless)",
         "  --root <path>                  Repository root",
         "  --model <name>                 Agent model override",
     ]

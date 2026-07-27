@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -14,14 +15,24 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from . import guard as guard_mod
 from .artifacts import validate_artifacts
+from .continuity.capabilities import (
+    PROBE_CONFIRMED,
+    SUPPORTED,
+    UNVERIFIED,
+    capability_for,
+    probe_provider,
+)
 from .control_plane import (
+    RunNotResolved,
     await_run,
     control_plane_home,
     ensure_session_id,
     lookup_run,
     normalize_run_root,
     record_stop_transition,
+    resolve_run,
     run_snapshot_dir,
     sync_state,
 )
@@ -30,16 +41,27 @@ from .delivery.store import atomic_write_json
 from .events import append_event
 from .model_overrides import _model_override_receipt, _with_model_override
 from .package_resources import deck_path as package_deck_path
+from .process_control import process_identity_receipt, validate_process_identity
 from .report_contract import CLAIM_DIGEST_ENV
 from .research_config import ResearchAgentSelection, resolve_research_runtime_config
+from .run_mutation import mutate_run_meta, run_mutation_locks
 from .spawn import _stdin_command
-from .workflow_runtime import WORKER_SIGNAL_DISCIPLINE
+from .workflow_runtime import WORKER_SIGNAL_DISCIPLINE, native_resume_argv
 from .workflows import registry as workflow_registry
 
 SUPPORTED_WORKFLOWS = workflow_registry.SUPPORTED_WORKFLOWS
 WORKFLOW_ALIASES = workflow_registry.WORKFLOW_ALIASES
 SUPPORTED_AGENTS = {"claude", "codex", "agy", "junie", "grok", "swarm"}
 SUPPORTED_RUNTIMES = {"headless", "terminal", "visible"}
+_TERMINAL_ORIGIN_ENV = {
+    "VIBECRAFTED_WORKER_SESSION",
+    "VIBECRAFTED_OPERATOR_SESSION",
+    "VC_FRAME_SESSION_NAME",
+    "VC_FRAME_TAB_NAME",
+    "VC_FRAME_PANE_ID",
+    "ZELLIJ_SESSION_NAME",
+    "ZELLIJ_PANE_ID",
+}
 TERMINAL_STATES = {
     "completed",
     "failed",
@@ -93,7 +115,10 @@ def reserve_run_id(skill: str) -> str:
     """Return a safe control-plane run id without creating runtime state."""
     stamp = time.strftime("%y%m%d-%H%M%S")
     code = (skill or "run")[:4].ljust(4, "x")
-    entropy = int(time.time_ns() % 100000)
+    # CSPRNG entropy: clock-derived time_ns % 100000 collides when the OS
+    # quantizes the clock (macOS CI ticks in whole ms → identical remainder
+    # within one second, observed as duplicate run ids).
+    entropy = int.from_bytes(os.urandom(3), "big") % 100000
     return f"{code}-{stamp}-{entropy:05d}"
 
 
@@ -286,6 +311,7 @@ def _dispatcher_command(
     emit_json: bool = True,
     quiet: bool = False,
     lifecycle_state_path: str = "",
+    salvage_report_from_stream: bool = False,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -312,6 +338,8 @@ def _dispatcher_command(
         )
     if lifecycle_state_path:
         command.extend(["--lifecycle-state", lifecycle_state_path])
+    if salvage_report_from_stream:
+        command.append("--salvage-report-from-stream")
     if tee_output:
         command.append("--tee-output")
     if quiet:
@@ -356,6 +384,7 @@ def _runtime_script_exports(
     artifact_ts: str = "",
     artifact_suffix: str = "",
     claim_digest: str = "",
+    worker_session: str = "",
 ) -> dict[str, str]:
     pythonpath = os.pathsep.join(
         dict.fromkeys(
@@ -392,6 +421,12 @@ def _runtime_script_exports(
         exports["VIBECRAFTED_ARTIFACT_SUFFIX"] = artifact_suffix
     if claim_digest:
         exports[CLAIM_DIGEST_ENV] = claim_digest
+    if worker_session:
+        # vc-frame launches this script from the host server's long-lived
+        # environment. That environment can still describe the human
+        # dispatcher seat, so pin the actual worker host for durable triage.
+        exports["VIBECRAFTED_WORKER_SESSION"] = worker_session
+        exports["VIBECRAFTED_OPERATOR_SESSION"] = worker_session
     if runtime in {"terminal", "visible"}:
         exports["VIBECRAFTED_TEE_OUTPUT"] = "1"
     return exports
@@ -417,6 +452,7 @@ def _write_research_lane_scripts(
     research_selection: ResearchAgentSelection,
     model_requested: str = "",
     claim_digest: str = "",
+    worker_session: str = "",
 ) -> dict[str, Path]:
     scripts: dict[str, Path] = {}
     for agent in research_selection.agents:
@@ -450,6 +486,7 @@ def _write_research_lane_scripts(
             artifact_ts=artifact_ts,
             artifact_suffix=artifact_suffix,
             claim_digest=claim_digest,
+            worker_session=worker_session,
         )
         export_lines = "".join(
             f"export {key}={shlex.quote(value)}\n" for key, value in exports.items()
@@ -714,6 +751,7 @@ def _launch_transport_command(
             artifact_ts=artifact_ts,
             artifact_suffix=artifact_suffix,
             claim_digest=spec.claim_digest,
+            worker_session=operator_session,
         ),
     )
     definition = workflow_registry.workflow_definition(spec.skill)
@@ -739,6 +777,7 @@ def _launch_transport_command(
             research_selection=selection,
             model_requested=spec.model,
             claim_digest=spec.claim_digest,
+            worker_session=operator_session,
         )
         layout_file = _write_research_layout(
             path=launch_dir / f"{run_id}-research.kdl",
@@ -938,22 +977,28 @@ def _write_terminal_meta(
         return {}
     path = Path(meta_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    existing = _read_json_object(path)
-    payload = {
-        **existing,
-        **_terminal_meta_payload(
-            run_id=run_id,
-            run=run,
-            report_path=report_path,
-            transcript_path=transcript_path,
-            meta_path=meta_path,
-        ),
-    }
-    path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
+    terminal = _terminal_meta_payload(
+        run_id=run_id,
+        run=run,
+        report_path=report_path,
+        transcript_path=transcript_path,
+        meta_path=meta_path,
     )
-    return payload
+    written: dict[str, Any] = {}
+
+    def _merge(payload: dict[str, Any]) -> dict[str, Any]:
+        payload.update(terminal)
+        written.update(payload)
+        return payload
+
+    mutate_run_meta(
+        control_plane_home(),
+        meta_path=path,
+        run_id=run_id,
+        mutator=_merge,
+        create=True,
+    )
+    return written
 
 
 def await_launch_truth(
@@ -1059,13 +1104,24 @@ def await_launch_truth(
 
 
 def _stop_signal_target(run: dict[str, Any]) -> tuple[str, int] | None:
-    for key in ("launcher_pid", "worker_pgid", "worker_pid"):
+    # The dispatcher and worker deliberately live in separate process groups.
+    # Stop the actual worker tree first; launcher_pid is only a pre-seed/legacy
+    # fallback before the supervisor has published worker identity.
+    for key in ("worker_pgid", "worker_pid", "launcher_pid"):
         raw = run.get(key)
         if isinstance(raw, int) and raw > 0:
             return key, raw
         if isinstance(raw, str) and raw.strip().isdigit():
             return key, int(raw.strip())
     return None
+
+
+@dataclass(frozen=True)
+class _QualifiedStopSignal:
+    kind: str
+    target_pid: int
+    identity_pid: int
+    target_pgid: int | None
 
 
 def _pid_is_alive(pid: int) -> bool:
@@ -1082,13 +1138,116 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
-def _wait_for_pid_exit(pid: int, grace_seconds: float) -> bool:
+def _pgid_is_alive(pgid: int) -> bool:
+    if pgid <= 0:
+        return False
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _stop_target_is_alive(target: _QualifiedStopSignal) -> bool:
+    if target.target_pgid is not None:
+        return _pgid_is_alive(target.target_pgid)
+    return _pid_is_alive(target.identity_pid)
+
+
+def _wait_for_stop_target_exit(
+    target: _QualifiedStopSignal, grace_seconds: float
+) -> bool:
     deadline = time.monotonic() + max(float(grace_seconds), 0.0)
     while time.monotonic() < deadline:
-        if not _pid_is_alive(pid):
+        if not _stop_target_is_alive(target):
             return False
         time.sleep(min(0.05, max(deadline - time.monotonic(), 0.0)))
-    return _pid_is_alive(pid)
+    return _stop_target_is_alive(target)
+
+
+def _legacy_stop_target_alive(target_kind: str, target_pid: int) -> bool:
+    # All dispatcher/worker groups created by this runtime are new sessions, so
+    # their leader PID is also the PGID. A live legacy number is never enough
+    # authority to signal; this probe only distinguishes a safely-gone target.
+    if target_kind == "launcher_pid":
+        return _pid_is_alive(target_pid) or _pgid_is_alive(target_pid)
+    if target_kind == "worker_pgid":
+        return _pgid_is_alive(target_pid)
+    return _pid_is_alive(target_pid)
+
+
+def _qualify_stop_signal(
+    run_id: str,
+    run: dict[str, Any],
+    *,
+    target_kind: str,
+    target_pid: int,
+) -> tuple[_QualifiedStopSignal | None, str, bool]:
+    """Resolve a current signal target without ever trusting a number alone."""
+
+    worker_target = target_kind.startswith("worker_")
+    receipt_key = "worker_identity" if worker_target else "launcher_identity"
+    receipt = run.get(receipt_key)
+    if not isinstance(receipt, dict):
+        gone = not _legacy_stop_target_alive(target_kind, target_pid)
+        return (
+            None,
+            "pid_gone_before_stop" if gone else "process_identity_unavailable",
+            gone,
+        )
+
+    identity_pid = _coerce_positive_int(receipt.get("pid"))
+    if identity_pid is None:
+        return None, "process_identity_invalid", False
+
+    if worker_target:
+        recorded_worker_pid = _coerce_positive_int(run.get("worker_pid"))
+        if recorded_worker_pid is not None and recorded_worker_pid != identity_pid:
+            return None, "process_identity_mismatch", False
+        expected_pgid = _coerce_positive_int(run.get("worker_pgid"))
+        if target_kind == "worker_pgid" and expected_pgid != target_pid:
+            return None, "process_identity_mismatch", False
+    else:
+        if identity_pid != target_pid:
+            return None, "process_identity_mismatch", False
+        expected_pgid = _coerce_positive_int(receipt.get("pgid"))
+
+    current, reason, _identity = validate_process_identity(
+        receipt,
+        expected_pid=identity_pid,
+        expected_pgid=expected_pgid,
+        expected_run_id=run_id,
+    )
+    if not current:
+        if reason == "process_identity_gone":
+            group_alive = bool(expected_pgid and _pgid_is_alive(expected_pgid))
+            pid_alive = _pid_is_alive(identity_pid)
+            if not group_alive and not pid_alive:
+                return None, "pid_gone_before_stop", True
+            return None, "process_identity_unavailable", False
+        return None, reason, False
+
+    signal_pgid: int | None
+    if target_kind == "worker_pid":
+        signal_pgid = None
+    else:
+        signal_pgid = expected_pgid
+        if signal_pgid is None:
+            return None, "process_identity_invalid", False
+    return (
+        _QualifiedStopSignal(
+            kind=target_kind,
+            target_pid=target_pid,
+            identity_pid=identity_pid,
+            target_pgid=signal_pgid,
+        ),
+        "process_identity_current",
+        False,
+    )
 
 
 def _normalized_runtime(raw: str) -> str:
@@ -1348,18 +1507,77 @@ def _sweep_stale_runs() -> None:
         _ = _sweep_exc  # best-effort reaper sweep
 
 
+def _launch_tracking_payload(
+    launch_meta: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Return the lineage/identity fields safe to project into launch events."""
+
+    if not launch_meta:
+        return {}
+    return {
+        key: launch_meta[key]
+        for key in (
+            "agent_session_id",
+            "runtime_session_id",
+            "parent_runtime_session_id",
+            "resume_of",
+            "resume_root",
+            "attempt",
+            "native_resume",
+            "resume_idempotency_key",
+        )
+        if launch_meta.get(key) not in (None, "")
+    }
+
+
 def launch_workflow(
     spec: WorkflowLaunchSpec,
     source_dir: str | Path,
     *,
     env: dict[str, str] | None = None,
     retry_of: str = "",
+    worker_command_override: list[str] | None = None,
+    launch_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Opportunistic pre-flight: before adding a run to the machine, take the dead
     # ones' survivors off it. Every spawn is the natural sweep point — it needs no
     # daemon, and it is exactly when the residue starts costing the new run cores.
     # Silent and best-effort; a reaper problem must never block a launch.
     _sweep_stale_runs()
+
+    # vc-guard proof path: refuse continuation when trust has block on HEAD.
+    # Guard never invents settlement; only consumes trust journal. Opt-out via
+    # VIBECRAFTED_GUARD=0 for hermetic tests that are not about enforcement.
+    if str(os.environ.get("VIBECRAFTED_GUARD", "1")).strip() not in {
+        "0",
+        "false",
+        "off",
+        "no",
+    }:
+        try:
+            from . import guard as guard_mod
+
+            root = Path(spec.root or source_dir or Path.cwd())
+            decision = guard_mod.enforce_continuation(
+                repo=root,
+                skill=str(spec.skill or ""),
+            )
+            if not decision.allowed:
+                raise ValueError(decision.remedium or "vc-guard refused continuation")
+        except ImportError:
+            pass
+        except (ValueError, OSError) as exc:
+            # Non-git fixtures, sandbox roots, and hermetic tests that stub
+            # subprocess: do not hard-fail launch unless the error is an
+            # explicit guard refusal (remedium text).
+            message = str(exc)
+            if (
+                "vc-guard" in message
+                or "Remedium" in message
+                or "trust recorded block" in message
+            ):
+                raise
+            # not a git repository / stubbed subprocess / unreadable context → allow
 
     run_id = spec.run_id or reserve_run_id(spec.skill)
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", run_id):
@@ -1398,16 +1616,22 @@ def launch_workflow(
     )
     prompt_path = _write_prompt_file(artifacts["prompt"], prompt_body)
     claim_digest = str(spec.claim_digest or "").strip()
+    initial_meta: dict[str, Any] = dict(launch_meta or {})
+    initial_meta["run_id"] = run_id
     if claim_digest:
+        initial_meta["claim_digest"] = claim_digest
+    if len(initial_meta) > 1:
         atomic_write_json(
             artifacts["meta"],
-            {
-                "run_id": run_id,
-                "claim_digest": claim_digest,
-            },
+            initial_meta,
         )
     safe_spec = {**spec.to_payload(), "prompt": "", "file": str(prompt_path)}
-    worker_command = build_launch_command(spec, source_dir, prompt_file=prompt_path)
+    worker_command = (
+        list(worker_command_override)
+        if worker_command_override is not None
+        else build_launch_command(spec, source_dir, prompt_file=prompt_path)
+    )
+    launch_tracking = _launch_tracking_payload(launch_meta)
     model_receipt = _model_override_receipt(spec.agent, spec.model)
     if spec.model and runtime_kind == "supervised_research":
         model_receipt = {"model_requested": spec.model}
@@ -1423,6 +1647,7 @@ def launch_workflow(
         emit_json=spec.runtime not in {"terminal", "visible"},
         quiet=spec.runtime in {"terminal", "visible"},
         lifecycle_state_path=spec.lifecycle_state_path,
+        salvage_report_from_stream=bool((launch_meta or {}).get("native_resume")),
     )
     launch_dir = control_plane_home() / "launches"
     launch_dir.mkdir(parents=True, exist_ok=True)
@@ -1435,6 +1660,7 @@ def launch_workflow(
     _prepend_pythonpath(merged_env, _core_package_root())
     session_id = ensure_session_id(merged_env.get("VIBECRAFTED_SESSION_ID"))
     merged_env["VIBECRAFTED_RUN_ID"] = run_id
+    merged_env["SPAWN_RUN_ID"] = run_id
     merged_env["VIBECRAFTED_SESSION_ID"] = session_id
     merged_env["VIBECRAFTED_REPORT_PATH"] = str(report_path)
     merged_env["VIBECRAFTED_TRANSCRIPT_PATH"] = str(artifacts["transcript"])
@@ -1477,11 +1703,19 @@ def launch_workflow(
     merged_env["VIBECRAFTED_ARTIFACT_TS"] = artifact_ts
     if artifact_suffix:
         merged_env["VIBECRAFTED_ARTIFACT_SUFFIX"] = artifact_suffix
-    operator_session = _effective_operator_session(
-        root=spec.root,
-        run_id=run_id,
-        env=merged_env,
-    )
+    if spec.runtime == "headless":
+        # A detached run has no terminal origin. Ambient Zellij/vc-frame
+        # variables belong to the operator shell and must not manufacture a
+        # tab that triage later captures, transfers, or closes.
+        for key in _TERMINAL_ORIGIN_ENV:
+            merged_env.pop(key, None)
+        operator_session = ""
+    else:
+        operator_session = _effective_operator_session(
+            root=spec.root,
+            run_id=run_id,
+            env=merged_env,
+        )
     command, transport, command_script = _launch_transport_command(
         spec=spec,
         run_id=run_id,
@@ -1498,7 +1732,10 @@ def launch_workflow(
         artifact_suffix=artifact_suffix,
         research_selection=research_selection,
     )
-    merged_env["VIBECRAFTED_OPERATOR_SESSION"] = operator_session
+    if operator_session:
+        merged_env["VIBECRAFTED_OPERATOR_SESSION"] = operator_session
+    else:
+        merged_env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     append_event(
         kind="launch",
@@ -1541,6 +1778,7 @@ def launch_workflow(
             "command": command,
             "transport": transport,
             "command_script": str(command_script or ""),
+            **launch_tracking,
             "retry_of": retry_of,
         },
     )
@@ -1558,6 +1796,7 @@ def launch_workflow(
                     "command": command,
                     "transport": transport,
                     "command_script": str(command_script or ""),
+                    **launch_tracking,
                     "retry_of": retry_of,
                     "session_id": session_id,
                     "operator_session": operator_session,
@@ -1567,6 +1806,7 @@ def launch_workflow(
             + "\n"
         )
         launcher_pid: int | None = None
+        launcher_identity: dict[str, Any] | None = None
         try:
             if transport == "vc-frame":
                 # G3: run action synchronously so "Session not found" cannot
@@ -1604,6 +1844,7 @@ def launch_workflow(
                             "session_id": session_id,
                             "error": host.error,
                             "last_error": host.error,
+                            **launch_tracking,
                             "retry_of": retry_of,
                             **model_receipt,
                         },
@@ -1622,6 +1863,7 @@ def launch_workflow(
                         "last_error": host.error,
                         "run_id": run_id,
                         "operator_session": operator_session,
+                        **launch_tracking,
                         "retry_of": retry_of,
                         **model_receipt,
                         "control_plane": sync_state(),
@@ -1649,6 +1891,11 @@ def launch_workflow(
                         name=f"vibecrafted-reap-{run_id}",
                         daemon=True,
                     ).start()
+            if launcher_pid is not None:
+                launcher_identity = process_identity_receipt(
+                    launcher_pid,
+                    run_id=run_id,
+                )
         except OSError as exc:
             handle.write(
                 json.dumps(
@@ -1679,6 +1926,7 @@ def launch_workflow(
                     "session_id": session_id,
                     "error": f"{type(exc).__name__}: {exc}",
                     "last_error": f"{type(exc).__name__}: {exc}",
+                    **launch_tracking,
                     "retry_of": retry_of,
                     **model_receipt,
                 },
@@ -1695,6 +1943,7 @@ def launch_workflow(
                 "spec": safe_spec,
                 "error": f"{type(exc).__name__}: {exc}",
                 "run_id": run_id,
+                **launch_tracking,
                 "retry_of": retry_of,
                 **model_receipt,
                 "control_plane": sync_state(),
@@ -1706,6 +1955,11 @@ def launch_workflow(
             payload={
                 "state": "process_spawned",
                 "launcher_pid": launcher_pid,
+                **(
+                    {"launcher_identity": launcher_identity}
+                    if launcher_identity is not None
+                    else {}
+                ),
                 "agent": spec.agent,
                 "skill": spec.skill,
                 "mode": spec.mode,
@@ -1728,6 +1982,7 @@ def launch_workflow(
                 "command": command,
                 "transport": transport,
                 "command_script": str(command_script or ""),
+                **launch_tracking,
                 "retry_of": retry_of,
             },
         )
@@ -1744,6 +1999,7 @@ def launch_workflow(
         "transport": transport,
         "command_script": str(command_script or ""),
         "pid": launcher_pid,
+        "launcher_identity": launcher_identity,
         "run_id": run_id,
         "agent": spec.agent,
         "skill": spec.skill,
@@ -1764,6 +2020,7 @@ def launch_workflow(
         },
         "workflow": _workflow_metadata(spec.skill),
         **model_receipt,
+        **launch_tracking,
         "retry_of": retry_of,
         "launch_log": str(launch_log),
         "spec": safe_spec,
@@ -1785,7 +2042,20 @@ def stop_run(
     target = str(run_id or "").strip()
     if not target:
         raise ValueError("run_id is required")
+    with run_mutation_locks(control_plane_home(), run_id=target):
+        return _stop_run_locked(
+            target,
+            reason=reason,
+            grace_seconds=grace_seconds,
+        )
 
+
+def _stop_run_locked(
+    target: str,
+    *,
+    reason: str,
+    grace_seconds: float,
+) -> dict[str, Any]:
     run = lookup_run(target)
     if run is None:
         record_stop_transition(
@@ -1825,31 +2095,58 @@ def stop_run(
         }
 
     target_kind, target_pid = signal_target
-    target_pgid: int | None = None
+    qualified, qualification, already_dead = _qualify_stop_signal(
+        target,
+        run,
+        target_kind=target_kind,
+        target_pid=target_pid,
+    )
+    if qualified is None and not already_dead:
+        record_stop_transition(
+            target,
+            run=run,
+            accepted=False,
+            reason=qualification,
+            target=target_kind,
+            target_pid=target_pid,
+        )
+        return {
+            "accepted": False,
+            "run_id": target,
+            "target": target_kind,
+            "target_pid": target_pid,
+            "target_pgid": None,
+            "signal_sent": False,
+            "already_dead": False,
+            "alive_after_grace": None,
+            "reason": qualification,
+            "error": "",
+            "run": lookup_run(target),
+        }
+
+    target_pgid = qualified.target_pgid if qualified is not None else None
+    if qualified is None and target_kind in {"launcher_pid", "worker_pgid"}:
+        target_pgid = target_pid
     signal_sent = False
-    already_dead = False
     alive_after_grace: bool | None = None
-    stop_reason = reason
+    stop_reason = "pid_gone_before_stop" if already_dead else reason
     stop_error = ""
-    try:
-        if target_kind == "launcher_pid":
-            target_pgid = os.getpgid(target_pid)
-            os.killpg(target_pgid, signal.SIGTERM)
-        elif target_kind == "worker_pgid":
-            target_pgid = target_pid
-            os.killpg(target_pgid, signal.SIGTERM)
-        else:
-            os.kill(target_pid, signal.SIGTERM)
-        signal_sent = True
-    except ProcessLookupError:
-        already_dead = True
-        stop_reason = "pid_gone_before_stop"
-    except OSError as exc:
-        stop_error = f"{type(exc).__name__}: {exc}"
+    if qualified is not None:
+        try:
+            if qualified.target_pgid is not None:
+                os.killpg(qualified.target_pgid, signal.SIGTERM)
+            else:
+                os.kill(qualified.identity_pid, signal.SIGTERM)
+            signal_sent = True
+        except ProcessLookupError:
+            already_dead = True
+            stop_reason = "pid_gone_before_stop"
+        except OSError as exc:
+            stop_error = f"{type(exc).__name__}: {exc}"
 
     accepted = not stop_error
-    if signal_sent:
-        alive_after_grace = _wait_for_pid_exit(target_pid, grace_seconds)
+    if signal_sent and qualified is not None:
+        alive_after_grace = _wait_for_stop_target_exit(qualified, grace_seconds)
     elif already_dead:
         alive_after_grace = False
 
@@ -1879,6 +2176,7 @@ def stop_run(
         "already_dead": already_dead,
         "alive_after_grace": alive_after_grace,
         "reason": stop_reason if accepted else "signal_failed",
+        "identity_qualification": qualification,
         "error": stop_error,
         "run": lookup_run(target),
     }
@@ -1894,7 +2192,64 @@ def retry_run(
     if not target:
         raise ValueError("run_id is required")
 
-    run = lookup_run(target)
+    preliminary_run = lookup_run(target)
+    preliminary_resume_root = target
+    if preliminary_run is not None:
+        preliminary_meta = _native_resume_meta(target, preliminary_run)
+        preliminary_resume_root = _native_resume_root(
+            target,
+            preliminary_meta,
+            preliminary_run,
+        )
+
+    # Manual retry and Guardian-native resume must serialize on the same parent
+    # and lineage boundary. Acquire the complete ordered set once; nesting a
+    # second parent lock below this point would deadlock cross-process flock.
+    with run_mutation_locks(
+        control_plane_home(),
+        run_id=target,
+        resume_root=preliminary_resume_root,
+    ):
+        run = lookup_run(target)
+        if run is not None:
+            locked_meta = _native_resume_meta(target, run)
+            locked_resume_root = _native_resume_root(target, locked_meta, run)
+            if locked_resume_root != preliminary_resume_root:
+                payload = {
+                    "accepted": False,
+                    "reason": "retry_lineage_changed",
+                    "retryable": False,
+                    "terminal": True,
+                }
+                append_event(
+                    kind="audit:retry",
+                    run_id=target,
+                    message="retry rejected: resume lineage changed",
+                    payload=payload,
+                )
+                return {
+                    "accepted": False,
+                    "run_id": target,
+                    **payload,
+                    "run": run,
+                }
+        return _retry_run_locked(
+            target,
+            source_dir,
+            env=env,
+            run=run,
+        )
+
+
+def _retry_run_locked(
+    target: str,
+    source_dir: str | Path,
+    *,
+    env: dict[str, str] | None,
+    run: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Retry after the caller acquired the parent and resume-lineage locks."""
+
     if run is None:
         append_event(
             kind="audit:retry",
@@ -1919,6 +2274,34 @@ def retry_run(
             "accepted": False,
             "run_id": target,
             "reason": "run_not_terminal",
+            "run": run,
+        }
+
+    settlement_tui, settlement_verdict, settlement_source = _native_resume_settlement(
+        run
+    )
+    if (
+        run.get("recovery_required") is True
+        and settlement_tui == "n"
+        and settlement_verdict == "needs_attention"
+        and settlement_source == "trust"
+    ):
+        rejection = {
+            "accepted": False,
+            "reason": "recovery_owned_by_guardian",
+            "retryable": False,
+            "terminal": True,
+        }
+        append_event(
+            kind="audit:retry",
+            run_id=target,
+            message="retry rejected: recovery owned by Guardian",
+            payload=rejection,
+        )
+        return {
+            "accepted": False,
+            "run_id": target,
+            **rejection,
             "run": run,
         }
 
@@ -1977,6 +2360,1521 @@ def retry_run(
     }
 
 
+DEFAULT_NATIVE_RESUME_PROMPT = (
+    "Resume this interrupted Vibecrafted run in its existing provider session. "
+    "Inspect the live repository and prior session context, continue only the "
+    "unfinished scoped work, run the relevant verification gates, and write "
+    "the required handoff report."
+)
+NATIVE_RESUME_IDEMPOTENCY_SCHEMA = "vibecrafted.native-resume-idempotency.v1"
+NATIVE_RESUME_IDEMPOTENCY_STATES = frozenset(
+    {"reserved", "dispatched", "launch_failed"}
+)
+NATIVE_RESUME_IDEMPOTENCY_MAX_LENGTH = 512
+NATIVE_RESUME_AUTOMATIC_ATTEMPT_BUDGET = 1
+_MISSING_NATIVE_IDENTITIES = {"", "pending", "none", "null", "unknown"}
+_ACTIVE_NATIVE_RESUME_LEASES: set[str] = set()
+_ACTIVE_NATIVE_RESUME_LEASES_LOCK = threading.Lock()
+_NATIVE_RESUME_TRANSIENT_REJECTIONS = {
+    "attempt_reservation_failed",
+    "idempotency_claim_failed",
+    "idempotency_in_progress",
+    "launch_failed",
+    "launch_rejected",
+    "recovery_not_required",
+    "run_not_found",
+    "run_not_terminal",
+    "worker_not_confirmed_dead",
+}
+
+
+class _AutomaticResumeBudgetExhausted(ValueError):
+    pass
+
+
+class _NativeResumeCommandRejected(ValueError):
+    def __init__(
+        self,
+        reason: str,
+        *,
+        detail: str = "",
+        retryable: bool = False,
+    ) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.detail = detail
+        self.retryable = retryable
+
+
+def _native_resume_rejection(
+    run_id: str,
+    reason: str,
+    *,
+    run: dict[str, Any] | None = None,
+    detail: str = "",
+    idempotency_key: str = "",
+    retryable: bool | None = None,
+) -> dict[str, Any]:
+    if retryable is None:
+        should_retry = (
+            reason in _NATIVE_RESUME_TRANSIENT_REJECTIONS
+            or reason.startswith("native_resume_probe_")
+        )
+    else:
+        should_retry = bool(retryable)
+    payload: dict[str, Any] = {
+        "accepted": False,
+        "reason": reason,
+        "retryable": should_retry,
+        "terminal": not should_retry,
+    }
+    if detail:
+        payload["detail"] = detail
+    if idempotency_key:
+        payload["idempotency_key"] = idempotency_key
+    append_event(
+        kind="audit:native_resume",
+        run_id=run_id,
+        message=f"native resume rejected: {reason}",
+        payload=payload,
+    )
+    result: dict[str, Any] = {"accepted": False, "run_id": run_id, **payload}
+    if run is not None:
+        result["run"] = run
+    return result
+
+
+def _native_resume_meta(run_id: str, run: dict[str, Any]) -> dict[str, Any]:
+    candidates: list[Path] = []
+    try:
+        resolved = resolve_run(run_id)
+    except (RunNotResolved, ValueError):
+        resolved = None
+    if resolved is not None and resolved.meta is not None:
+        candidates.append(resolved.meta)
+    announced = str(run.get("meta") or "").strip()
+    if announced:
+        announced_path = Path(announced).expanduser()
+        if announced_path not in candidates:
+            candidates.append(announced_path)
+
+    payload: dict[str, Any] = {}
+    for path in candidates:
+        loaded = _read_json_object(path)
+        for key, value in loaded.items():
+            if key not in payload or payload[key] in (None, ""):
+                payload[key] = value
+    return payload
+
+
+def _manual_stop_or_cancel(run: dict[str, Any]) -> bool:
+    state = str(run.get("state") or "").strip().lower()
+    if state in {"stopped", "cancelled", "canceled"}:
+        return True
+    stop_reason = str(run.get("stop_reason") or "").strip().lower()
+    return bool(
+        stop_reason
+        and any(token in stop_reason for token in ("operator", "manual", "cancel"))
+    )
+
+
+def _native_resume_settlement(run: dict[str, Any]) -> tuple[str, str, str]:
+    settlement = run.get("settlement")
+    nested = settlement if isinstance(settlement, dict) else {}
+    tui = (
+        str(
+            run.get("settlement_tui")
+            or nested.get("tui")
+            or nested.get("settlement_tui")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    verdict = (
+        str(
+            run.get("settlement_verdict")
+            or nested.get("verdict")
+            or nested.get("settlement_verdict")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    source = (
+        str(
+            run.get("settlement_source")
+            or nested.get("source")
+            or nested.get("settlement_source")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    return tui, verdict, source
+
+
+def _explicit_native_identity(value: Any) -> str:
+    candidate = str(value or "").strip()
+    return "" if candidate.lower() in _MISSING_NATIVE_IDENTITIES else candidate
+
+
+def _native_resume_root(
+    parent_run_id: str,
+    parent_meta: dict[str, Any],
+    parent_run: dict[str, Any],
+) -> str:
+    return str(
+        parent_meta.get("resume_root") or parent_run.get("resume_root") or parent_run_id
+    ).strip()
+
+
+def _native_resume_eligibility(
+    run: dict[str, Any],
+    parent_meta: dict[str, Any],
+) -> tuple[str, str, str, int]:
+    """Return candidate identity and settlement revision, or raise policy error."""
+
+    if _manual_stop_or_cancel(run):
+        raise ValueError("manual_stop")
+    state = str(run.get("state") or "").strip().lower()
+    if state == "blocked" or str(run.get("operator_state") or "").lower() == "blocked":
+        raise ValueError("blocked")
+    if not _run_is_terminal(run):
+        raise ValueError("run_not_terminal")
+
+    tui, verdict, source = _native_resume_settlement(run)
+    if tui == "x":
+        raise ValueError("trust_x")
+    if tui != "n" or verdict != "needs_attention":
+        raise ValueError(f"settlement_{tui or 'unknown'}_not_resumable")
+    if source != "trust":
+        raise ValueError("vc_trust_authority_missing")
+    if run.get("recovery_required") is not True:
+        raise ValueError("recovery_not_required")
+    if run.get("worker_alive") is not False:
+        raise ValueError("worker_not_confirmed_dead")
+
+    revision = run.get("settlement_revision")
+    if type(revision) is not int or revision <= 0:
+        raise ValueError("settlement_revision_missing")
+    agent = _explicit_native_identity(parent_meta.get("agent") or run.get("agent"))
+    agent_session_id = _explicit_native_identity(
+        parent_meta.get("agent_session_id") or run.get("agent_session_id")
+    )
+    if not agent or not agent_session_id:
+        raise ValueError("native_resume_candidate_missing")
+    return agent.lower(), agent_session_id, source, revision
+
+
+def _native_resume_reservation_dir(resume_root: str) -> Path:
+    lineage_key = hashlib.sha256(resume_root.encode("utf-8")).hexdigest()[:24]
+    return control_plane_home() / "resume_attempts" / lineage_key
+
+
+def _next_native_resume_attempt(
+    *,
+    resume_root: str,
+    parent_meta: dict[str, Any],
+    parent_run: dict[str, Any],
+) -> int:
+    floor = max(
+        _coerce_positive_int(parent_meta.get("attempt"), 1) or 1,
+        _coerce_positive_int(parent_run.get("attempt"), 1) or 1,
+    )
+    runtime_root = control_plane_home() / "runtime_runs"
+    if runtime_root.is_dir():
+        for meta_path in runtime_root.glob("*/meta.json"):
+            payload = _read_json_object(meta_path)
+            if str(payload.get("resume_root") or "").strip() != resume_root:
+                continue
+            floor = max(floor, _coerce_positive_int(payload.get("attempt"), 1) or 1)
+
+    reservation_dir = _native_resume_reservation_dir(resume_root)
+    reservation_dir.mkdir(parents=True, exist_ok=True)
+    for marker in reservation_dir.glob("*.json"):
+        if marker.stem == "automatic":
+            continue
+        floor = max(floor, _coerce_positive_int(marker.stem, 1) or 1)
+    return floor + 1
+
+
+def _write_native_resume_attempt(
+    *,
+    resume_root: str,
+    parent_run_id: str,
+    child_run_id: str,
+    attempt: int,
+    resume_mode: str,
+    settlement_revision: int,
+    trust_receipt_id: str = "",
+    idempotency_key: str = "",
+) -> None:
+    reservation_dir = _native_resume_reservation_dir(resume_root)
+    reservation_dir.mkdir(parents=True, exist_ok=True)
+    marker = reservation_dir / f"{attempt}.json"
+    reservation = {
+        "schema": "vibecrafted.native-resume-attempt.v1",
+        "resume_root": resume_root,
+        "resume_of": parent_run_id,
+        "run_id": child_run_id,
+        "attempt": attempt,
+        "resume_mode": resume_mode,
+        "automatic_attempt_budget": NATIVE_RESUME_AUTOMATIC_ATTEMPT_BUDGET,
+        "automatic_attempt_number": 1 if resume_mode == "automatic" else 0,
+        "settlement_revision": settlement_revision,
+        **({"trust_receipt_id": trust_receipt_id} if trust_receipt_id else {}),
+        "reserved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        **({"resume_idempotency_key": idempotency_key} if idempotency_key else {}),
+    }
+    if marker.exists():
+        existing = _read_json_object(marker)
+        if (
+            str(existing.get("run_id") or "") == child_run_id
+            and int(existing.get("attempt") or 0) == attempt
+        ):
+            return
+        raise ValueError(f"resume attempt {attempt} already belongs to another run")
+    encoded = (
+        json.dumps(reservation, ensure_ascii=False, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    try:
+        os.write(fd, encoded)
+    finally:
+        os.close(fd)
+
+
+def _reserve_native_resume_attempt(
+    *,
+    parent_run_id: str,
+    child_run_id: str,
+    parent_meta: dict[str, Any],
+    parent_run: dict[str, Any],
+    idempotency_key: str = "",
+    resume_mode: str = "manual",
+    settlement_revision: int = 0,
+    trust_receipt_id: str = "",
+) -> tuple[str, int]:
+    """Reserve one manual lineage attempt while the caller holds its lock."""
+
+    resume_root = _native_resume_root(parent_run_id, parent_meta, parent_run)
+    attempt = _next_native_resume_attempt(
+        resume_root=resume_root,
+        parent_meta=parent_meta,
+        parent_run=parent_run,
+    )
+    _write_native_resume_attempt(
+        resume_root=resume_root,
+        parent_run_id=parent_run_id,
+        child_run_id=child_run_id,
+        attempt=attempt,
+        resume_mode=resume_mode,
+        settlement_revision=settlement_revision,
+        trust_receipt_id=trust_receipt_id,
+        idempotency_key=idempotency_key,
+    )
+    return resume_root, attempt
+
+
+def _normalize_native_resume_idempotency_key(value: str) -> str:
+    key = str(value or "").strip()
+    if not key:
+        return ""
+    if len(key) > NATIVE_RESUME_IDEMPOTENCY_MAX_LENGTH:
+        raise ValueError(
+            f"idempotency_key exceeds {NATIVE_RESUME_IDEMPOTENCY_MAX_LENGTH} characters"
+        )
+    if any(ord(char) < 32 or ord(char) == 127 for char in key):
+        raise ValueError("idempotency_key contains control characters")
+    return key
+
+
+def _native_resume_idempotency_registry() -> Path:
+    registry = control_plane_home() / "native_resume_idempotency"
+    registry.mkdir(parents=True, exist_ok=True)
+    return registry
+
+
+def _native_resume_idempotency_path(registry: Path, key: str) -> Path:
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return registry / f"{digest}.json"
+
+
+def _read_native_resume_idempotency_record(
+    path: Path,
+    key: str,
+) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    payload = _read_json_object(path)
+    if not payload:
+        raise ValueError(f"unreadable idempotency record: {path}")
+    if payload.get("schema") != NATIVE_RESUME_IDEMPOTENCY_SCHEMA:
+        raise ValueError(f"invalid idempotency record schema: {path}")
+    if str(payload.get("idempotency_key") or "") != key:
+        raise ValueError(f"idempotency hash collision or key mismatch: {path}")
+    required = (
+        "parent_run_id",
+        "agent",
+        "child_run_id",
+        "runtime_session_id",
+        "resume_root",
+        "attempt",
+        "state",
+    )
+    missing = [name for name in required if payload.get(name) in (None, "")]
+    if missing:
+        raise ValueError(
+            f"idempotency record missing fields {','.join(missing)}: {path}"
+        )
+    state = payload.get("state")
+    if not isinstance(state, str) or state not in NATIVE_RESUME_IDEMPOTENCY_STATES:
+        raise ValueError(f"invalid idempotency record state {state!r}: {path}")
+    return payload
+
+
+def _lookup_native_resume_idempotency(key: str) -> dict[str, Any] | None:
+    """Lockless preliminary read; writers publish records with atomic replace."""
+
+    registry = _native_resume_idempotency_registry()
+    path = _native_resume_idempotency_path(registry, key)
+    return _read_native_resume_idempotency_record(path, key)
+
+
+def _native_resume_automatic_budget_path(resume_root: str) -> Path:
+    directory = _native_resume_reservation_dir(resume_root)
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / "automatic.json"
+
+
+def _new_native_resume_lease() -> tuple[str, int]:
+    return ensure_session_id(), os.getpid()
+
+
+def _native_resume_owner_active_here(record: dict[str, Any]) -> bool:
+    """Return whether this process still owns the in-memory launch lease.
+
+    Cross-process ownership is established only by the ordered filesystem
+    locks. A PID in a durable receipt is diagnostic metadata, never authority:
+    it may already identify an unrelated process after PID reuse.
+    """
+
+    token = str(record.get("owner_token") or "")
+    if not token:
+        return False
+    with _ACTIVE_NATIVE_RESUME_LEASES_LOCK:
+        return token in _ACTIVE_NATIVE_RESUME_LEASES
+
+
+def _activate_native_resume_lease(token: str) -> None:
+    with _ACTIVE_NATIVE_RESUME_LEASES_LOCK:
+        _ACTIVE_NATIVE_RESUME_LEASES.add(token)
+
+
+def _release_native_resume_lease(token: str) -> None:
+    with _ACTIVE_NATIVE_RESUME_LEASES_LOCK:
+        _ACTIVE_NATIVE_RESUME_LEASES.discard(token)
+
+
+def _claim_native_resume_idempotency(
+    *,
+    key: str,
+    parent_run_id: str,
+    agent: str,
+    agent_session_id: str,
+    parent_runtime_session_id: str,
+    parent_meta: dict[str, Any],
+    parent_run: dict[str, Any],
+    settlement_revision: int,
+    trust_receipt_id: str = "",
+) -> tuple[dict[str, Any], bool]:
+    """Return/create one automatic claim while ordered locks are held."""
+
+    registry = _native_resume_idempotency_registry()
+    path = _native_resume_idempotency_path(registry, key)
+    existing = _read_native_resume_idempotency_record(path, key)
+    if existing is not None:
+        return existing, False
+
+    resume_root = _native_resume_root(parent_run_id, parent_meta, parent_run)
+    budget_path = _native_resume_automatic_budget_path(resume_root)
+    budget = _read_json_object(budget_path)
+    if not budget:
+        # Adopt pre-ledger keyed receipts from the v1 implementation. A rollout
+        # must not reset a lineage's automatic budget merely because its first
+        # reservation predates ``automatic.json``.
+        for receipt_path in registry.glob("*.json"):
+            receipt = _read_json_object(receipt_path)
+            if (
+                receipt.get("schema") == NATIVE_RESUME_IDEMPOTENCY_SCHEMA
+                and str(receipt.get("resume_root") or "") == resume_root
+            ):
+                budget = receipt
+                atomic_write_json(budget_path, budget)
+                break
+    if budget:
+        budget_state = budget.get("state")
+        if (
+            not isinstance(budget_state, str)
+            or budget_state not in NATIVE_RESUME_IDEMPOTENCY_STATES
+        ):
+            raise ValueError(
+                f"invalid automatic resume ledger state {budget_state!r}: {budget_path}"
+            )
+        if (
+            str(budget.get("idempotency_key") or "") != key
+            or str(budget.get("parent_run_id") or "") != parent_run_id
+            or str(budget.get("agent") or "").lower() != agent.lower()
+        ):
+            raise _AutomaticResumeBudgetExhausted(
+                f"automatic attempt already reserved by "
+                f"{budget.get('idempotency_key') or 'unknown'}"
+            )
+        record = dict(budget)
+        record["schema"] = NATIVE_RESUME_IDEMPOTENCY_SCHEMA
+        atomic_write_json(path, record)
+        _write_native_resume_attempt(
+            resume_root=resume_root,
+            parent_run_id=parent_run_id,
+            child_run_id=str(record["child_run_id"]),
+            attempt=int(record["attempt"]),
+            resume_mode="automatic",
+            settlement_revision=int(record.get("settlement_revision") or 0),
+            trust_receipt_id=str(record.get("trust_receipt_id") or ""),
+            idempotency_key=key,
+        )
+        return record, False
+
+    child_run_id = reserve_run_id("rsme")
+    attempt = _next_native_resume_attempt(
+        resume_root=resume_root,
+        parent_meta=parent_meta,
+        parent_run=parent_run,
+    )
+    runtime_session_id = ensure_session_id()
+    owner_token, owner_pid = _new_native_resume_lease()
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    record = {
+        "schema": NATIVE_RESUME_IDEMPOTENCY_SCHEMA,
+        "idempotency_key": key,
+        "parent_run_id": parent_run_id,
+        "agent": agent,
+        "agent_session_id": agent_session_id,
+        "parent_runtime_session_id": parent_runtime_session_id,
+        "child_run_id": child_run_id,
+        "runtime_session_id": runtime_session_id,
+        "resume_root": resume_root,
+        "attempt": attempt,
+        "resume_mode": "automatic",
+        "automatic_attempt_budget": NATIVE_RESUME_AUTOMATIC_ATTEMPT_BUDGET,
+        "automatic_attempt_number": 1,
+        "settlement_revision": settlement_revision,
+        "trust_receipt_id": trust_receipt_id,
+        "state": "reserved",
+        "launch_accepted": False,
+        "owner_token": owner_token,
+        "owner_pid": owner_pid,
+        "lease_generation": 1,
+        "created_at": now,
+        "updated_at": now,
+    }
+    # The lineage ledger is the budget and recovery source of truth. Publishing
+    # it first means a kill before the idempotency mirror is still recoverable
+    # with the exact child/runtime identity and attempt.
+    atomic_write_json(budget_path, record)
+    _write_native_resume_attempt(
+        resume_root=resume_root,
+        parent_run_id=parent_run_id,
+        child_run_id=child_run_id,
+        attempt=attempt,
+        resume_mode="automatic",
+        settlement_revision=settlement_revision,
+        trust_receipt_id=trust_receipt_id,
+        idempotency_key=key,
+    )
+    atomic_write_json(path, record)
+    return record, True
+
+
+def _take_over_native_resume_idempotency(
+    *,
+    key: str,
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    """CAS one exclusively locked reservation without changing launch identity."""
+
+    registry = _native_resume_idempotency_registry()
+    path = _native_resume_idempotency_path(registry, key)
+    current = _read_native_resume_idempotency_record(path, key)
+    if current is None:
+        raise ValueError("idempotency record disappeared before takeover")
+    expected_generation = int(record.get("lease_generation") or 0)
+    if int(current.get("lease_generation") or 0) != expected_generation:
+        raise ValueError("idempotency lease changed before takeover")
+    token, owner_pid = _new_native_resume_lease()
+    current["owner_token"] = token
+    current["owner_pid"] = owner_pid
+    current["lease_generation"] = expected_generation + 1
+    current["state"] = "reserved"
+    current["launch_accepted"] = False
+    current["takeover_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    current["updated_at"] = current["takeover_at"]
+    atomic_write_json(path, current)
+    budget_path = _native_resume_automatic_budget_path(
+        str(current.get("resume_root") or "")
+    )
+    budget = _read_json_object(budget_path)
+    if str(budget.get("idempotency_key") or "") == key:
+        budget.update(
+            {
+                "owner_token": token,
+                "owner_pid": owner_pid,
+                "lease_generation": current["lease_generation"],
+                "takeover_at": current["takeover_at"],
+                "updated_at": current["updated_at"],
+            }
+        )
+        atomic_write_json(budget_path, budget)
+    return current
+
+
+def _update_native_resume_idempotency(
+    *,
+    key: str,
+    child_run_id: str,
+    state: str,
+    launch_accepted: bool,
+    launch: dict[str, Any] | None = None,
+    error: str = "",
+    owner_token: str = "",
+    release_owner: bool = False,
+) -> dict[str, Any]:
+    if state not in NATIVE_RESUME_IDEMPOTENCY_STATES:
+        raise ValueError(f"invalid idempotency record state: {state!r}")
+    registry = _native_resume_idempotency_registry()
+    path = _native_resume_idempotency_path(registry, key)
+    record = _read_native_resume_idempotency_record(path, key)
+    if record is None:
+        raise ValueError("idempotency record disappeared before launch receipt")
+    if str(record.get("child_run_id") or "") != child_run_id:
+        raise ValueError("idempotency record child_run_id changed")
+    if owner_token and str(record.get("owner_token") or "") != owner_token:
+        raise ValueError("idempotency lease owner changed before launch receipt")
+    record["state"] = state
+    record["launch_accepted"] = bool(launch_accepted)
+    record["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    if launch:
+        record["launch_pid"] = launch.get("pid")
+        record["launch_status"] = str(launch.get("status") or "")
+        record["launch_error"] = str(
+            launch.get("error") or launch.get("last_error") or ""
+        )
+    if error:
+        record["launch_error"] = error
+    if release_owner:
+        record["owner_pid"] = 0
+        record["owner_released_at"] = record["updated_at"]
+    atomic_write_json(path, record)
+    budget_path = _native_resume_automatic_budget_path(
+        str(record.get("resume_root") or "")
+    )
+    budget = _read_json_object(budget_path)
+    if str(budget.get("idempotency_key") or "") == key:
+        budget.update(record)
+        atomic_write_json(budget_path, budget)
+    return record
+
+
+def _native_resume_child_was_dispatched(child: dict[str, Any] | None) -> bool:
+    if not child:
+        return False
+    state = str(child.get("state") or "").strip().lower()
+    if state in {
+        "process_spawned",
+        "first_output_seen",
+        "active",
+        "running",
+        "completed",
+        "report_validated",
+        "report_missing",
+        "report_invalid",
+        "contract_failed",
+        "closed",
+        "timed_out",
+        "ghost",
+    }:
+        return True
+    return any(
+        _coerce_positive_int(child.get(field), 0)
+        for field in ("launcher_pid", "worker_pid", "worker_pgid")
+    )
+
+
+def _native_resume_idempotency_result(
+    *,
+    target: str,
+    agent: str,
+    requested_agent: str,
+    key: str,
+    record: dict[str, Any],
+    run: dict[str, Any],
+) -> dict[str, Any]:
+    recorded_parent = str(record.get("parent_run_id") or "")
+    recorded_agent = str(record.get("agent") or "").lower()
+    if (
+        recorded_parent != target
+        or recorded_agent != agent
+        or (requested_agent and requested_agent != recorded_agent)
+    ):
+        return _native_resume_rejection(
+            target,
+            "idempotency_conflict",
+            run=run,
+            idempotency_key=key,
+            detail=(
+                f"recorded_parent={recorded_parent or 'unknown'} "
+                f"recorded_agent={recorded_agent or 'unknown'} "
+                f"requested_parent={target} "
+                f"requested_agent={requested_agent or agent or 'unknown'}"
+            ),
+        )
+
+    child_run_id = str(record.get("child_run_id") or "")
+    state = str(record.get("state") or "reserved")
+    accepted = state == "dispatched" and bool(record.get("launch_accepted"))
+    child: dict[str, Any] | None = None
+    if state == "reserved":
+        candidate = lookup_run(child_run_id)
+        if (
+            candidate is not None
+            and str(candidate.get("run_id") or child_run_id) == child_run_id
+        ):
+            child = candidate
+            accepted = _native_resume_child_was_dispatched(child)
+
+    if accepted:
+        reason = "idempotent_replay"
+    elif state == "launch_failed":
+        reason = "launch_failed"
+    else:
+        reason = "idempotency_in_progress"
+    retryable = not accepted and reason in {
+        "idempotency_in_progress",
+        "launch_failed",
+    }
+    payload = {
+        "accepted": accepted,
+        "reason": reason,
+        "retryable": retryable,
+        "terminal": not retryable,
+        "deduplicated": True,
+        "idempotency_key": key,
+        "new_run_id": child_run_id,
+        "agent": recorded_agent,
+        "agent_session_id": str(record.get("agent_session_id") or ""),
+        "runtime_session_id": str(record.get("runtime_session_id") or ""),
+        "parent_runtime_session_id": str(record.get("parent_runtime_session_id") or ""),
+        "resume_of": recorded_parent,
+        "resume_root": str(record.get("resume_root") or ""),
+        "attempt": _coerce_positive_int(record.get("attempt"), 0),
+        "resume_mode": str(record.get("resume_mode") or "automatic"),
+        "automatic_attempt_budget": int(
+            record.get("automatic_attempt_budget")
+            or NATIVE_RESUME_AUTOMATIC_ATTEMPT_BUDGET
+        ),
+        "automatic_attempt_number": int(record.get("automatic_attempt_number") or 1),
+        "settlement_revision": int(record.get("settlement_revision") or 0),
+        "trust_receipt_id": str(record.get("trust_receipt_id") or ""),
+        "lease_generation": int(record.get("lease_generation") or 0),
+        "idempotency_state": state,
+    }
+    append_event(
+        kind="audit:native_resume",
+        run_id=target,
+        message=f"native resume idempotency replay: {reason}",
+        payload=payload,
+    )
+    return {
+        "accepted": accepted,
+        "run_id": target,
+        "resume_run_id": child_run_id,
+        "reason": reason,
+        "retryable": retryable,
+        "terminal": not retryable,
+        "deduplicated": True,
+        "idempotency_key": key,
+        "attempt": payload["attempt"],
+        "resume_of": recorded_parent,
+        "resume_root": payload["resume_root"],
+        "agent": recorded_agent,
+        "agent_session_id": payload["agent_session_id"],
+        "runtime_session_id": payload["runtime_session_id"],
+        "parent_runtime_session_id": payload["parent_runtime_session_id"],
+        "resume_mode": payload["resume_mode"],
+        "automatic_attempt_budget": payload["automatic_attempt_budget"],
+        "automatic_attempt_number": payload["automatic_attempt_number"],
+        "settlement_revision": payload["settlement_revision"],
+        "trust_receipt_id": payload["trust_receipt_id"],
+        "lease_generation": payload["lease_generation"],
+        "idempotency_state": state,
+        "launch": {
+            "accepted": accepted,
+            "run_id": child_run_id,
+            "status": str(record.get("launch_status") or state),
+            "error": str(record.get("launch_error") or ""),
+            "deduplicated": True,
+        },
+        **({"child": child} if child is not None else {}),
+    }
+
+
+def _verified_native_resume_command(
+    agent: str,
+    agent_session_id: str,
+) -> tuple[list[str], str, str]:
+    """Return one live-probed provider resume argv with no shell boundary."""
+
+    normalized_agent = str(agent or "").strip().lower()
+    try:
+        capability = capability_for(normalized_agent)
+    except ValueError as exc:
+        raise _NativeResumeCommandRejected(
+            "native_resume_unsupported",
+            detail=str(exc),
+        ) from exc
+    if capability.noninteractive_resume != SUPPORTED:
+        reason = (
+            "native_resume_unverified"
+            if capability.noninteractive_resume == UNVERIFIED
+            else "native_resume_unsupported"
+        )
+        raise _NativeResumeCommandRejected(
+            reason,
+            detail=capability.notes,
+        )
+
+    provider_probe = probe_provider(normalized_agent)
+    if provider_probe.state != PROBE_CONFIRMED or not provider_probe.executable:
+        reason = (
+            "native_resume_probe_failed"
+            if provider_probe.state == "probe_failed"
+            else f"native_resume_probe_{provider_probe.state}"
+        )
+        raise _NativeResumeCommandRejected(
+            reason,
+            detail=provider_probe.detail,
+            retryable=True,
+        )
+    try:
+        command = native_resume_argv(normalized_agent, agent_session_id)
+    except ValueError as exc:
+        raise _NativeResumeCommandRejected(
+            "native_resume_unsupported",
+            detail=str(exc),
+        ) from exc
+    command[0] = provider_probe.executable
+    if any(flag in command for flag in capability.forbidden_flags):
+        raise _NativeResumeCommandRejected("native_resume_forbidden_flag")
+    return (
+        command,
+        str(provider_probe.state),
+        str(provider_probe.version or ""),
+    )
+
+
+def _manual_explicit_resume_rejection(
+    *,
+    agent: str,
+    agent_session_id: str,
+    reason: str,
+    detail: str = "",
+    retryable: bool = False,
+    run_id: str = "",
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema": "vibecrafted.manual_explicit_resume.v1",
+        "accepted": False,
+        "reason": reason,
+        "retryable": retryable,
+        "terminal": not retryable,
+        "resume_mode": "manual_explicit",
+        "agent": agent,
+        "agent_session_id": agent_session_id,
+    }
+    if run_id:
+        payload["run_id"] = run_id
+    if detail:
+        payload["detail"] = detail
+    return payload
+
+
+def manual_resume_session(
+    agent: str,
+    agent_session_id: str,
+    source_dir: str | Path = ".",
+    *,
+    prompt: str,
+    root: str | Path = "",
+    model: str = "",
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Launch an explicit provider-session continuation as its own tracked run.
+
+    This operator boundary deliberately has no parent-run authority semantics:
+    it does not claim settlement, consume the Guardian automatic budget, or
+    manufacture trust preconditions. It only proves that the requested
+    provider has a verified noninteractive resume contract, then delegates the
+    detached lifetime and prompt-stdin transport to the normal core launcher.
+    """
+
+    normalized_agent = str(agent or "").strip().lower()
+    native_id = _explicit_native_identity(agent_session_id)
+    prompt_body = str(prompt or "")
+    if not normalized_agent:
+        return _manual_explicit_resume_rejection(
+            agent="",
+            agent_session_id=native_id,
+            reason="missing_agent",
+        )
+    if not native_id:
+        return _manual_explicit_resume_rejection(
+            agent=normalized_agent,
+            agent_session_id="",
+            reason="missing_agent_session_id",
+        )
+    if not prompt_body.strip():
+        return _manual_explicit_resume_rejection(
+            agent=normalized_agent,
+            agent_session_id=native_id,
+            reason="missing_prompt",
+        )
+    try:
+        command, _probe_state, _probe_version = _verified_native_resume_command(
+            normalized_agent,
+            native_id,
+        )
+    except _NativeResumeCommandRejected as exc:
+        return _manual_explicit_resume_rejection(
+            agent=normalized_agent,
+            agent_session_id=native_id,
+            reason=exc.reason,
+            detail=exc.detail,
+            retryable=exc.retryable,
+        )
+    model_requested = str(model or "").strip()
+    command = _with_model_override(
+        normalized_agent,
+        command,
+        model_requested,
+    )
+
+    resolved_source_dir = Path(source_dir).expanduser().resolve()
+    resolved_root = normalize_run_root(root, resolved_source_dir)
+    child_run_id = reserve_run_id("rsme")
+    child_runtime_session_id = ensure_session_id()
+    child_env = dict(env or {})
+    child_env["VIBECRAFTED_SESSION_ID"] = child_runtime_session_id
+    child_env["VIBECRAFTED_AGENT_SESSION_ID"] = native_id
+    launch_meta = {
+        "run_id": child_run_id,
+        "agent": normalized_agent,
+        "agent_session_id": native_id,
+        "runtime_session_id": child_runtime_session_id,
+        "native_resume": True,
+        "resume_mode": "manual_explicit",
+        "manual_explicit": True,
+    }
+    spec = WorkflowLaunchSpec(
+        agent=normalized_agent,
+        mode="manual_explicit",
+        skill="workflow",
+        prompt=prompt_body,
+        file="",
+        runtime="headless",
+        root=resolved_root,
+        model=model_requested,
+        run_id=child_run_id,
+    )
+    try:
+        launched = launch_workflow(
+            spec,
+            resolved_source_dir,
+            env=child_env,
+            worker_command_override=command,
+            launch_meta=launch_meta,
+        )
+    except (OSError, ValueError) as exc:
+        return _manual_explicit_resume_rejection(
+            agent=normalized_agent,
+            agent_session_id=native_id,
+            reason="launch_rejected",
+            detail=f"{type(exc).__name__}: {exc}",
+            retryable=isinstance(exc, OSError),
+            run_id=child_run_id,
+        )
+    return {
+        **launched,
+        "schema": "vibecrafted.manual_explicit_resume.v1",
+        "resume_mode": "manual_explicit",
+        "agent": normalized_agent,
+        "agent_session_id": native_id,
+        "runtime_session_id": child_runtime_session_id,
+    }
+
+
+def native_resume_run(
+    run_id: str,
+    source_dir: str | Path = ".",
+    *,
+    prompt: str = "",
+    expected_agent: str = "",
+    expected_agent_session_id: str = "",
+    expected_settlement_revision: int | None = None,
+    expected_receipt_id: str = "",
+    env: dict[str, str] | None = None,
+    idempotency_key: str = "",
+) -> dict[str, Any]:
+    """Resume one explicit trust-settled recovery candidate.
+
+    The public boundary is fail-closed even when called without the Guardian:
+    only a terminal trust ``n`` with a dead worker, explicit native identity,
+    recovery requirement, stable settlement revision, and one exact v2 trust
+    receipt may launch. A keyed call is an automatic Guardian attempt (one per
+    lineage); an unkeyed call is a separate explicit manual attempt. Guardian
+    callers may pin the provider-session identity, settlement revision, and
+    receipt id; all are revalidated under the live run mutation locks.
+    """
+
+    target = str(run_id or "").strip()
+    if not target:
+        raise ValueError("run_id is required")
+    requested_agent = str(expected_agent or "").strip().lower()
+    requested_receipt_id = str(expected_receipt_id or "").strip()
+    raw_expected_agent_session = str(expected_agent_session_id or "").strip()
+    requested_agent_session = _explicit_native_identity(raw_expected_agent_session)
+    if raw_expected_agent_session and not requested_agent_session:
+        return _native_resume_rejection(
+            target,
+            "invalid_expected_agent_session_id",
+        )
+    requested_settlement_revision: int | None = None
+    if expected_settlement_revision is not None:
+        if (
+            type(expected_settlement_revision) is not int
+            or expected_settlement_revision <= 0
+        ):
+            return _native_resume_rejection(
+                target,
+                "invalid_expected_settlement_revision",
+            )
+        requested_settlement_revision = expected_settlement_revision
+    try:
+        resume_idempotency_key = _normalize_native_resume_idempotency_key(
+            idempotency_key
+        )
+    except ValueError as exc:
+        return _native_resume_rejection(
+            target,
+            "invalid_idempotency_key",
+            detail=str(exc),
+        )
+
+    existing_idempotency: dict[str, Any] | None = None
+    if resume_idempotency_key:
+        try:
+            existing_idempotency = _lookup_native_resume_idempotency(
+                resume_idempotency_key
+            )
+        except (OSError, ValueError) as exc:
+            return _native_resume_rejection(
+                target,
+                "idempotency_record_invalid",
+                detail=f"{type(exc).__name__}: {exc}",
+                idempotency_key=resume_idempotency_key,
+            )
+        if existing_idempotency is not None and (
+            str(existing_idempotency.get("parent_run_id") or "") != target
+            or (
+                requested_agent
+                and str(existing_idempotency.get("agent") or "").lower()
+                != requested_agent
+            )
+        ):
+            return _native_resume_rejection(
+                target,
+                "idempotency_conflict",
+                detail=(
+                    "recorded_parent="
+                    f"{existing_idempotency.get('parent_run_id') or 'unknown'} "
+                    f"recorded_agent={existing_idempotency.get('agent') or 'unknown'} "
+                    f"requested_parent={target} "
+                    f"requested_agent={requested_agent or 'unspecified'}"
+                ),
+                idempotency_key=resume_idempotency_key,
+            )
+        # A prior dispatched idempotency receipt is not resume authority.
+        # Replay is resolved only after the live parent and exact trust receipt
+        # have been revalidated under the ordered mutation locks below.
+        if (
+            existing_idempotency is not None
+            and not requested_agent_session
+            and requested_settlement_revision is None
+            and not requested_receipt_id
+            and _native_resume_owner_active_here(existing_idempotency)
+        ):
+            return _native_resume_idempotency_result(
+                target=target,
+                agent=str(existing_idempotency.get("agent") or "").lower(),
+                requested_agent=requested_agent,
+                key=resume_idempotency_key,
+                record=existing_idempotency,
+                run={"run_id": target},
+            )
+
+    run = lookup_run(target)
+    if run is None:
+        return _native_resume_rejection(
+            target,
+            "run_not_found",
+            idempotency_key=resume_idempotency_key,
+        )
+
+    parent_meta = _native_resume_meta(target, run)
+    try:
+        agent, agent_session_id, _settlement_source, settlement_revision = (
+            _native_resume_eligibility(run, parent_meta)
+        )
+    except ValueError as exc:
+        return _native_resume_rejection(
+            target,
+            str(exc),
+            run=run,
+            idempotency_key=resume_idempotency_key,
+        )
+    if requested_agent and requested_agent != agent:
+        return _native_resume_rejection(
+            target,
+            "agent_mismatch",
+            run=run,
+            detail=f"recorded={agent or 'unknown'} requested={requested_agent}",
+            idempotency_key=resume_idempotency_key,
+        )
+    parent_runtime_session_id = _explicit_native_identity(
+        parent_meta.get("runtime_session_id") or run.get("runtime_session_id") or ""
+    )
+    if not parent_runtime_session_id:
+        return _native_resume_rejection(
+            target,
+            "missing_runtime_session_id",
+            run=run,
+            idempotency_key=resume_idempotency_key,
+        )
+
+    try:
+        command, provider_probe_state, provider_probe_version = (
+            _verified_native_resume_command(agent, agent_session_id)
+        )
+    except _NativeResumeCommandRejected as exc:
+        return _native_resume_rejection(
+            target,
+            exc.reason,
+            run=run,
+            detail=exc.detail,
+            idempotency_key=resume_idempotency_key,
+            retryable=exc.retryable,
+        )
+
+    preliminary_resume_root = _native_resume_root(target, parent_meta, run)
+    cas_revision = settlement_revision
+    if existing_idempotency is not None:
+        recorded_revision = existing_idempotency.get("settlement_revision")
+        if type(recorded_revision) is not int or recorded_revision <= 0:
+            return _native_resume_rejection(
+                target,
+                "idempotency_record_revision_missing",
+                run=run,
+                idempotency_key=resume_idempotency_key,
+            )
+        cas_revision = recorded_revision
+
+    with run_mutation_locks(
+        control_plane_home(),
+        run_id=target,
+        resume_root=preliminary_resume_root,
+        idempotency_key=resume_idempotency_key,
+    ):
+        locked_run = lookup_run(target)
+        if locked_run is None:
+            return _native_resume_rejection(
+                target,
+                "run_not_found",
+                idempotency_key=resume_idempotency_key,
+            )
+        locked_meta = _native_resume_meta(target, locked_run)
+        try:
+            locked_agent, locked_agent_session, _source, locked_revision = (
+                _native_resume_eligibility(locked_run, locked_meta)
+            )
+        except ValueError as exc:
+            return _native_resume_rejection(
+                target,
+                str(exc),
+                run=locked_run,
+                idempotency_key=resume_idempotency_key,
+            )
+        locked_resume_root = _native_resume_root(target, locked_meta, locked_run)
+        if locked_resume_root != preliminary_resume_root:
+            return _native_resume_rejection(
+                target,
+                "resume_lineage_changed",
+                run=locked_run,
+                idempotency_key=resume_idempotency_key,
+            )
+        if requested_agent_session and locked_agent_session != requested_agent_session:
+            return _native_resume_rejection(
+                target,
+                "expected_agent_session_mismatch",
+                run=locked_run,
+                detail=(
+                    f"expected={requested_agent_session} "
+                    f"current={locked_agent_session or 'unknown'}"
+                ),
+                idempotency_key=resume_idempotency_key,
+            )
+        if (
+            requested_settlement_revision is not None
+            and locked_revision != requested_settlement_revision
+        ):
+            return _native_resume_rejection(
+                target,
+                "expected_settlement_revision_mismatch",
+                run=locked_run,
+                detail=(
+                    f"expected={requested_settlement_revision} "
+                    f"current={locked_revision}"
+                ),
+                idempotency_key=resume_idempotency_key,
+            )
+        if locked_revision != cas_revision:
+            return _native_resume_rejection(
+                target,
+                "settlement_revision_changed",
+                run=locked_run,
+                detail=f"expected={cas_revision} current={locked_revision}",
+                idempotency_key=resume_idempotency_key,
+            )
+        if locked_agent != agent or locked_agent_session != agent_session_id:
+            return _native_resume_rejection(
+                target,
+                "native_resume_identity_changed",
+                run=locked_run,
+                idempotency_key=resume_idempotency_key,
+            )
+        locked_parent_runtime_session_id = _explicit_native_identity(
+            locked_meta.get("runtime_session_id")
+            or locked_run.get("runtime_session_id")
+        )
+        if not locked_parent_runtime_session_id:
+            return _native_resume_rejection(
+                target,
+                "missing_runtime_session_id",
+                run=locked_run,
+                idempotency_key=resume_idempotency_key,
+            )
+        if locked_parent_runtime_session_id != parent_runtime_session_id:
+            return _native_resume_rejection(
+                target,
+                "runtime_session_identity_changed",
+                run=locked_run,
+                idempotency_key=resume_idempotency_key,
+            )
+        authority = guard_mod.authorize_guardian_resume(
+            run_id=target,
+            repo=Path(
+                str(locked_run.get("root") or locked_meta.get("root") or source_dir)
+            ),
+            meta=locked_meta,
+            projection=locked_run,
+            expected_receipt_id=requested_receipt_id,
+        )
+        if not authority.allowed:
+            return _native_resume_rejection(
+                target,
+                authority.reason,
+                run=locked_run,
+                detail=authority.detail,
+                idempotency_key=resume_idempotency_key,
+                retryable=authority.retryable,
+            )
+        locked_receipt_id = authority.receipt_id
+
+        resume_mode = "automatic" if resume_idempotency_key else "manual"
+        owner_token = ""
+        if resume_idempotency_key:
+            try:
+                idempotency_record, created = _claim_native_resume_idempotency(
+                    key=resume_idempotency_key,
+                    parent_run_id=target,
+                    agent=agent,
+                    agent_session_id=agent_session_id,
+                    parent_runtime_session_id=parent_runtime_session_id,
+                    parent_meta=locked_meta,
+                    parent_run=locked_run,
+                    settlement_revision=locked_revision,
+                    trust_receipt_id=locked_receipt_id,
+                )
+            except _AutomaticResumeBudgetExhausted as exc:
+                return _native_resume_rejection(
+                    target,
+                    "automatic_resume_budget_exhausted",
+                    run=locked_run,
+                    detail=str(exc),
+                    idempotency_key=resume_idempotency_key,
+                )
+            except (OSError, ValueError) as exc:
+                return _native_resume_rejection(
+                    target,
+                    "idempotency_claim_failed",
+                    run=locked_run,
+                    detail=f"{type(exc).__name__}: {exc}",
+                    idempotency_key=resume_idempotency_key,
+                    retryable=isinstance(exc, OSError),
+                )
+            recorded_parent = str(idempotency_record.get("parent_run_id") or "")
+            recorded_agent = str(idempotency_record.get("agent") or "").lower()
+            if recorded_parent != target or recorded_agent != agent:
+                return _native_resume_rejection(
+                    target,
+                    "idempotency_conflict",
+                    run=locked_run,
+                    idempotency_key=resume_idempotency_key,
+                )
+            if (
+                int(idempotency_record.get("settlement_revision") or 0)
+                != locked_revision
+            ):
+                return _native_resume_rejection(
+                    target,
+                    "settlement_revision_changed",
+                    run=locked_run,
+                    idempotency_key=resume_idempotency_key,
+                )
+            if (
+                str(idempotency_record.get("trust_receipt_id") or "")
+                != locked_receipt_id
+            ):
+                return _native_resume_rejection(
+                    target,
+                    "trust_receipt_id_changed",
+                    run=locked_run,
+                    idempotency_key=resume_idempotency_key,
+                )
+            if not created:
+                child = lookup_run(str(idempotency_record.get("child_run_id") or ""))
+                idempotency_state = str(idempotency_record.get("state") or "reserved")
+                if idempotency_state not in {
+                    "reserved",
+                    "launch_failed",
+                } or _native_resume_child_was_dispatched(child):
+                    return _native_resume_idempotency_result(
+                        target=target,
+                        agent=agent,
+                        requested_agent=requested_agent,
+                        key=resume_idempotency_key,
+                        record=idempotency_record,
+                        run=locked_run,
+                    )
+                idempotency_record = _take_over_native_resume_idempotency(
+                    key=resume_idempotency_key,
+                    record=idempotency_record,
+                )
+            child_run_id = str(idempotency_record["child_run_id"])
+            resume_root = str(idempotency_record["resume_root"])
+            attempt = int(idempotency_record["attempt"])
+            child_runtime_session_id = str(idempotency_record["runtime_session_id"])
+            owner_token = str(idempotency_record.get("owner_token") or "")
+        else:
+            child_run_id = reserve_run_id("rsme")
+            try:
+                resume_root, attempt = _reserve_native_resume_attempt(
+                    parent_run_id=target,
+                    child_run_id=child_run_id,
+                    parent_meta=locked_meta,
+                    parent_run=locked_run,
+                    resume_mode=resume_mode,
+                    settlement_revision=locked_revision,
+                    trust_receipt_id=locked_receipt_id,
+                )
+            except (OSError, ValueError) as exc:
+                return _native_resume_rejection(
+                    target,
+                    "attempt_reservation_failed",
+                    run=locked_run,
+                    detail=f"{type(exc).__name__}: {exc}",
+                    retryable=isinstance(exc, OSError),
+                )
+            child_runtime_session_id = ensure_session_id()
+
+        automatic_attempt_number = 1 if resume_mode == "automatic" else 0
+        child_env = dict(env or {})
+        child_env["VIBECRAFTED_SESSION_ID"] = child_runtime_session_id
+        child_env["VIBECRAFTED_AGENT_SESSION_ID"] = agent_session_id
+        launch_meta = {
+            "run_id": child_run_id,
+            "agent": agent,
+            "agent_session_id": agent_session_id,
+            "runtime_session_id": child_runtime_session_id,
+            "parent_runtime_session_id": parent_runtime_session_id,
+            "resume_of": target,
+            "resume_root": resume_root,
+            "attempt": attempt,
+            "native_resume": True,
+            "resume_mode": resume_mode,
+            "automatic_attempt_budget": NATIVE_RESUME_AUTOMATIC_ATTEMPT_BUDGET,
+            "automatic_attempt_number": automatic_attempt_number,
+            "resume_settlement_revision": locked_revision,
+            "resume_trust_receipt_id": locked_receipt_id,
+            **(
+                {"resume_idempotency_key": resume_idempotency_key}
+                if resume_idempotency_key
+                else {}
+            ),
+        }
+        claim_digest = str(
+            locked_meta.get("claim_digest") or locked_run.get("claim_digest") or ""
+        ).strip()
+        spec = WorkflowLaunchSpec(
+            agent=agent,
+            mode="native_resume",
+            skill=str(
+                locked_run.get("skill") or locked_meta.get("skill") or "workflow"
+            ),
+            prompt=str(prompt or "").strip() or DEFAULT_NATIVE_RESUME_PROMPT,
+            file="",
+            runtime="headless",
+            root=str(
+                locked_run.get("root")
+                or locked_meta.get("root")
+                or Path(source_dir).resolve()
+            ),
+            model=str(
+                locked_run.get("model_requested")
+                or locked_meta.get("model_requested")
+                or ""
+            ),
+            claim_digest=claim_digest,
+            run_id=child_run_id,
+        )
+        resume_command = _with_model_override(agent, command, spec.model)
+        if owner_token:
+            _activate_native_resume_lease(owner_token)
+        try:
+            launched = launch_workflow(
+                spec,
+                source_dir,
+                env=child_env,
+                worker_command_override=resume_command,
+                launch_meta=launch_meta,
+            )
+        except BaseException as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            if resume_idempotency_key:
+                try:
+                    _update_native_resume_idempotency(
+                        key=resume_idempotency_key,
+                        child_run_id=child_run_id,
+                        state="reserved",
+                        launch_accepted=False,
+                        error=detail,
+                        owner_token=owner_token,
+                        release_owner=True,
+                    )
+                except (OSError, ValueError) as receipt_exc:
+                    detail += (
+                        "; idempotency receipt update failed: "
+                        f"{type(receipt_exc).__name__}: {receipt_exc}"
+                    )
+                finally:
+                    _release_native_resume_lease(owner_token)
+            if not isinstance(exc, (OSError, ValueError)):
+                raise
+            return _native_resume_rejection(
+                target,
+                "launch_rejected",
+                run=locked_run,
+                detail=detail,
+                idempotency_key=resume_idempotency_key,
+            )
+
+        accepted = bool(launched.get("accepted"))
+        idempotency_receipt_error = ""
+        if resume_idempotency_key:
+            try:
+                _update_native_resume_idempotency(
+                    key=resume_idempotency_key,
+                    child_run_id=child_run_id,
+                    state="dispatched" if accepted else "reserved",
+                    launch_accepted=accepted,
+                    launch=launched,
+                    owner_token=owner_token,
+                    release_owner=not accepted,
+                )
+            except (OSError, ValueError) as exc:
+                idempotency_receipt_error = f"{type(exc).__name__}: {exc}"
+            finally:
+                _release_native_resume_lease(owner_token)
+        payload = {
+            "accepted": accepted,
+            "reason": "dispatched" if accepted else "launch_failed",
+            "retryable": not accepted,
+            "terminal": accepted,
+            "new_run_id": child_run_id,
+            "agent": agent,
+            "agent_session_id": agent_session_id,
+            "runtime_session_id": child_runtime_session_id,
+            "parent_runtime_session_id": parent_runtime_session_id,
+            "resume_of": target,
+            "resume_root": resume_root,
+            "attempt": attempt,
+            "resume_mode": resume_mode,
+            "automatic_attempt_budget": NATIVE_RESUME_AUTOMATIC_ATTEMPT_BUDGET,
+            "automatic_attempt_number": automatic_attempt_number,
+            "settlement_revision": locked_revision,
+            "trust_receipt_id": locked_receipt_id,
+            "probe_state": provider_probe_state,
+            "probe_version": provider_probe_version,
+            "deduplicated": False,
+            **(
+                {"idempotency_key": resume_idempotency_key}
+                if resume_idempotency_key
+                else {}
+            ),
+            **(
+                {"idempotency_receipt_error": idempotency_receipt_error}
+                if idempotency_receipt_error
+                else {}
+            ),
+        }
+        append_event(
+            kind="audit:native_resume",
+            run_id=target,
+            message=(
+                "native resume dispatched"
+                if accepted
+                else "native resume launch failed"
+            ),
+            payload=payload,
+        )
+        return {
+            "accepted": accepted,
+            "run_id": target,
+            "resume_run_id": child_run_id,
+            "launch": launched,
+            **payload,
+        }
+
+
 def block_run(
     run_id: str,
     *,
@@ -1993,7 +3891,16 @@ def block_run(
     target = str(run_id or "").strip()
     if not target:
         raise ValueError("run_id is required")
+    with run_mutation_locks(control_plane_home(), run_id=target):
+        return _block_run_locked(target, reason=reason, note=note)
 
+
+def _block_run_locked(
+    target: str,
+    *,
+    reason: str,
+    note: str,
+) -> dict[str, Any]:
     run = lookup_run(target)
     if run is None:
         append_event(

@@ -132,7 +132,8 @@ Repo-local `.vibecrafted/plans` and `.vibecrafted/reports` are convenience symli
 ## Spawn Commands
 
 Use the portable scripts from `runtime/scripts/`. These handle artifact
-generation, launch mode selection (visible Terminal or headless), and execution
+generation, launch mode selection (headless by default; terminal only when
+explicitly requested), and execution
 environment setup automatically.
 
 ### Codex (default for implementation)
@@ -141,23 +142,23 @@ environment setup automatically.
 ARTIFACT_DAY="$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>"
 PLAN="$ARTIFACT_DAY/plans/<ts>_<agent-task>.md"
 
-bash runtime/scripts/codex_spawn.sh "$PLAN" --mode implement --runtime terminal
+bash runtime/scripts/codex_spawn.sh "$PLAN" --mode implement
 ```
 
 ### Claude (for complex reasoning tasks)
 
 ```bash
-bash agents//claude_spawn.sh "$PLAN" --mode review --runtime terminal
+bash agents//claude_spawn.sh "$PLAN" --mode review
 ```
 
 ### Gemini
 
 ```bash
-bash agents//agy_spawn.sh "$PLAN" --mode implement --runtime terminal  # gemini deprecated; agy is the Google-family runtime
+bash agents//agy_spawn.sh "$PLAN" --mode implement  # gemini deprecated; agy is the Google-family runtime
 ```
 
-> The scripts default to visible Terminal mode on macOS and fall back to headless
-> when Terminal automation is unavailable.
+> The scripts default to detached headless execution on every platform.
+> Pass `--runtime terminal` only for a provider path proven to require a TTY.
 
 If the optional zsh helper layer is installed, the same actions become:
 

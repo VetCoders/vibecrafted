@@ -43,6 +43,50 @@ def test_snapshot_marks_owned_process_killable():
     assert rows[900]["start_token"]
 
 
+def test_process_identity_receipt_rejects_reused_pid_or_wrong_run():
+    original = [entry(904, pgid=5004, command="python worker.py")]
+    receipt = pc.process_identity_receipt(
+        904,
+        run_id="impl-owned",
+        table=original,
+    )
+
+    assert receipt is not None
+    current, reason, identity = pc.validate_process_identity(
+        receipt,
+        expected_pid=904,
+        expected_pgid=5004,
+        expected_run_id="impl-owned",
+        table=original,
+        env_index={904: "impl-owned"},
+    )
+    assert current is True
+    assert reason == "process_identity_current"
+    assert identity is not None
+
+    reused, reason, _identity = pc.validate_process_identity(
+        receipt,
+        expected_pid=904,
+        expected_pgid=5004,
+        expected_run_id="impl-owned",
+        table=[entry(904, pgid=5004, command="python unrelated.py")],
+        env_index={904: "impl-owned"},
+    )
+    assert reused is False
+    assert reason == "process_identity_mismatch"
+
+    wrong_run, reason, _identity = pc.validate_process_identity(
+        receipt,
+        expected_pid=904,
+        expected_pgid=5004,
+        expected_run_id="impl-owned",
+        table=original,
+        env_index={904: "some-other-run"},
+    )
+    assert wrong_run is False
+    assert reason == "process_run_id_mismatch"
+
+
 def test_snapshot_protects_vc_frame():
     table = [entry(901, pgid=4242, command="/usr/local/bin/vc-frame attach foo")]
     snap = pc.snapshot_processes(

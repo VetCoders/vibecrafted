@@ -3,6 +3,45 @@
 All notable changes to 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## 3.7.0 — 2026-07-27
+
+> **Runtime truth recovery.** The release where a killed supervisor, a stale
+> lock, a torn journal, or a lying "healthy" receipt can no longer fake the
+> board. 114 commits across 202 files, every recovery path proof-gated.
+
+### Highlights
+
+- **Durable settlement V2** — immutable, append-only, hash-chained
+  `SettlementEventV2` ledger (`settlement_ledger` / `settlement_history`),
+  published as durable revisions and read back by triage, guardian, and the
+  control plane. Zero on the f/x/n rail is now a verdict, not a default.
+- **Read-only settlements CLI** — `vibecrafted settlements`
+  (summary / list / inspect / revalidatable) over the canonical ledger,
+  schema `vibecrafted.settlements-query.v1`.
+- **Untriaged-run sweep** — `run_triage --sweep-control-plane` retro-triages
+  every finished run the dispatcher never came back for (the 418-runs-of-
+  silence class), idempotent and bounded, with rotating candidates.
+- **Guardian recovery** — event-driven recovery guardian with server-owned
+  sidecar lifecycle, exact argv identity, trust-outbox recovery before
+  attach, reconciled recovery lineage, and race-closed native resume.
+- **Supervised service truth** — canonical pair health proof before any
+  healthy receipt; foreign live PIDs and minimal identity JSON are rejected;
+  doctor fails closed on dead supervision; malformed service plists are
+  contained; stale lifecycle locks recover after SIGKILL.
+- **Trust journal crash-safety** — torn/partial JSONL tails after a
+  prepared-outbox crash are repaired to the exact prefix; newline crash
+  recovery gaps closed; post-hoc commit verdicts.
+- **Scaffold control room** — plan library + picker with a deterministic
+  machine-checked `scaffold-doctor` gate (R1–R11), bounded catalog
+  discovery, and health checks that stay cheap and isolated.
+- **Install/runtime handoff** — crash-atomic tool handoff, supervision
+  enabled only after payload verification, terminal failure truth preserved,
+  and dirfd-anchored restore publication with digest checks.
+- **Test-suite hermeticity vs live operator runtime** — TUI/core suites and
+  the portable gate now strip ambient frame/session env (`ZELLIJ*`,
+  `VC_FRAME*`, prepared-session vars, `PYTHONPATH`), so green in CI can no
+  longer redden on an operator machine with a live cockpit.
+
 ## 3.6.0 — 2026-07-24
 
 > **Ship AI-built software without the vibe hangover.**

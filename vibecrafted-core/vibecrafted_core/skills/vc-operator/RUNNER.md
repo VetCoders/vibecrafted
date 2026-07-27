@@ -168,9 +168,10 @@ or small bounded research inside the operator session.
 
 - telemetry — every launcher fire writes `meta.json` + transcript
   - report path, native subagents do not
-- observability — the operator's watched terminal tab (vc-frame /
-  tmux / screen) only surfaces launcher-fired dispatches; native
-  subagents fire into the dark (NIGDY HEADLESS rule)
+- observability — the receipt, control-plane state, transcript, and report
+  remain available while detached workers run headless; vc-frame may project
+  those surfaces but does not host the worker. Native subagents do not register
+  the same fleet run contract
 - recovery — a stalled launcher dispatch has a known recovery
   doctrine in `./AWAIT.md`; a native subagent stall is invisible
 

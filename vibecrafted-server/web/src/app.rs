@@ -29,6 +29,7 @@ struct DashboardSettlement {
     x: usize,
     n: usize,
     invalid: usize,
+    unclassified: usize,
     total_settled: usize,
 }
 
@@ -149,6 +150,7 @@ fn load_dashboard_data_from(
             x: settlement.x,
             n: settlement.n,
             invalid: settlement.invalid,
+            unclassified: settlement.unclassified,
             total_settled: settlement.total_settled,
         },
         active_runs: state.active_runs.into_iter().map(run_summary).collect(),
@@ -282,6 +284,7 @@ fn settlement_board(settlement: DashboardSettlement) -> impl IntoView {
             data-x=settlement.x
             data-n=settlement.n
             data-invalid=settlement.invalid
+            data-unclassified=settlement.unclassified
             data-total-settled=settlement.total_settled
         >
             <div class="settlement-board-head">
@@ -311,6 +314,7 @@ fn settlement_board(settlement: DashboardSettlement) -> impl IntoView {
             </dl>
             <div class="settlement-board-foot">
                 <span>{format!("{} active", settlement.active)}</span>
+                <span>{format!("{} unclassified snapshots", settlement.unclassified)}</span>
                 <span>{format!("{} settled", settlement.total_settled)}</span>
             </div>
         </section>
@@ -601,7 +605,15 @@ mod tests {
         });
         let board = &api["settlement_counts"];
 
-        for key in ["active", "f", "x", "n", "invalid", "total_settled"] {
+        for key in [
+            "active",
+            "f",
+            "x",
+            "n",
+            "invalid",
+            "unclassified",
+            "total_settled",
+        ] {
             let expected = board[key].as_u64().expect("numeric settlement field");
             let attribute = key.replace('_', "-");
             assert!(

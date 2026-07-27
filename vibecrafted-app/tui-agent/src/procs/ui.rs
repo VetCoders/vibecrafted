@@ -1,12 +1,12 @@
 //! Ratatui rendering for vc-procs.
 
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
 #[allow(unused_imports)]
 use ratatui::text::Text;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Gauge, Paragraph, Row, Table};
-use ratatui::Frame;
 
 use super::app::ProcsApp;
 use super::model::format_bytes;
@@ -82,7 +82,11 @@ pub fn draw(frame: &mut Frame, app: &ProcsApp) {
 
 fn draw_gauge(frame: &mut Frame, area: Rect, title: &str, ratio: f64, label: String, color: Color) {
     let g = Gauge::default()
-        .block(Block::default().borders(Borders::ALL).title(format!(" {title} ")))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" {title} ")),
+        )
         .gauge_style(Style::default().fg(color).bg(Color::DarkGray))
         .ratio(ratio.clamp(0.0, 1.0))
         .label(label);
@@ -96,7 +100,9 @@ fn draw_table(frame: &mut Frame, area: Rect, app: &ProcsApp) {
     let rows = idxs.iter().enumerate().filter_map(|(vis, &i)| {
         let p = app.snapshot.processes.get(i)?;
         let style = if vis == app.selected {
-            Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };

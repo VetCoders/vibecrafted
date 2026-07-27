@@ -31,6 +31,7 @@ def test_lazy_workflow_exports_load_on_demand() -> None:
     # These live behind module.__getattr__ to keep CLI modules out of a bare
     # `import vibecrafted_core`; accessing one must materialize a real symbol.
     assert callable(vibecrafted_core.launch_workflow)
+    assert callable(vibecrafted_core.native_resume_run)
     assert callable(vibecrafted_core.vibecrafted_launcher)
 
 

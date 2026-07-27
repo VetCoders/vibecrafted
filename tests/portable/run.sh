@@ -3,6 +3,17 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+# Portable simulates a stranger's clean machine. A live Vibecrafted worker
+# shell exports runtime identity plus PYTHONPATH pinned at the HOST install;
+# leaked into the sandboxed bootstrap they make uv-tool import the host's
+# vibecrafted_core and trip the install-tools drift FATAL. Strip them all
+# up front instead of per-invocation.
+unset PYTHONPATH
+for _ambient_var in $(compgen -e | grep -E '^(VIBECRAFTED_|VC_FRAME|ZELLIJ)'); do
+  unset "$_ambient_var"
+done
+unset _ambient_var
+
 log() {
   printf '[portable] %s\n' "$*"
 }
@@ -68,6 +79,25 @@ assert_not_contains() {
   fi
 }
 
+assert_no_perception_watcher() {
+  local root="$1"
+  python3 - "$root" <<'PY' || die "Detached perception watcher escaped the portable sandbox: $root"
+import subprocess
+import sys
+
+root = sys.argv[1]
+needle = f"loct watch --dev {root}"
+result = subprocess.run(
+    ["ps", "-axo", "command="],
+    check=True,
+    capture_output=True,
+    text=True,
+)
+if any(line.strip().endswith(needle) for line in result.stdout.splitlines()):
+    raise SystemExit(1)
+PY
+}
+
 print_installer_logs() {
   local home="$1"
   local log_dir="$home/.vibecrafted/logs/installer"
@@ -104,6 +134,10 @@ if command -v zsh >/dev/null 2>&1; then
 fi
 
 workspace="$(mktemp -d)"
+# macOS reports TMPDIR through the compatibility /var symlink.  Canonicalize
+# the sandbox root before it becomes HOME so the installer's no-follow payload
+# transaction proves a physical path instead of correctly rejecting /var.
+workspace="$(cd "$workspace" && pwd -P)"
 cleanup_workspace() {
   local status=$?
   rm -rf "$workspace" 2>/dev/null || {
@@ -122,6 +156,11 @@ fake_bin="$home_dir/.local/bin"
 bootstrap_archive="$workspace/vibecrafted-bootstrap.tar.gz"
 mkdir -p "$bootstrap_home" "$bootstrap_config_dir" "$home_dir" "$config_dir" "$work_repo" "$fake_bin"
 
+# Product spawns intentionally detach one perception watcher per durable repo.
+# This test repo is ephemeral and deleted by the EXIT trap, so keep that
+# orthogonal daemon disabled here; perception lifecycle has its own core suite.
+export VIBECRAFTED_PERCEPTION_WATCH=0
+
 log "bootstrap smoke via root install.sh"
 tar -czf "$bootstrap_archive" \
   --exclude='.git' \
@@ -129,7 +168,9 @@ tar -czf "$bootstrap_archive" \
   --exclude='output' \
   --exclude='*.png' \
   -C "$repo_root" .
-if ! HOME="$bootstrap_home" XDG_CONFIG_HOME="$bootstrap_config_dir" VIBECRAFTED_HOME="$bootstrap_home/.vibecrafted" \
+# The portable sandbox shares the operator's launchd user domain. Install the
+# complete payload without claiming or mutating the host's fixed service label.
+if ! HOME="$bootstrap_home" XDG_CONFIG_HOME="$bootstrap_config_dir" VIBECRAFTED_HOME="$bootstrap_home/.vibecrafted" INSTALL_SERVER_SERVICE_POLICY=isolated \
   bash "$repo_root/install.sh" --archive-file "$bootstrap_archive"; then
   print_installer_logs "$bootstrap_home"
   die "root install.sh bootstrap failed"
@@ -159,7 +200,7 @@ HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
 # granular installer, so create the shim here too — otherwise the launcher
 # symlink dangles and the resume smoke below cannot exec it.
 log "stage python launcher tools (uv-tool shim)"
-HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
+HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" INSTALL_TOOLS_SERVICE_POLICY=isolated \
   make --no-print-directory -C "$repo_root" install-python-tools
 
 require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"
@@ -168,8 +209,8 @@ require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runti
 require_file "$home_dir/.local/bin/vibecrafted"
 require_symlink "$home_dir/.local/bin/vc-help"
 require_symlink "$home_dir/.local/bin/vc-marbles"
-# Skill-symlink fan-out follows SYMLINK_TARGETS (agents, claude, codex, agy).
-# gemini is deprecated; no gemini_spawn.sh is shipped.
+# Explicit --tool selections keep their requested compatibility views.
+require_symlink "$home_dir/.agents/skills/vc-agents"
 require_symlink "$home_dir/.codex/skills/vc-agents"
 require_symlink "$home_dir/.claude/skills/vc-agents"
 require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"
@@ -199,6 +240,16 @@ PLAN
 cat > "$fake_bin/codex" <<'EOF_CODEX'
 #!/usr/bin/env bash
 set -euo pipefail
+case "${1:-}" in
+  --version)
+    echo "codex-cli 0.999.0-portable-fixture"
+    exit 0
+    ;;
+  --help)
+    echo "Usage: codex [exec|resume]"
+    exit 0
+    ;;
+esac
 report=""
 json_mode=0
 if [[ -n "${FAKE_CODEX_CAPTURE:-}" ]]; then
@@ -216,7 +267,11 @@ while [[ $# -gt 0 ]]; do
   esac
   shift || true
 done
-cat >/dev/null || true
+if [[ -n "${FAKE_CODEX_STDIN_CAPTURE:-}" ]]; then
+  cat > "$FAKE_CODEX_STDIN_CAPTURE"
+else
+  cat >/dev/null || true
+fi
 if (( json_mode )); then
   printf '{"type":"thread.started","thread_id":"fake-session-001"}\n'
   printf '{"type":"item.started","item":{"type":"command_execution","command":"ls"}}\n'
@@ -346,9 +401,9 @@ assert_matches "$claude_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2} Read\]'
 assert_matches "$agy_transcript" 'agy-test-model'
 
 jq -e '.prompt_id != null and (.prompt_id | startswith("test_"))' "$codex_meta" >/dev/null || die "codex meta missing prompt_id"
-jq -e '.run_id | test("^plan-[0-9]{6}-[0-9]+$")' "$codex_meta" >/dev/null || die "codex meta missing plan run_id"
-jq -e '.run_id | test("^rvew-[0-9]{6}-[0-9]+$")' "$claude_meta" >/dev/null || die "claude meta missing review run_id"
-jq -e '.run_id | test("^impl-[0-9]{6}-[0-9]+$")' "$agy_meta" >/dev/null || die "agy meta missing implement run_id"
+jq -e '.run_id | test("^plan-[0-9]{6}-[0-9]{6}-[0-9]{5}$")' "$codex_meta" >/dev/null || die "codex meta has non-canonical plan run_id"
+jq -e '.run_id | test("^rvew-[0-9]{6}-[0-9]{6}-[0-9]{5}$")' "$claude_meta" >/dev/null || die "claude meta has non-canonical review run_id"
+jq -e '.run_id | test("^impl-[0-9]{6}-[0-9]{6}-[0-9]{5}$")' "$agy_meta" >/dev/null || die "agy meta has non-canonical implement run_id"
 jq -e '.loop_nr == 0' "$codex_meta" >/dev/null || die "codex meta missing loop_nr"
 jq -e '.framework_version != null and .framework_version != ""' "$codex_meta" >/dev/null || die "codex meta missing framework_version"
 jq -e '.completed_at != null and .duration_s != null' "$codex_meta" >/dev/null || die "codex meta missing completion telemetry"
@@ -356,15 +411,35 @@ jq -e '.liveness == "terminal"' "$codex_meta" >/dev/null || die "codex meta miss
 
 log "launcher resume smoke"
 resume_capture="$workspace/resume-codex.txt"
+resume_prompt_capture="$workspace/resume-codex-prompt.txt"
+resume_output="$(
+  env -u VIBECRAFTED_RUN_ID -u VIBECRAFTED_OPERATOR_SESSION \
+    -u VC_FRAME -u VC_FRAME_PANE_ID -u VC_FRAME_SESSION_NAME \
+    -u ZELLIJ -u ZELLIJ_PANE_ID -u ZELLIJ_SESSION_NAME \
+    HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" \
+    FAKE_CODEX_CAPTURE="$resume_capture" \
+    FAKE_CODEX_STDIN_CAPTURE="$resume_prompt_capture" \
+    "$home_dir/.local/bin/vibecrafted" resume codex \
+      --session fake-session-001 --prompt "resume smoke"
+)"
+printf '%s\n' "$resume_output"
+resume_run_id="$(
+  printf '%s\n' "$resume_output" |
+    sed -n 's/^run_id:[[:space:]]*//p' |
+    tail -n 1
+)"
+[[ -n "$resume_run_id" ]] || die "resume receipt did not expose a run_id"
 env -u VIBECRAFTED_RUN_ID -u VIBECRAFTED_OPERATOR_SESSION \
   -u VC_FRAME -u VC_FRAME_PANE_ID -u VC_FRAME_SESSION_NAME \
   -u ZELLIJ -u ZELLIJ_PANE_ID -u ZELLIJ_SESSION_NAME \
-  HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" FAKE_CODEX_CAPTURE="$resume_capture" \
-  "$home_dir/.local/bin/vibecrafted" resume codex --session fake-session-001 --prompt "resume smoke"
+  HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" \
+  "$home_dir/.local/bin/vibecrafted" codex await \
+    --run-id "$resume_run_id" --timeout 20 --interval 0.1 --status-interval 20
 require_file "$resume_capture"
+require_file "$resume_prompt_capture"
 assert_contains "$resume_capture" 'resume'
 assert_contains "$resume_capture" 'fake-session-001'
-assert_contains "$resume_capture" 'resume smoke'
+assert_contains "$resume_prompt_capture" 'resume smoke'
 
 log "helper bash smoke"
 # shellcheck disable=SC2016
@@ -390,6 +465,7 @@ require_file "$skill_meta"
 jq -e '.skill_code == "marb"' "$skill_meta" >/dev/null || die "skill helper did not wire skill_code"
 jq -e '.run_id | startswith("marb-")' "$skill_meta" >/dev/null || die "skill helper did not wire run_id"
 jq -e '.liveness == "terminal"' "$skill_meta" >/dev/null || die "skill helper did not finish with terminal liveness"
+assert_no_perception_watcher "$work_repo"
 
 # If zsh is available, also smoke test zsh loading via compat symlink
 if command -v zsh >/dev/null 2>&1; then

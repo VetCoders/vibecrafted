@@ -7,10 +7,12 @@ import errno
 import fcntl
 import json
 import os
+import re
+import stat
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -23,14 +25,26 @@ from .delivery.model import (
     ProofResult,
     ProofState,
 )
+from .report_contract import (
+    CLAIM_BLOCKED,
+    CLAIM_COMPLETED,
+    CLAIM_FAILED,
+    CLAIM_PARTIAL,
+    validate_report_file,
+)
+from .run_mutation import run_mutation_locks
 from .runtime_paths import vibecrafted_home
 from .settlement import (
+    SETTLEMENT_EVENT_KIND,
     board_fxn_counts,
     can_archive,
+    emit_settlement_event,
     orphan_settlement_payloads,
     persist_await_verdict,
     persist_settlement_to_meta,
+    prepare_settlement_event,
     settle_payload,
+    settlement_from_payload,
 )
 
 ACTIVE_STATES = {
@@ -72,6 +86,22 @@ BLOCKED_STATES = {
     "contract_failed",
     "recovery_required",
 }
+SETTLEMENT_PROJECTION_FIELDS = (
+    "settlement_verdict",
+    "settlement_reason",
+    "settlement_at",
+    "settlement_source",
+    "settlement_tui",
+    "settlement_waived",
+    "settlement_claim_digest",
+    "settlement_revision",
+    "settlement",
+    "await_rc",
+    "await_outcome",
+    "await_reason",
+    "await_worker_alive",
+    "await_settled_at",
+)
 SKILL_CODE_MAP = {
     "agnt": "agents",
     "deco": "decorate",
@@ -104,6 +134,12 @@ RUN_SNAPSHOT_RETENTION_COUNT_ENV = "VIBECRAFTED_RUN_SNAPSHOT_RETENTION_COUNT"
 EVENT_TAIL_LIMIT = 16
 EVENTS_ROTATE_BYTES = 32 * 1024 * 1024
 EVENTS_ROTATE_BYTES_ENV = "VIBECRAFTED_EVENTS_ROTATE_BYTES"
+EVENTS_ARCHIVE_MAX_FILES = 64
+EVENTS_ARCHIVE_MAX_FILES_ENV = "VIBECRAFTED_EVENTS_ARCHIVE_MAX_FILES"
+EVENTS_ARCHIVE_MAX_BYTES = 512 * 1024 * 1024
+EVENTS_ARCHIVE_MAX_BYTES_ENV = "VIBECRAFTED_EVENTS_ARCHIVE_MAX_BYTES"
+EVENT_SEGMENT_SCHEMA = "vibecrafted.event-stream-segment.v1"
+EVENT_MAX_LINE_BYTES = 256 * 1024
 RECENT_RUN_LIMIT = 12
 MISSING_SESSION_IDS = {"", "pending", "none", "null", "unknown"}
 
@@ -142,7 +178,21 @@ class Event:
     kind: str
     message: str
     payload: dict[str, Any]
-    cursor: int
+    cursor: str
+
+
+@dataclass(frozen=True)
+class _EventSegment:
+    path: Path
+    epoch: str
+    generation: int
+    data_start: int
+    size: int
+    active: bool
+    modified_ns: int
+
+    def cursor(self, offset: int) -> str:
+        return f"v2:{self.epoch}:{self.generation}:{max(offset, 0)}"
 
 
 @dataclass(frozen=True)
@@ -171,6 +221,10 @@ def run_snapshot_dir() -> Path:
 
 def event_stream_path() -> Path:
     return control_plane_home() / "events.jsonl"
+
+
+def _event_lock_path() -> Path:
+    return control_plane_home() / ".events.lock"
 
 
 def _sync_lock_path() -> Path:
@@ -204,6 +258,45 @@ def _sync_lock_timeout_seconds() -> float:
 
 
 @contextlib.contextmanager
+def _event_lock(*, exclusive: bool) -> Iterator[None]:
+    """Coordinate event appends with generation rotation.
+
+    Lock order is ``_sync_lock`` then ``_event_lock`` whenever both are held.
+    Appenders take the exclusive lock only around tail repair, one bounded
+    ``O_APPEND`` write, and fsync. Rotation takes the same exclusive lock, so no
+    writer can open the old inode after it has been archived. Readers may take
+    the shared lock without ever touching the global sync lock.
+
+    The lock file is deliberately stable across rotations. ``O_NOFOLLOW`` plus
+    owner/mode checks prevent a replaced symlink or another user's writable
+    file from becoming the synchronization authority.
+    """
+
+    home = control_plane_home()
+    home.mkdir(parents=True, exist_ok=True)
+    flags = os.O_RDWR | os.O_CREAT
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(_event_lock_path(), flags, 0o600)
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError(errno.EINVAL, "event lock is not a regular file")
+        if metadata.st_uid != os.getuid():
+            raise PermissionError("event lock is not owned by the current user")
+        if metadata.st_mode & 0o022:
+            raise PermissionError("event lock must not be group/world writable")
+        operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        fcntl.flock(fd, operation)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+@contextlib.contextmanager
 def _sync_lock(
     *, timeout: float | None = None, purpose: str = "sync"
 ) -> Iterator[None]:
@@ -213,14 +306,13 @@ def _sync_lock(
     to ``timeout`` seconds, then raises :class:`ControlPlaneLockBusy`.
 
     DOCTRINE (enforced by ``tests/test_control_plane_lock_doctrine.py`` — do not
-    weaken): this lock guards ONLY the full (unscoped) board rebuild in
+    weaken): this GLOBAL lock guards ONLY the full (unscoped) board rebuild in
     ``sync_state``. It must NEVER wrap a per-run path or the append/emit path.
-    Per-run snapshots are single-writer atomic (``_write_json`` = tmp +
-    ``os.replace``) and event appends are atomic ``O_APPEND`` writes; neither
-    needs this mutex. Re-serializing them "for safety" is the exact regression
-    that caused the 2026-07-12 flock migraine (empty dispatchers, false
-    stalled/pid_gone). If a change wants the lock on a hot path, the change is
-    wrong.
+    Run snapshots use the independent ``run_mutation_locks`` key for their own
+    run id; event appends use the dedicated event lock around one atomic
+    ``O_APPEND`` write. Re-serializing either hot path on this shared mutex is
+    the exact regression that caused the 2026-07-12 flock migraine (empty
+    dispatchers, false stalled/pid_gone).
     """
     control_plane_home().mkdir(parents=True, exist_ok=True)
     lock_path = _sync_lock_path()
@@ -268,6 +360,100 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     finally:
         with contextlib.suppress(OSError):
             tmp.unlink()
+
+
+def _write_json_durable(path: Path, payload: dict[str, Any]) -> None:
+    """Atomically publish JSON and durably commit both data and directory entry."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    descriptor = -1
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
+    try:
+        descriptor = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+        written = os.write(descriptor, data)
+        if written != len(data):
+            raise OSError(errno.EIO, f"short write to {tmp}")
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(tmp, path)
+        _fsync_directory_durable(path.parent)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+
+
+def _fsync_directory_durable(path: Path) -> None:
+    """Fsync a directory or raise; authority receipts cannot be best-effort."""
+
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _write_run_snapshot(
+    path: Path,
+    previous: dict[str, Any] | None,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """CAS one run projection, its runtime meta, and its settlement event.
+
+    Projection work intentionally happens outside this critical section so
+    different runs never herd behind one global mutex. The exact snapshot used
+    to derive the candidate is compared again after the per-run lock is held.
+    A stale writer loses without rebasing stale evidence into a newer verdict.
+    """
+
+    run_id = str(payload.get("run_id") or path.stem).strip()
+    if not run_id:
+        return {}
+    root = control_plane_home()
+    with run_mutation_locks(root, run_id=run_id):
+        current_payload = _read_json(path)
+        current = (
+            current_payload
+            if str(current_payload.get("run_id") or "") == run_id
+            else None
+        )
+        expected = previous if previous else None
+        if current != expected:
+            return dict(current or {})
+
+        # Per-run snapshots are projections, never f/x/n history authorities.
+        # Scrub the short-lived 052c embedded ledger on the next successful CAS.
+        payload.pop("settlement_history", None)
+        event = prepare_settlement_event(run_id, current, payload)
+        revision = _coerce_int(payload.get("settlement_revision"))
+        nested = payload.get("settlement")
+        if revision is not None and isinstance(nested, dict):
+            nested["revision"] = revision
+
+        settlement = settlement_from_payload(payload)
+        runtime_meta = _runtime_run_dir(run_id) / "meta.json"
+        if settlement is not None and runtime_meta.is_file():
+            if revision is None or revision <= 0:
+                return dict(current or {})
+            if not persist_settlement_to_meta(
+                runtime_meta,
+                settlement,
+                control_plane_root=root,
+                run_id=run_id,
+                revision=revision,
+            ):
+                return dict(current or {})
+
+        _write_json(path, payload)
+        _record_transition(current, payload)
+        if event is not None:
+            emit_settlement_event(event)
+        return payload
 
 
 def _read_lines(path: Path) -> list[str]:
@@ -385,6 +571,18 @@ def _configured_events_rotate_bytes() -> int:
     return _configured_nonnegative_int(EVENTS_ROTATE_BYTES_ENV, EVENTS_ROTATE_BYTES)
 
 
+def _configured_events_archive_max_files() -> int:
+    return _configured_nonnegative_int(
+        EVENTS_ARCHIVE_MAX_FILES_ENV, EVENTS_ARCHIVE_MAX_FILES
+    )
+
+
+def _configured_events_archive_max_bytes() -> int:
+    return _configured_nonnegative_int(
+        EVENTS_ARCHIVE_MAX_BYTES_ENV, EVENTS_ARCHIVE_MAX_BYTES
+    )
+
+
 def _configured_nonnegative_int(env_name: str, default: int) -> int:
     raw = os.environ.get(env_name)
     if not raw:
@@ -431,6 +629,14 @@ def _operator_state(run: dict[str, Any]) -> str:
     return "running"
 
 
+def _accepted_operator_stop_payload(run: dict[str, Any] | None) -> bool:
+    return bool(
+        isinstance(run, dict)
+        and str(run.get("state") or "") == "stopped"
+        and run.get("operator_stop_accepted") is True
+    )
+
+
 def _artifact_projection(
     run: dict[str, Any], previous: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -441,10 +647,17 @@ def _artifact_projection(
     errors = [str(item) for item in (run.get("artifact_errors") or []) if str(item)]
     artifact_ok = run.get("artifact_ok")
     terminal_state = state in {"report_validated", "completed", "closed"}
+    operator_stopped = _accepted_operator_stop_payload(run)
     has_live_identity = bool(str(run.get("session_id") or "").strip())
     defer_report_gate = state in ACTIVE_STATES and has_live_identity
 
-    if report and not defer_report_gate:
+    if operator_stopped:
+        # Completion evidence is intentionally not owed after an operator stop.
+        # Later supervisor artifact errors remain observable in the event log,
+        # but cannot turn accepted terminal intent into report_missing/failed.
+        errors = []
+        artifact_ok = True
+    elif report and not defer_report_gate:
         report_path = Path(report)
         try:
             if not report_path.exists():
@@ -480,7 +693,9 @@ def _artifact_projection(
     else:
         artifact_ok = bool(artifact_ok) and len(errors) == 0
 
-    if errors:
+    if operator_stopped:
+        gate = "stopped"
+    elif errors:
         gate = "failed"
     elif state in {"report_validated", "completed", "closed"}:
         gate = "validated"
@@ -493,7 +708,12 @@ def _artifact_projection(
     result["transcript_bytes"] = transcript_bytes
     result["transcript_growth"] = transcript_growth
     result["heartbeat_at"] = str(run.get("heartbeat_at") or run.get("updated_at") or "")
-    if terminal_state and artifact_ok and not errors:
+    if operator_stopped:
+        result["health"] = "final"
+        result["liveness"] = str(result.get("liveness") or "terminal")
+        result["recovery_required"] = False
+        result["last_error"] = ""
+    elif terminal_state and artifact_ok and not errors:
         if _coerce_int(result.get("exit_code")) is None:
             result["exit_code"] = 0
         if not str(result.get("completed_at") or ""):
@@ -531,6 +751,95 @@ def _heartbeat_age_seconds(run: dict[str, Any], now: dt.datetime) -> float | Non
     if heartbeat_at.tzinfo is None:
         heartbeat_at = heartbeat_at.replace(tzinfo=dt.timezone.utc)
     return (now - heartbeat_at).total_seconds()
+
+
+def _transcript_age_seconds(run: dict[str, Any], now: dt.datetime) -> float | None:
+    """Seconds since the transcript last grew, or None when there is none."""
+    transcript = str(run.get("latest_transcript") or "").strip()
+    if not transcript:
+        return None
+    try:
+        mtime = Path(transcript).stat().st_mtime
+    except OSError:
+        return None
+    stamped = dt.datetime.fromtimestamp(mtime, dt.timezone.utc)
+    return max((now - stamped).total_seconds(), 0.0)
+
+
+def _activity_age_seconds(run: dict[str, Any], now: dt.datetime) -> float | None:
+    """Age of the freshest proof of life, not merely of the heartbeat stamp.
+
+    Two reasons the heartbeat alone lies. It is stamped once, when the first
+    output arrives, and never refreshed for the rest of the run, so on its own
+    every run older than the threshold reads as stale. And a worker sitting
+    inside a ten-minute ``cargo build`` is silent in the token stream while
+    being entirely alive — silence during a tool call is not death.
+
+    The transcript keeps a file mtime that moves whenever the worker actually
+    speaks, so take whichever signal is fresher.
+    """
+    ages = [
+        age
+        for age in (
+            _heartbeat_age_seconds(run, now),
+            _transcript_age_seconds(run, now),
+        )
+        if age is not None
+    ]
+    return min(ages) if ages else None
+
+
+def _freshest_activity_stamp(*stamps: str, transcript: str = "") -> str:
+    """Newest of the run's liveness clocks, as an ISO stamp.
+
+    The health clock used ``heartbeat_at`` alone, and that stamp is written
+    once — at first output — so a run doing real work for longer than
+    ``RUN_STALL_SECONDS`` aged itself into ``stalled`` health while its worker
+    was still talking. The transcript mtime moves whenever the worker actually
+    speaks, so it is the honest floor under the frozen heartbeat.
+    """
+    candidates = list(stamps)
+    if transcript:
+        try:
+            mtime = Path(transcript).stat().st_mtime
+        except OSError:
+            pass
+        else:
+            candidates.append(
+                dt.datetime.fromtimestamp(mtime, dt.timezone.utc).isoformat()
+            )
+    best: dt.datetime | None = None
+    best_raw = ""
+    for raw in candidates:
+        parsed = _parse_iso(str(raw or ""))
+        if parsed is None:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        if best is None or parsed > best:
+            best = parsed
+            best_raw = str(raw)
+    return best_raw
+
+
+def _append_last_error(previous: str, explanation: str, *, limit: int = 4) -> str:
+    """Append a watchdog note without letting it rewrite itself forever.
+
+    The reconciler runs on every projection, so a parked run accumulated a
+    dozen near-identical copies of the same sentence, differing only in the
+    stale-seconds count. Collapse same-shape notes and keep the chain bounded.
+    """
+    explanation = str(explanation or "").strip()
+    if not explanation:
+        return str(previous or "").strip()
+    shape = re.sub(r"\d+", "#", explanation)
+    parts = [
+        part.strip()
+        for part in str(previous or "").split(";")
+        if part.strip() and re.sub(r"\d+", "#", part.strip()) != shape
+    ]
+    parts.append(explanation)
+    return "; ".join(parts[-limit:])
 
 
 def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
@@ -590,7 +899,7 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
             return result
 
     now = _now()
-    age_seconds = _heartbeat_age_seconds(result, now)
+    age_seconds = _activity_age_seconds(result, now)
     threshold = _configured_stale_heartbeat_seconds()
     if age_seconds is None or age_seconds < threshold:
         return result
@@ -646,22 +955,50 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
     )
     if past_gc_grace:
         explanation = (
-            f"garbage-collected: dead launcher, heartbeat stale >{gc_grace}s; "
-            f"{pid_detail}; heartbeat stale for {int(age_seconds)}s "
+            f"garbage-collected: dead launcher, no activity >{gc_grace}s; "
+            f"{pid_detail}; no worker activity for {int(age_seconds)}s "
             f"(threshold {threshold}s); no live launcher proof{lock_detail}; "
             f"settlement parks as needs_attention before archive"
         )
     else:
         explanation = (
-            f"{pid_detail}; heartbeat stale for {int(age_seconds)}s "
+            f"{pid_detail}; no worker activity for {int(age_seconds)}s "
             f"(threshold {threshold}s); no live launcher proof{lock_detail}"
             f"{artifact_detail}; recovery_required"
         )
-    previous_error = str(result.get("last_error") or "").strip()
-    result["last_error"] = (
-        f"{previous_error}; {explanation}" if previous_error else explanation
+    result["last_error"] = _append_last_error(
+        str(result.get("last_error") or ""), explanation
     )
     return result
+
+
+def _report_attests_completion(run: dict[str, Any]) -> bool:
+    """True when the delivered report carries the worker's own success attestation.
+
+    ``finalized: true`` plus a non-empty ``claim`` is the deliberate self-attest
+    the report contract defines — the very signal the operator reads off the
+    frontmatter. It had no edge into the control plane: a run could finalize its
+    report, land its commit and exit, while the record stayed ``stalled``
+    forever because exit_code and completed_at were never recorded. The
+    attestation IS the terminal proof; treat it as such.
+    """
+    report = str(run.get("latest_report") or "").strip()
+    if not report:
+        return False
+    verdict = validate_report_file(report, require_frontmatter=False)
+    if "report_missing" in verdict.errors:
+        return False
+    if not verdict.finalized or not verdict.claim:
+        return False
+    claim_status = verdict.claim_status
+    if claim_status in CLAIM_COMPLETED:
+        return True
+    # A recognized negative/incomplete claim deliberately overrides the
+    # top-level lifecycle status. An unrecognized evidence adjective (the live
+    # report used ``verified``) must not erase an explicit ``status: completed``.
+    if claim_status in CLAIM_FAILED | CLAIM_BLOCKED | CLAIM_PARTIAL:
+        return False
+    return str(verdict.fields.get("status") or "").strip().lower() in CLAIM_COMPLETED
 
 
 def _has_success_evidence(run: dict[str, Any]) -> bool:
@@ -677,7 +1014,9 @@ def _has_success_evidence(run: dict[str, Any]) -> bool:
         return True
     if str(run.get("completed_at") or "").strip():
         return True
-    return str(run.get("liveness") or "") == "terminal"
+    if str(run.get("liveness") or "") == "terminal":
+        return True
+    return _report_attests_completion(run)
 
 
 def _reconcile_successful_terminal(run: dict[str, Any]) -> dict[str, Any]:
@@ -858,25 +1197,304 @@ def _skill_from_code(skill_code: str) -> str:
     return SKILL_CODE_MAP.get(skill_code, skill_code or "unknown")
 
 
-def _append_event(event: dict[str, Any]) -> None:
-    """Append one event line to the stream — atomically, WITHOUT the sync lock.
+def _segment_header(epoch: str, generation: int) -> dict[str, Any]:
+    return {
+        "ts": _now().isoformat(),
+        "run_id": "",
+        "kind": "stream.segment",
+        "message": f"event stream generation {generation}",
+        "payload": {
+            "schema": EVENT_SEGMENT_SCHEMA,
+            "epoch": epoch,
+            "generation": generation,
+        },
+    }
 
-    Appending to events.jsonl is the hottest control-plane path (every spawn /
-    emit / stop of every run). It must never serialize on the global lock: a
-    single ``O_APPEND`` ``os.write`` of one already-encoded line is atomic on a
-    local filesystem (the kernel appends at the current end without a
-    read-modify-write), so concurrent writers interleave cleanly by whole lines.
-    This is the last piece of the flock migraine — the emit path used to take the
-    global lock and, under a herd, raise ControlPlaneLockBusy after the timeout.
-    """
-    stream_path = event_stream_path()
-    stream_path.parent.mkdir(parents=True, exist_ok=True)
-    line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
-    fd = os.open(stream_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+
+def _parse_segment_header(raw: bytes) -> tuple[str, int] | None:
+    if not raw.endswith(b"\n") or len(raw) > EVENT_MAX_LINE_BYTES:
+        return None
     try:
-        os.write(fd, line)
+        header = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    payload = header.get("payload")
+    if (
+        header.get("kind") != "stream.segment"
+        or not isinstance(payload, dict)
+        or payload.get("schema") != EVENT_SEGMENT_SCHEMA
+    ):
+        return None
+    epoch = str(payload.get("epoch") or "").strip()
+    generation = payload.get("generation")
+    if not epoch or ":" in epoch or type(generation) is not int or generation < 0:
+        return None
+    return epoch, generation
+
+
+def _read_segment_header(path: Path) -> tuple[str, int] | None:
+    try:
+        with path.open("rb") as handle:
+            raw = handle.readline(EVENT_MAX_LINE_BYTES + 1)
+    except OSError:
+        return None
+    return _parse_segment_header(raw)
+
+
+def _read_event_segment(path: Path, *, active: bool) -> _EventSegment | None:
+    """Capture one segment header and metadata from the same open inode."""
+
+    try:
+        with path.open("rb") as handle:
+            raw = handle.readline(EVENT_MAX_LINE_BYTES + 1)
+            metadata = os.fstat(handle.fileno())
+    except OSError:
+        return None
+    header = _parse_segment_header(raw)
+    if header is None:
+        return None
+    return _EventSegment(
+        path=path,
+        epoch=header[0],
+        generation=header[1],
+        data_start=len(raw),
+        size=metadata.st_size,
+        active=active,
+        modified_ns=metadata.st_mtime_ns,
+    )
+
+
+def _parse_event_cursor(
+    raw: str | int | None,
+) -> tuple[str | None, int | None, int] | None:
+    value = "0" if raw is None else str(raw).strip()
+    if value.isdigit():
+        return None, None, int(value)
+    parts = value.split(":")
+    if len(parts) != 4 or parts[0] != "v2":
+        return None
+    epoch = parts[1]
+    if not epoch or re.fullmatch(r"[A-Za-z0-9_.-]+", epoch) is None:
+        return None
+    try:
+        generation = int(parts[2])
+        offset = int(parts[3])
+    except ValueError:
+        return None
+    if generation < 0 or offset < 0:
+        return None
+    return epoch, generation, offset
+
+
+def _last_complete_event_offset(path: Path, minimum: int) -> int:
+    try:
+        with path.open("rb") as handle:
+            size = os.fstat(handle.fileno()).st_size
+            if size <= minimum:
+                return min(size, minimum)
+            handle.seek(size - 1)
+            if handle.read(1) == b"\n":
+                return size
+            end = size
+            while end > minimum:
+                start = max(end - 8192, minimum)
+                handle.seek(start)
+                chunk = handle.read(end - start)
+                position = chunk.rfind(b"\n")
+                if position >= 0:
+                    return start + position + 1
+                end = start
+    except OSError:
+        return minimum
+    return minimum
+
+
+def _event_segments() -> list[_EventSegment]:
+    segments: list[_EventSegment] = []
+    archive_dir = _events_archive_dir()
+    if archive_dir.is_dir():
+        for path in archive_dir.glob("events-*.jsonl"):
+            segment = _read_event_segment(path, active=False)
+            if segment is not None:
+                segments.append(segment)
+    active = _read_event_segment(event_stream_path(), active=True)
+    if active is not None:
+        segments.append(active)
+    segments.sort(
+        key=lambda segment: (
+            segment.active,
+            segment.modified_ns,
+            segment.epoch,
+            segment.generation,
+        )
+    )
+    return segments
+
+
+def _active_event_resume_cursor() -> str:
+    stream = event_stream_path()
+    segment = _read_event_segment(stream, active=True)
+    if segment is not None:
+        return segment.cursor(_last_complete_event_offset(stream, segment.data_start))
+    return str(_last_complete_event_offset(stream, 0))
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def _write_new_event_segment_locked(path: Path, epoch: str, generation: int) -> None:
+    """Atomically publish an fsynced empty segment. Caller holds event EX."""
+
+    line = (
+        json.dumps(_segment_header(epoch, generation), ensure_ascii=False) + "\n"
+    ).encode("utf-8")
+    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(tmp, flags, 0o600)
+    try:
+        written = os.write(fd, line)
+        if written != len(line):
+            raise OSError(errno.EIO, "short event segment header write")
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    try:
+        os.replace(tmp, path)
+        _fsync_directory(path.parent)
+    finally:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+
+
+def _latest_archived_segment_header() -> tuple[str, int] | None:
+    candidates: list[tuple[int, str, int]] = []
+    archive_dir = _events_archive_dir()
+    if not archive_dir.is_dir():
+        return None
+    for path in archive_dir.glob("events-*.jsonl"):
+        header = _read_segment_header(path)
+        if header is None:
+            continue
+        try:
+            modified = path.stat().st_mtime_ns
+        except OSError:
+            continue
+        candidates.append((modified, header[0], header[1]))
+    if not candidates:
+        return None
+    _, epoch, generation = max(candidates)
+    return epoch, generation
+
+
+def _legacy_archive_target() -> Path:
+    archive_dir = _events_archive_dir()
+    stamp = _now().strftime("%Y%m%dT%H%M%S%fZ")
+    return archive_dir / f"events-legacy-{stamp}-{uuid.uuid4().hex}.jsonl"
+
+
+def _ensure_event_segment() -> None:
+    """Ensure the active stream has a v1 header without racing appenders."""
+
+    stream_path = event_stream_path()
+    with _event_lock(exclusive=False):
+        header = _read_segment_header(stream_path)
+        if header is not None:
+            return
+        try:
+            if not stream_path.exists() or stream_path.stat().st_size == 0:
+                pass
+            else:
+                # A non-empty legacy stream must be moved, never rewritten:
+                # prepending a header would invalidate every saved byte cursor.
+                header = None
+        except OSError:
+            pass
+
+    with _event_lock(exclusive=True):
+        if _read_segment_header(stream_path) is not None:
+            return
+        stream_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy = False
+        try:
+            legacy = stream_path.is_file() and stream_path.stat().st_size > 0
+        except OSError:
+            legacy = False
+        if legacy:
+            archive_dir = _events_archive_dir()
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            stream_path.replace(_legacy_archive_target())
+            _fsync_directory(archive_dir)
+            _fsync_directory(stream_path.parent)
+            epoch, generation = str(uuid.uuid4()), 0
+        else:
+            previous = _latest_archived_segment_header()
+            if previous is None:
+                epoch, generation = str(uuid.uuid4()), 0
+            else:
+                epoch, generation = previous[0], previous[1] + 1
+        _write_new_event_segment_locked(stream_path, epoch, generation)
+        _prune_event_archives_locked()
+
+
+def _repair_incomplete_event_tail_locked(fd: int) -> int:
+    """Drop only an unterminated final record while the event lock is exclusive."""
+
+    end = os.lseek(fd, 0, os.SEEK_END)
+    if end == 0 or os.pread(fd, 1, end - 1) == b"\n":
+        return end
+
+    scan_size = min(end, EVENT_MAX_LINE_BYTES + 1)
+    tail = os.pread(fd, scan_size, end - scan_size)
+    newline = tail.rfind(b"\n")
+    if newline < 0:
+        raise OSError(errno.EIO, "event segment has no complete record boundary")
+    repaired_end = end - scan_size + newline + 1
+    os.ftruncate(fd, repaired_end)
+    os.fsync(fd)
+    return repaired_end
+
+
+def _append_event(event: dict[str, Any]) -> None:
+    """Append one durable event line without taking the global sync lock.
+
+    Appending to events.jsonl is the hottest control-plane path (every spawn /
+    emit / stop of every run). It never acquires the global sync lock. The
+    dedicated event lock makes the write/rollback boundary exclusive to
+    appenders and rotation. ``fsync`` is the receipt: once this call returns,
+    the complete newline-delimited effect is on the durable segment.
+    """
+    _ensure_event_segment()
+    stream_path = event_stream_path()
+    line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
+    if len(line) > EVENT_MAX_LINE_BYTES:
+        raise ValueError(
+            f"event line exceeds {EVENT_MAX_LINE_BYTES} byte stream contract"
+        )
+    with _event_lock(exclusive=True):
+        flags = os.O_RDWR | os.O_APPEND
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(stream_path, flags)
+        try:
+            start = _repair_incomplete_event_tail_locked(fd)
+            written = os.write(fd, line)
+            if written != len(line):
+                os.ftruncate(fd, start)
+                os.fsync(fd)
+                raise OSError(errno.EIO, "short atomic event append")
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
 
 def _iter_meta_files() -> Iterator[Path]:
@@ -923,15 +1541,30 @@ def _normalize_agent_meta(path: Path) -> RunStatus | None:
         "prompt",
         "file",
         "retry_of",
+        "agent_session_id",
+        "runtime_session_id",
+        "parent_runtime_session_id",
+        "resume_of",
+        "resume_root",
+        "attempt",
+        "native_resume",
+        "resume_idempotency_key",
         "worker_command",
         "worker_pid",
         "worker_pgid",
+        "worker_identity",
+        "launcher_identity",
         "heartbeat_at",
         "meta",
         "artifact_ok",
         "artifact_errors",
+        "artifact_warnings",
         "artifact_gate",
         "operator_state",
+        "operator_stop_accepted",
+        "operator_stop_at",
+        "stop_reason",
+        "trust_receipt",
     ):
         if key in payload and payload.get(key) not in (None, ""):
             extra[key] = payload[key]
@@ -1059,6 +1692,37 @@ def _merge_event_stream(
 
         payload = dict(event.get("payload") or {})
         kind = str(event.get("kind") or "")
+        artifact_event = (
+            str(payload.get("event_kind") or "") == "artifact"
+            or "meta_exists" in payload
+            or "report_exists" in payload
+            or "transcript_exists" in payload
+        )
+        if artifact_event and "artifact_errors" not in payload and "errors" in payload:
+            raw_errors = payload.get("errors")
+            payload["artifact_errors"] = (
+                list(raw_errors)
+                if isinstance(raw_errors, (list, tuple))
+                else ([raw_errors] if raw_errors else [])
+            )
+        if (
+            artifact_event
+            and "artifact_warnings" not in payload
+            and "warnings" in payload
+        ):
+            raw_warnings = payload.get("warnings")
+            payload["artifact_warnings"] = (
+                list(raw_warnings)
+                if isinstance(raw_warnings, (list, tuple))
+                else ([raw_warnings] if raw_warnings else [])
+            )
+        if artifact_event and "artifact_ok" not in payload:
+            payload["artifact_ok"] = not bool(payload.get("artifact_errors"))
+        # Settlement events are a durable notification about a snapshot that
+        # has already been written. Re-projecting them as lifecycle evidence
+        # would resurrect an archived run as active/unknown on the next sync.
+        if kind == SETTLEMENT_EVENT_KIND:
+            continue
         message = str(event.get("message") or "")
         ts = _safe_iso(str(event.get("ts") or ""))
         existing = merged.get(run_id)
@@ -1124,14 +1788,32 @@ def _merge_event_stream(
             "prompt",
             "file",
             "retry_of",
+            "agent_session_id",
+            "runtime_session_id",
+            "parent_runtime_session_id",
+            "resume_of",
+            "resume_root",
+            "attempt",
+            "native_resume",
+            "resume_idempotency_key",
+            "resume_mode",
+            "automatic_attempt_budget",
+            "automatic_attempt_number",
+            "resume_settlement_revision",
+            "resume_trust_receipt_id",
             "worker_command",
             "worker_pid",
             "worker_pgid",
+            "worker_identity",
+            "launcher_identity",
             "heartbeat_at",
             "meta",
             "artifact_ok",
             "artifact_errors",
+            "artifact_warnings",
             "recovery_required",
+            "operator_stop_accepted",
+            "operator_stop_at",
             "stop_reason",
             "stop_signal",
             "stop_target",
@@ -1161,7 +1843,11 @@ def _merge_event_stream(
             )
         )
         declared_health = str(payload.get("health") or "")
-        activity_at = str(payload.get("heartbeat_at") or updated_at)
+        activity_at = _freshest_activity_stamp(
+            str(payload.get("heartbeat_at") or ""),
+            updated_at,
+            transcript=transcript,
+        ) or str(payload.get("heartbeat_at") or updated_at)
         if declared_health in {"stalled", "final", "unknown"}:
             health = declared_health
         else:
@@ -1208,7 +1894,7 @@ def _merge_status(existing: RunStatus | None, incoming: RunStatus) -> RunStatus:
         existing if existing_dt is not None and existing_dt >= incoming_dt else incoming
     )
     preferred = latest
-    return RunStatus(
+    merged_status = RunStatus(
         run_id=preferred.run_id,
         state=preferred.state,
         agent=preferred.agent or existing.agent,
@@ -1241,6 +1927,40 @@ def _merge_status(existing: RunStatus | None, incoming: RunStatus) -> RunStatus:
         else existing.total_loops,
         extra={**existing.extra, **incoming.extra},
     )
+    stop_owner = next(
+        (
+            candidate
+            for candidate in (incoming, existing)
+            if candidate.state == "stopped"
+            and candidate.extra.get("operator_stop_accepted") is True
+        ),
+        None,
+    )
+    if stop_owner is None:
+        return merged_status
+
+    stop_extra = {
+        **merged_status.extra,
+        **stop_owner.extra,
+        "operator_stop_accepted": True,
+        "recovery_required": False,
+        "artifact_ok": True,
+        "artifact_errors": [],
+        "artifact_gate": "stopped",
+        "operator_state": "stopped",
+    }
+    return replace(
+        merged_status,
+        state="stopped",
+        last_error="",
+        updated_at=stop_owner.updated_at or merged_status.updated_at,
+        health="final",
+        source=stop_owner.source,
+        exit_code=stop_owner.exit_code,
+        liveness=stop_owner.liveness or "terminal",
+        completed_at=stop_owner.completed_at or merged_status.completed_at,
+        extra=stop_extra,
+    )
 
 
 def _snapshot_path(run_id: str) -> Path:
@@ -1269,6 +1989,38 @@ def _events_archive_dir() -> Path:
     return control_plane_home() / "events_archive"
 
 
+def _prune_event_archives_locked() -> list[Path]:
+    """Enforce retained generation count/byte caps while event EX is held."""
+
+    archive_dir = _events_archive_dir()
+    if not archive_dir.is_dir():
+        return []
+    entries: list[tuple[int, str, Path, int]] = []
+    for path in archive_dir.glob("events-*.jsonl"):
+        try:
+            metadata = path.stat()
+        except OSError:
+            continue
+        entries.append((metadata.st_mtime_ns, path.name, path, metadata.st_size))
+    entries.sort()
+    max_files = _configured_events_archive_max_files()
+    max_bytes = _configured_events_archive_max_bytes()
+    total_bytes = sum(entry[3] for entry in entries)
+    removed: list[Path] = []
+    while entries and (len(entries) > max_files or total_bytes > max_bytes):
+        _, _, path, size = entries.pop(0)
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        total_bytes = max(total_bytes - size, 0)
+        removed.append(path)
+    if removed:
+        with contextlib.suppress(OSError):
+            _fsync_directory(archive_dir)
+    return removed
+
+
 def _read_tail_lines(path: Path, limit: int, *, window_bytes: int = 65536) -> list[str]:
     """Last ``limit`` complete lines of a large file without reading it whole."""
     try:
@@ -1286,16 +2038,26 @@ def _read_tail_lines(path: Path, limit: int, *, window_bytes: int = 65536) -> li
 
 
 def _rotate_event_stream() -> Path | None:
-    """Rotate an oversized events.jsonl into events_archive/, keeping the tail.
+    """Rotate an oversized generation under the exclusive event lock.
 
     The event stream is append-only and unbounded; every full board rebuild
     re-parses it whole, so past ~1 GB a sync took a minute and starved every
     await on the lock. Rotation is safe exactly at the end of an unscoped sync:
     all information the stream carried has just been projected into per-run
-    snapshots, which are the durable state. The last ``EVENT_TAIL_LIMIT`` lines
-    are re-seeded into the fresh stream so the board's event tail stays
-    continuous. Caller must hold the sync lock.
+    snapshots, which are the durable state. The archived generation remains the
+    cursor bridge for SSE reconnects. The fresh generation contains only its
+    header: copying tail records would replay effects.
+
+    The normal caller already holds ``_sync_lock``. Lock order is therefore
+    sync -> event, never the reverse.
     """
+    with _event_lock(exclusive=True):
+        return _rotate_event_stream_locked()
+
+
+def _rotate_event_stream_locked() -> Path | None:
+    """Implementation for tests/recovery; caller holds event EX."""
+
     threshold = _configured_events_rotate_bytes()
     if threshold <= 0:
         return None
@@ -1305,20 +2067,36 @@ def _rotate_event_stream() -> Path | None:
             return None
     except OSError:
         return None
-    tail = _read_tail_lines(stream_path, EVENT_TAIL_LIMIT)
+    header = _read_segment_header(stream_path)
+    if header is None:
+        # Legacy input is archived intact. A fresh epoch makes the discontinuity
+        # explicit to v2 clients instead of pretending byte offsets still align.
+        epoch, generation = str(uuid.uuid4()), 0
+    else:
+        epoch, generation = header[0], header[1] + 1
     archive_dir = _events_archive_dir()
     archive_dir.mkdir(parents=True, exist_ok=True)
-    stamp = _now().strftime("%Y%m%dT%H%M%SZ")
-    target = archive_dir / f"events-{stamp}.jsonl"
-    counter = 0
-    while target.exists():
-        counter += 1
-        target = archive_dir / f"events-{stamp}-{counter}.jsonl"
+    if header is None:
+        target = _legacy_archive_target()
+    else:
+        target = archive_dir / f"events-{header[0]}-g{header[1]:020d}.jsonl"
+        # Two files claiming the same epoch/generation make exactly-once replay
+        # ambiguous. Keep the active segment in place and fail closed.
+        if target.exists():
+            return None
     try:
         stream_path.replace(target)
-        if tail:
-            stream_path.write_text("\n".join(tail) + "\n", encoding="utf-8")
+        _fsync_directory(archive_dir)
+        _fsync_directory(stream_path.parent)
+        _write_new_event_segment_locked(stream_path, epoch, generation)
+        _prune_event_archives_locked()
     except OSError:
+        # Best-effort rollback preserves the only copy when publishing the new
+        # header fails (for example ENOSPC). The archive is never overwritten.
+        if not stream_path.exists() and target.exists():
+            with contextlib.suppress(OSError):
+                target.replace(stream_path)
+                _fsync_directory(stream_path.parent)
         return None
     return target
 
@@ -1402,6 +2180,7 @@ def _archive_expired_snapshots() -> None:
         # Settle first (default → needs_attention), then archive only once
         # the settlement axis is present. Live/unreadable runs stay put.
         if not can_archive(payload):
+            previous = dict(payload)
             settlement = settle_payload(payload, source="auto")
             if settlement is not None:
                 payload.update(settlement.to_payload())
@@ -1414,7 +2193,7 @@ def _archive_expired_snapshots() -> None:
                     "waived": settlement.waived,
                     "tui": settlement.tui_key,
                 }
-                _write_json(path, payload)
+                _write_run_snapshot(path, previous, payload)
             if not can_archive(payload):
                 continue
         _archive_snapshot(path)
@@ -1460,6 +2239,7 @@ def drain_settled_snapshots(
                     counts["skipped_live"] += 1
                     continue
                 if not can_archive(payload):
+                    previous = dict(payload)
                     settlement = settle_payload(payload, source="auto")
                     if settlement is None:
                         counts["skipped_live"] += 1
@@ -1474,7 +2254,7 @@ def drain_settled_snapshots(
                         "waived": settlement.waived,
                         "tui": settlement.tui_key,
                     }
-                    _write_json(path, payload)
+                    _write_run_snapshot(path, previous, payload)
                     counts["settled"] += 1
                 age = _snapshot_age_seconds(payload, now)
                 if age is not None and age < keep_seconds:
@@ -1589,7 +2369,6 @@ def record_stop_transition(
     payload: dict[str, Any] = {
         "accepted": accepted,
         "reason": reason,
-        "stop_reason": reason,
         "signal": signal_name,
         "stop_signal": signal_name,
         "target": target,
@@ -1618,6 +2397,8 @@ def record_stop_transition(
             "launcher_pid",
             "worker_pid",
             "worker_pgid",
+            "launcher_identity",
+            "worker_identity",
             "runtime",
             "source_dir",
             "prompt",
@@ -1634,6 +2415,10 @@ def record_stop_transition(
             payload["transcript"] = run["latest_transcript"]
     if accepted:
         payload["state"] = "stopped"
+        payload["operator_stop_accepted"] = True
+        payload["operator_stop_at"] = now
+        payload["stop_reason"] = reason
+        payload["recovery_required"] = False
         payload["health"] = "final"
         payload["liveness"] = (
             "pid_alive_after_stop" if alive_after_grace else "terminal"
@@ -1641,6 +2426,8 @@ def record_stop_transition(
         payload["completed_at"] = now
         if exit_code is not None:
             payload["exit_code"] = exit_code
+    else:
+        payload["stop_rejection_reason"] = reason
 
     event = {
         "ts": now,
@@ -1651,8 +2438,8 @@ def record_stop_transition(
         ),
         "payload": payload,
     }
-    # Lockless atomic append (see _append_event) — the stop path never blocks
-    # on the shared mutex.
+    # Dedicated event append boundary (see _append_event) — the stop path never
+    # blocks behind the global board-rebuild lock.
     _append_event(event)
     return event
 
@@ -1680,62 +2467,406 @@ def _warnings_for_runs(runs: list[dict[str, Any]]) -> list[str]:
 
 def read_event_tail(limit: int = EVENT_TAIL_LIMIT) -> list[dict[str, Any]]:
     stream = event_stream_path()
-    if not stream.exists():
+    if limit <= 0:
         return []
-    events = []
-    for line in reversed(stream.read_text(encoding="utf-8").splitlines()):
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if _event_has_test_provenance(event):
-            continue
-        events.append(event)
-        if len(events) >= limit:
-            break
+    paths: list[Path] = []
+    if stream.is_file():
+        paths.append(stream)
+    archive_dir = _events_archive_dir()
+    if archive_dir.is_dir():
+        archived = list(archive_dir.glob("events-*.jsonl"))
+
+        def _mtime_ns(path: Path) -> int:
+            try:
+                return path.stat().st_mtime_ns
+            except OSError:
+                return 0
+
+        archived.sort(key=_mtime_ns, reverse=True)
+        paths.extend(archived)
+    events: list[dict[str, Any]] = []
+    for path in paths:
+        for line in reversed(_read_tail_lines(path, limit + 1)):
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("kind") == "stream.segment":
+                continue
+            if _event_has_test_provenance(event):
+                continue
+            events.append(event)
+            if len(events) >= limit:
+                return events
     return events
 
 
-def subscribe_events(
-    since_cursor: int | None = None,
-    kinds: set[str] | list[str] | tuple[str, ...] | None = None,
-    callback=None,
-) -> Iterator[Event]:
-    """Yield control-plane events from events.jsonl, polling when needed."""
-    stream = event_stream_path()
-    cursor = max(int(since_cursor or 0), 0)
-    kinds_filter = set(kinds or [])
+def _stream_control_event(
+    kind: str,
+    *,
+    cursor: str,
+    requested: str = "",
+    from_cursor: str = "",
+    reason: str,
+) -> Event:
+    payload: dict[str, Any] = {"reason": reason}
+    if kind == "stream.boundary":
+        payload.update({"from": from_cursor, "to": cursor})
+        message = "event stream generation boundary"
+    else:
+        payload.update(
+            {
+                "requested": requested,
+                "resumed_at": cursor,
+                "action": "resnapshot",
+            }
+        )
+        message = "event stream cursor gap; resnapshot required"
+    return Event(
+        ts=_now().isoformat(),
+        run_id="",
+        kind=kind,
+        message=message,
+        payload=payload,
+        cursor=cursor,
+    )
 
-    while True:
-        emitted = False
-        if stream.exists():
-            with stream.open("r", encoding="utf-8") as handle:
-                handle.seek(cursor)
-                while True:
-                    line = handle.readline()
-                    if not line:
+
+def _drain_event_segment(
+    segment: _EventSegment,
+    offset: int,
+    kinds_filter: set[str],
+) -> tuple[list[Event], int, str | None]:
+    events: list[Event] = []
+    try:
+        with segment.path.open("rb") as handle:
+            observed = _parse_segment_header(handle.readline(EVENT_MAX_LINE_BYTES + 1))
+            if observed != (segment.epoch, segment.generation):
+                return events, offset, "generation_changed_before_read"
+            size = os.fstat(handle.fileno()).st_size
+            if offset < segment.data_start or offset > size:
+                return events, offset, "cursor_outside_segment"
+            handle.seek(offset)
+            cursor = offset
+            while True:
+                line_start = cursor
+                raw = handle.readline(EVENT_MAX_LINE_BYTES + 1)
+                if not raw:
+                    break
+                if len(raw) > EVENT_MAX_LINE_BYTES:
+                    complete = raw.endswith(b"\n")
+                    if not complete:
+                        while True:
+                            suffix = handle.readline(EVENT_MAX_LINE_BYTES + 1)
+                            if not suffix or suffix.endswith(b"\n"):
+                                complete = suffix.endswith(b"\n")
+                                break
+                    cursor = handle.tell()
+                    events.append(
+                        _stream_control_event(
+                            "stream.gap",
+                            cursor=segment.cursor(cursor),
+                            requested=segment.cursor(line_start),
+                            reason="line_too_large",
+                        )
+                    )
+                    if not complete and segment.active:
+                        break
+                    continue
+                if not raw.endswith(b"\n"):
+                    if segment.active:
                         break
                     cursor = handle.tell()
-                    try:
-                        payload = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    kind = str(payload.get("kind") or "")
-                    if kinds_filter and kind not in kinds_filter:
-                        continue
-                    event = Event(
+                    events.append(
+                        _stream_control_event(
+                            "stream.gap",
+                            cursor=segment.cursor(cursor),
+                            requested=segment.cursor(line_start),
+                            reason="partial_archived_line",
+                        )
+                    )
+                    break
+                cursor = handle.tell()
+                try:
+                    payload = json.loads(raw)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    events.append(
+                        _stream_control_event(
+                            "stream.gap",
+                            cursor=segment.cursor(cursor),
+                            requested=segment.cursor(line_start),
+                            reason="malformed_event",
+                        )
+                    )
+                    continue
+                kind = str(payload.get("kind") or "")
+                if kind == "stream.segment":
+                    continue
+                if kinds_filter and kind not in kinds_filter:
+                    continue
+                events.append(
+                    Event(
                         ts=str(payload.get("ts") or ""),
                         run_id=str(payload.get("run_id") or ""),
                         kind=kind,
                         message=str(payload.get("message") or ""),
                         payload=dict(payload.get("payload") or {}),
-                        cursor=cursor,
+                        cursor=segment.cursor(cursor),
                     )
-                    if callback is not None:
-                        callback(event)
-                    emitted = True
-                    yield event
-        if callback is None and not emitted:
+                )
+            return events, cursor, None
+    except OSError:
+        return events, offset, "generation_expired_or_unknown"
+
+
+def _drain_legacy_events(
+    offset: int, kinds_filter: set[str]
+) -> tuple[list[Event], int, str | None]:
+    stream = event_stream_path()
+    events: list[Event] = []
+    try:
+        with stream.open("rb") as handle:
+            size = os.fstat(handle.fileno()).st_size
+            if offset > size:
+                return events, offset, "legacy_cursor_beyond_eof"
+            handle.seek(offset)
+            cursor = offset
+            while True:
+                line_start = cursor
+                raw = handle.readline(EVENT_MAX_LINE_BYTES + 1)
+                if not raw:
+                    break
+                if len(raw) > EVENT_MAX_LINE_BYTES:
+                    complete = raw.endswith(b"\n")
+                    if not complete:
+                        while True:
+                            suffix = handle.readline(EVENT_MAX_LINE_BYTES + 1)
+                            if not suffix or suffix.endswith(b"\n"):
+                                complete = suffix.endswith(b"\n")
+                                break
+                    cursor = handle.tell()
+                    events.append(
+                        _stream_control_event(
+                            "stream.gap",
+                            cursor=str(cursor),
+                            requested=str(line_start),
+                            reason="line_too_large",
+                        )
+                    )
+                    if not complete:
+                        break
+                    continue
+                if not raw.endswith(b"\n"):
+                    break
+                cursor = handle.tell()
+                try:
+                    payload = json.loads(raw)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+                kind = str(payload.get("kind") or "")
+                if kinds_filter and kind not in kinds_filter:
+                    continue
+                events.append(
+                    Event(
+                        ts=str(payload.get("ts") or ""),
+                        run_id=str(payload.get("run_id") or ""),
+                        kind=kind,
+                        message=str(payload.get("message") or ""),
+                        payload=dict(payload.get("payload") or {}),
+                        cursor=str(cursor),
+                    )
+                )
+            return events, cursor, None
+    except OSError:
+        return events, offset, None
+
+
+def _read_event_delta(
+    requested: str | int | None, kinds_filter: set[str]
+) -> tuple[list[Event], str]:
+    raw_requested = "0" if requested is None else str(requested).strip()
+    parsed = _parse_event_cursor(requested)
+    if parsed is None:
+        resumed_at = _active_event_resume_cursor()
+        return [
+            _stream_control_event(
+                "stream.gap",
+                cursor=resumed_at,
+                requested=raw_requested,
+                reason="invalid_cursor",
+            )
+        ], resumed_at
+
+    epoch, generation, offset = parsed
+    segments = _event_segments()
+    active = next((segment for segment in reversed(segments) if segment.active), None)
+    if epoch is None:
+        if active is not None:
+            if offset != 0:
+                resumed_at = _active_event_resume_cursor()
+                return [
+                    _stream_control_event(
+                        "stream.gap",
+                        cursor=resumed_at,
+                        requested=raw_requested,
+                        reason="legacy_cursor_generation_unknown",
+                    )
+                ], resumed_at
+            start_cursor = active.cursor(active.data_start)
+            legacy_items = [
+                _stream_control_event(
+                    "stream.boundary",
+                    cursor=start_cursor,
+                    from_cursor="0",
+                    reason="legacy_zero_migrated",
+                )
+            ]
+            drained, end, failure = _drain_event_segment(
+                active, active.data_start, kinds_filter
+            )
+            if failure is not None:
+                resumed_at = _active_event_resume_cursor()
+                legacy_items.append(
+                    _stream_control_event(
+                        "stream.gap",
+                        cursor=resumed_at,
+                        requested=start_cursor,
+                        reason=failure,
+                    )
+                )
+                return legacy_items, resumed_at
+            legacy_items.extend(drained)
+            return legacy_items, active.cursor(end)
+        drained, end, failure = _drain_legacy_events(offset, kinds_filter)
+        if failure is None:
+            return drained, str(end)
+        resumed_at = _active_event_resume_cursor()
+        return [
+            _stream_control_event(
+                "stream.gap",
+                cursor=resumed_at,
+                requested=raw_requested,
+                reason=failure,
+            )
+        ], resumed_at
+
+    matches = [
+        segment
+        for segment in segments
+        if segment.epoch == epoch and segment.generation == generation
+    ]
+    if len(matches) != 1:
+        resumed_at = _active_event_resume_cursor()
+        reason = (
+            "generation_expired_or_unknown" if not matches else "ambiguous_generation"
+        )
+        return [
+            _stream_control_event(
+                "stream.gap",
+                cursor=resumed_at,
+                requested=raw_requested,
+                reason=reason,
+            )
+        ], resumed_at
+
+    current = matches[0]
+    current_offset = offset
+    stream_items: list[Event] = []
+    while True:
+        drained, current_offset, failure = _drain_event_segment(
+            current, current_offset, kinds_filter
+        )
+        stream_items.extend(drained)
+        if failure is not None:
+            resumed_at = _active_event_resume_cursor()
+            stream_items.append(
+                _stream_control_event(
+                    "stream.gap",
+                    cursor=resumed_at,
+                    requested=current.cursor(current_offset),
+                    reason=failure,
+                )
+            )
+            return stream_items, resumed_at
+
+        next_segments = [
+            segment
+            for segment in segments
+            if segment.epoch == current.epoch
+            and segment.generation == current.generation + 1
+        ]
+        if len(next_segments) > 1:
+            resumed_at = _active_event_resume_cursor()
+            stream_items.append(
+                _stream_control_event(
+                    "stream.gap",
+                    cursor=resumed_at,
+                    requested=current.cursor(current_offset),
+                    reason="ambiguous_generation",
+                )
+            )
+            return stream_items, resumed_at
+        if not next_segments:
+            if (
+                not current.active
+                and active is not None
+                and (
+                    active.epoch != current.epoch
+                    or active.generation > current.generation + 1
+                )
+            ):
+                resumed_at = _active_event_resume_cursor()
+                stream_items.append(
+                    _stream_control_event(
+                        "stream.gap",
+                        cursor=resumed_at,
+                        requested=current.cursor(current_offset),
+                        reason="generation_gap",
+                    )
+                )
+                return stream_items, resumed_at
+            return stream_items, current.cursor(current_offset)
+        next_segment = next_segments[0]
+        next_cursor = next_segment.cursor(next_segment.data_start)
+        stream_items.append(
+            _stream_control_event(
+                "stream.boundary",
+                cursor=next_cursor,
+                from_cursor=current.cursor(current_offset),
+                reason="generation_advanced",
+            )
+        )
+        current = next_segment
+        current_offset = current.data_start
+
+
+def subscribe_events(
+    since_cursor: str | int | None = None,
+    kinds: set[str] | list[str] | tuple[str, ...] | None = None,
+    callback: Callable[[Event], Any] | None = None,
+) -> Iterator[Event]:
+    """Yield events with an opaque generation-aware cursor.
+
+    Numeric cursors remain an explicit migration input: ``0`` upgrades to the
+    active v2 start, while a non-zero numeric cursor on a segmented stream emits
+    ``stream.gap`` because it cannot identify a generation.
+    """
+
+    cursor = "0" if since_cursor is None else str(since_cursor)
+    kinds_filter = set(kinds or [])
+    while True:
+        events, cursor = _read_event_delta(cursor, kinds_filter)
+        for event in events:
+            if (
+                kinds_filter
+                and event.kind.startswith("stream.")
+                and event.kind not in kinds_filter
+            ):
+                continue
+            if callback is not None:
+                callback(event)
+            yield event
+        if callback is None:
             return
         time.sleep(1.0)
 
@@ -1743,8 +2874,30 @@ def subscribe_events(
 def _project_run_payload(
     run_id: str, status: RunStatus, previous: dict[str, Any] | None
 ) -> dict[str, Any]:
-    """Project one run's status to its snapshot payload (single-run, lockless)."""
+    """Project one run's status to a candidate snapshot payload."""
     incoming = _status_to_payload(status)
+    if previous is not None and _accepted_operator_stop_payload(previous):
+        # Snapshots are also reducer inputs after event rotation. Preserve the
+        # accepted stop even if a stale runtime meta or a later supervisor
+        # failure is the only newer source still on disk.
+        incoming.update(
+            {
+                "state": "stopped",
+                "operator_stop_accepted": True,
+                "operator_stop_at": previous.get("operator_stop_at"),
+                "stop_reason": previous.get("stop_reason"),
+                "recovery_required": False,
+                "health": "final",
+                "liveness": previous.get("liveness") or "terminal",
+                "completed_at": previous.get("completed_at"),
+                "exit_code": previous.get("exit_code"),
+                "last_error": "",
+                "artifact_ok": True,
+                "artifact_errors": [],
+                "artifact_gate": "stopped",
+                "operator_state": "stopped",
+            }
+        )
     # A settled gc park is sticky: the launcher meta that fed this status stays
     # "running" forever, so without this guard every full sync re-parked the
     # same dead run — restamping updated_at/completed_at (which made the drain
@@ -1761,6 +2914,14 @@ def _project_run_payload(
     payload = _artifact_projection(incoming, previous)
     payload = _reconcile_dead_launcher(payload)
     run_dir = _runtime_run_dir(run_id)
+    runtime_meta = _read_json(run_dir / "meta.json") if run_dir.is_dir() else {}
+    # Runtime meta is the durable half of the settlement transaction. If a
+    # process died after meta replace but before snapshot replace, the next
+    # projection must carry the higher revision forward rather than reviving
+    # stale snapshot truth.
+    for key in SETTLEMENT_PROJECTION_FIELDS:
+        if key in runtime_meta:
+            payload[key] = runtime_meta[key]
     axes = _delivery_axes_from_run_dir(
         run_dir if run_dir.is_dir() else None,
         legacy_state=str(payload.get("state") or ""),
@@ -1796,6 +2957,7 @@ def _project_run_payload(
     # months later. A current worker PID is durable process evidence; the
     # launch window is covered independently by a fresh heartbeat.
     has_live_process = _worker_is_alive(payload)
+    payload["worker_alive"] = has_live_process
     if _run_is_terminal(payload):
         payload["health"] = "final"
     elif state == "stalled":
@@ -1804,10 +2966,17 @@ def _project_run_payload(
         payload["health"] = "active"
     else:
         # Synthetic state events legitimately refresh `updated_at`; they do not
-        # prove worker activity. Heartbeat is the canonical temporal evidence.
+        # prove worker activity. Heartbeat plus transcript growth is the
+        # canonical temporal evidence — the heartbeat stamp alone is written
+        # once, at first output, so it ages a working run into `stalled`.
+        # A growing transcript is worker activity, never a synthetic refresh.
         payload["health"] = _state_health(
             state,
-            str(payload.get("heartbeat_at") or payload.get("updated_at") or ""),
+            _freshest_activity_stamp(
+                str(payload.get("heartbeat_at") or ""),
+                transcript=str(payload.get("latest_transcript") or ""),
+            )
+            or str(payload.get("heartbeat_at") or payload.get("updated_at") or ""),
         )
     if not payload.get("liveness"):
         payload["liveness"] = "terminal" if _run_is_terminal(payload) else "heartbeat"
@@ -1824,6 +2993,8 @@ def _project_run_payload(
             "settlement_tui",
             "settlement_waived",
             "settlement_claim_digest",
+            "settlement_revision",
+            "trust_receipt",
             "settlement",
             "await_rc",
             "await_outcome",
@@ -1860,9 +3031,6 @@ def _project_run_payload(
             "waived": settlement.waived,
             "tui": settlement.tui_key,
         }
-        meta = run_dir / "meta.json" if run_dir.is_dir() else None
-        if meta is not None and meta.is_file():
-            persist_settlement_to_meta(meta, settlement)
     return payload
 
 
@@ -1871,11 +3039,11 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
 
     ``only_run_id`` scopes the whole pass to one run and its child rounds. The
     scoped path is the hot path (``lookup_run`` / ``await_run`` poll it every few
-    seconds): it takes NO global lock, skips the ``artifacts/`` meta rglob, and
-    writes only the target run's snapshot atomically. That removes the O(runs²)
-    lock herd where every per-run poll used to rebuild the whole board under one
-    exclusive ``flock``. The full board rebuild (``only_run_id is None``) stays
-    behind the bounded ``_sync_lock`` and is used by dashboards/status-all.
+    seconds): it takes NO global lock and commits each target behind only that
+    run's mutation key. That removes the O(runs²) herd while serializing writers
+    that can actually conflict. The full board rebuild
+    (``only_run_id is None``) stays behind the bounded ``_sync_lock`` and is
+    used by dashboards/status-all.
     """
     scope = str(only_run_id or "").strip()
     scoped = bool(scope)
@@ -1893,9 +3061,9 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
         # The migraine was the exclusive GLOBAL LOCK, not the file walk: every
         # per-run poll serialised on one flock while rebuilding the whole board.
         # Scoped mode keeps the same on-disk reads (so a run seeded only via its
-        # meta/lock is still resolved) but folds ONLY the target + child rounds,
-        # holds no lock, and writes only their snapshots — so concurrent per-run
-        # polls run in parallel instead of queueing.
+        # meta/lock is still resolved) but folds ONLY the target + child rounds
+        # and writes only their snapshots. Different runs stay parallel; only
+        # writers for the same run meet at the final mutation CAS.
         for path in _iter_meta_files():
             status = _normalize_agent_meta(path)
             if status is None or not _in_scope(status.run_id):
@@ -1934,9 +3102,13 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
                 continue
             previous = previous_snapshots.get(run_id)
             payload = _project_run_payload(run_id, status, previous)
-            _record_transition(previous, payload)
-            _write_json(_snapshot_path(run_id), payload)
-            payload_runs.append(payload)
+            committed = _write_run_snapshot(
+                _snapshot_path(run_id),
+                previous,
+                payload,
+            )
+            if committed:
+                payload_runs.append(committed)
         if not scoped:
             # Retained snapshots whose source evidence went quiet (e.g. their
             # event lines were rotated away) stay on the board until archived;
@@ -2278,10 +3450,27 @@ def _await_child_runs(snapshot: dict[str, Any], target: str) -> list[dict[str, A
 
 
 def _report_file_written(path: str) -> bool:
+    """True when the announced report carries worker evidence, not just bytes.
+
+    Size alone is a false seal. The launcher materializes an identity shell at
+    spawn time, so the announced path is non-empty from the run's first second;
+    await read that shell as ``report_delivered`` and returned rc=0 the moment
+    the worker died, reporting a green handoff for a run that never wrote a
+    word. The report contract already brands the untouched shell
+    ``report_missing`` — honour that verdict here instead of re-deciding it.
+
+    An honest blocked/partial/failed report is still a delivery: the worker
+    spoke. Only the never-touched launcher template is not.
+    """
     try:
-        return Path(str(path)).stat().st_size > 0
+        if Path(str(path)).stat().st_size <= 0:
+            return False
     except OSError:
         return False
+    return (
+        "report_missing"
+        not in validate_report_file(path, require_frontmatter=False).errors
+    )
 
 
 def _resolve_await_hard_cap(hard_cap_seconds: float | None) -> float | None:
@@ -2340,6 +3529,8 @@ def _finalize_await_result(
 
     await_fields = persist_await_verdict(
         meta_path,
+        control_plane_root=control_plane_home(),
+        run_id=run_id,
         rc=exit_code,
         outcome=outcome,
         worker_alive=worker_alive,
@@ -2353,6 +3544,7 @@ def _finalize_await_result(
         try:
             snapshot = _read_json(snapshot_path)
             if snapshot:
+                previous_snapshot = dict(snapshot)
                 snapshot.update(await_fields)
                 # Re-settle with await evidence so unsealed reports stay n.
                 settlement = settle_payload(snapshot, force=True, source="await")
@@ -2369,10 +3561,13 @@ def _finalize_await_result(
                         "await_rc": exit_code,
                         "await_outcome": outcome,
                     }
-                    if meta_path is not None:
-                        persist_settlement_to_meta(meta_path, settlement)
-                _write_json(snapshot_path, snapshot)
-                last_run = snapshot
+                committed = _write_run_snapshot(
+                    snapshot_path,
+                    previous_snapshot,
+                    snapshot,
+                )
+                if committed:
+                    last_run = committed
         except OSError:
             pass
 

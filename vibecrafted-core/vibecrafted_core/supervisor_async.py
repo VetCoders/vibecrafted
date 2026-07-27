@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import sys
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -16,13 +17,24 @@ from .agent_stream import (
     resolve_default_model,
 )
 from .artifacts import ArtifactValidation, validate_artifacts
-from .control_plane import ensure_session_id, normalize_run_root
+from .control_plane import (
+    control_plane_home,
+    ensure_session_id,
+    lookup_run,
+    normalize_run_root,
+)
 from .events import append_event
 from .lifecycle import EventKind, RunState
 from .model_overrides import _model_override_receipt
+from .process_control import process_identity_receipt
 from .report_contract import CLAIM_DIGEST_ENV
+from .run_mutation import RunMetaMutationError, mutate_run_meta
 
 STDIO_LIMIT_BYTES = 16 * 1024 * 1024
+# Well under the reconciler's 120s staleness threshold, so an ordinary talking
+# worker is never mistaken for a dead one, while a long tool call still emits
+# at most a handful of pulse events.
+_HEARTBEAT_INTERVAL_SECONDS = 20.0
 
 
 def _utc_now() -> datetime:
@@ -44,6 +56,11 @@ def _json_text_fragment(event: dict[str, object]) -> str:
     event_type = str(event.get("type") or "")
     if event_type == "thought":
         return ""
+    if event_type == "item.completed":
+        item = event.get("item")
+        if isinstance(item, dict) and item.get("type") == "agent_message":
+            text = item.get("text")
+            return text if isinstance(text, str) else ""
     if event_type == "text":
         value = event.get("data")
         return value if isinstance(value, str) else ""
@@ -124,13 +141,37 @@ def _origin_fields_from_env(env: Mapping[str, str] | None = None) -> dict[str, s
     if session:
         fields["origin_session"] = session
         fields["operator_session"] = session
-    tab = _get("VC_FRAME_TAB_NAME", "VIBECRAFTED_RUN_ID", "SPAWN_RUN_ID")
-    if tab:
+    # The run's tab is named by run id (spawn contract). A dispatcher's ambient
+    # VC_FRAME_TAB_NAME instead names the *operator's* tab — stamping it would
+    # hand triage a tab to capture and close that was never the run's. So the
+    # tab comes only from the run-id envs, and the ambient tab claim serves one
+    # purpose: proving this process sits in the run's own tab, which is the
+    # only case where the ambient pane id is the run's pane. (2026-07-25:
+    # dispatched runs stamped the operator's pane "1"; the scrollback dump
+    # aimed at it found nothing and the tabs never reached their buckets.)
+    tab = _get("VIBECRAFTED_RUN_ID", "SPAWN_RUN_ID")
+    if session and tab:
         fields["origin_tab"] = tab
     pane = _get("VC_FRAME_PANE_ID", "ZELLIJ_PANE_ID")
-    if pane:
+    if session and pane and tab and _get("VC_FRAME_TAB_NAME") == tab:
         fields["origin_pane_id"] = pane
     return fields
+
+
+def _accepted_operator_stop(run_id: str) -> dict[str, object] | None:
+    """Read the durable operator-stop authority after the worker exits."""
+
+    try:
+        run = lookup_run(run_id)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+    if (
+        isinstance(run, dict)
+        and str(run.get("state") or "") == "stopped"
+        and run.get("operator_stop_accepted") is True
+    ):
+        return run
+    return None
 
 
 def _cache_write_line(prefix: str, value: int | None) -> str:
@@ -279,6 +320,10 @@ class AsyncRunHandle:
     cost_usd: float | None = None
     cost_source: str | None = None
     resume_command: str = ""
+    heartbeat_monotonic: float = 0.0
+    worker_identity: dict[str, object] | None = None
+    operator_stopped: bool = False
+    operator_stop_reason: str = ""
 
     @property
     def state(self) -> RunState:
@@ -317,6 +362,8 @@ class AsyncSupervisor:
             merged_env.update(env)
         session_id = ensure_session_id(merged_env.get("VIBECRAFTED_SESSION_ID"))
         merged_env["VIBECRAFTED_SESSION_ID"] = session_id
+        merged_env["VIBECRAFTED_RUN_ID"] = run_id
+        merged_env["SPAWN_RUN_ID"] = run_id
         if meta_path is not None:
             merged_env["VIBECRAFTED_META_PATH"] = str(meta_path)
         if report_path is not None:
@@ -326,6 +373,9 @@ class AsyncSupervisor:
         if prompt_file is not None:
             merged_env["VIBECRAFTED_PROMPT_PATH"] = str(prompt_file)
         agent = str(merged_env.get("VIBECRAFTED_AGENT") or _infer_agent(command))
+        initial_agent_session_id = str(
+            merged_env.get("VIBECRAFTED_AGENT_SESSION_ID") or ""
+        ).strip()
         skill = str(
             merged_env.get("VIBECRAFTED_SKILL_NAME")
             or merged_env.get("VIBECRAFTED_SKILL_CODE")
@@ -364,6 +414,14 @@ class AsyncSupervisor:
                 "session_id": session_id,
                 "identity_required": True,
                 "agent": agent,
+                **(
+                    {
+                        "agent_session_id": initial_agent_session_id,
+                        "runtime_session_id": session_id,
+                    }
+                    if initial_agent_session_id
+                    else {}
+                ),
                 "skill": skill,
                 "agent_model": agent_model,
                 **({"claim_digest": claim_digest} if claim_digest else {}),
@@ -400,6 +458,7 @@ class AsyncSupervisor:
             session_id=session_id,
             agent=agent,
             skill=skill,
+            agent_session_id=initial_agent_session_id,
             agent_model=agent_model,
             claim_digest=claim_digest,
             model_requested=str(model_receipt.get("model_requested") or ""),
@@ -415,45 +474,62 @@ class AsyncSupervisor:
             handle.pgid = os.getpgid(process.pid)
         except ProcessLookupError:
             handle.pgid = None
+        handle.worker_identity = process_identity_receipt(
+            process.pid,
+            run_id=run_id,
+        )
         self._runs[run_id] = handle
         # Seed durable origin identity as soon as the worker exists so triage
         # still works when the finisher has no ambient VC_FRAME pane env.
         if handle.meta_path is not None:
             try:
-                seed: dict[str, object] = {}
-                if handle.meta_path.exists():
-                    loaded = json.loads(handle.meta_path.read_text(encoding="utf-8"))
-                    if isinstance(loaded, dict):
-                        seed.update(loaded)
                 origin = _origin_fields_from_env(merged_env)
-                if (
-                    origin.get("origin_session")
-                    and not str(seed.get("origin_session") or "").strip()
-                ):
-                    seed["origin_session"] = origin["origin_session"]
-                    seed["operator_session"] = origin.get(
-                        "operator_session", origin["origin_session"]
-                    )
-                if not str(seed.get("origin_tab") or "").strip():
-                    seed["origin_tab"] = origin.get("origin_tab") or run_id
-                if (
-                    origin.get("origin_pane_id")
-                    and not str(seed.get("origin_pane_id") or "").strip()
-                ):
-                    seed["origin_pane_id"] = origin["origin_pane_id"]
-                seed.setdefault("run_id", run_id)
-                seed.setdefault("root", str(cwd))
-                seed.setdefault("agent", agent)
-                seed.setdefault("skill", skill)
-                if claim_digest:
-                    seed["claim_digest"] = claim_digest
                 handle.meta_path.parent.mkdir(parents=True, exist_ok=True)
-                handle.meta_path.write_text(
-                    json.dumps(seed, indent=2, ensure_ascii=False, sort_keys=True)
-                    + "\n",
-                    encoding="utf-8",
+
+                def _seed(latest: dict[str, object]) -> dict[str, object]:
+                    if (
+                        origin.get("origin_session")
+                        and not str(latest.get("origin_session") or "").strip()
+                    ):
+                        latest["origin_session"] = origin["origin_session"]
+                        latest["operator_session"] = origin.get(
+                            "operator_session", origin["origin_session"]
+                        )
+                    if (
+                        origin.get("origin_session")
+                        and origin.get("origin_tab")
+                        and not str(latest.get("origin_tab") or "").strip()
+                    ):
+                        latest["origin_tab"] = origin["origin_tab"]
+                    if (
+                        origin.get("origin_pane_id")
+                        and not str(latest.get("origin_pane_id") or "").strip()
+                    ):
+                        latest["origin_pane_id"] = origin["origin_pane_id"]
+                    latest.setdefault("run_id", run_id)
+                    latest.setdefault("root", str(cwd))
+                    latest.setdefault("agent", agent)
+                    latest.setdefault("skill", skill)
+                    latest["worker_pid"] = handle.process.pid
+                    latest["worker_pgid"] = handle.pgid
+                    if handle.worker_identity is not None:
+                        latest["worker_identity"] = handle.worker_identity
+                    if initial_agent_session_id:
+                        latest.setdefault("agent_session_id", initial_agent_session_id)
+                        latest.setdefault("runtime_session_id", session_id)
+                    if claim_digest:
+                        latest["claim_digest"] = claim_digest
+                    return latest
+
+                mutate_run_meta(
+                    control_plane_home(),
+                    meta_path=handle.meta_path,
+                    mutation_root=handle.meta_path.parent,
+                    run_id=run_id,
+                    mutator=_seed,
+                    create=True,
                 )
-            except (OSError, json.JSONDecodeError, TypeError):
+            except (OSError, RunMetaMutationError, TypeError):
                 pass
         await self._transition(
             handle,
@@ -462,6 +538,11 @@ class AsyncSupervisor:
             payload={
                 "worker_pid": handle.process.pid,
                 "worker_pgid": handle.pgid,
+                **(
+                    {"worker_identity": handle.worker_identity}
+                    if handle.worker_identity is not None
+                    else {}
+                ),
                 "meta": str(handle.meta_path or ""),
                 "report": str(handle.report_path or ""),
                 "transcript": str(handle.transcript_path or ""),
@@ -484,6 +565,7 @@ class AsyncSupervisor:
         require_report: bool = True,
         require_transcript_output: bool = False,
         tee_output: bool = False,
+        salvage_report_from_stream: bool = False,
     ) -> AsyncRunHandle:
         handle = await self.spawn(
             run_id=run_id,
@@ -523,7 +605,34 @@ class AsyncSupervisor:
 
         handle.exit_code = handle.process.returncode
         handle.completed_at = _utc_now()
-        self._write_report_fallback(handle)
+        operator_stop = await asyncio.to_thread(
+            _accepted_operator_stop,
+            handle.run_id,
+        )
+        if operator_stop is not None:
+            handle.operator_stopped = True
+            handle.operator_stop_reason = str(
+                operator_stop.get("stop_reason") or "operator stop request"
+            )
+            self._write_meta_summary(handle)
+            # A deliberately stopped run owes no completion report. Keep an
+            # observational artifact receipt for dispatcher callers, but do
+            # not manufacture lifecycle:failed/report_missing after the
+            # durable stop authority already won.
+            handle.artifact_validation = validate_artifacts(
+                meta_path=handle.meta_path,
+                report_path=handle.report_path,
+                transcript_path=handle.transcript_path,
+                require_report=False,
+                require_transcript_output=False,
+            )
+            if tee_output:
+                _write_terminal(_terminal_footer(handle))
+            return handle
+        self._write_report_fallback(
+            handle,
+            salvage_report_from_stream=salvage_report_from_stream,
+        )
         self._write_meta_summary(handle)
         if handle.exit_code == 0:
             await self._transition(
@@ -607,64 +716,120 @@ class AsyncSupervisor:
     ) -> None:
         assert handle.process.stdout is not None
         parser = AgentStreamParser(handle.agent, default_model=handle.agent_model)
-        while True:
-            chunk = await handle.process.stdout.readline()
-            if not chunk:
-                break
-            if handle.transcript_path is not None:
-                with handle.transcript_path.open("ab") as transcript:
-                    transcript.write(chunk)
-            display_text = parser.feed_line(chunk)
-            previous_agent_session_id = handle.agent_session_id
-            self._sync_stream_summary(handle, parser)
-            if (
-                handle.report_path is not None
-                and handle.agent_session_id
-                and handle.agent_session_id != previous_agent_session_id
-            ):
-                from .report_contract import stamp_launcher_report_identity
+        read_task = asyncio.create_task(handle.process.stdout.readline())
+        try:
+            while True:
+                completed, _pending = await asyncio.wait(
+                    {read_task}, timeout=_HEARTBEAT_INTERVAL_SECONDS
+                )
+                if not completed:
+                    # stdout silence is normal while an agent waits inside a
+                    # long build/test/install tool call. Drive liveness from
+                    # the process clock so the exact quiet phase still pulses.
+                    if handle.process.returncode is None:
+                        handle.heartbeat_monotonic = time.monotonic()
+                        await self._emit(
+                            handle.run_id,
+                            handle.state,
+                            "worker heartbeat",
+                            payload={
+                                "liveness": "pid_alive",
+                                "heartbeat_at": _utc_now().isoformat(),
+                            },
+                        )
+                    continue
 
-                stamp_launcher_report_identity(
-                    handle.report_path,
-                    run_id=handle.run_id,
-                    session_id=handle.agent_session_id,
-                    agent=handle.agent,
-                    skill=handle.skill,
-                    status="pending",
-                    model=handle.agent_model,
-                    claim_digest=handle.claim_digest,
-                )
-            if tee_output and display_text:
-                sys.stdout.buffer.write(display_text.encode("utf-8"))
-                sys.stdout.buffer.flush()
-            if not handle.first_output_seen:
-                handle.first_output_seen = True
-                await self._transition(
-                    handle,
-                    RunState.FIRST_OUTPUT_SEEN,
-                    "first output observed",
-                    payload={
-                        "heartbeat_at": _utc_now().isoformat(),
-                    },
-                )
-                await self._transition(
-                    handle,
-                    RunState.ACTIVE,
-                    "process active",
-                    payload={
-                        "liveness": "pid_alive",
-                        "heartbeat_at": _utc_now().isoformat(),
-                    },
-                )
+                chunk = read_task.result()
+                if not chunk:
+                    break
+                read_task = asyncio.create_task(handle.process.stdout.readline())
+                if handle.transcript_path is not None:
+                    with handle.transcript_path.open("ab") as transcript:
+                        transcript.write(chunk)
+                display_text = parser.feed_line(chunk)
+                previous_agent_session_id = handle.agent_session_id
+                self._sync_stream_summary(handle, parser)
+                if (
+                    handle.report_path is not None
+                    and handle.agent_session_id
+                    and handle.agent_session_id != previous_agent_session_id
+                ):
+                    from .report_contract import stamp_launcher_report_identity
+
+                    stamp_launcher_report_identity(
+                        handle.report_path,
+                        run_id=handle.run_id,
+                        session_id=handle.agent_session_id,
+                        agent=handle.agent,
+                        skill=handle.skill,
+                        status="pending",
+                        model=handle.agent_model,
+                        claim_digest=handle.claim_digest,
+                    )
+                if tee_output and display_text:
+                    sys.stdout.buffer.write(display_text.encode("utf-8"))
+                    sys.stdout.buffer.flush()
+                if not handle.first_output_seen:
+                    handle.first_output_seen = True
+                    handle.heartbeat_monotonic = time.monotonic()
+                    await self._transition(
+                        handle,
+                        RunState.FIRST_OUTPUT_SEEN,
+                        "first output observed",
+                        payload={
+                            "heartbeat_at": _utc_now().isoformat(),
+                        },
+                    )
+                    await self._transition(
+                        handle,
+                        RunState.ACTIVE,
+                        "process active",
+                        payload={
+                            "liveness": "pid_alive",
+                            "heartbeat_at": _utc_now().isoformat(),
+                        },
+                    )
+                    continue
+                # Output movement is also a heartbeat, but use `_emit` rather
+                # than `_transition`: a pulse must not mutate state history.
+                now_monotonic = time.monotonic()
+                if (
+                    now_monotonic - handle.heartbeat_monotonic
+                    >= _HEARTBEAT_INTERVAL_SECONDS
+                ):
+                    handle.heartbeat_monotonic = now_monotonic
+                    await self._emit(
+                        handle.run_id,
+                        RunState.ACTIVE,
+                        "worker heartbeat",
+                        payload={
+                            "liveness": "pid_alive",
+                            "heartbeat_at": _utc_now().isoformat(),
+                        },
+                    )
+        finally:
+            if not read_task.done():
+                read_task.cancel()
+                try:
+                    await read_task
+                except asyncio.CancelledError:
+                    pass
         await handle.process.wait()
         self._sync_stream_summary(handle, parser)
 
-    def _write_report_fallback(self, handle: AsyncRunHandle) -> None:
+    def _write_report_fallback(
+        self,
+        handle: AsyncRunHandle,
+        *,
+        salvage_report_from_stream: bool = False,
+    ) -> None:
         report = handle.report_path
         if report is None:
             return
         if not report.exists():
-            if handle.exit_code != 0 or handle.agent != "grok":
+            if handle.exit_code != 0 or (
+                handle.agent != "grok" and not salvage_report_from_stream
+            ):
                 return
             transcript_text = ""
             if handle.transcript_path is not None and handle.transcript_path.exists():
@@ -695,7 +860,7 @@ class AsyncSupervisor:
         fields, _, has_frontmatter = parse_report_text(text)
         if (
             handle.exit_code == 0
-            and handle.agent == "grok"
+            and (handle.agent == "grok" or salvage_report_from_stream)
             and has_frontmatter
             and fields.get("launcher_template", "").strip().lower()
             in {"1", "true", "yes", "on"}
@@ -728,7 +893,8 @@ class AsyncSupervisor:
     def _sync_stream_summary(
         self, handle: AsyncRunHandle, parser: AgentStreamParser
     ) -> None:
-        handle.agent_session_id = parser.session_id
+        if parser.session_id:
+            handle.agent_session_id = parser.session_id
         handle.agent_model = parser.model_id
         handle.tokens_input = parser.tokens_input
         handle.tokens_cached_input = parser.tokens_cached_input
@@ -741,14 +907,6 @@ class AsyncSupervisor:
     def _write_meta_summary(self, handle: AsyncRunHandle) -> None:
         if handle.meta_path is None:
             return
-        payload: dict[str, object] = {}
-        if handle.meta_path.exists():
-            try:
-                loaded = json.loads(handle.meta_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                loaded = {}
-            if isinstance(loaded, dict):
-                payload.update(loaded)
         summary = {
             "run_id": handle.run_id,
             "agent": handle.agent,
@@ -770,28 +928,28 @@ class AsyncSupervisor:
             "completed_at": handle.completed_at.isoformat()
             if handle.completed_at
             else "",
-            "status": "completed"
-            if handle.exit_code == 0
-            else ("failed" if handle.exit_code is not None else "running"),
+            "status": (
+                "stopped"
+                if handle.operator_stopped
+                else (
+                    "completed"
+                    if handle.exit_code == 0
+                    else ("failed" if handle.exit_code is not None else "running")
+                )
+            ),
+            "worker_pid": handle.process.pid,
+            "worker_pgid": handle.pgid,
         }
+        if handle.worker_identity is not None:
+            summary["worker_identity"] = handle.worker_identity
+        if handle.operator_stopped:
+            summary["operator_stop_accepted"] = True
+            summary["stop_reason"] = handle.operator_stop_reason
+            summary["recovery_required"] = False
         # Stamp origin for triage-run: dispatcher finishes outside the worker
         # pane, so ambient VC_FRAME_* is often empty at triage time. Prefer
         # values already in meta (launch path) over live env.
         origin = _origin_fields_from_env()
-        if not str(payload.get("origin_session") or "").strip() and origin.get(
-            "origin_session"
-        ):
-            summary["origin_session"] = origin["origin_session"]
-            summary["operator_session"] = origin.get(
-                "operator_session", origin["origin_session"]
-            )
-        if not str(payload.get("origin_tab") or "").strip():
-            summary["origin_tab"] = origin.get("origin_tab") or handle.run_id
-        if (
-            origin.get("origin_pane_id")
-            and not str(payload.get("origin_pane_id") or "").strip()
-        ):
-            summary["origin_pane_id"] = origin["origin_pane_id"]
         if handle.model_requested:
             summary["model_requested"] = handle.model_requested
             summary["model_override_supported"] = handle.model_override_supported
@@ -802,13 +960,39 @@ class AsyncSupervisor:
                 )
         if handle.tokens_cache_write is not None:
             summary["tokens_cache_write"] = handle.tokens_cache_write
-        else:
-            payload.pop("tokens_cache_write", None)
-        payload.update(summary)
         handle.meta_path.parent.mkdir(parents=True, exist_ok=True)
-        handle.meta_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-            encoding="utf-8",
+
+        def _merge_summary(payload: dict[str, object]) -> dict[str, object]:
+            if not str(payload.get("origin_session") or "").strip() and origin.get(
+                "origin_session"
+            ):
+                summary["origin_session"] = origin["origin_session"]
+                summary["operator_session"] = origin.get(
+                    "operator_session", origin["origin_session"]
+                )
+            if (
+                origin.get("origin_session")
+                and origin.get("origin_tab")
+                and not str(payload.get("origin_tab") or "").strip()
+            ):
+                summary["origin_tab"] = origin["origin_tab"]
+            if (
+                origin.get("origin_pane_id")
+                and not str(payload.get("origin_pane_id") or "").strip()
+            ):
+                summary["origin_pane_id"] = origin["origin_pane_id"]
+            if handle.tokens_cache_write is None:
+                payload.pop("tokens_cache_write", None)
+            payload.update(summary)
+            return payload
+
+        mutate_run_meta(
+            control_plane_home(),
+            meta_path=handle.meta_path,
+            mutation_root=handle.meta_path.parent,
+            run_id=handle.run_id,
+            mutator=_merge_summary,
+            create=True,
         )
 
     async def _terminate(self, handle: AsyncRunHandle) -> None:

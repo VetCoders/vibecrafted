@@ -100,10 +100,12 @@ No strider split on the entrypoint.
 ### SESSIONS rail and finished-run triage (`f` · `x` · `n`)
 
 The left **Sessions** column (session-manager plugin, `rail true` in shipped
-layouts) lists host sessions. Worker tabs open in **project / worker hosts**
-(see `docs/runtime/AGENT_OPS.md` G7), not in the human operator seat.
+layouts) lists User Sessions and optional viewer/compatibility hosts. Ordinary
+workers launch headless and do not live in this rail (see
+`docs/runtime/AGENT_OPS.md`).
 
-When a supervised run finishes, the runtime calls **`vc-frame triage-run`**:
+For an explicitly terminal-backed compatibility run, the runtime may call
+**`vc-frame triage-run`**:
 
 1. Capture scrollback + run identity.
 2. Recreate a viewer/rerun tab in one of:
@@ -112,9 +114,10 @@ When a supervised run finishes, the runtime calls **`vc-frame triage-run`**:
    - `Needs attention` (**n**)
 3. Only then close the origin tab in the work session.
 
-Board counters **`f · x · n` count tabs inside those three bucket sessions**,
-not “how many control-plane runs completed.” Settlement in meta
-(`status=completed`, exit 0, report path) is a different axis from triage.
+Board counters **`f · x · n` must come from the immutable settlement ledger**,
+not from bucket-tab counts or bare control-plane completion. Bucket sessions
+remain optional transcript/rerun projections; closing them changes no
+settlement fact and cannot stop a headless worker.
 
 Full contract (classification, origin stamp, push≠install, research vs
 implement, backfill):

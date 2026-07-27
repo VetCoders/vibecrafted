@@ -526,27 +526,45 @@ def research_synthesize_main(argv: Sequence[str] | None = None) -> int:
 
 def resume_main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Resume an agent from captured Vibecrafted session_id."
+        description=(
+            "Create a tracked provider-native resume attempt from explicit "
+            "agent_session_id evidence."
+        )
     )
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--agent", required=True, choices=sorted(AGENTS))
-    ns, extra = parser.parse_known_args(list(sys.argv[1:] if argv is None else argv))
-    run = control_plane.lookup_run(ns.run_id) or {}
-    session_id = str(run.get("session_id") or "")
-    if not session_id:
-        for item in _load_meta_files(ns.run_id):
-            if item.get("agent") == ns.agent and item.get("session_id"):
-                session_id = str(item["session_id"])
-                break
-    if not session_id:
+    parser.add_argument("--prompt", default="")
+    parser.add_argument("--source-dir", default=".")
+    parser.add_argument("--idempotency-key", default="")
+    parser.add_argument("--json", action="store_true")
+    ns = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
+
+    from .workflow import native_resume_run
+
+    result = native_resume_run(
+        ns.run_id,
+        source_dir=ns.source_dir,
+        prompt=ns.prompt,
+        expected_agent=ns.agent,
+        idempotency_key=ns.idempotency_key,
+    )
+    if ns.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    elif result.get("accepted"):
         print(
-            f"vibecrafted-resume: no session_id captured for {ns.run_id}/{ns.agent}",
+            "native resume dispatched "
+            f"run_id={result.get('resume_run_id')} "
+            f"resume_of={result.get('run_id')} "
+            f"attempt={result.get('attempt')}"
+        )
+    else:
+        detail = str(result.get("detail") or "").strip()
+        suffix = f": {detail}" if detail else ""
+        print(
+            f"vibecrafted-resume: refused {result.get('reason')}{suffix}",
             file=sys.stderr,
         )
-        return 1
-    command = [str(deck_path()), "resume", ns.agent, "--session", session_id, *extra]
-    print(" ".join(command))
-    return subprocess.call(command)
+    return 0 if result.get("accepted") else 1
 
 
 def stop_main(argv: Sequence[str] | None = None) -> int:

@@ -93,6 +93,87 @@ def test_release_archive_preserves_bundled_tool_slot() -> None:
     assert "$SOURCE/tools/bin/<os>-<arch>" in tools_readme
 
 
+def test_release_workflow_proves_every_payload_before_publication() -> None:
+    workflow = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+
+    core_gate = workflow.index("- name: Run core runtime tests")
+    artifact_verify = workflow.index("- name: Verify exact release payloads")
+    oidc_attestation = workflow.index(
+        "- name: Attest release payloads with GitHub OIDC"
+    )
+    draft_create = workflow.index("- name: Create draft GitHub Release")
+    draft_verify = workflow.index("- name: Verify uploaded draft assets")
+    publication = workflow.index("- name: Publish verified GitHub Release")
+
+    assert core_gate < artifact_verify < oidc_attestation
+    assert oidc_attestation < draft_create < draft_verify < publication
+    assert "run: make test-core" in workflow[core_gate:artifact_verify]
+
+    for permission in (
+        "contents: write",
+        "id-token: write",
+        "attestations: write",
+        "artifact-metadata: write",
+    ):
+        assert permission in workflow[:core_gate]
+    assert "persist-credentials: false" in workflow[:core_gate]
+
+    signing_step = workflow.split(
+        "- name: Stage release payloads and sign with existing RSA key", 1
+    )[1].split("- name: Verify exact release payloads", 1)[0]
+    for payload in (
+        '"vibecrafted-${{ steps.version.outputs.version }}.tar.gz"',
+        '"vibecrafted-framework.plugin"',
+        '"install.sh"',
+    ):
+        assert payload in signing_step
+    assert "VIBECRAFTED_SIGNING_KEY" in signing_step
+    assert 'openssl dgst -sha256 -sign "$signing_key"' in signing_step
+    assert 'sha256sum "$payload" >> SHA256SUMS' in signing_step
+
+    verification_step = workflow[artifact_verify:oidc_attestation]
+    assert "sha256sum --check SHA256SUMS" in verification_step
+    assert "openssl dgst -sha256" in verification_step
+    assert "scripts/distribution_manifest.py check" in verification_step
+    assert "python3 -m zipfile -t" in verification_step
+
+    attestation_step = workflow[oidc_attestation:draft_create]
+    assert "actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6" in attestation_step
+    assert "subject-checksums: dist/SHA256SUMS" in attestation_step
+
+    draft_step = workflow[draft_create:draft_verify]
+    assert "draft: true" in draft_step
+    assert "fail_on_unmatched_files: true" in draft_step
+    assert "dist/install.sh" in draft_step
+
+    uploaded_verification = workflow[draft_verify:publication]
+    assert "gh release download" in uploaded_verification
+    assert 'cmp "dist/$asset" "$download_dir/$asset"' in uploaded_verification
+    assert 'gh release edit "$tag" --draft=false' in workflow[publication:]
+
+
+def test_release_docs_keep_rsa_and_future_gpg_as_distinct_trust_paths() -> None:
+    kickoff = (REPO_ROOT / "docs" / "RELEASE_KICKOFF.md").read_text(encoding="utf-8")
+    normalized = " ".join(kickoff.split())
+
+    for current_truth in (
+        "The operational signing mechanism today is the existing RSA private key",
+        "`VIBECRAFTED_SIGNING_KEY`",
+        "`vibecrafted-signing.pub`",
+        "OIDC attestation complements that signature",
+    ):
+        assert current_truth in normalized
+
+    for future_truth in (
+        "does **not** yet claim a VetCoders organization GPG trust root",
+        "GPG is a separate future trust path",
+        "Do not relabel the current RSA key as GPG",
+    ):
+        assert future_truth in normalized
+
+
 def test_vc_release_skill_locks_four_mandatory_report_sections() -> None:
     skill = (REPO_ROOT / "skills/vc-release/SKILL.md").read_text(encoding="utf-8")
 

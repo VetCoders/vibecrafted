@@ -30,7 +30,6 @@ FOUNDATIONS_DIR="$SKILLS_DIR/foundations"
 FIXTURES_DIR="$SCRIPT_DIR/fixtures"
 HELPER_SHIM="${HOME}/.config/vetcoders/vc-skills.sh"
 
-MIN_DOCTOR_OK=100
 EXPECTED_HELPER_FUNCTIONS=(vc-init vc-help vc-research vc-agents)
 
 NEGATIVE_ONLY=0
@@ -257,12 +256,20 @@ printf '\n%s\n' "$(dim '─── phase 5: make doctor health ───')"
 doctor_log="$(mktemp -t vc-doctor.XXXXXX)"
 trap 'rm -f "$doctor_log"' EXIT
 
-if ! (cd "$REPO_ROOT" && make doctor) >"$doctor_log" 2>&1; then
-  log_warn "make doctor exited nonzero — output captured at $doctor_log"
+doctor_exit=0
+if (cd "$REPO_ROOT" && make doctor) >"$doctor_log" 2>&1; then
+  doctor_exit=0
+else
+  doctor_exit=$?
 fi
 
 # Doctor is summary-first (CLI_PRODUCT_SPEC §6.4): parse the verdict-line
 # counts ("N ok   M warnings   K failures") instead of counting bracket tags.
+# The ok/warning split is host-dependent: a clean CI runner reports optional
+# install surfaces as warnings, while an installed workstation reports them as
+# passing checks. The stable health contract is a parseable verdict with at
+# least one passing check, zero failures, and a zero command exit.
+summary_line="$(grep -m1 -E '[0-9]+ ok.*[0-9]+ warnings.*[0-9]+ failures' "$doctor_log" || true)"
 ok_count="$(grep -oE '[0-9]+ ok' "$doctor_log" | head -n1 | grep -oE '[0-9]+' || true)"
 warn_count="$(grep -oE '[0-9]+ warnings' "$doctor_log" | head -n1 | grep -oE '[0-9]+' || true)"
 fail_count="$(grep -oE '[0-9]+ failures' "$doctor_log" | head -n1 | grep -oE '[0-9]+' || true)"
@@ -270,10 +277,14 @@ ok_count="${ok_count:-0}"
 warn_count="${warn_count:-0}"
 fail_count="${fail_count:-0}"
 
-if (( fail_count > 0 )); then
+if [[ -z "$summary_line" ]]; then
+  log_fail "doctor: summary line missing or unparseable"
+elif (( fail_count > 0 )); then
   log_fail "doctor: $fail_count failures reported"
-elif (( ok_count < MIN_DOCTOR_OK )); then
-  log_fail "doctor: only $ok_count ok checks (expected ≥$MIN_DOCTOR_OK)"
+elif (( doctor_exit != 0 )); then
+  log_fail "doctor: exited $doctor_exit despite a zero-failure summary"
+elif (( ok_count == 0 )); then
+  log_fail "doctor: summary reports no passing checks"
 else
   log_pass "doctor: $ok_count ok / $warn_count warnings / $fail_count failures"
 fi

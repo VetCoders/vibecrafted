@@ -79,9 +79,10 @@ vc-<launcher> <agent> \
   --prompt '<prompt>'
 ```
 
-If `vc-<launcher> <agent>` is invoked outside vc-frame, the framework will attach
-or create the operator session and run that launcher skill in a new tab. `vc-agents`
-defines how that launcher run fans out into external workers.
+`vc-<launcher> <agent>` launches a detached headless worker whether or not
+vc-frame is live. The User Session may project its transcript and state, but it
+does not host the process. `vc-agents` defines how that launcher run fans out
+into external workers.
 
 ### Concrete dispatch examples
 

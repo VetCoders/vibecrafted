@@ -1,59 +1,69 @@
-# Run triage and SESSIONS rail (`f` · `x` · `n`)
+# Run settlement truth and terminal triage projection (`f` · `x` · `n`)
 
-> **Canonical contract for finished-run terminal placement.**
-> Source of truth in code: `vibecrafted_core/run_triage.py`,
+> **Canonical settlement truth:** the append-only hash-chained ledger in
+> `vibecrafted_core/settlement_ledger.py`.
+>
+> **Optional terminal projection:** finished-run tab placement through
+> `run_triage.py` and `vc-frame triage-run`.
+>
+> Bucket tabs are retained compatibility/viewer surfaces. They do not own
+> worker processes and are not the source of `f · x · n`.
+>
+> Source of terminal placement behavior: `vibecrafted_core/run_triage.py`,
 > `vibecrafted_core/dispatcher.py` (Python finish hook),
 > `runtime/scripts/lib/meta.sh` → `spawn_triage_run` (shell finish hook),
 > `vc-frame triage-run` (transfer primitive).
 > Related: [CONTRACT.md](./CONTRACT.md) (report frontmatter),
-> [AGENT_OPS.md](./AGENT_OPS.md) (worker host sessions),
+> [AGENT_OPS.md](./AGENT_OPS.md) (process and session ownership),
 > [VC-FRAME.md](../VC-FRAME.md) (layouts and SESSIONS rail).
 
 This document exists because field evidence repeatedly confused three different
 numbers:
 
-| What operators see                                        | What it actually counts                                      |
-| --------------------------------------------------------- | ------------------------------------------------------------ |
-| Many `impl-*` / `rese-*` tabs still open                  | Live or finished tabs **still sitting in the work session**  |
-| Control-plane `status=completed` + exit `0` + report path | Run **settled** in meta; artifacts exist                     |
-| SESSIONS rail `f · x · n`                                 | Tabs currently inside **bucket sessions** after `triage-run` |
+| What operators see                                        | What it actually counts                                                 |
+| --------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Many `impl-*` / `rese-*` viewer tabs still open           | UI projections; not worker liveness or settlement                       |
+| Control-plane `status=completed` + exit `0` + report path | Run state and artifacts; still not an immutable settlement history      |
+| Settlement rail `f · x · n`                               | Ledger transitions or latest-per-run verdicts, depending on the UI view |
 
-**Those are not the same axis.** Settlement ≠ triage. Push ≠ install. Layout ≠
-bucket.
+**Those are not the same axis.** Settlement ≠ triage. Worker ≠ viewer.
+Push ≠ install. Layout ≠ ledger.
 
 ---
 
 ## Product shape (what “good” looks like)
 
 ```text
-1. Worker tab opens in a project/worker host session
-   (not the human operator seat — see AGENT_OPS G7).
-2. Agent runs; pane shows live output.
+1. Ordinary worker launches headless in its own process session.
+2. Agent output lands in the durable transcript; control-plane state exposes
+   liveness independently of vc-frame.
 3. Worker reaches a terminal state; the launcher/dispatcher finalizes
    artifacts (report/meta/transcript), then reaps orphan processes.
-4. Still inside the origin process, runtime calls triage (fail-open):
-   shell: spawn_reap_run then spawn_triage_run → vibecrafted_core.run_triage
-   python: dispatcher triage_finished_run(meta_path) after finalize
-5. vc-frame triage-run (on success):
-   - captures scrollback + run identity
+4. A V2 settlement event is appended to
+   `control_plane/settlement_ledger.jsonl` before its bounded notification is
+   published. Guardian and UI consumers must derive `f · x · n` from this
+   ledger.
+5. For an explicit `--runtime terminal` compatibility run only, runtime may call
+   triage and `vc-frame triage-run` may:
+   - capture scrollback + run identity
    - recreates a viewer/rerun tab in a bucket session
    - only then closes the origin tab
    → the origin pane often never shows the EXIT footer; that footer is
      what remains when triage skips or errors (fail-open leave-origin):
      [ EXIT CODE: N ]  <ENTER> re-run, <ESC> drop to shell, <Ctrl-c> exit
-6. Work-session rail sheds the origin tab (happy path).
-7. SESSIONS board f/x/n counts tabs in bucket sessions.
+6. Closing, moving, or losing that viewer changes no ledger fact and has no
+   authority over a headless worker.
 ```
 
-`vc-frame` owns the terminal transfer. The runtime owns classification and the
-call. A PTY **cannot migrate** between sessions; triage **recreates**, then
-closes origin. Fail-open on the runtime side: missing binary, dead session, or
-non-zero `triage-run` becomes a receipt — never a lost report, never an
-exception that fails an already-finished run.
+`vc-frame` owns only the terminal transfer/projection. The runtime owns
+classification and settlement. A PTY **cannot migrate** between sessions;
+triage **recreates**, then closes origin. Fail-open on the projection side:
+missing binary, dead session, or non-zero `triage-run` becomes a receipt —
+never a lost report, never an exception that fails an already-finished run.
 
 ---
 
-## Bucket sessions (wire names)
+## Viewer bucket sessions (legacy wire names)
 
 Exact session names are a **vc-frame wire contract** (`BucketKind::session_name`).
 Vibecrafted mirrors them for receipts only.
@@ -64,15 +74,17 @@ Vibecrafted mirrors them for receipts only.
 | **x** | `Failed runs`     | `failed`                 | `failed`          |
 | **n** | `Needs attention` | `needs_attention`        | `needs-attention` |
 
-`f · x · n` on the board is **tab count inside those sessions**, not “how many
-control-plane runs completed today.”
+The names remain a vc-frame compatibility wire for viewer placement. Product
+`f · x · n` counters must instead read the settlement ledger:
 
-If the bucket sessions do not exist yet, counts stay at zero even when dozens of
-runs have `status=completed` and valid reports.
+- `counts.historical_transitions` for every immutable transition;
+- `counts.latest_by_run` for one current verdict per run.
+
+Missing bucket sessions therefore do not make ledger counts zero.
 
 ---
 
-## Classification (where a run lands)
+## Terminal projection classification (where a viewer lands)
 
 Implemented by `classify_run` / `read_run_signals` in `run_triage.py`.
 
@@ -137,13 +149,14 @@ applied for destination on that degraded wire.
 | `no_meta`            | Meta path unreadable / not an object (outcome only; no receipt write)              |
 | `error` / `exit N:…` | Transfer attempted; `triage-run` non-zero or invoke failed (origin left in place)  |
 
-Python dispatcher finishes **outside** the worker pane, so ambient `VC_FRAME_*`
-is often empty at triage time. That is why finish paths **stamp**
+For an explicit terminal run, the Python dispatcher finishes **outside** the
+viewer pane, so ambient `VC_FRAME_*` is often empty at triage time. That is why
+terminal finish paths **stamp**
 `origin_session` / `origin_tab` / `origin_pane_id` into meta (see
 `supervisor_async._origin_fields_from_env` and meta summary write).
 
-**Headless / CI / setsid** runs with no session: skip is correct — there is no
-terminal to triage.
+Ordinary headless, CI, and setsid runs have no session: skip is correct — there
+is no terminal to triage.
 
 ---
 
@@ -224,25 +237,26 @@ refresh the tools home.
 
 ---
 
-## Research layout vs implement tabs
+## Research projections vs ordinary workers
 
 These are different models. Do not force one into the other.
 
-| Surface                                   | Model                                                                                |
-| ----------------------------------------- | ------------------------------------------------------------------------------------ |
-| Implement / scaffold / most skill workers | **One tab per run_id** in a worker host session; triage moves that tab into a bucket |
-| Research swarm                            | **One multi-pane tab** (synthesis + agent stack) while work is live                  |
+| Surface                                   | Default model                                                                                        |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Implement / scaffold / most skill workers | Detached headless process; receipt, transcript, and state may be projected into a viewer             |
+| Research swarm                            | One common run_id with headless lanes; explicit terminal compatibility may use one multi-pane viewer |
 
-### Static layout (`config/vc-frame/layouts/research.kdl`)
+### Static explicit-terminal layout (`config/vc-frame/layouts/research.kdl`)
 
 - Includes **session-manager** rail (`Sessions` column) like operator/dashboard.
 - Multi-pane: synthesis left (~55%), agents stacked right.
 - Swap layouts: `grid`, `synthesis` (documented in the KDL header).
 
-### Workflow-generated research layout
+### Workflow-generated explicit-terminal layout
 
+When terminal compatibility is explicitly selected,
 `workflow._write_research_layout` (and the shell twin path) builds a **minimal**
-KDL for the swarm: compact-bar + status-bar + panes. It **does not** currently
+KDL viewer for the swarm: compact-bar + status-bar + panes. It **does not** currently
 include the session-manager rail, even though static `research.kdl` does.
 
 That is a **layout generator gap**, not “research learning sessions over time.”
@@ -251,8 +265,8 @@ research will look like it “does not know” the Sessions column.
 
 ### When does research touch `f · x · n`?
 
-When the **whole research run** reaches a terminal state and triage runs with
-a valid origin. Id prefixes in the wild:
+When the **whole research run** emits a V2 settlement event. Terminal triage
+and a valid origin are optional projection concerns. Id prefixes in the wild:
 
 | Path                                   | Typical `run_id` prefix |
 | -------------------------------------- | ----------------------- |
@@ -261,14 +275,14 @@ a valid origin. Id prefixes in the wild:
 
 Either form is a research run identity, not “four session columns for four agents.”
 
-- Prefer **one** transfer of the research host tab into a bucket — not one
-  bucket entry per agent pane.
-- Agent panes are lanes inside the research layout; they are not separate
-  SESSIONS board columns.
+- For an explicit terminal run, prefer **one** transfer of the research viewer
+  tab into a bucket — not one bucket entry per agent pane.
+- Agent panes are viewer lanes inside the compatibility layout; they are not
+  separate workers or SESSIONS board columns.
 
 ---
 
-## Operator diagnostics (when rail stays at 0)
+## Operator diagnostics (when a viewer rail or ledger count stays at 0)
 
 Work through this list in order:
 
@@ -280,8 +294,11 @@ Work through this list in order:
    - `origin_session`, `origin_tab`
    - `triage` receipt (null vs `finalized` / `skipped` / `error`)
 5. **Bucket sessions exist?** — `vc-frame list-sessions` should eventually show
-   `Finalized runs` / `Failed runs` / `Needs attention` after successful transfers.
-6. **Historical runs** — triage is at finish time. Past runs without origin do
+   `Finalized runs` / `Failed runs` / `Needs attention` after successful
+   projection transfers. This does not affect ledger counts.
+6. **Ledger** — verify `settlement_ledger.jsonl` through
+   `read_settlement_ledger()`; never repair counts by inventing pre-ledger facts.
+7. **Historical runs** — triage is at finish time. Past runs without origin do
    not auto-backfill. Options: manual `triage-run` with explicit
    `--origin-session` / `--origin-tab`, or close orphan tabs manually.
 
@@ -314,12 +331,13 @@ origin alone — do not invent origin fields.
 
 ## Related tests and probes
 
-| Check               | Location / command                              |
-| ------------------- | ----------------------------------------------- |
-| Triage unit surface | `vibecrafted-core/tests/test_run_triage.py`     |
-| Layout smoke        | `make test-vc-frame`                            |
-| Report frontmatter  | `report_contract` + artifact validation tests   |
-| Install stamp       | `VERSION` under tools home after `make install` |
+| Check               | Location / command                                 |
+| ------------------- | -------------------------------------------------- |
+| Triage unit surface | `vibecrafted-core/tests/test_run_triage.py`        |
+| Settlement ledger   | `vibecrafted-core/tests/test_settlement_ledger.py` |
+| Layout smoke        | `make test-vc-frame`                               |
+| Report frontmatter  | `report_contract` + artifact validation tests      |
+| Install stamp       | `VERSION` under tools home after `make install`    |
 
 ---
 

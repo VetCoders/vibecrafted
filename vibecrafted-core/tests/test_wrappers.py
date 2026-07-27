@@ -176,22 +176,22 @@ def test_print_completed_sends_missing_payload_error_to_stderr(capsys) -> None:
     assert "completed without control-plane payload" in captured.err
 
 
-def test_resume_main_routes_captured_session_through_vc_frame_aware_resume_helper(
+def test_resume_main_routes_through_tracked_native_resume_api(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    calls: list[list[str]] = []
+    calls: list[dict[str, object]] = []
 
-    monkeypatch.setattr(
-        wrappers.control_plane,
-        "lookup_run",
-        lambda run_id: {"run_id": run_id, "session_id": "sess-codex-123"},
-    )
+    def fake_resume(run_id: str, **kwargs: object) -> dict[str, object]:
+        calls.append({"run_id": run_id, **kwargs})
+        return {
+            "accepted": True,
+            "run_id": run_id,
+            "resume_run_id": "rsme-child",
+            "attempt": 2,
+        }
 
-    def fake_call(command: list[str]) -> int:
-        calls.append(command)
-        return 0
-
-    monkeypatch.setattr(subprocess, "call", fake_call)
+    monkeypatch.setattr(workflow, "native_resume_run", fake_resume)
 
     assert (
         wrappers.resume_main(
@@ -202,22 +202,46 @@ def test_resume_main_routes_captured_session_through_vc_frame_aware_resume_helpe
                 "codex",
                 "--prompt",
                 "Continue the fix",
+                "--idempotency-key",
+                "settlement:impl-080608-14038:7",
             ]
         )
         == 0
     )
 
     assert calls == [
-        [
-            str(wrappers.deck_path()),
-            "resume",
-            "codex",
-            "--session",
-            "sess-codex-123",
-            "--prompt",
-            "Continue the fix",
-        ]
+        {
+            "run_id": "impl-080608-14038",
+            "source_dir": ".",
+            "prompt": "Continue the fix",
+            "expected_agent": "codex",
+            "idempotency_key": "settlement:impl-080608-14038:7",
+        }
     ]
+    assert "run_id=rsme-child" in capsys.readouterr().out
+
+
+def test_resume_main_returns_nonzero_and_reason_on_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        workflow,
+        "native_resume_run",
+        lambda *_args, **_kwargs: {
+            "accepted": False,
+            "reason": "trust_x",
+            "detail": "trust rejected this run",
+        },
+    )
+
+    rc = wrappers.resume_main(["--run-id", "impl-x", "--agent", "codex"])
+
+    assert rc == 1
+    assert (
+        "vibecrafted-resume: refused trust_x: trust rejected this run"
+        in capsys.readouterr().err
+    )
 
 
 def test_stop_main_prints_success_for_stopped_run(

@@ -52,6 +52,7 @@ fn populated_mission_state() -> MissionControlState {
             x: 2,
             n: 5,
             invalid: 0,
+            unclassified: 2,
             active: 2,
             stalled: 3,
             orphans: 1,

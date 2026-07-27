@@ -61,15 +61,115 @@ _vetcoders_in_vc_frame() {
   [[ -n "${VC_FRAME_PANE_ID:-}" ]] && [[ -n "${VC_FRAME_SESSION_NAME:-}" ]]
 }
 
-_vetcoders_guess_active_vc_frame_session() {
+# Live (non-EXITED) vc-frame session names. One name per line. Multi-word hosts
+# keep spaces (e.g. "vibecrafted workers"); status tags are stripped.
+_vetcoders_list_live_vc_frame_sessions() {
   local PATH="${PATH:-}"
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
   export PATH
   local vc_frame_bin=""
   vc_frame_bin="$(_vetcoders_vc_frame_bin)" || return 0
-  local active
-  active="$("$vc_frame_bin" ls 2>/dev/null | _vetcoders_strip_ansi | grep -E '\(attached\)|\(current\)' | head -1 | awk '{print $1}')"
-  printf '%s\n' "$active"
+  local listing=""
+  listing="$("$vc_frame_bin" list-sessions 2>/dev/null || true)"
+  [[ -n "$listing" ]] || listing="$("$vc_frame_bin" ls 2>/dev/null || true)"
+  printf '%s\n' "$listing" \
+    | _vetcoders_strip_ansi \
+    | awk '
+        NF == 0 { next }
+        /EXITED/ { next }
+        {
+          line = $0
+          sub(/[[:space:]]+\[.*$/, "", line)
+          sub(/[[:space:]]+\([^)]*\)$/, "", line)
+          gsub(/[[:space:]]+$/, "", line)
+          if (line != "") print line
+        }
+      '
+}
+
+# Typed owner for interactive surface targeting (init / bare resume / operator).
+# Policy (order is the contract — not provider-specific):
+#   1. attached/current marker from vc-frame listing
+#   2. repo-bound host (basename of root) when that session is live
+#   3. exactly one live session
+#   4. otherwise empty — callers fail closed for interactive (never silent headless)
+# Explicit VIBECRAFTED_OPERATOR_SESSION / in-frame env are handled by
+# _vetcoders_prepare_operator_runtime before this resolver runs.
+# On multi-candidate ambiguity, lists candidates on stderr so the fail message
+# is actionable instead of "no operator session" when sessions exist.
+_vetcoders_resolve_interactive_operator_target() {
+  local PATH="${PATH:-}"
+  PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
+  export PATH
+  local vc_frame_bin=""
+  vc_frame_bin="$(_vetcoders_vc_frame_bin)" || return 0
+
+  local listing=""
+  listing="$("$vc_frame_bin" list-sessions 2>/dev/null || true)"
+  [[ -n "$listing" ]] || listing="$("$vc_frame_bin" ls 2>/dev/null || true)"
+  listing="$(printf '%s\n' "$listing" | _vetcoders_strip_ansi)"
+
+  local attached=""
+  attached="$(
+    printf '%s\n' "$listing" \
+      | grep -E '\(attached\)|\(current\)' \
+      | head -1 \
+      | awk '{
+          line = $0
+          sub(/[[:space:]]+\[.*$/, "", line)
+          sub(/[[:space:]]+\([^)]*\)$/, "", line)
+          gsub(/[[:space:]]+$/, "", line)
+          print line
+        }'
+  )"
+  if [[ -n "$attached" ]]; then
+    printf '%s\n' "$attached"
+    return 0
+  fi
+
+  # Portable live list (bash + zsh): newline-separated names, no shell arrays.
+  local live_list="" live_count=0 first_live="" name=""
+  live_list="$(_vetcoders_list_live_vc_frame_sessions)"
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    ((live_count += 1))
+    if [[ -z "$first_live" ]]; then
+      first_live="$name"
+    fi
+  done <<< "$live_list"
+
+  local repo_root="" host=""
+  repo_root="${SPAWN_ROOT:-${VIBECRAFTED_ROOT:-${_vetcoders_contract_root:-}}}"
+  if [[ -z "$repo_root" ]]; then
+    repo_root="$(_vetcoders_repo_root 2>/dev/null || pwd)"
+  fi
+  host="$(basename "$repo_root")"
+  if [[ -n "$host" ]] && printf '%s\n' "$live_list" | grep -Fxq -- "$host"; then
+    printf '%s\n' "$host"
+    return 0
+  fi
+
+  if ((live_count == 1)); then
+    printf '%s\n' "$first_live"
+    return 0
+  fi
+
+  if ((live_count > 1)); then
+    printf 'Interactive operator target is ambiguous (%d live vc-frame sessions); pick one explicitly.\n' \
+      "$live_count" >&2
+    printf '  candidates:\n' >&2
+    while IFS= read -r name; do
+      [[ -n "$name" ]] || continue
+      printf '    - %s\n' "$name" >&2
+    done <<< "$live_list"
+    printf '  export VIBECRAFTED_OPERATOR_SESSION=<name>  # or attach a vc-frame tab\n' >&2
+  fi
+  return 0
+}
+
+# Back-compat alias — same typed owner as above.
+_vetcoders_guess_active_vc_frame_session() {
+  _vetcoders_resolve_interactive_operator_target
 }
 
 _vetcoders_current_vc_frame_session_name() {
@@ -236,14 +336,6 @@ _vetcoders_vc_frame_gc_script() {
   _vetcoders_workflow_script "vc-operator" "mission-control/vc-frame-gc.sh"
 }
 
-_vetcoders_auto_gc_dead_vc_frame_sessions() {
-  local gc_script
-  gc_script="$(_vetcoders_vc_frame_gc_script 2>/dev/null || true)"
-  [[ -n "$gc_script" && -f "$gc_script" ]] || return 0
-  bash "$gc_script" --apply --quiet >/dev/null 2>&1 || true
-}
-
-
 _vetcoders_wait_for_vc_frame_session() {
   local session_name="$1"
   local attempts="${2:-40}"
@@ -373,7 +465,6 @@ _vetcoders_prepare_operator_runtime() {
   local runtime="${1:-$(_vetcoders_default_runtime)}"
   local session_name layout_file
   _vetcoders_normalize_ambient_context
-  _vetcoders_auto_gc_dead_vc_frame_sessions
 
   case "$runtime" in
     terminal|visible) ;;
@@ -398,9 +489,11 @@ _vetcoders_prepare_operator_runtime() {
     return 0
   fi
 
-  # If spawned by a headless agent, attempt to naturally latch onto the user's active session.
+  # Detected interactive target (typed owner — not provider-specific).
+  # Priority: attached/current → repo-bound live → single live.
+  # Multi-candidate ambiguity leaves session unset and prints candidates.
   local guessed_session
-  guessed_session="$(_vetcoders_guess_active_vc_frame_session)"
+  guessed_session="$(_vetcoders_resolve_interactive_operator_target)"
   if [[ -n "$guessed_session" ]]; then
     export VIBECRAFTED_OPERATOR_SESSION="$guessed_session"
     export VC_FRAME_SESSION_NAME="$guessed_session"
@@ -410,13 +503,13 @@ _vetcoders_prepare_operator_runtime() {
 
   # No attachable session exists, so the only remaining option is to CREATE
   # one — which vc-frame cannot do without a real PTY. Without a controlling TTY
-  # (scripts, CI, in-repo agent dispatch), degrade to headless instead of
-  # hard-failing: leave VIBECRAFTED_OPERATOR_SESSION unset and return success so
-  # the caller proceeds down the session-free dispatch path. The test bypass env
-  # lets the suite exercise the create branch without a real TTY.
-  # "brak TTY → headless" (runtime invariant: degrade, don't die).
+  # (scripts, CI, in-repo agent dispatch), leave VIBECRAFTED_OPERATOR_SESSION
+  # unset and return success so interactive callers can fail closed (refuse
+  # headless downgrade) while non-interactive callers continue on the
+  # session-free path. The test bypass env lets the suite exercise the create
+  # branch without a real TTY.
   if [[ ! -t 0 || ! -t 1 ]] && [[ -z "${VIBECRAFTED_TEST_ALLOW_NON_TTY_VC_FRAME:-}" ]]; then
-    printf 'no TTY; running headless (no operator session)\n' >&2
+    printf 'no TTY and no detected operator target; leaving operator session unset\n' >&2
     return 0
   fi
 
@@ -449,15 +542,15 @@ _vetcoders_vc_frame_create_host_session() {
   local vc_frame_bin="${1:-}"
   local session_name="${2:-}"
   [[ -n "$vc_frame_bin" && -n "$session_name" ]] || return 1
-  local out="" status=0
-  out="$("$vc_frame_bin" attach --create-background "$session_name" 2>&1)" || status=$?
+  local out="" action_status=0
+  out="$("$vc_frame_bin" attach --create-background "$session_name" 2>&1)" || action_status=$?
   if [[ -n "$out" ]]; then
     printf '%s\n' "$out" >&2
   fi
   if [[ "$(_vetcoders_vc_frame_session_state "$session_name")" == "live" ]]; then
     return 0
   fi
-  [[ "$status" -eq 0 ]] || return "$status"
+  [[ "$action_status" -eq 0 ]] || return "$action_status"
   return 1
 }
 
@@ -469,7 +562,7 @@ _vetcoders_vc_frame_session_action() {
   [[ -n "$vc_frame_bin" ]] || return 1
   [[ "$#" -ge 1 ]] || return 1
 
-  local err_file out_file status=0 err=""
+  local err_file out_file action_status=0 err=""
   err_file="$(mktemp "${TMPDIR:-/tmp}/vc-frame-action.XXXXXX.err")"
   out_file="$(mktemp "${TMPDIR:-/tmp}/vc-frame-action.XXXXXX.out")"
 
@@ -481,8 +574,8 @@ _vetcoders_vc_frame_session_action() {
     fi
   }
 
-  status=0
-  _vetcoders_vc_frame_action_invoke "$@" || status=$?
+  action_status=0
+  _vetcoders_vc_frame_action_invoke "$@" || action_status=$?
   err="$(cat "$err_file" 2>/dev/null || true)"
   if [[ -n "$err" ]]; then
     printf '%s\n' "$err" >&2
@@ -501,21 +594,21 @@ _vetcoders_vc_frame_session_action() {
       rm -f "$err_file" "$out_file"
       return 2
     fi
-    status=0
-    _vetcoders_vc_frame_action_invoke "$@" || status=$?
+    action_status=0
+    _vetcoders_vc_frame_action_invoke "$@" || action_status=$?
     err="$(cat "$err_file" 2>/dev/null || true)"
     if [[ -n "$err" ]]; then
       printf '%s\n' "$err" >&2
     fi
-    if _vetcoders_vc_frame_stderr_is_session_not_found "$err" || [[ "$status" -ne 0 ]]; then
-      VETCODERS_VC_FRAME_LAST_ERROR="${err:-vc-frame action failed after host resurrect (exit ${status})}"
+    if _vetcoders_vc_frame_stderr_is_session_not_found "$err" || [[ "$action_status" -ne 0 ]]; then
+      VETCODERS_VC_FRAME_LAST_ERROR="${err:-vc-frame action failed after host resurrect (exit ${action_status})}"
       rm -f "$err_file" "$out_file"
       return 2
     fi
-  elif [[ "$status" -ne 0 ]]; then
-    VETCODERS_VC_FRAME_LAST_ERROR="${err:-vc-frame action exit ${status}}"
+  elif [[ "$action_status" -ne 0 ]]; then
+    VETCODERS_VC_FRAME_LAST_ERROR="${err:-vc-frame action exit ${action_status}}"
     rm -f "$err_file" "$out_file"
-    return "$status"
+    return "$action_status"
   fi
 
   rm -f "$err_file" "$out_file"
@@ -545,7 +638,7 @@ _vetcoders_spawn_into_operator_session() {
   local cmd_script
   local vc_frame_bin=""
   local run_id="${VIBECRAFTED_RUN_ID:-interactive}"
-  local status=0
+  local action_status=0
 
   _vetcoders_require_vc_frame || return 1
   vc_frame_bin="$(_vetcoders_vc_frame_bin)" || return 1
@@ -570,13 +663,20 @@ _vetcoders_spawn_into_operator_session() {
   # it, instead of drifting to the rail's far end. Probe the binary — a stale
   # install without the flag degrades to the old append placement.
   local placement_flag=""
-  if "$vc_frame_bin" action new-tab --help 2>&1 | command grep -q -- '--after-base'; then
+  local focus_flag=""
+  local new_tab_help=""
+  new_tab_help="$("$vc_frame_bin" action new-tab --help 2>&1 || true)"
+  if [[ "$new_tab_help" == *"--after-base"* ]]; then
     placement_flag="--after-base"
+  fi
+  if [[ -n "${VIBECRAFTED_WORKER_SESSION:-}" && "$new_tab_help" == *"--no-focus"* ]]; then
+    focus_flag="--no-focus"
   fi
   # G3: check exit + stderr; one create-background on session-not-found.
   if _vetcoders_vc_frame_session_action "$vc_frame_bin" "$session_name" \
     action new-tab \
     ${placement_flag:+"$placement_flag"} \
+    ${focus_flag:+"$focus_flag"} \
     --name "$tab_name" \
     --cwd "$root_dir" \
     -- "$cmd_script"; then
@@ -584,13 +684,13 @@ _vetcoders_spawn_into_operator_session() {
       "$run_id" "$session_name" "$tab_name" "$session_name"
     return 0
   else
-    status=$?
+    action_status=$?
   fi
 
   printf 'launch failed: run_id=%s target=%s/%s status=%s\n' \
-    "$run_id" "$session_name" "$tab_name" "$status" >&2
+    "$run_id" "$session_name" "$tab_name" "$action_status" >&2
   if [[ -n "${VETCODERS_VC_FRAME_LAST_ERROR:-}" ]]; then
     printf '%s\n' "$VETCODERS_VC_FRAME_LAST_ERROR" >&2
   fi
-  return "$status"
+  return "$action_status"
 }

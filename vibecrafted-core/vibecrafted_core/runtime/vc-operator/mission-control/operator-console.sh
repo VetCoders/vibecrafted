@@ -3,8 +3,6 @@ set -euo pipefail
 
 export VIBECRAFTED_OPERATOR_MODE=1
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-
 shell_bin="${SHELL:-}"
 if [[ -z "$shell_bin" || ! -x "$shell_bin" ]]; then
   if command -v zsh >/dev/null 2>&1; then
@@ -38,12 +36,8 @@ printf '  close terminal: detach\n'
 printf '  Ctrl+q: quit intentionally\n'
 printf '\n'
 
-if [[ -x "$SCRIPT_DIR/vc-frame-gc.sh" ]]; then
-  bash "$SCRIPT_DIR/vc-frame-gc.sh" --apply --quiet || true
-fi
-
 # restore-orphaned path retired 2026-04-22 — it reanimated zombie runs without
-# PID validation and burned the laptop. Dead runs stay dead. Spawn-time GC in
-# marbles_spawn.sh + watcher heartbeat keep the truth fresh without resurrection.
+# PID validation and burned the laptop. Dead sessions stay as evidence until the
+# operator explicitly runs `vibecrafted dashboard gc [--apply]`.
 
 exec "$shell_bin" -l

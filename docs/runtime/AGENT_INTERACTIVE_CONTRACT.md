@@ -1,18 +1,45 @@
 # Agent interactive contract — init / resume / operator
 
 Spec for how `vibecrafted init|resume|operator <agent>` must behave.
-Applies to the **operator seat** (interactive launcher → vc-frame tab).
-Fleet workers (`*_spawn.sh`, marbles baton) stay non-interactive by design.
+Applies to the **operator seat** (interactive launcher → explicit or detected
+operator target). Fleet workers (`*_spawn.sh`, marbles baton) stay
+non-interactive by design.
+
+## Single rule (typed owner)
+
+```text
+bare resume → interactive → explicit or detected operator target
+prompt/file → tracked headless worker
+provider adapter → changes argv only, never policy
+```
+
+- **Policy owner:** `_vetcoders_resolve_interactive_operator_target` +
+  `_vetcoders_resume_with_contract` (shell runtime). Not comments in adapters.
+- **Adapters** (`_vetcoders_resume_command` / `_vetcoders_fresh_session_command`)
+  only emit provider argv for a given `mode`.
+- **No provider special-case** for surface preparation (including Codex).
+
+### Interactive target resolution (order)
+
+1. Explicit `VIBECRAFTED_OPERATOR_SESSION` (jawny target)
+2. In-frame env (`VC_FRAME_PANE_ID` + `VC_FRAME_SESSION_NAME`)
+3. Detected: vc-frame `(attached)` / `(current)`
+4. Detected: live repo-bound host (`basename` of project root)
+5. Detected: exactly one live non-`EXITED` session
+6. Multiple live candidates with no unique pick → **fail closed** with candidate
+   list (never silent headless, never pick arbitrarily)
+
+Interactive without a resolved target **refuses to downgrade** to headless.
 
 ## Modes
 
-| Mode                | Trigger                                                                              | UI                                                       | Agent invocation                     |
-| ------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------- | ------------------------------------ |
-| **interactive**     | bare `init` / `resume` / `operator`; or `resume --session` without operator job text | Operator tab in vc-frame (or tty)                        | TUI stays open; human can continue   |
-| **non-interactive** | explicit `--prompt` / `--file` on resume (job continue); fleet spawn                 | May still _host_ in a tab, but agent **exits** when done | One-shot / print / exec / `--single` |
+| Mode                | Trigger                                                                              | UI                                                    | Agent invocation                     |
+| ------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------- | ------------------------------------ |
+| **interactive**     | bare `init` / `resume` / `operator`; or `resume --session` without operator job text | Explicit or detected operator target (tab / frame)    | TUI stays open; human can continue   |
+| **non-interactive** | explicit `--prompt` / `--file` on resume (job continue); fleet spawn                 | Headless worker; tab/UI is transcript projection only | One-shot / print / exec / `--single` |
 
-Codex exception (already implemented): internal AICX continuity pack as a
-file is **transport**, not operator job text — bare resume stays interactive.
+An internal AICX continuity pack is **transport**, not operator job text, for
+every provider — bare resume stays interactive.
 
 ## Lifecycle (clean install)
 
@@ -20,11 +47,11 @@ file is **transport**, not operator job text — bare resume stays interactive.
 2. Tab **Start here** = Guide / onboarding (map + picker when productized).
 3. **Start 1st Operator session** → pick agent + root → `vibecrafted init <agent>`
    → new tab on the **human seat** with `/vc-init` seed, **interactive**.
-4. Workers land in `… workers` sessions (G7); not in the human seat.
-5. When a supervised worker finishes, runtime triage may move its tab into a
-   bucket session (`Finalized runs` / `Failed runs` / `Needs attention`). Board
-   `f · x · n` counts those bucket tabs — not control-plane completed rows.
-   See [`TRIAGE_AND_SESSIONS.md`](./TRIAGE_AND_SESSIONS.md).
+4. Workers launch headless in their own process sessions; they do not live in
+   the human seat or depend on a vc-frame session.
+5. Guardian and the immutable settlement ledger own `f · x · n`. vc-frame may
+   project those counts and transcripts, but tabs and bucket sessions are not
+   settlement truth or process ownership.
 
 ## Per-command
 
@@ -36,12 +63,12 @@ file is **transport**, not operator job text — bare resume stays interactive.
 
 ### `vibecrafted resume <agent>`
 
-| Args                              | Mode                                                                                  |
-| --------------------------------- | ------------------------------------------------------------------------------------- |
-| bare                              | AICX 48h pack → native resume if same-agent session, else **new interactive** session |
-| `--session <id>`                  | **interactive** resume of that session                                                |
-| `--session` + `--prompt`/`--file` | **non-interactive** continue (job)                                                    |
-| bare + `--prompt`/`--file`        | **non-interactive** (job; for codex, explicit input only)                             |
+| Args                              | Mode                                                                                    |
+| --------------------------------- | --------------------------------------------------------------------------------------- |
+| bare                              | AICX 48h pack → native resume if same-agent session, else **new interactive** session   |
+| `--session <id>`                  | **interactive** resume of that session                                                  |
+| `--session` + `--prompt`/`--file` | **non-interactive** continue (job)                                                      |
+| bare + `--prompt`/`--file`        | **non-interactive** fresh tracked job; never adopts an AICX-selected historical session |
 
 ### `vibecrafted operator <agent>`
 
@@ -60,11 +87,18 @@ From `grok --help`:
 
 - Using `--single` on init / operator / bare interactive resume.
 - Treating AICX continuity file as “operator prompt” for mode selection
-  (codex rule; other agents should converge on the same intent model).
+  (the rule applies to every provider).
 - Dumping worker tabs into the operator interactive session (G7).
+- Treating closure of a viewer tab or vc-frame session as authority to stop a
+  headless worker.
+- Provider-specific policy forks (e.g. “only Codex prepares the operator
+  surface”) — policy is one owner; adapters change argv only.
+- Equating “interactive endpoint” solely with auto-detected `(attached)` when
+  live sessions exist but none was selected — list candidates and require an
+  explicit target instead.
 
 ## Ownership
 
-Each agent lane owns its flag matrix. A broken interactive path for one
-agent is fixed on that agent only (no cross-agent “make everyone the same
-wrong”).
+Mode + target policy is shared. Each agent lane owns only its **flag matrix**
+(argv). A broken interactive _policy_ is fixed once for every agent; a broken
+argv path is fixed on that agent only.

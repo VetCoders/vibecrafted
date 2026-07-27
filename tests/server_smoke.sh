@@ -5,7 +5,7 @@
 #   - install-all / install-server copies vc-server and assets/fonts.
 #   - Starts a copied binary from /tmp with no LEPTOS_* environment.
 #   - Binds to a free ephemeral port (no hardcoded port).
-#   - Polls /api/control/state and /api/control/runs to 200 OK.
+#   - Polls /api/health, /api/control/state, and /api/control/runs to 200 OK.
 #   - Asserts JSON payload structure, dashboard visibility, and favicon hygiene.
 #   - SIGTERM shuts down clean (no process leaks, no panics in log).
 #
@@ -283,12 +283,11 @@ while [[ $elapsed -lt $((timeout * 2)) ]]; do
   if python3 -c '
 import urllib.request, json, sys
 try:
-    resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/control/state", timeout=1.0)
+    resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/health", timeout=1.0)
     if resp.status == 200:
         data = json.loads(resp.read().decode())
-        assert "generated_at" in data, "missing generated_at"
-        assert "active_runs" in data, "missing active_runs"
-        assert "recent_runs" in data, "missing recent_runs"
+        assert data["schema"] == "vibecrafted.health.v1", "wrong health schema"
+        assert data["status"] == "ok", "server is not ready"
         sys.exit(0)
     sys.exit(1)
 except Exception as e:
@@ -302,10 +301,24 @@ except Exception as e:
 done
 
 if [[ $healthy -eq 1 ]]; then
-  ok "HTTP health check to http://127.0.0.1:$PORT/api/control/state OK (200 + valid JSON keys)"
+  ok "HTTP health check to http://127.0.0.1:$PORT/api/health OK (200 + ready)"
 else
   fail "health check timed out after 15 seconds"
   cat "$LOG_FILE"
+  exit 1
+fi
+
+if python3 -c '
+import urllib.request, json
+resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/control/state", timeout=5.0)
+data = json.loads(resp.read().decode())
+assert "generated_at" in data, "missing generated_at"
+assert "active_runs" in data, "missing active_runs"
+assert "recent_runs" in data, "missing recent_runs"
+'; then
+  ok "GET /api/control/state returns the full state contract"
+else
+  fail "GET /api/control/state contract failed"
   exit 1
 fi
 

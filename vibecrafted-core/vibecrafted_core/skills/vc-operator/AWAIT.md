@@ -15,8 +15,8 @@ scheduled wakeups are diagnostic only, not wake signals. Hedging await with
 ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
 do not normalize the hedge.
 
-Liveness is always 3-signal before declaring done: await verdict, terminal run
-meta, and worker pid dead; if a report is promised, confirm it exists. Two
+Liveness is always 3-signal before declaring done: await verdict, terminal-state
+run meta, and worker pid dead; if a report is promised, confirm it exists. Two
 agreeing signals are enough to act, three to declare done; disagreement means
 treat as live and re-arm await. Known skew: rc=0-on-live and meta stuck
 `active`/`stalled` after real completion.
@@ -32,7 +32,7 @@ For operator mode that translates into:
   `vibecrafted <agent> await --run-id <id>` command, or the framework loop
   command that delegates to it.
 - **Diagnostic signal**: the `<task-notification>` payload, report path,
-  control-plane JSON, transcript, visible pane, or scheduled heartbeat.
+  control-plane JSON, transcript, optional viewer pane, or scheduled heartbeat.
   These can explain state; they do not replace the canonical await.
 - **Anti-pattern**: short-interval polling. Re-checking task status every
   60 seconds burns the prompt cache and signals to the operator that you
@@ -60,11 +60,11 @@ authorizes that step.
 1. Fire:  vibecrafted implement claude --file 01-textforge-editor-core.md
           → run_id = impl-181153-86836
           → background task tracker = b1h5dkw7s
-          → operator-visible in a watched terminal tab (NIGDY HEADLESS rule)
+          → detached headless worker; receipt exposes state and transcript paths
 
 2. Confirm start (~30s after fire):
           → check task tracker is alive
-          → confirm operator sees the watched tab
+          → confirm control-plane state and worker pid
           → arm: vibecrafted claude await --run-id impl-181153-86836
           → write "Wave B-1 fired, canonical await armed" to operator
 
@@ -78,8 +78,8 @@ authorizes that step.
           → do not poll, do not tail logs, do not read /tmp/.../tasks/*.output
 
 5. Await returns:
-          → vibecrafted <agent> await exits with terminal/report truth
-          → confirm worker pid dead and terminal run meta; if report promised,
+          → vibecrafted <agent> await exits with settlement/report truth
+          → confirm worker pid dead and terminal-state run meta; if report promised,
             confirm the report exists
           → read the worker's report file (NOT the /tmp output file —
             see "What the operator-agent reads")
@@ -196,22 +196,25 @@ When the operator pings you during an await:
 
 ---
 
-## NIGDY HEADLESS
+## Headless by default, always observable
 
-Every dispatch must be operator-visible in a watched terminal tab
-(vc-frame, tmux, screen, or equivalent). If your dispatch mechanism doesn't
-surface to the operator's terminal, you're firing into the dark and the
-operator can't intervene. That violates the autonomy contract.
+Every ordinary fleet dispatch defaults to a detached headless worker. vc-frame
+is an observation surface for run state and durable transcripts; its tabs do
+not host the worker and losing a pane must not stop the run.
 
-When in doubt, prefer:
+A true PTY is reserved for the interactive User Session, a bare resume, or an
+explicit `--runtime terminal` chosen for a provider path proven to require it.
+Terminal attachment is never inferred from TTY presence or a live repo session.
 
-1. `vibecrafted implement <agent> --file <path>` in a foreground watched tab.
-2. Supervisor-side `vibecrafted <agent> await --run-id <id>` armed immediately.
-3. Operator can pull focus to the tab at any time and see the worker's
-   live output.
+When in doubt:
 
-Forbidden: piping dispatch through a non-visible subprocess where the
-operator only sees your report after-the-fact.
+1. Launch normally, without a runtime override.
+2. Arm supervisor-side `vibecrafted <agent> await --run-id <id>` immediately.
+3. Observe through the receipt, control-plane state, transcript, and report;
+   optionally project those surfaces in vc-frame.
+
+Forbidden: making worker liveness depend on a pane, tab, attach session, or
+viewer process.
 
 ---
 

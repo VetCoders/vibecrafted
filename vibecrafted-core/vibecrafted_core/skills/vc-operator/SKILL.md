@@ -218,28 +218,24 @@ allowed for parallel recon or small bounded research inside the operator
 session, but dispatched worker slices need telemetry, launch cards, reports,
 transcripts, meta, and awaitable state.
 
-### Visible Dispatch (vc-frame default — non-negotiable when a session is live)
+### Headless Worker Boundary
 
-When a vc-frame operator session is live (`VC_FRAME_SESSION_NAME` is set), every
-attended fleet dispatch MUST launch in the **visible** runtime so each worker
-opens as a vc-frame tab the operator watches directly. A headless, unwatchable
-dispatch is the failure mode, not the safe default — it blinds the operator,
-forces them to ask "is it running?", and pushes the conductor into relaying
-status in a panic instead of both simply watching the pane.
+The vc-frame operator session is the **User Session**, not the worker process
+host. Every ordinary fleet dispatch defaults to `headless`, including attended
+work launched while `VC_FRAME_SESSION_NAME` is set. The worker owns durable run
+state and transcript; vc-frame may project those surfaces, and closing a
+projection must not stop the run.
 
-- **CLI auto-selects visible.** `vibecrafted <skill> <agent> --file <brief>`
-  picks the `terminal` runtime automatically when an operator session exists,
-  and degrades to headless ONLY when no session is present (degrade-not-die).
-  Prefer the CLI for attended dispatch — it does the right thing by default.
-- **MCP launcher does NOT auto-select.** `vc_run_launch` / `vc_launch` default to
-  `runtime="headless"` and do not detect `VC_FRAME_SESSION_NAME`. Dispatching
-  through MCP with a live session therefore REQUIRES an explicit
-  `runtime="visible"` (or `"terminal"`). Passing — or defaulting to — `headless`
-  while a session is live is a dispatch error: it strands the worker as an
-  invisible orphan the operator never sees.
-- **Headless is for the unattended lane only:** cron heartbeats, no-session
-  CI/headless hosts, and runs the operator explicitly chose to background. Never
-  for work the operator is sitting and watching.
+- **CLI and MCP agree.** `vibecrafted <skill> <agent> --file <brief>` and
+  `vc_run_launch` / `vc_launch` default to a detached headless worker.
+- **Observation is explicit and durable.** Use `observe`, `await`, transcripts,
+  run state, and Guardian settlement instead of treating a pane as liveness.
+- **Terminal is an exception.** Pass `runtime="visible"` or
+  `--runtime terminal` only for a provider path proven to require a TTY. Until a
+  daemon-owned PTY broker exists, that compatibility path remains coupled to
+  the terminal and does not inherit the survival guarantee of a headless run.
+- **Interactive PTY stays human-owned.** `init`, `operator`, and bare
+  interactive `resume` remain true User Session tabs.
 
 ## Plan Mutation Allowance
 
@@ -280,7 +276,7 @@ See [JOURNAL.md](JOURNAL.md).
 - Silently downgrading model tier or violating agent fairness.
 - Claiming wave green without report, gate, branch, and SHA evidence.
 - Authoring worker commits or close-outs as if the operator did their work.
-- Running headless or unwatchable dispatches.
+- Making a vc-frame tab or session the process owner for an ordinary worker.
 - Pushing, merging, deploying, or publishing without written plan/session
   permission or an explicit operator button press.
 

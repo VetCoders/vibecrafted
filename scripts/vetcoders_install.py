@@ -19,19 +19,32 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ctypes
+import errno
+import fcntl
+import hashlib
 import importlib
 import json
+import math
 import os
+import plistlib
 import re
+import runpy
+import select
 import shutil
+import signal
+import stat
+import struct
 import subprocess
 import sys
-from collections.abc import Sequence
-from contextlib import contextmanager
+import time
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import ExitStack, contextmanager, nullcontext
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 try:
     _distribution_manifest = importlib.import_module("distribution_manifest")
@@ -576,9 +589,22 @@ def _is_writable(path: Path) -> bool:
 
 
 AGENT_RUNTIMES = ["codex", "claude", "agy", "junie", "grok"]
-SYMLINK_TARGETS = ["agents", "claude", "codex"]
+SYMLINK_TARGETS = ["agents"]
 # gemini kept in CHOICES only for legacy .gemini data dir compat (no active runtime)
-SYMLINK_TARGET_CHOICES = [*SYMLINK_TARGETS, "gemini", "agy", "junie", "grok"]
+SYMLINK_TARGET_CHOICES = [
+    *SYMLINK_TARGETS,
+    "claude",
+    "codex",
+    "gemini",
+    "agy",
+    "junie",
+    "grok",
+]
+SHADOWED_SKILL_VIEW_RUNTIMES = ("claude", "codex")
+# Claude Code and Codex CLIs read only their own ~/.claude/skills and
+# ~/.codex/skills — the canonical .agents view is invisible to them, so the
+# standard install must keep their views or the /vc-* deck goes dark.
+STANDARD_VIEW_RUNTIMES = [*SYMLINK_TARGETS, *SHADOWED_SKILL_VIEW_RUNTIMES]
 
 # ---------------------------------------------------------------------------
 # Install state
@@ -2597,32 +2623,4425 @@ def _remove_path(path: Path) -> None:
         shutil.rmtree(path)
 
 
-def sync_control_plane_tree(
-    src: Path, dst: Path, dry_run: bool = False, mirror: bool = False
-) -> None:
-    """Atomically replace the staged source tree used by installed launchers."""
-    if dry_run:
+_TOOLS_HANDOFF_SCHEMA = "vibecrafted.tools-handoff.v1"
+_TOOLS_INSTALL_LEASE_ENV = "VIBECRAFTED_INSTALL_LEASE_FD"
+_TOOLS_INSTALL_LEASE_TIMEOUT_ENV = "VIBECRAFTED_INSTALL_LOCK_TIMEOUT"
+_TOOLS_INSTALL_LEASE_DEFAULT_SECONDS = 180.0
+_TOOLS_GENERATIONS_TO_KEEP = 3
+_RUNTIME_SERVICE_LABEL = "io.vetcoders.vibecrafted.server"
+_RUNTIME_SERVICE_COMMAND_TIMEOUT_SECONDS = 45.0
+_RUNTIME_SERVICE_ACTIVATION_TIMEOUT_SECONDS = 120.0
+_SERVICE_LIFECYCLE_LOCK_MARKER = (
+    b"readonly VIBECRAFTED_SERVICE_LIFECYCLE_LOCK_CONTRACT=1"
+)
+_RUNTIME_LIFECYCLE_ENV: ContextVar[dict[str, str] | None] = ContextVar(
+    "runtime_lifecycle_environment",
+    default=None,
+)
+_RUNTIME_SERVICE_COMMAND_DEADLINE: ContextVar[float | None] = ContextVar(
+    "runtime_service_command_deadline",
+    default=None,
+)
+
+
+class _RuntimeServiceTransition(OSError):
+    """A structurally valid service snapshot that may still converge."""
+
+
+@dataclass(frozen=True)
+class _RuntimeServiceStatus:
+    installed: bool
+    loaded: bool
+    supervisor_live: bool
+    supervisor_verified: bool
+    supervisor_service_managed: bool
+    build_current: bool
+    pair_healthy: bool
+    supervisor_pid: int | None
+
+    @property
+    def healthy(self) -> bool:
+        return (
+            self.installed
+            and self.loaded
+            and self.supervisor_live
+            and self.supervisor_verified
+            and self.supervisor_service_managed
+            and self.build_current
+            and self.pair_healthy
+            and self.supervisor_pid is not None
+            and self.supervisor_pid > 0
+        )
+
+    @property
+    def quiescent(self) -> bool:
+        return (
+            not self.loaded
+            and not self.supervisor_live
+            and not self.supervisor_verified
+            and not self.supervisor_service_managed
+            and not self.build_current
+            and not self.pair_healthy
+            and self.supervisor_pid is None
+        )
+
+
+@dataclass(frozen=True)
+class _RuntimeLaunchAgentBackup:
+    path: Path
+    contents: bytes | None
+    mode: int | None
+    service_arguments: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _RuntimePayloadEntryBackup:
+    path: Path
+    backup: Path | None
+    kind: str
+    digest: str | None
+
+
+@dataclass(frozen=True)
+class _RuntimePayloadBackup:
+    root: Path
+    entries: tuple[_RuntimePayloadEntryBackup, ...]
+    root_identity: tuple[int, int]
+
+
+@dataclass
+class _RuntimePayloadRestoreOperation:
+    entry: _RuntimePayloadEntryBackup
+    parent_fd: int
+    staged_name: str | None
+    staged_fd: int | None
+    staged_kind: str | None
+    displaced_name: str
+    precall_name: str | None = None
+    precall_fd: int | None = None
+    precall_kind: str | None = None
+    precall_digest: str | None = None
+    current_displaced: bool = False
+    replacement_published: bool = False
+    precall_published: bool = False
+
+
+@dataclass(frozen=True)
+class _RuntimePayloadCaptureSource:
+    path: Path
+    parent_fd: int | None
+    source_fd: int | None
+    kind: str
+    digest: str | None
+    opened: os.stat_result | None
+
+
+def _tools_handoff_path(current_link: Path) -> Path:
+    return current_link.parent / ".vibecrafted-current-handoff.json"
+
+
+def _tools_install_lease_path(current_link: Path) -> Path:
+    return current_link.parent / ".vibecrafted-install.lock"
+
+
+def _tools_handoff_file(shared_home: Path) -> Path:
+    return _tools_handoff_path(_current_tools_link(shared_home))
+
+
+def _tools_install_timeout(timeout_seconds: float | None) -> float:
+    if timeout_seconds is None:
+        raw = os.environ.get(
+            _TOOLS_INSTALL_LEASE_TIMEOUT_ENV,
+            str(_TOOLS_INSTALL_LEASE_DEFAULT_SECONDS),
+        )
+        try:
+            timeout_seconds = float(raw)
+        except ValueError as exc:
+            raise ValueError(
+                f"{_TOOLS_INSTALL_LEASE_TIMEOUT_ENV} must be a finite "
+                f"non-negative number, got {raw!r}"
+            ) from exc
+    if not math.isfinite(timeout_seconds) or timeout_seconds < 0:
+        raise ValueError(
+            "tools install lease timeout must be a finite non-negative number"
+        )
+    return timeout_seconds
+
+
+def _validate_tools_lease_descriptor(descriptor: int, lock_path: Path) -> None:
+    try:
+        opened = os.fstat(descriptor)
+        named = os.stat(lock_path, follow_symlinks=False)
+    except OSError as exc:
+        raise OSError(
+            f"inherited tools install lease is unavailable at {lock_path}"
+        ) from exc
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or opened.st_uid != os.geteuid()
+        or opened.st_nlink != 1
+        or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
+    ):
+        raise OSError(
+            f"inherited tools install lease does not own the regular file {lock_path}"
+        )
+
+
+def _tools_lease_owner(descriptor: int) -> str:
+    try:
+        raw = os.pread(descriptor, 4096, 0).decode("utf-8", errors="replace").strip()
+        payload = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return "owner metadata unavailable"
+    if not isinstance(payload, dict):
+        return "owner metadata unavailable"
+    pid = payload.get("pid", "unknown")
+    operation = payload.get("operation", "unknown")
+    started_at = payload.get("started_at", "unknown")
+    return f"pid={pid}, operation={operation}, started_at={started_at}"
+
+
+def _write_tools_lease_owner(descriptor: int, operation: str) -> None:
+    encoded = (
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "operation": operation,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+    os.ftruncate(descriptor, 0)
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    view = memoryview(encoded)
+    while view:
+        written = os.write(descriptor, view)
+        if written <= 0:
+            raise OSError("could not persist tools install lease owner")
+        view = view[written:]
+    os.fsync(descriptor)
+
+
+@contextmanager
+def _tools_install_lease(
+    current_link: Path,
+    *,
+    timeout_seconds: float | None = None,
+    operation: str = "runtime-publish",
+) -> Iterator[int]:
+    """Serialize runtime publication and Python-tool/service reconciliation."""
+    lock_path = _tools_install_lease_path(current_link)
+    inherited_raw = os.environ.get(_TOOLS_INSTALL_LEASE_ENV)
+    if inherited_raw:
+        try:
+            inherited = int(inherited_raw)
+        except ValueError as exc:
+            raise OSError(
+                f"invalid inherited tools install lease descriptor: {inherited_raw!r}"
+            ) from exc
+        _validate_tools_lease_descriptor(inherited, lock_path)
+        try:
+            fcntl.flock(inherited, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise OSError(
+                "inherited tools install lease descriptor does not own the lock"
+            ) from exc
+        yield inherited
         return
+
+    timeout = _tools_install_timeout(timeout_seconds)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(
+        lock_path,
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    acquired = False
+    try:
+        _validate_tools_lease_descriptor(descriptor, lock_path)
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except BlockingIOError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    owner = _tools_lease_owner(descriptor)
+                    raise TimeoutError(
+                        "another Vibecrafted installer still owns "
+                        f"{lock_path} ({owner}); waited {timeout:.2f}s"
+                    )
+                time.sleep(min(0.1, remaining))
+        _write_tools_lease_owner(descriptor, operation)
+        yield descriptor
+    finally:
+        if acquired:
+            try:
+                os.ftruncate(descriptor, 0)
+                os.fsync(descriptor)
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def _require_inherited_tools_install_lease(shared_home: Path) -> int:
+    raw_descriptor = os.environ.get(_TOOLS_INSTALL_LEASE_ENV)
+    if not raw_descriptor:
+        raise OSError(
+            "runtime service handoff requires the inherited cross-process "
+            "installer lease"
+        )
+    try:
+        descriptor = int(raw_descriptor)
+    except ValueError as exc:
+        raise OSError(
+            f"invalid inherited tools install lease descriptor: {raw_descriptor!r}"
+        ) from exc
+    _validate_tools_lease_descriptor(
+        descriptor,
+        _tools_install_lease_path(_current_tools_link(shared_home)),
+    )
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        raise OSError(
+            "inherited tools install lease descriptor does not own the lock"
+        ) from exc
+    if _tools_lease_owner(descriptor) == "owner metadata unavailable":
+        raise OSError("inherited tools install lease has no verified owner metadata")
+    return descriptor
+
+
+def _runtime_launchctl_job_is_absent(
+    result: subprocess.CompletedProcess[str],
+) -> bool:
+    if result.returncode == 0:
+        return False
+    detail = result.stderr.strip() or result.stdout.strip()
+    if (
+        result.returncode == 113
+        and f'Could not find service "{_RUNTIME_SERVICE_LABEL}"' in detail
+    ):
+        return True
+    raise OSError(
+        "fixed-label runtime service ownership query failed "
+        f"({detail or f'exit={result.returncode}'})"
+    )
+
+
+def _runtime_loaded_service_home() -> Path | None:
+    if sys.platform != "darwin":
+        return None
+    result = _runtime_launchctl("print", _runtime_launch_target())
+    if _runtime_launchctl_job_is_absent(result):
+        return None
+    raw_home = _runtime_launchctl_print_value(
+        result.stdout,
+        "VIBECRAFTED_HOME",
+        separator="=>",
+        section="environment",
+    )
+    if not raw_home:
+        raise OSError(
+            "loaded fixed-label runtime service has no attributable VIBECRAFTED_HOME"
+        )
+    return Path(raw_home).expanduser().resolve(strict=False)
+
+
+def _canonical_operator_home() -> Path:
+    if sys.platform != "darwin":
+        return Path.home().resolve(strict=False)
+    import pwd
+
+    return Path(pwd.getpwuid(os.getuid()).pw_dir).resolve(strict=False)
+
+
+def _assert_runtime_loaded_service_owner(shared_home: Path) -> Path | None:
+    loaded_home = _runtime_loaded_service_home()
+    if loaded_home is not None and loaded_home != shared_home.resolve(strict=False):
+        raise OSError(
+            "fixed-label runtime service belongs to foreign home "
+            f"{loaded_home}; expected {shared_home.resolve(strict=False)}"
+        )
+    return loaded_home
+
+
+def _runtime_service_has_evidence(shared_home: Path) -> bool:
+    runtime_dir = shared_home / "server"
+    evidence = (
+        Path.home() / "Library" / "LaunchAgents" / f"{_RUNTIME_SERVICE_LABEL}.plist",
+        runtime_dir / "supervisor.lock",
+        runtime_dir / "server.pid",
+        runtime_dir / "guardian.pid",
+        runtime_dir / "server.identity.json",
+        runtime_dir / "guardian.identity.json",
+    )
+    if any(path.exists() or path.is_symlink() for path in evidence):
+        return True
+    loaded_home = _runtime_loaded_service_home()
+    return loaded_home == shared_home.resolve(strict=False)
+
+
+def _runtime_launchctl(
+    *arguments: str,
+) -> subprocess.CompletedProcess[str]:
+    launchctl = Path("/bin/launchctl")
+    if not launchctl.is_file():
+        raise OSError("macOS runtime handoff requires /bin/launchctl")
+    return subprocess.run(
+        [str(launchctl), *arguments],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env={
+            "HOME": str(Path.home()),
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        },
+    )
+
+
+def _runtime_launch_target() -> str:
+    return f"gui/{os.getuid()}/{_RUNTIME_SERVICE_LABEL}"
+
+
+def _runtime_launch_domain() -> str:
+    return f"gui/{os.getuid()}"
+
+
+def _runtime_launch_agent_path() -> Path:
+    return Path.home() / "Library" / "LaunchAgents" / f"{_RUNTIME_SERVICE_LABEL}.plist"
+
+
+def _runtime_launchd_disabled_state() -> bool:
+    result = _runtime_launchctl("print-disabled", _runtime_launch_domain())
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or result.returncode
+        raise OSError(f"launchd disabled-state query failed ({detail})")
+    pattern = re.compile(
+        rf'^\s*"{re.escape(_RUNTIME_SERVICE_LABEL)}"\s*=>\s*'
+        r"(true|false|enabled|disabled)\s*$"
+    )
+    matches = [
+        match.group(1)
+        for line in result.stdout.splitlines()
+        if (match := pattern.match(line))
+    ]
+    if len(matches) > 1:
+        raise OSError("launchd returned duplicate disabled-state entries")
+    return matches in (["true"], ["disabled"])
+
+
+def _set_runtime_launchd_disabled(disabled: bool) -> None:
+    action = "disable" if disabled else "enable"
+    result = _runtime_launchctl(action, _runtime_launch_target())
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or result.returncode
+        raise OSError(f"launchd could not {action} the runtime label ({detail})")
+    if _runtime_launchd_disabled_state() is not disabled:
+        raise OSError(f"launchd did not verify the runtime label as {action}d")
+
+
+class _RuntimeLaunchdMutationGate:
+    """Prevent an already-resolved legacy service command from bootstrapping.
+
+    The public launcher and the new supervisor honor the tools-install lease.
+    A process that resolved the legacy implementation before publication does
+    not.  Disabling the fixed launchd label closes that compatibility window;
+    the gate is reopened only for a bounded, strictly verified activation.
+    """
+
+    def __init__(self, *, required: bool) -> None:
+        self.required = sys.platform == "darwin" and required
+        self.originally_disabled = False
+        self.disabled = False
+        self._retain_disabled = False
+
+    def __enter__(self) -> _RuntimeLaunchdMutationGate:  # noqa: PYI034
+        if not self.required:
+            return self
+        self.originally_disabled = _runtime_launchd_disabled_state()
+        if not self.originally_disabled:
+            _set_runtime_launchd_disabled(True)
+        self.disabled = True
+        return self
+
+    def disable(self) -> None:
+        if not self.required or self.disabled:
+            return
+        _set_runtime_launchd_disabled(True)
+        self.disabled = True
+
+    def enable_for_activation(self) -> None:
+        if not self.required or not self.disabled:
+            return
+        _set_runtime_launchd_disabled(False)
+        self.disabled = False
+
+    def retain_disabled(self) -> None:
+        if self.required:
+            self._retain_disabled = True
+            self.disable()
+
+    def allow_original_state_restore(self) -> None:
+        self._retain_disabled = False
+
+    def commit_enabled_state(self) -> None:
+        """Keep a successfully installed explicit service enabled."""
+        if not self.required:
+            return
+        self._retain_disabled = False
+        self.originally_disabled = False
+        self.enable_for_activation()
+
+    @property
+    def retention_required(self) -> bool:
+        return self._retain_disabled
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        if not self.required:
+            return
+        if self._retain_disabled:
+            self.disable()
+            return
+        if self.originally_disabled:
+            self.disable()
+        else:
+            self.enable_for_activation()
+
+
+def _runtime_launchctl_print_value(
+    payload: str,
+    key: str,
+    *,
+    separator: str,
+    section: str | None = None,
+) -> str | None:
+    prefix = f"{key} {separator} "
+    in_section = section is None
+    for raw_line in payload.splitlines():
+        line = raw_line.strip()
+        if not in_section:
+            if line == f"{section} = {{":
+                in_section = True
+            continue
+        if section is not None and line == "}":
+            return None
+        if line.startswith(prefix):
+            value = line.removeprefix(prefix)
+            return value or None
+    return None
+
+
+def _runtime_launch_agent_contract(shared_home: Path) -> dict[str, Path]:
+    plist_path = _runtime_launch_agent_path()
+    try:
+        visible = plist_path.lstat()
+        descriptor = os.open(
+            plist_path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except OSError as exc:
+        raise OSError(
+            "loaded runtime service has no readable owned LaunchAgent plist"
+        ) from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            plist_path.is_symlink()
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != os.geteuid()
+            or opened.st_nlink != 1
+            or (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino)
+        ):
+            raise OSError(
+                "loaded runtime LaunchAgent plist is not a stable user-owned file"
+            )
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = -1
+            payload = plistlib.load(handle)
+    except (plistlib.InvalidFileException, ValueError, TypeError) as exc:
+        raise OSError("loaded runtime LaunchAgent plist is invalid") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+    if not isinstance(payload, dict) or payload.get("Label") != _RUNTIME_SERVICE_LABEL:
+        raise OSError("loaded runtime LaunchAgent plist has an invalid label")
+    arguments = payload.get("ProgramArguments")
+    environment = payload.get("EnvironmentVariables")
+    if (
+        not isinstance(arguments, list)
+        or not arguments
+        or not all(isinstance(argument, str) and argument for argument in arguments)
+        or not isinstance(environment, dict)
+    ):
+        raise OSError("loaded runtime LaunchAgent plist has an invalid schema")
+
+    def required_argument(flag: str) -> str:
+        try:
+            value = arguments[arguments.index(flag) + 1]
+        except (ValueError, IndexError) as exc:
+            raise OSError(
+                f"loaded runtime LaunchAgent plist is missing {flag}"
+            ) from exc
+        if not value:
+            raise OSError(f"loaded runtime LaunchAgent plist has an empty {flag}")
+        return value
+
+    def optional_argument(flag: str) -> str | None:
+        try:
+            value = arguments[arguments.index(flag) + 1]
+        except ValueError:
+            return None
+        except IndexError as exc:
+            raise OSError(
+                f"loaded runtime LaunchAgent plist has an empty {flag}"
+            ) from exc
+        return value or None
+
+    expected_raw = {
+        "plist": str(plist_path),
+        "program": arguments[0],
+        "supervisor": environment.get("VIBECRAFTED_SERVER_SUPERVISOR_PATH"),
+        "home": environment.get("VIBECRAFTED_HOME"),
+        "runtime_home": environment.get("VIBECRAFTED_RUNTIME_HOME"),
+        "operator_home": environment.get("HOME"),
+        "launcher": required_argument("--launcher"),
+    }
+    if any(not isinstance(value, str) or not value for value in expected_raw.values()):
+        raise OSError("loaded runtime LaunchAgent plist omits owned runtime paths")
+    expected = {
+        key: Path(str(value)).expanduser().resolve(strict=False)
+        for key, value in expected_raw.items()
+    }
+    if (
+        expected["program"] != expected["supervisor"]
+        or Path(required_argument("--home")).expanduser().resolve(strict=False)
+        != expected["home"]
+        or Path(required_argument("--runtime-home")).expanduser().resolve(strict=False)
+        != expected["runtime_home"]
+        or expected["home"] != shared_home.resolve(strict=False)
+    ):
+        raise OSError("loaded runtime LaunchAgent plist has inconsistent owned paths")
+    operator_argument = optional_argument("--operator-home")
+    if operator_argument is not None and (
+        Path(operator_argument).expanduser().resolve(strict=False)
+        != expected["operator_home"]
+    ):
+        raise OSError(
+            "loaded runtime LaunchAgent plist has an inconsistent operator home"
+        )
+    return expected
+
+
+def _assert_runtime_launchd_job_owned(
+    shared_home: Path,
+    *,
+    result: subprocess.CompletedProcess[str] | None = None,
+) -> bool:
+    observed = result or _runtime_launchctl("print", _runtime_launch_target())
+    if observed.returncode != 0:
+        return False
+    expected = _runtime_launch_agent_contract(shared_home)
+    actual_raw = {
+        "plist": _runtime_launchctl_print_value(
+            observed.stdout,
+            "path",
+            separator="=",
+        ),
+        "program": _runtime_launchctl_print_value(
+            observed.stdout,
+            "program",
+            separator="=",
+        ),
+        "supervisor": _runtime_launchctl_print_value(
+            observed.stdout,
+            "VIBECRAFTED_SERVER_SUPERVISOR_PATH",
+            separator="=>",
+            section="environment",
+        ),
+        "home": _runtime_launchctl_print_value(
+            observed.stdout,
+            "VIBECRAFTED_HOME",
+            separator="=>",
+            section="environment",
+        ),
+        "runtime_home": _runtime_launchctl_print_value(
+            observed.stdout,
+            "VIBECRAFTED_RUNTIME_HOME",
+            separator="=>",
+            section="environment",
+        ),
+        "operator_home": _runtime_launchctl_print_value(
+            observed.stdout,
+            "HOME",
+            separator="=>",
+            section="environment",
+        ),
+    }
+    if any(value is None for value in actual_raw.values()):
+        raise OSError(
+            "loaded runtime launchd job omits the owned path contract; refusing mutation"
+        )
+    actual = {
+        key: Path(str(value)).expanduser().resolve(strict=False)
+        for key, value in actual_raw.items()
+    }
+    if any(actual[key] != expected[key] for key in actual):
+        raise OSError(
+            "loaded fixed-label launchd job belongs to foreign runtime paths; "
+            "refusing mutation"
+        )
+    return True
+
+
+def _bootout_owned_runtime_launchd_job(shared_home: Path) -> bool:
+    observed = _runtime_launchctl("print", _runtime_launch_target())
+    if _runtime_launchctl_job_is_absent(observed):
+        return False
+    _assert_runtime_launchd_job_owned(shared_home, result=observed)
+    result = _runtime_launchctl("bootout", _runtime_launch_target())
+    if result.returncode != 0:
+        still_loaded = _runtime_launchctl("print", _runtime_launch_target())
+        if _runtime_launchctl_job_is_absent(still_loaded):
+            return True
+        raise OSError(
+            "verified runtime launchd job raced the install fence and could "
+            f"not be unloaded ({result.stderr.strip() or result.returncode})"
+        )
+    final_observation = _runtime_launchctl("print", _runtime_launch_target())
+    if not _runtime_launchctl_job_is_absent(final_observation):
+        raise OSError("verified runtime launchd job remains loaded after bootout")
+    return True
+
+
+def _capture_runtime_launch_agent_backup(
+    shared_home: Path,
+) -> _RuntimeLaunchAgentBackup:
+    path = _runtime_launch_agent_path()
+    if not path.exists() and not path.is_symlink():
+        return _RuntimeLaunchAgentBackup(path, None, None, ())
+    try:
+        visible = path.lstat()
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except OSError as exc:
+        raise OSError(f"cannot snapshot runtime LaunchAgent at {path}") from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            path.is_symlink()
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != os.geteuid()
+            or opened.st_nlink != 1
+            or (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino)
+        ):
+            raise OSError(
+                "runtime LaunchAgent snapshot is not a stable user-owned file"
+            )
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, 65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > 1024 * 1024:
+                raise OSError("runtime LaunchAgent exceeds the bounded snapshot size")
+        named = os.stat(path, follow_symlinks=False)
+        if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
+            raise OSError("runtime LaunchAgent changed during its snapshot")
+    finally:
+        os.close(descriptor)
+
+    contents = b"".join(chunks)
+    try:
+        payload = plistlib.loads(contents)
+    except (plistlib.InvalidFileException, ValueError, TypeError) as exc:
+        raise OSError("runtime LaunchAgent snapshot is not a valid plist") from exc
+    if not isinstance(payload, dict) or payload.get("Label") != _RUNTIME_SERVICE_LABEL:
+        raise OSError("runtime LaunchAgent snapshot has a foreign label")
+    arguments = payload.get("ProgramArguments")
+    environment = payload.get("EnvironmentVariables")
+    if (
+        not isinstance(arguments, list)
+        or not arguments
+        or not all(isinstance(argument, str) and argument for argument in arguments)
+        or not isinstance(environment, dict)
+    ):
+        raise OSError("runtime LaunchAgent snapshot has an invalid schema")
+    if Path(arguments[0]).expanduser().resolve(strict=False) != Path(
+        str(environment.get("VIBECRAFTED_SERVER_SUPERVISOR_PATH", ""))
+    ).expanduser().resolve(strict=False) or Path(
+        str(environment.get("VIBECRAFTED_HOME", ""))
+    ).expanduser().resolve(strict=False) != shared_home.resolve(strict=False):
+        raise OSError("runtime LaunchAgent snapshot has foreign runtime paths")
+
+    service_arguments: list[str] = []
+    for flag in ("--host", "--port", "--interval"):
+        positions = [
+            index for index, argument in enumerate(arguments) if argument == flag
+        ]
+        if len(positions) > 1:
+            raise OSError(f"runtime LaunchAgent repeats {flag}")
+        if positions:
+            index = positions[0]
+            if index + 1 >= len(arguments) or not arguments[index + 1]:
+                raise OSError(f"runtime LaunchAgent has no value for {flag}")
+            service_arguments.extend((flag, arguments[index + 1]))
+    return _RuntimeLaunchAgentBackup(
+        path,
+        contents,
+        stat.S_IMODE(opened.st_mode),
+        tuple(service_arguments),
+    )
+
+
+def _restore_runtime_launch_agent_backup(
+    shared_home: Path,
+    backup: _RuntimeLaunchAgentBackup,
+) -> None:
+    if backup.path != _runtime_launch_agent_path():
+        raise OSError("runtime LaunchAgent backup targets an unexpected path")
+    current_exists = backup.path.exists() or backup.path.is_symlink()
+    current = (
+        _capture_runtime_launch_agent_backup(shared_home) if current_exists else None
+    )
+    if backup.contents is None:
+        if current is None:
+            return
+        if current.contents is None:
+            return
+        backup.path.unlink()
+        directory = os.open(
+            backup.path.parent,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+        )
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        return
+    _atomic_bytes_file(backup.path, backup.contents, mode=backup.mode or 0o600)
+
+
+def _activate_runtime_service_from_backup(
+    shared_home: Path,
+    backup: _RuntimeLaunchAgentBackup,
+) -> None:
+    if backup.contents is None:
+        raise OSError("active legacy service has no LaunchAgent definition to restore")
+    _restore_runtime_launch_agent_backup(shared_home, backup)
+    loaded = _runtime_launchctl("print", _runtime_launch_target())
+    if loaded.returncode == 0:
+        raise OSError(
+            "refusing legacy service restore while its label is already loaded"
+        )
+    originally_disabled = _runtime_launchd_disabled_state()
+    try:
+        if originally_disabled:
+            _set_runtime_launchd_disabled(False)
+        result = _runtime_launchctl(
+            "bootstrap",
+            _runtime_launch_domain(),
+            str(backup.path),
+        )
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or result.returncode
+            raise OSError(f"legacy LaunchAgent bootstrap failed ({detail})")
+        if not _assert_runtime_launchd_job_owned(shared_home):
+            raise OSError("restored legacy LaunchAgent is not loaded")
+        restored = _runtime_service_snapshot(shared_home)
+        if restored is None or not restored[1].healthy or restored[2] != "running":
+            raise OSError("restored legacy service did not prove a healthy pair")
+    finally:
+        if originally_disabled:
+            _set_runtime_launchd_disabled(True)
+
+
+def _runtime_service_launcher(shared_home: Path) -> Path | None:
+    candidate = vibecrafted_launcher_bin() / "vibecrafted"
+    try:
+        resolved = candidate.resolve(strict=True)
+        metadata = resolved.stat()
+    except OSError:
+        if _runtime_service_has_evidence(shared_home):
+            raise OSError(
+                "runtime service evidence exists but the current on-disk "
+                f"launcher is unavailable at {candidate}"
+            )
+        return None
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or not os.access(resolved, os.X_OK)
+    ):
+        raise OSError(
+            "current Vibecrafted launcher is not a user-owned executable regular "
+            f"file: {resolved}"
+        )
+    # Run the exact launcher proven above.  Re-resolving the public symlink for
+    # each status/stop call would let a concurrent publication silently switch
+    # the authority used halfway through the legacy drain.
+    return resolved
+
+
+def _runtime_service_environment(
+    launcher: Path,
+    shared_home: Path,
+) -> dict[str, str]:
+    environment = os.environ.copy()
+    existing_path = environment.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+    environment["PATH"] = f"{launcher.parent}:{existing_path}"
+    environment["VIBECRAFTED_HOME"] = str(shared_home.resolve(strict=False))
+    # server_supervisor must validate the very same install FD that this
+    # process owns, including XDG-only layouts where runtime-home/tools would
+    # otherwise diverge.
+    environment["VIBECRAFTED_TOOLS_HOME"] = str(
+        vibecrafted_tools_home().resolve(strict=False)
+    )
+    lifecycle_environment = _RUNTIME_LIFECYCLE_ENV.get()
+    if lifecycle_environment is not None:
+        environment.update(lifecycle_environment)
+    return environment
+
+
+def _run_runtime_service_command(
+    launcher: Path,
+    shared_home: Path,
+    *arguments: str,
+) -> subprocess.CompletedProcess[str]:
+    descriptor = _require_inherited_tools_install_lease(shared_home)
+    timeout_seconds = _RUNTIME_SERVICE_COMMAND_TIMEOUT_SECONDS
+    deadline = _RUNTIME_SERVICE_COMMAND_DEADLINE.get()
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("runtime service observation deadline expired")
+        timeout_seconds = min(timeout_seconds, remaining)
+    return subprocess.run(
+        [str(launcher), "server", *arguments],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+        env=_runtime_service_environment(launcher, shared_home),
+        pass_fds=(descriptor,),
+    )
+
+
+def _decode_runtime_service_status(
+    result: subprocess.CompletedProcess[str],
+) -> _RuntimeServiceStatus:
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise OSError(
+            "old launcher service status did not return one bounded JSON record"
+        )
+    try:
+        payload = json.loads(lines[0])
+    except json.JSONDecodeError as exc:
+        raise OSError("old launcher service status returned invalid JSON") from exc
+    boolean_fields = (
+        "installed",
+        "loaded",
+        "supervisor_live",
+        "supervisor_verified",
+        "supervisor_service_managed",
+        "build_current",
+        "pair_healthy",
+    )
+    if not isinstance(payload, dict) or any(
+        not isinstance(payload.get(field), bool) for field in boolean_fields
+    ):
+        raise OSError("old launcher service status JSON has an invalid schema")
+    supervisor_pid = payload.get("supervisor_pid")
+    if supervisor_pid is not None and (
+        not isinstance(supervisor_pid, int)
+        or isinstance(supervisor_pid, bool)
+        or supervisor_pid <= 0
+    ):
+        raise OSError("old launcher service status has an invalid supervisor PID")
+    status = _RuntimeServiceStatus(
+        installed=payload["installed"],
+        loaded=payload["loaded"],
+        supervisor_live=payload["supervisor_live"],
+        supervisor_verified=payload["supervisor_verified"],
+        supervisor_service_managed=payload["supervisor_service_managed"],
+        build_current=payload["build_current"],
+        pair_healthy=payload["pair_healthy"],
+        supervisor_pid=supervisor_pid,
+    )
+    expected_returncode = 0 if status.healthy else 1 if status.quiescent else None
+    if expected_returncode is None:
+        detail = result.stderr.strip() or f"exit={result.returncode}"
+        raise _RuntimeServiceTransition(
+            "runtime service identity is uncertain while transition is in progress "
+            f"({detail})"
+        )
+    if result.returncode != expected_returncode:
+        detail = result.stderr.strip() or f"exit={result.returncode}"
+        raise OSError(
+            "runtime service identity is uncertain; refusing pre-swap mutation "
+            f"({detail})"
+        )
+    return status
+
+
+def _runtime_service_pair_state(
+    launcher: Path,
+    shared_home: Path,
+) -> str:
+    result = _run_runtime_service_command(launcher, shared_home, "status")
+    running = (
+        result.returncode == 0
+        and "Server: RUNNING" in result.stdout
+        and "Guardian: RUNNING" in result.stdout
+    )
+    stopped = (
+        result.returncode == 0
+        and "Server: STOPPED" in result.stdout
+        and "Guardian: STOPPED" in result.stdout
+    )
+    if running:
+        return "running"
+    if stopped:
+        return "stopped"
+    detail = (
+        result.stderr.strip() or result.stdout.strip() or f"exit={result.returncode}"
+    )
+    raise OSError(
+        "runtime server/guardian identity is uncertain; refusing install handoff "
+        f"({detail})"
+    )
+
+
+def _runtime_service_snapshot(
+    shared_home: Path,
+) -> tuple[Path, _RuntimeServiceStatus, str] | None:
+    launcher = _runtime_service_launcher(shared_home)
+    if launcher is None:
+        return None
+    status = _decode_runtime_service_status(
+        _run_runtime_service_command(
+            launcher,
+            shared_home,
+            "service",
+            "status",
+            "--json",
+        )
+    )
+    # service_status JSON already proves the managed supervisor and exact
+    # server/guardian pair from one snapshot.  A second text probe would compose
+    # two different moments and can manufacture disagreement across a launchd
+    # restart.
+    if status.healthy:
+        return launcher, status, "running"
+    pair_state = _runtime_service_pair_state(launcher, shared_home)
+    if pair_state != "stopped":
+        raise OSError(
+            "runtime service and server/guardian observations disagree; "
+            "refusing install handoff"
+        )
+    return launcher, status, pair_state
+
+
+def runtime_service_active_for_install(shared_home: Path) -> bool:
+    """Read-only preflight used before recording the rollback obligation."""
+    if sys.platform != "darwin":
+        return False
+    _require_inherited_tools_install_lease(shared_home)
+    snapshot = _runtime_service_snapshot(shared_home)
+    if snapshot is None:
+        return False
+    return snapshot[1].healthy
+
+
+def prepare_runtime_service_for_install(
+    shared_home: Path,
+    *,
+    launch_agent_backup: _RuntimeLaunchAgentBackup | None = None,
+) -> bool:
+    """Drain a verified legacy service before the runtime pointer can move."""
+    if sys.platform != "darwin":
+        return False
+    _require_inherited_tools_install_lease(shared_home)
+    snapshot = _runtime_service_snapshot(shared_home)
+    if snapshot is None:
+        return False
+    launcher, status, _ = snapshot
+    if status.quiescent:
+        return False
+    backup = launch_agent_backup or _capture_runtime_launch_agent_backup(shared_home)
+    if backup.contents is None:
+        raise OSError("healthy runtime service has no LaunchAgent snapshot")
+    if not _assert_runtime_launchd_job_owned(shared_home):
+        raise OSError(
+            "healthy runtime service disappeared before its owned launchd paths "
+            "could be proved"
+        )
+    try:
+        result = _run_runtime_service_command(
+            launcher,
+            shared_home,
+            "service",
+            "stop",
+        )
+        if result.returncode != 0:
+            detail = (
+                result.stderr.strip()
+                or result.stdout.strip()
+                or f"exit={result.returncode}"
+            )
+            raise OSError(
+                "old launcher refused the verified service drain before runtime "
+                f"swap ({detail})"
+            )
+        stopped = _runtime_service_snapshot(shared_home)
+        if stopped is None or not stopped[1].quiescent or stopped[2] != "stopped":
+            raise OSError(
+                "old launcher returned from service stop without proving "
+                "supervisor, server, and guardian are all stopped"
+            )
+    except (OSError, subprocess.SubprocessError) as exc:
+        try:
+            observed = _runtime_service_snapshot(shared_home)
+            if observed is None:
+                raise OSError("legacy service recovery has no verified launcher")
+            if observed[1].healthy:
+                if not _assert_runtime_launchd_job_owned(shared_home):
+                    raise OSError(
+                        "legacy service recovery cannot prove the loaded launchd job"
+                    )
+                observed_backup = _capture_runtime_launch_agent_backup(shared_home)
+                if observed_backup != backup:
+                    retry = _run_runtime_service_command(
+                        observed[0],
+                        shared_home,
+                        "service",
+                        "stop",
+                    )
+                    if retry.returncode != 0:
+                        detail = (
+                            retry.stderr.strip()
+                            or retry.stdout.strip()
+                            or f"exit={retry.returncode}"
+                        )
+                        raise OSError(
+                            "raced legacy service could not be stopped for exact "
+                            f"LaunchAgent recovery ({detail})"
+                        )
+                    stopped = _runtime_service_snapshot(shared_home)
+                    if (
+                        stopped is None
+                        or not stopped[1].quiescent
+                        or stopped[2] != "stopped"
+                    ):
+                        raise OSError(
+                            "raced legacy service did not become quiescent for "
+                            "exact LaunchAgent recovery"
+                        )
+                    _bootout_owned_runtime_launchd_job(shared_home)
+                    _activate_runtime_service_from_backup(shared_home, backup)
+            else:
+                if not observed[1].quiescent or observed[2] != "stopped":
+                    raise OSError("legacy service recovery state is uncertain")
+                _activate_runtime_service_from_backup(shared_home, backup)
+        except (OSError, subprocess.SubprocessError) as recovery_exc:
+            raise OSError(
+                "legacy runtime drain failed and automatic service recovery "
+                f"also failed: {recovery_exc}"
+            ) from exc
+        raise OSError(
+            "legacy runtime drain failed; previous service ownership was recovered"
+        ) from exc
+    return True
+
+
+def activate_runtime_service_after_install(
+    shared_home: Path,
+    *,
+    service_arguments: Sequence[str] = (),
+) -> None:
+    """Start the service through the launcher backed by the current generation."""
+    if sys.platform != "darwin":
+        return
+    _require_inherited_tools_install_lease(shared_home)
+    snapshot = _runtime_service_snapshot(shared_home)
+    if snapshot is None:
+        raise OSError("cannot reactivate runtime service without a current launcher")
+    launcher, status, pair_state = snapshot
+    expected_arguments = {
+        "--host": "127.0.0.1",
+        "--port": "3024",
+    }
+    supported_arguments = {*expected_arguments, "--interval"}
+    if len(service_arguments) % 2 != 0:
+        raise OSError("runtime service activation arguments are incomplete")
+    seen_arguments: set[str] = set()
+    for index in range(0, len(service_arguments), 2):
+        flag, value = service_arguments[index : index + 2]
+        if flag not in supported_arguments or not value:
+            raise OSError(
+                f"runtime service activation has unsupported argument {flag!r}"
+            )
+        if flag in seen_arguments:
+            raise OSError(f"runtime service activation repeats argument {flag!r}")
+        seen_arguments.add(flag)
+        if flag in expected_arguments:
+            expected_arguments[flag] = value
+    expected_service_arguments = tuple(
+        argument
+        for flag in ("--host", "--port")
+        for argument in (flag, expected_arguments[flag])
+    )
+    if status.healthy and pair_state == "running":
+        installed = _capture_runtime_launch_agent_backup(shared_home)
+        if installed.service_arguments != expected_service_arguments:
+            raise OSError("healthy runtime service has stale endpoint arguments")
+        return
+    if not status.quiescent or pair_state != "stopped":
+        raise OSError(
+            "current runtime is not provably quiescent; refusing service activation"
+        )
+    result = _run_runtime_service_command(
+        launcher,
+        shared_home,
+        "service",
+        "install",
+        *service_arguments,
+    )
+    if result.returncode != 0:
+        detail = (
+            result.stderr.strip()
+            or result.stdout.strip()
+            or f"exit={result.returncode}"
+        )
+        raise OSError(f"new runtime service activation failed ({detail})")
+    deadline = time.monotonic() + _RUNTIME_SERVICE_ACTIVATION_TIMEOUT_SECONDS
+    last_observation = "no post-install service observation"
+    while True:
+        deadline_token = _RUNTIME_SERVICE_COMMAND_DEADLINE.set(deadline)
+        try:
+            try:
+                active = _runtime_service_snapshot(shared_home)
+            finally:
+                _RUNTIME_SERVICE_COMMAND_DEADLINE.reset(deadline_token)
+        except (
+            _RuntimeServiceTransition,
+            subprocess.TimeoutExpired,
+            TimeoutError,
+        ) as exc:
+            last_observation = str(exc)
+        else:
+            if active is not None and active[1].healthy and active[2] == "running":
+                break
+            if active is None:
+                raise OSError(
+                    "current runtime launcher disappeared during service activation"
+                )
+            status = active[1]
+            last_observation = (
+                f"installed={status.installed}, loaded={status.loaded}, "
+                f"supervisor_live={status.supervisor_live}, "
+                f"pair_healthy={status.pair_healthy}, pair={active[2]}"
+            )
+        if time.monotonic() >= deadline:
+            raise OSError(
+                "new runtime service activation did not prove a healthy managed "
+                f"pair within {_RUNTIME_SERVICE_ACTIVATION_TIMEOUT_SECONDS:g}s "
+                f"(last observation: {last_observation})"
+            )
+        time.sleep(0.2)
+    installed = _capture_runtime_launch_agent_backup(shared_home)
+    if installed.service_arguments != expected_service_arguments:
+        raise OSError(
+            "new runtime activation did not install the requested service arguments"
+        )
+
+
+def rollback_runtime_install(
+    shared_home: Path,
+    *,
+    service_was_active: bool,
+    service_activation_attempted: bool,
+    lifecycle_deck: Path | None = None,
+    launch_agent_backup: _RuntimeLaunchAgentBackup | None = None,
+    payload_backup: _RuntimePayloadBackup | None = None,
+    launchd_gate: _RuntimeLaunchdMutationGate | None = None,
+    restore_tools_pointer: bool = True,
+    manage_runtime_service: bool = True,
+) -> bool:
+    """Quiesce the new service, restore the pointer, and revive the old service.
+
+    If activation left an uncertain service state, the strict snapshot raises
+    before the pointer moves.  Keeping the new generation published is safer
+    than reviving the old generation underneath a process we cannot prove.
+    """
+    _require_inherited_tools_install_lease(shared_home)
+    darwin_service = sys.platform == "darwin" and manage_runtime_service
+    darwin_service_attempted = darwin_service and service_activation_attempted
+    gate_context = (
+        _RuntimeLaunchdMutationGate(
+            required=darwin_service_attempted
+            or service_was_active
+            or launch_agent_backup is not None
+        )
+        if launchd_gate is None
+        else nullcontext(launchd_gate)
+    )
+    with gate_context as gate:
+        if darwin_service_attempted:
+            gate.disable()
+            try:
+                snapshot = _runtime_service_snapshot(shared_home)
+            except (OSError, subprocess.SubprocessError):
+                gate.retain_disabled()
+                raise
+            if snapshot is None:
+                gate.retain_disabled()
+                raise OSError(
+                    "service activation was attempted but no current launcher can "
+                    "prove the rollback state"
+                )
+            if snapshot[1].healthy:
+                current_backup = _capture_runtime_launch_agent_backup(shared_home)
+                if not prepare_runtime_service_for_install(
+                    shared_home,
+                    launch_agent_backup=current_backup,
+                ):
+                    gate.retain_disabled()
+                    raise OSError(
+                        "activated runtime service could not be drained during rollback"
+                    )
+            elif not snapshot[1].quiescent or snapshot[2] != "stopped":
+                gate.retain_disabled()
+                raise OSError(
+                    "activated runtime service is uncertain; refusing pointer rollback"
+                )
+
+        if darwin_service:
+            if lifecycle_deck is None:
+                handoff = _read_tools_handoff(shared_home)
+                if handoff is None or handoff["state"] != "prepared":
+                    raise OSError(
+                        "runtime rollback has no exact lifecycle generation handoff"
+                    )
+                lifecycle_target_raw = handoff["old_target"] or handoff["new_target"]
+                if not lifecycle_target_raw:
+                    raise OSError("runtime rollback has no exact lifecycle generation")
+                lifecycle_deck = _runtime_lifecycle_deck_for_generation(
+                    Path(lifecycle_target_raw)
+                )
+            with _runtime_lifecycle_handoff_fence(
+                shared_home,
+                deck=lifecycle_deck,
+            ) as lifecycle_guard:
+                lifecycle_guard.assert_owned()
+                snapshot = _runtime_service_snapshot(shared_home)
+                if (
+                    snapshot is None
+                    or not snapshot[1].quiescent
+                    or snapshot[2] != "stopped"
+                ):
+                    gate.retain_disabled()
+                    raise OSError(
+                        "runtime ownership changed before rollback fences closed"
+                    )
+                with _runtime_supervisor_handoff_fence(
+                    shared_home,
+                    required=True,
+                ):
+                    lifecycle_guard.assert_owned()
+                    try:
+                        _bootout_owned_runtime_launchd_job(shared_home)
+                    except (OSError, subprocess.SubprocessError):
+                        gate.retain_disabled()
+                        raise
+                    _restore_runtime_payload_backup(payload_backup)
+                    if launch_agent_backup is not None:
+                        _restore_runtime_launch_agent_backup(
+                            shared_home,
+                            launch_agent_backup,
+                        )
+                    restored = (
+                        _rollback_current_tools_locked(shared_home)
+                        if restore_tools_pointer
+                        else False
+                    )
+                    lifecycle_guard.assert_owned()
+        else:
+            _restore_runtime_payload_backup(payload_backup)
+            restored = (
+                _rollback_current_tools_locked(shared_home)
+                if restore_tools_pointer
+                else False
+            )
+
+        if service_was_active:
+            if launch_agent_backup is None:
+                raise OSError(
+                    "active legacy service rollback requires its exact LaunchAgent "
+                    "snapshot"
+                )
+            gate.enable_for_activation()
+            try:
+                _activate_runtime_service_from_backup(
+                    shared_home,
+                    launch_agent_backup,
+                )
+            except (OSError, subprocess.SubprocessError):
+                gate.retain_disabled()
+                raise
+        return restored
+
+
+@contextmanager
+def _runtime_supervisor_handoff_fence(
+    shared_home: Path,
+    *,
+    required: bool,
+) -> Iterator[None]:
+    """Hold the canonical supervisor lock between legacy drain and publication.
+
+    The installed legacy launcher predates the tools-install lease.  Its
+    service-start path still respects the supervisor lock, so this fence closes
+    the only interval in which an old command could restart launchd after a
+    verified stop but before ``vibecrafted-current`` moves.
+    """
+    if sys.platform != "darwin" or not required:
+        yield
+        return
+
+    server_dir = shared_home.resolve(strict=False) / "server"
+    server_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    directory = server_dir.lstat()
+    if (
+        not stat.S_ISDIR(directory.st_mode)
+        or directory.st_uid != os.geteuid()
+        or server_dir.is_symlink()
+    ):
+        raise OSError(
+            f"runtime server directory is not an owned regular directory: {server_dir}"
+        )
+    lock_path = server_dir / "supervisor.lock"
+    descriptor = os.open(
+        lock_path,
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    locked = False
+    try:
+        opened = os.fstat(descriptor)
+        named = os.stat(lock_path, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_uid != os.geteuid()
+            or opened.st_nlink != 1
+            or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
+        ):
+            raise OSError(
+                f"runtime supervisor fence does not own stable lock {lock_path}"
+            )
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno in {errno.EACCES, errno.EAGAIN}:
+                raise OSError(
+                    "runtime supervisor became active after the verified drain; "
+                    "refusing pointer publication"
+                ) from exc
+            raise
+        locked = True
+        yield
+    finally:
+        try:
+            if locked:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def _runtime_lifecycle_deck_for_generation(generation: Path) -> Path:
+    try:
+        generation = generation.resolve(strict=True)
+    except OSError as exc:
+        raise OSError(
+            f"cannot fence server lifecycle without generation {generation}"
+        ) from exc
+    if not _is_framework_source_root(generation):
+        raise OSError(f"runtime generation is incomplete or unmanaged: {generation}")
+    deck = generation / "scripts" / "vibecrafted"
+    try:
+        visible = deck.lstat()
+    except OSError as exc:
+        raise OSError(f"legacy lifecycle deck is unavailable at {deck}") from exc
+    if (
+        deck.is_symlink()
+        or not stat.S_ISREG(visible.st_mode)
+        or visible.st_uid != os.geteuid()
+        or visible.st_nlink != 1
+        or not os.access(deck, os.X_OK)
+    ):
+        raise OSError(
+            f"legacy lifecycle deck is not a stable user-owned executable: {deck}"
+        )
+    return deck
+
+
+def _runtime_deck_has_service_lifecycle_lock(deck: Path) -> bool:
+    try:
+        metadata = deck.stat()
+        if metadata.st_size > 4 * 1024 * 1024:
+            raise OSError("runtime lifecycle deck exceeds the bounded contract size")
+        lines = deck.read_bytes().splitlines()
+    except OSError as exc:
+        raise OSError(
+            f"cannot inspect service lifecycle-lock capability in {deck}"
+        ) from exc
+    return _SERVICE_LIFECYCLE_LOCK_MARKER in lines
+
+
+@dataclass(frozen=True)
+class _LegacyServiceMutator:
+    pid: int
+    start_token: str
+    started_at: datetime
+    argv: tuple[str, ...]
+
+
+class _DarwinProcBSDInfo(ctypes.Structure):
+    _fields_ = [
+        ("pbi_flags", ctypes.c_uint32),
+        ("pbi_status", ctypes.c_uint32),
+        ("pbi_xstatus", ctypes.c_uint32),
+        ("pbi_pid", ctypes.c_uint32),
+        ("pbi_ppid", ctypes.c_uint32),
+        ("pbi_uid", ctypes.c_uint32),
+        ("pbi_gid", ctypes.c_uint32),
+        ("pbi_ruid", ctypes.c_uint32),
+        ("pbi_rgid", ctypes.c_uint32),
+        ("pbi_svuid", ctypes.c_uint32),
+        ("pbi_svgid", ctypes.c_uint32),
+        ("rfu_1", ctypes.c_uint32),
+        ("pbi_comm", ctypes.c_char * 16),
+        ("pbi_name", ctypes.c_char * 32),
+        ("pbi_nfiles", ctypes.c_uint32),
+        ("pbi_pgid", ctypes.c_uint32),
+        ("pbi_pjobc", ctypes.c_uint32),
+        ("e_tdev", ctypes.c_uint32),
+        ("e_tpgid", ctypes.c_uint32),
+        ("pbi_nice", ctypes.c_int32),
+        ("pbi_start_tvsec", ctypes.c_uint64),
+        ("pbi_start_tvusec", ctypes.c_uint64),
+    ]
+
+
+_DARWIN_PROC_UID_ONLY = 4
+_DARWIN_PROC_PIDTBSDINFO = 3
+_DARWIN_PROC_BSDINFO_SIZE = 136
+_DARWIN_PROC_FLAG_INEXIT = 0x4
+_DARWIN_PROC_FLAG_LP64 = 0x10
+_DARWIN_STABLE_PROCESS_STATES = frozenset({1, 2, 3, 4})
+_DARWIN_CTL_KERN = 1
+_DARWIN_KERN_PROCARGS2 = 49
+_DARWIN_MAX_PROCARGS = 16 * 1024 * 1024
+_DARWIN_LIBPROC: ctypes.CDLL | None = None
+_DARWIN_LIBC: ctypes.CDLL | None = None
+
+
+def _darwin_process_libraries() -> tuple[ctypes.CDLL, ctypes.CDLL]:
+    global _DARWIN_LIBPROC, _DARWIN_LIBC
+    if sys.platform != "darwin":
+        raise OSError("Darwin process census requested on a non-Darwin host")
+    if _DARWIN_LIBPROC is None:
+        try:
+            libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        except OSError as exc:
+            raise OSError(f"cannot load Darwin process API: {exc}") from exc
+        libproc.proc_listpids.argtypes = [
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        ]
+        libproc.proc_listpids.restype = ctypes.c_int
+        libproc.proc_pidinfo.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        ]
+        libproc.proc_pidinfo.restype = ctypes.c_int
+        _DARWIN_LIBPROC = libproc
+    if _DARWIN_LIBC is None:
+        libc = ctypes.CDLL(None, use_errno=True)
+        libc.sysctl.argtypes = [
+            ctypes.POINTER(ctypes.c_int),
+            ctypes.c_uint,
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+        ]
+        libc.sysctl.restype = ctypes.c_int
+        _DARWIN_LIBC = libc
+    return _DARWIN_LIBPROC, _DARWIN_LIBC
+
+
+def _darwin_process_ids() -> tuple[int, ...]:
+    libproc, _ = _darwin_process_libraries()
+    ctypes.set_errno(0)
+    effective_uid = os.geteuid()
+    estimated = libproc.proc_listpids(
+        _DARWIN_PROC_UID_ONLY,
+        effective_uid,
+        None,
+        0,
+    )
+    if estimated <= 0:
+        raise OSError(f"cannot size Darwin process census (errno {ctypes.get_errno()})")
+    capacity = max(1024, estimated // ctypes.sizeof(ctypes.c_int) + 256)
+    for _ in range(4):
+        buffer = (ctypes.c_int * capacity)()
+        ctypes.set_errno(0)
+        received = libproc.proc_listpids(
+            _DARWIN_PROC_UID_ONLY,
+            effective_uid,
+            ctypes.byref(buffer),
+            ctypes.sizeof(buffer),
+        )
+        if received < 0:
+            raise OSError(
+                f"cannot enumerate Darwin processes (errno {ctypes.get_errno()})"
+            )
+        if received < ctypes.sizeof(buffer):
+            count = received // ctypes.sizeof(ctypes.c_int)
+            return tuple(
+                sorted(
+                    {int(buffer[index]) for index in range(count) if buffer[index] > 1}
+                )
+            )
+        capacity *= 2
+    raise OSError("Darwin process census kept exceeding its bounded buffer")
+
+
+def _darwin_process_birth(pid: int) -> tuple[str, int, int]:
+    libproc, _ = _darwin_process_libraries()
+    info = _DarwinProcBSDInfo()
+    if ctypes.sizeof(info) != _DARWIN_PROC_BSDINFO_SIZE:
+        raise OSError("Darwin proc_bsdinfo ABI does not match the supported layout")
+    ctypes.set_errno(0)
+    received = libproc.proc_pidinfo(
+        pid,
+        _DARWIN_PROC_PIDTBSDINFO,
+        0,
+        ctypes.byref(info),
+        _DARWIN_PROC_BSDINFO_SIZE,
+    )
+    if received != _DARWIN_PROC_BSDINFO_SIZE:
+        observed_errno = ctypes.get_errno()
+        if received == 0 and observed_errno in {0, errno.ESRCH}:
+            raise ProcessLookupError(pid)
+        raise OSError(
+            f"cannot inspect Darwin process birth identity for {pid} "
+            f"(errno {observed_errno})"
+        )
+    if (
+        int(info.pbi_pid) != pid
+        or int(info.pbi_status) not in _DARWIN_STABLE_PROCESS_STATES
+        or int(info.pbi_flags) & _DARWIN_PROC_FLAG_INEXIT
+        or int(info.pbi_start_tvsec) <= 0
+        or not 0 <= int(info.pbi_start_tvusec) < 1_000_000
+    ):
+        raise ProcessLookupError(pid)
+    return (
+        f"darwin:{int(info.pbi_start_tvsec)}:{int(info.pbi_start_tvusec)}",
+        int(info.pbi_uid),
+        8 if int(info.pbi_flags) & _DARWIN_PROC_FLAG_LP64 else 4,
+    )
+
+
+def _darwin_process_arguments(pid: int, *, pointer_size: int) -> tuple[str, ...]:
+    if pointer_size not in {4, 8}:
+        raise OSError(f"invalid Darwin process pointer size for {pid}")
+    _, libc = _darwin_process_libraries()
+    mib = (ctypes.c_int * 3)(
+        _DARWIN_CTL_KERN,
+        _DARWIN_KERN_PROCARGS2,
+        pid,
+    )
+    raw: bytes | None = None
+    for _ in range(3):
+        required_size = ctypes.c_size_t(0)
+        ctypes.set_errno(0)
+        if (
+            libc.sysctl(
+                mib,
+                len(mib),
+                None,
+                ctypes.byref(required_size),
+                None,
+                0,
+            )
+            != 0
+        ):
+            observed_errno = ctypes.get_errno()
+            if observed_errno == errno.ESRCH:
+                raise ProcessLookupError(pid)
+            raise OSError(
+                f"cannot size Darwin process arguments for {pid} "
+                f"(errno {observed_errno})"
+            )
+        capacity = int(required_size.value)
+        if not 4 <= capacity <= _DARWIN_MAX_PROCARGS:
+            raise OSError(f"invalid Darwin process argument size for {pid}")
+        buffer = ctypes.create_string_buffer(capacity)
+        received_size = ctypes.c_size_t(capacity)
+        ctypes.set_errno(0)
+        if (
+            libc.sysctl(
+                mib,
+                len(mib),
+                buffer,
+                ctypes.byref(received_size),
+                None,
+                0,
+            )
+            == 0
+        ):
+            actual_size = int(received_size.value)
+            if not 4 <= actual_size <= capacity:
+                raise OSError(f"invalid Darwin process argument payload for {pid}")
+            raw = buffer.raw[:actual_size]
+            break
+        observed_errno = ctypes.get_errno()
+        if observed_errno == errno.ESRCH:
+            raise ProcessLookupError(pid)
+        if observed_errno != errno.ENOMEM:
+            raise OSError(
+                f"cannot inspect Darwin process arguments for {pid} "
+                f"(errno {observed_errno})"
+            )
+    if raw is None:
+        raise OSError(f"Darwin process arguments kept changing size for {pid}")
+
+    argc = struct.unpack_from("=i", raw)[0]
+    if not 1 <= argc <= 4096:
+        raise OSError(f"invalid Darwin process argument count for {pid}")
+    position = struct.calcsize("=i")
+    executable_end = raw.find(b"\0", position)
+    if executable_end < 0 or executable_end == position:
+        raise OSError(f"cannot parse Darwin executable argument for {pid}")
+    position = executable_end + 1
+    padding_size = (-(position - struct.calcsize("=i"))) % pointer_size
+    padding_end = position + padding_size
+    if padding_end > len(raw) or any(raw[position:padding_end]):
+        raise OSError(f"invalid Darwin process argument alignment for {pid}")
+    position = padding_end
+    arguments: list[str] = []
+    for _ in range(argc):
+        argument_end = raw.find(b"\0", position)
+        if argument_end < 0:
+            raise OSError(f"cannot parse Darwin argv for {pid}")
+        arguments.append(os.fsdecode(raw[position:argument_end]))
+        position = argument_end + 1
+    if not arguments or not arguments[0]:
+        raise OSError(f"Darwin argv is empty for {pid}")
+    return tuple(arguments)
+
+
+def _argv_is_legacy_service_action_mutator(argv: Sequence[str]) -> bool:
+    actions = {"install", "reconcile", "restart", "start", "stop", "uninstall"}
+    for index in range(len(argv) - 3):
+        if (
+            Path(argv[index]).name == "vibecrafted"
+            and argv[index + 1] == "server"
+            and argv[index + 2] == "service"
+            and argv[index + 3] in actions
+        ):
+            return True
+    for entrypoint, argument in enumerate(argv):
+        if argument != "vibecrafted_core.server_supervisor" and Path(
+            argument
+        ).name not in {"vc-server-supervisor", "server_supervisor.py"}:
+            continue
+        tail = argv[entrypoint + 1 :]
+        return any(
+            tail[index] == "service" and tail[index + 1] in actions
+            for index in range(len(tail) - 1)
+        )
+    return False
+
+
+def _argv_is_legacy_manual_server_mutator(argv: Sequence[str]) -> bool:
+    if any(
+        Path(argv[index]).name == "vibecrafted"
+        and argv[index + 1] == "server"
+        and argv[index + 2] in {"start", "stop"}
+        for index in range(len(argv) - 2)
+    ):
+        return True
+    for entrypoint, argument in enumerate(argv):
+        if argument != "vibecrafted_core.server_supervisor" and Path(
+            argument
+        ).name not in {"vc-server-supervisor", "server_supervisor.py"}:
+            continue
+        return "manual-stop" in argv[entrypoint + 1 :]
+    return False
+
+
+def _argv_is_service_mutator(argv: Sequence[str]) -> bool:
+    return _argv_is_legacy_service_action_mutator(
+        argv
+    ) or _argv_is_legacy_manual_server_mutator(argv)
+
+
+def _legacy_service_mutator_census() -> tuple[_LegacyServiceMutator, ...]:
+    records: list[_LegacyServiceMutator] = []
+    for pid in _darwin_process_ids():
+        if pid == os.getpid():
+            continue
+        try:
+            first_birth = _darwin_process_birth(pid)
+            if first_birth[1] != os.geteuid():
+                continue
+            first_argv = _darwin_process_arguments(
+                pid,
+                pointer_size=first_birth[2],
+            )
+            second_argv = _darwin_process_arguments(
+                pid,
+                pointer_size=first_birth[2],
+            )
+            second_birth = _darwin_process_birth(pid)
+        except ProcessLookupError:
+            continue
+        if first_birth != second_birth or first_argv != second_argv:
+            raise OSError(f"Darwin process {pid} changed during legacy mutator census")
+        if _argv_is_service_mutator(first_argv):
+            _, seconds, microseconds = first_birth[0].split(":")
+            records.append(
+                _LegacyServiceMutator(
+                    pid=pid,
+                    start_token=first_birth[0],
+                    started_at=datetime.fromtimestamp(
+                        int(seconds) + int(microseconds) / 1_000_000,
+                        tz=timezone.utc,
+                    ),
+                    argv=first_argv,
+                )
+            )
+    return tuple(sorted(records, key=lambda record: (record.pid, record.start_token)))
+
+
+def _wait_for_legacy_service_mutator_quiescence(
+    *,
+    published_at: datetime,
+    classifier: Callable[[Sequence[str]], bool] = _argv_is_service_mutator,
+    timeout_seconds: float = 15.0,
+) -> None:
+    if published_at.tzinfo is None:
+        raise OSError("runtime publication boundary has no timezone")
+    published_at = published_at.astimezone(timezone.utc)
+    deadline = time.monotonic() + timeout_seconds
+    empty_observations = 0
+    last_records: tuple[_LegacyServiceMutator, ...] = ()
+    while True:
+        records = tuple(
+            record
+            for record in _legacy_service_mutator_census()
+            if record.started_at <= published_at and classifier(record.argv)
+        )
+        if records:
+            empty_observations = 0
+            last_records = records
+        else:
+            empty_observations += 1
+            if empty_observations >= 2:
+                return
+        if time.monotonic() >= deadline:
+            detail = ", ".join(
+                f"pid={record.pid}, start={record.start_token}"
+                for record in last_records
+            )
+            raise OSError(
+                "pre-lock legacy service mutators did not become quiescent"
+                f"{f' ({detail})' if detail else ''}"
+            )
+        time.sleep(0.05)
+
+
+def _runtime_lifecycle_deck(shared_home: Path) -> Path:
+    current = _current_tools_link(shared_home)
+    try:
+        generation = current.resolve(strict=True)
+    except OSError as exc:
+        raise OSError(
+            "cannot fence legacy server lifecycle without the current runtime "
+            f"generation at {current}"
+        ) from exc
+    return _runtime_lifecycle_deck_for_generation(generation)
+
+
+@dataclass(frozen=True)
+class _RuntimeLifecycleFenceGuard:
+    process: subprocess.Popen[str] | None
+    owner_pid: int | None = None
+    owner_nonce: str | None = None
+    lock_dir: Path | None = None
+
+    def assert_owned(self) -> None:
+        if self.process is not None and self.process.poll() is not None:
+            raise OSError(
+                "legacy lifecycle fence exited before the protected mutation "
+                f"completed (exit={self.process.returncode})"
+            )
+
+    def inherited_environment(self) -> dict[str, str]:
+        self.assert_owned()
+        if self.process is None:
+            return {}
+        if (
+            self.owner_pid is None
+            or self.owner_pid <= 1
+            or self.owner_nonce is None
+            or re.fullmatch(r"[0-9a-f]{64}", self.owner_nonce) is None
+            or self.lock_dir is None
+        ):
+            raise OSError("legacy lifecycle fence has no verified owner proof")
+        return {
+            "_SERVER_LIFECYCLE_LOCK_PID": str(self.owner_pid),
+            "_SERVER_LIFECYCLE_LOCK_NONCE": self.owner_nonce,
+            "_SERVER_LIFECYCLE_LOCK_DIR": str(self.lock_dir),
+        }
+
+
+@contextmanager
+def _inherited_runtime_lifecycle_fence(
+    guard: _RuntimeLifecycleFenceGuard,
+) -> Iterator[None]:
+    environment = guard.inherited_environment()
+    token = _RUNTIME_LIFECYCLE_ENV.set(environment or None)
+    try:
+        yield
+    finally:
+        _RUNTIME_LIFECYCLE_ENV.reset(token)
+
+
+@contextmanager
+def _runtime_lifecycle_handoff_fence(
+    shared_home: Path,
+    *,
+    deck: Path | None,
+) -> Iterator[_RuntimeLifecycleFenceGuard]:
+    """Hold the repo-native lifecycle.lock through publication.
+
+    The supervisor flock blocks service/launchd ownership.  Direct legacy
+    ``server start`` and ``server stop`` serialize through a separate,
+    identity-backed directory lease; source the already-installed old deck and
+    let that exact implementation own its lock for the transaction.
+    """
+    if sys.platform != "darwin" or deck is None:
+        yield _RuntimeLifecycleFenceGuard(None)
+        return
+
+    token = f"VIBECRAFTED_LIFECYCLE_FENCE_READY_{os.urandom(16).hex()}"
+    shell = r"""
+set -euo pipefail
+deck="$1"
+ready_token="$2"
+source "$deck" help >/dev/null
+held=0
+cleanup_install_lifecycle_fence() {
+  if [[ "$held" -eq 1 ]]; then
+    _release_server_lifecycle_lock
+    held=0
+  fi
+}
+trap cleanup_install_lifecycle_fence EXIT HUP INT TERM
+_acquire_server_lifecycle_lock
+held=1
+printf '%s\t%s\t%s\n' \
+  "$ready_token" \
+  "$_SERVER_LIFECYCLE_LOCK_PID" \
+  "$_SERVER_LIFECYCLE_LOCK_NONCE"
+IFS= read -r _release_request || true
+"""
+    environment = os.environ.copy()
+    environment["HOME"] = str(Path.home())
+    environment["VIBECRAFTED_HOME"] = str(shared_home.resolve(strict=False))
+    environment["VIBECRAFTED_TOOLS_HOME"] = str(
+        vibecrafted_tools_home().resolve(strict=False)
+    )
+    process = subprocess.Popen(
+        ["/bin/bash", "-c", shell, "vibecrafted", str(deck), token],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=environment,
+    )
+    ready = False
+    owner_pid: int | None = None
+    owner_nonce: str | None = None
+    output: list[str] = []
+    deadline = time.monotonic() + 15.0
+    assert process.stdout is not None
+    try:
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                break
+            readable, _, _ = select.select(
+                [process.stdout],
+                [],
+                [],
+                min(0.1, max(0.0, deadline - time.monotonic())),
+            )
+            if not readable:
+                continue
+            line = process.stdout.readline()
+            if not line:
+                break
+            rendered = line.rstrip("\n")
+            output.append(rendered)
+            fields = rendered.split("\t")
+            if (
+                len(fields) == 3
+                and fields[0] == token
+                and fields[1].isdigit()
+                and int(fields[1]) > 1
+                and re.fullmatch(r"[0-9a-f]{64}", fields[2]) is not None
+            ):
+                owner_pid = int(fields[1])
+                owner_nonce = fields[2]
+                ready = True
+                break
+        if not ready:
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+            assert process.stderr is not None
+            detail = process.stderr.read().strip() or " | ".join(output)
+            raise OSError(
+                "legacy lifecycle fence could not acquire verified ownership "
+                f"({detail or f'exit={process.returncode}'})"
+            )
+        guard = _RuntimeLifecycleFenceGuard(
+            process,
+            owner_pid=owner_pid,
+            owner_nonce=owner_nonce,
+            lock_dir=shared_home.resolve(strict=False) / "server" / "lifecycle.lock",
+        )
+        guard.assert_owned()
+        yield guard
+    finally:
+        if ready and process.poll() is not None:
+            assert process.stderr is not None
+            detail = process.stderr.read().strip() or process.returncode
+            raise OSError(
+                f"legacy lifecycle fence exited before explicit release ({detail})"
+            )
+        if ready:
+            assert process.stdin is not None
+            try:
+                process.stdin.write("release\n")
+                process.stdin.flush()
+                process.stdin.close()
+            except (BrokenPipeError, ValueError):
+                pass
+            try:
+                process.wait(timeout=15)
+            except subprocess.TimeoutExpired as exc:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+                raise OSError(
+                    "legacy lifecycle fence did not release within its timeout"
+                ) from exc
+            if process.returncode != 0:
+                assert process.stderr is not None
+                raise OSError(
+                    "legacy lifecycle fence exited without clean ownership "
+                    f"release ({process.stderr.read().strip() or process.returncode})"
+                )
+
+
+@contextmanager
+def _inherited_tools_install_lease(
+    descriptor: int,
+) -> Iterator[None]:
+    previous = os.environ.get(_TOOLS_INSTALL_LEASE_ENV)
+    os.environ[_TOOLS_INSTALL_LEASE_ENV] = str(descriptor)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(_TOOLS_INSTALL_LEASE_ENV, None)
+        else:
+            os.environ[_TOOLS_INSTALL_LEASE_ENV] = previous
+
+
+def _terminate_installer_child_process_group(
+    process: subprocess.Popen[bytes],
+) -> None:
+    """Contain only the installer child tree started by this process."""
+    process_group = process.pid
+    if process.poll() is None:
+        try:
+            observed_group = os.getpgid(process.pid)
+        except ProcessLookupError:
+            pass
+        else:
+            if observed_group != process_group:
+                raise OSError(
+                    "installer child does not own its process group; refusing broad "
+                    "signal"
+                )
+
+    def group_exists() -> bool:
+        try:
+            os.killpg(process_group, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # Darwin can transiently report EPERM while a killed, reparented
+            # descendant is still a zombie in the otherwise-owned group.
+            # Keep waiting for ESRCH; the bounded timeout below still refuses
+            # to call containment complete while an unsignalable group remains.
+            return True
+        return True
+
+    def wait_for_group_exit(timeout_seconds: float) -> bool:
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            process.poll()
+            if not group_exists():
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
+
+    if not group_exists():
+        process.wait(timeout=1)
+        return
+    os.killpg(process_group, signal.SIGTERM)
+    if not wait_for_group_exit(5):
+        try:
+            os.killpg(process_group, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        if not wait_for_group_exit(5):
+            raise OSError(
+                "installer child process group survived bounded SIGKILL containment"
+            )
+    process.wait(timeout=1)
+
+
+def _run_install_child_with_lifecycle_guard(
+    argv: Sequence[str],
+    *,
+    descriptor: int,
+    environment: dict[str, str],
+    lifecycle_guard: _RuntimeLifecycleFenceGuard,
+) -> int:
+    process = subprocess.Popen(
+        list(argv),
+        pass_fds=(descriptor,),
+        env=environment,
+        start_new_session=True,
+    )
+    try:
+        while process.poll() is None:
+            lifecycle_guard.assert_owned()
+            time.sleep(0.05)
+        lifecycle_guard.assert_owned()
+        # Build/install helpers can outlive their parent for a few scheduling
+        # ticks while flushing caches or reaping children.  Give the isolated
+        # installer group a bounded natural drain before treating survivors as
+        # a failed transaction and containing that group.
+        drain_deadline = time.monotonic() + 5.0
+        while True:
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                break
+            if time.monotonic() >= drain_deadline:
+                raise OSError(
+                    "installer child exited while same-group descendants remained"
+                )
+            lifecycle_guard.assert_owned()
+            time.sleep(0.05)
+    except BaseException as fence_exc:
+        try:
+            _terminate_installer_child_process_group(process)
+        except (OSError, subprocess.SubprocessError) as containment_exc:
+            raise OSError(
+                "legacy lifecycle fence was lost and the installer child "
+                f"could not be contained: {containment_exc}"
+            ) from fence_exc
+        raise
+    return process.returncode
+
+
+def run_with_tools_install_lease(
+    shared_home: Path,
+    argv: Sequence[str],
+    *,
+    service_policy: Literal["preserve", "ensure", "isolated"] = "preserve",
+    runtime_payload_paths: Sequence[Path] = (),
+    require_tools_handoff: bool = True,
+) -> int:
+    """Own the full legacy-drain -> publish -> activation transaction."""
+    if not argv:
+        raise ValueError("tools install lease requires a command")
+    current_link = _current_tools_link(shared_home)
+    try:
+        if service_policy not in {"preserve", "ensure", "isolated"}:
+            raise ValueError(f"unknown runtime service policy: {service_policy!r}")
+        ensure_service = service_policy == "ensure"
+        manage_runtime_service = service_policy != "isolated"
+        darwin_service = sys.platform == "darwin" and manage_runtime_service
+        if darwin_service:
+            configured_home = Path.home().resolve(strict=False)
+            canonical_home = _canonical_operator_home()
+            if configured_home != canonical_home:
+                raise OSError(
+                    "managed runtime service requires the canonical operator HOME "
+                    f"{canonical_home}; got {configured_home}. Use service policy "
+                    "'isolated' for alternate HOME installs"
+                )
+        with _tools_install_lease(
+            current_link,
+            operation="publish-uv-service-reconcile",
+        ) as descriptor:
+            os.set_inheritable(descriptor, True)
+            with _inherited_tools_install_lease(descriptor):
+                service_was_active = False
+                fence_required = False
+                lifecycle_deck: Path | None = None
+                launch_agent_backup: _RuntimeLaunchAgentBackup | None = None
+                payload_backup = _capture_runtime_payload_backup(
+                    shared_home,
+                    runtime_payload_paths,
+                )
+                launchd_gate_required = False
+                legacy_service_lock_contract = True
+                legacy_quiescence_proven = True
+                if darwin_service:
+                    _assert_runtime_loaded_service_owner(shared_home)
+                    try:
+                        current_link.lstat()
+                    except FileNotFoundError:
+                        current_exists = False
+                    except OSError as exc:
+                        raise OSError(
+                            "cannot inspect the current runtime generation"
+                        ) from exc
+                    else:
+                        current_exists = True
+                    if current_exists:
+                        if not current_link.is_symlink():
+                            raise OSError(
+                                "current runtime generation is not a symlink pointer"
+                            )
+                        lifecycle_deck = _runtime_lifecycle_deck(shared_home)
+                    # Every managed Darwin transaction closes the fixed-label
+                    # namespace. `preserve` still publishes code that a raced
+                    # service install could resolve, so a no-op gate is unsafe.
+                    launchd_gate_required = True
+                    legacy_service_lock_contract = (
+                        lifecycle_deck is None
+                        or _runtime_deck_has_service_lifecycle_lock(lifecycle_deck)
+                    )
+                    legacy_quiescence_proven = legacy_service_lock_contract
+
+                child_returncode = 0
+                child_rollback_restored = False
+                gate = _RuntimeLaunchdMutationGate(required=launchd_gate_required)
+                if darwin_service:
+                    # Re-attribute immediately before the first possible
+                    # fixed-label mutation. The installer lease serializes all
+                    # supported managed writers; a foreign owner fails closed.
+                    _assert_runtime_loaded_service_owner(shared_home)
+                with gate:
+                    if darwin_service:
+                        # Re-check after entering the gate so a raced owner is
+                        # caught before any payload child can publish.
+                        _assert_runtime_loaded_service_owner(shared_home)
+                        # Capture exact bytes or exact absence while bootstrap
+                        # is fenced, even when no launcher currently answers.
+                        launch_agent_backup = _capture_runtime_launch_agent_backup(
+                            shared_home
+                        )
+                        snapshot = _runtime_service_snapshot(shared_home)
+                        if not gate.required and (
+                            snapshot is not None
+                            or launch_agent_backup.contents is not None
+                        ):
+                            raise OSError(
+                                "runtime service evidence appeared before the "
+                                "launchd mutation gate closed"
+                            )
+                        if snapshot is not None:
+                            if lifecycle_deck is None:
+                                raise OSError(
+                                    "runtime service exists without an exact current "
+                                    "lifecycle generation"
+                                )
+                            service_was_active = snapshot[1].healthy
+                        # A quiescent old launcher can still receive a
+                        # concurrent `service install`; fence every validated
+                        # launcher, not only one with current service evidence.
+                        fence_required = lifecycle_deck is not None
+                        if service_was_active:
+                            print(
+                                "[install-tools] draining verified legacy runtime "
+                                "before publication..."
+                            )
+                            try:
+                                drained = prepare_runtime_service_for_install(
+                                    shared_home,
+                                    launch_agent_backup=launch_agent_backup,
+                                )
+                            except BaseException:
+                                gate.retain_disabled()
+                                raise
+                            if not drained:
+                                gate.retain_disabled()
+                                raise OSError(
+                                    "legacy runtime was active at preflight but "
+                                    "did not enter the verified drain"
+                                )
+
+                    try:
+                        with _runtime_lifecycle_handoff_fence(
+                            shared_home,
+                            deck=lifecycle_deck,
+                        ) as lifecycle_guard:
+                            lifecycle_guard.assert_owned()
+                            if lifecycle_deck is not None:
+                                fenced_snapshot = _runtime_service_snapshot(shared_home)
+                                if (
+                                    fenced_snapshot is None
+                                    or not fenced_snapshot[1].quiescent
+                                    or fenced_snapshot[2] != "stopped"
+                                ):
+                                    raise OSError(
+                                        "legacy server/guardian ownership changed "
+                                        "before the publication fences closed"
+                                    )
+                            with _runtime_supervisor_handoff_fence(
+                                shared_home,
+                                required=fence_required,
+                            ):
+                                lifecycle_guard.assert_owned()
+                                # A service-install that resolved the old
+                                # implementation before publication can only
+                                # leave a disabled job behind. Remove it only
+                                # after proving the exact owned-path contract.
+                                if darwin_service:
+                                    try:
+                                        _bootout_owned_runtime_launchd_job(shared_home)
+                                    except (OSError, subprocess.SubprocessError):
+                                        gate.retain_disabled()
+                                        raise
+                                environment = os.environ.copy()
+                                child_returncode = (
+                                    _run_install_child_with_lifecycle_guard(
+                                        argv,
+                                        descriptor=descriptor,
+                                        environment=environment,
+                                        lifecycle_guard=lifecycle_guard,
+                                    )
+                                )
+                                lifecycle_guard.assert_owned()
+                                if darwin_service:
+                                    try:
+                                        _bootout_owned_runtime_launchd_job(shared_home)
+                                    except (OSError, subprocess.SubprocessError):
+                                        # A loaded/foreign job means quiescence is
+                                        # unproved. Never move the pointer backwards
+                                        # under it; contain the label instead.
+                                        gate.retain_disabled()
+                                        raise
+
+                                if child_returncode != 0:
+                                    if lifecycle_deck is not None:
+                                        failed_snapshot = _runtime_service_snapshot(
+                                            shared_home
+                                        )
+                                        if (
+                                            failed_snapshot is None
+                                            or not failed_snapshot[1].quiescent
+                                            or failed_snapshot[2] != "stopped"
+                                        ):
+                                            gate.retain_disabled()
+                                            raise OSError(
+                                                "install child failed while runtime "
+                                                "ownership was not quiescent"
+                                            )
+                                    _restore_runtime_payload_backup(payload_backup)
+                                    if launch_agent_backup is not None:
+                                        _restore_runtime_launch_agent_backup(
+                                            shared_home,
+                                            launch_agent_backup,
+                                        )
+                                    child_rollback_restored = (
+                                        _rollback_current_tools_locked(shared_home)
+                                        if require_tools_handoff
+                                        else False
+                                    )
+                                lifecycle_guard.assert_owned()
+                    except BaseException as exc:
+                        rollback_was_already_unsafe = gate.retention_required
+                        gate.retain_disabled()
+                        if rollback_was_already_unsafe:
+                            raise
+                        try:
+                            restored = rollback_runtime_install(
+                                shared_home,
+                                service_was_active=(
+                                    service_was_active and legacy_quiescence_proven
+                                ),
+                                service_activation_attempted=False,
+                                lifecycle_deck=lifecycle_deck,
+                                launch_agent_backup=launch_agent_backup,
+                                payload_backup=payload_backup,
+                                launchd_gate=gate,
+                                restore_tools_pointer=require_tools_handoff,
+                                manage_runtime_service=manage_runtime_service,
+                            )
+                        except (
+                            OSError,
+                            subprocess.SubprocessError,
+                        ) as rollback_exc:
+                            raise OSError(
+                                "install child failed and safe transaction rollback "
+                                f"was refused: {rollback_exc}"
+                            ) from exc
+                        if legacy_quiescence_proven:
+                            gate.allow_original_state_restore()
+                        else:
+                            gate.retain_disabled()
+                        _discard_runtime_payload_backup(payload_backup)
+                        if not isinstance(exc, Exception):
+                            raise
+                        detail = (
+                            "previous runtime generation was restored"
+                            if restored
+                            else "runtime pointer was unchanged"
+                        )
+                        if not legacy_quiescence_proven:
+                            detail += "; pre-lock service remains disabled"
+                        raise OSError(
+                            f"install child failed; {detail} and service ownership "
+                            "were recovered"
+                        ) from exc
+
+                    if child_returncode != 0:
+                        if darwin_service and not legacy_service_lock_contract:
+                            gate.retain_disabled()
+                            _discard_runtime_payload_backup(payload_backup)
+                            print(
+                                "[install-tools] FAILED closed: legacy service "
+                                "mutators predate lifecycle locking; the runtime "
+                                "label remains disabled until a clean re-entry",
+                                file=sys.stderr,
+                            )
+                            return child_returncode
+                        if service_was_active:
+                            if launch_agent_backup is None:
+                                raise OSError(
+                                    "legacy service recovery has no LaunchAgent "
+                                    "snapshot"
+                                )
+                            gate.enable_for_activation()
+                            try:
+                                _activate_runtime_service_from_backup(
+                                    shared_home,
+                                    launch_agent_backup,
+                                )
+                            except BaseException:
+                                gate.retain_disabled()
+                                raise
+                        _discard_runtime_payload_backup(payload_backup)
+                        detail = (
+                            "restored previous runtime generation"
+                            if child_rollback_restored
+                            else "runtime pointer did not require rollback"
+                        )
+                        print(
+                            f"[install-tools] FAILED safely: {detail} and service "
+                            "ownership",
+                            file=sys.stderr,
+                        )
+                        return child_returncode
+
+                    activation_attempted = darwin_service and (
+                        service_was_active or ensure_service
+                    )
+                    handoff_target_to_seal: Path | None = None
+                    try:
+                        publication_boundary: datetime | None = None
+                        if darwin_service:
+                            if require_tools_handoff:
+                                published_deck = _runtime_lifecycle_deck(shared_home)
+                                if not _runtime_deck_has_service_lifecycle_lock(
+                                    published_deck
+                                ):
+                                    raise OSError(
+                                        "published runtime generation has no "
+                                        "service lifecycle-lock contract"
+                                    )
+                            elif gate.required and not legacy_service_lock_contract:
+                                raise OSError(
+                                    "payload-only service activation cannot migrate "
+                                    "a pre-lock runtime generation"
+                                )
+                            if not legacy_service_lock_contract:
+                                publication_boundary = (
+                                    _tools_handoff_publication_boundary(shared_home)
+                                )
+                                # Commands resolved through the old deck can hold the
+                                # supervisor lease while a child waits for
+                                # lifecycle.lock. Drain the complete pre-publication
+                                # set before taking lifecycle.lock ourselves.
+                                _wait_for_legacy_service_mutator_quiescence(
+                                    published_at=publication_boundary,
+                                    classifier=_argv_is_service_mutator,
+                                )
+                        with _runtime_lifecycle_handoff_fence(
+                            shared_home,
+                            deck=lifecycle_deck,
+                        ) as activation_guard:
+                            activation_guard.assert_owned()
+                            if darwin_service and not legacy_service_lock_contract:
+                                try:
+                                    if publication_boundary is None:
+                                        raise OSError(
+                                            "pre-lock runtime migration has no exact "
+                                            "publication boundary"
+                                        )
+                                    _wait_for_legacy_service_mutator_quiescence(
+                                        published_at=publication_boundary,
+                                        classifier=(
+                                            _argv_is_legacy_service_action_mutator
+                                        ),
+                                    )
+                                    _bootout_owned_runtime_launchd_job(shared_home)
+                                    legacy_quiescence_proven = True
+                                except BaseException:
+                                    gate.retain_disabled()
+                                    raise
+                            if activation_attempted:
+                                print(
+                                    "[install-tools] activating verified current "
+                                    "runtime..."
+                                )
+                                try:
+                                    gate.enable_for_activation()
+                                    with _inherited_runtime_lifecycle_fence(
+                                        activation_guard
+                                    ):
+                                        activate_runtime_service_after_install(
+                                            shared_home,
+                                            service_arguments=(
+                                                launch_agent_backup.service_arguments
+                                                if launch_agent_backup is not None
+                                                else ()
+                                            ),
+                                        )
+                                    if not _assert_runtime_launchd_job_owned(
+                                        shared_home
+                                    ):
+                                        raise OSError(
+                                            "new runtime activation has no owned "
+                                            "launchd job"
+                                        )
+                                except BaseException:
+                                    gate.disable()
+                                    raise
+                            activation_guard.assert_owned()
+                            if require_tools_handoff:
+                                prepared = _read_tools_handoff(shared_home)
+                                if prepared is None or prepared["state"] != "prepared":
+                                    raise OSError(
+                                        "install child completed without a prepared "
+                                        "runtime generation handoff"
+                                    )
+                                handoff_target_to_seal = Path(
+                                    prepared["new_target"]
+                                ).resolve(strict=False)
+                                if _symlink_target(current_link) != (
+                                    handoff_target_to_seal
+                                ):
+                                    raise OSError(
+                                        "prepared runtime generation changed before "
+                                        "handoff seal"
+                                    )
+                                if not _complete_current_tools_handoff_locked(
+                                    shared_home
+                                ):
+                                    raise OSError(
+                                        "install child completed without a prepared "
+                                        "runtime generation handoff"
+                                    )
+                            if ensure_service:
+                                gate.commit_enabled_state()
+                    except BaseException as exc:
+                        rollback_was_already_unsafe = gate.retention_required
+                        gate.retain_disabled()
+                        if handoff_target_to_seal is not None and (
+                            _tools_handoff_is_complete_current(
+                                shared_home,
+                                expected_target=handoff_target_to_seal,
+                            )
+                        ):
+                            # The verified cutover was sealed before the lifecycle
+                            # helper failed to release.  Never synthesize an old
+                            # service under a committed new pointer.
+                            _discard_runtime_payload_backup(payload_backup)
+                            raise
+                        if rollback_was_already_unsafe:
+                            raise
+                        safe_to_reactivate = (
+                            legacy_service_lock_contract or legacy_quiescence_proven
+                        )
+                        try:
+                            restored = rollback_runtime_install(
+                                shared_home,
+                                service_was_active=(
+                                    service_was_active and safe_to_reactivate
+                                ),
+                                service_activation_attempted=activation_attempted,
+                                lifecycle_deck=lifecycle_deck,
+                                launch_agent_backup=launch_agent_backup,
+                                payload_backup=payload_backup,
+                                launchd_gate=gate,
+                                restore_tools_pointer=require_tools_handoff,
+                                manage_runtime_service=manage_runtime_service,
+                            )
+                        except BaseException as rollback_exc:
+                            gate.retain_disabled()
+                            if not isinstance(rollback_exc, Exception):
+                                raise
+                            raise OSError(
+                                "current runtime activation failed and safe rollback "
+                                "was refused; "
+                                f"activation failure: {exc}; "
+                                f"rollback refusal: {rollback_exc}"
+                            ) from exc
+                        if safe_to_reactivate:
+                            gate.allow_original_state_restore()
+                        else:
+                            gate.retain_disabled()
+                        _discard_runtime_payload_backup(payload_backup)
+                        if not isinstance(exc, Exception):
+                            raise
+                        if not manage_runtime_service:
+                            detail = (
+                                "previous runtime generation was restored; "
+                                "isolated service state was untouched"
+                                if restored
+                                else "runtime pointer was unchanged; isolated "
+                                "service state was untouched"
+                            )
+                        elif not safe_to_reactivate:
+                            detail = (
+                                "previous runtime generation was restored; pre-lock "
+                                "service remains disabled"
+                                if restored
+                                else "runtime pointer was unchanged; pre-lock service "
+                                "remains disabled"
+                            )
+                        else:
+                            detail = (
+                                "previous runtime generation and service were restored"
+                                if restored
+                                else "previous service was restored; pointer was "
+                                "unchanged"
+                            )
+                        raise OSError(
+                            f"runtime handoff failed ({exc}); {detail}"
+                        ) from exc
+
+                    _discard_runtime_payload_backup(payload_backup)
+                    return 0
+    except TimeoutError as exc:
+        print(f"[install-tools] FATAL: {exc}", file=sys.stderr)
+        return 75
+    except ValueError as exc:
+        print(
+            f"[install-tools] FATAL: invalid installer lease policy: {exc}",
+            file=sys.stderr,
+        )
+        return 64
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(
+            f"[install-tools] FATAL: runtime install handoff failed: {exc}",
+            file=sys.stderr,
+        )
+        return 126
+
+
+def _symlink_target(path: Path) -> Path | None:
+    if not path.is_symlink():
+        return None
+    raw_target = Path(os.readlink(path))
+    if not raw_target.is_absolute():
+        raw_target = path.parent / raw_target
+    return raw_target.resolve(strict=False)
+
+
+def _atomic_symlink(target: Path, link: Path) -> None:
+    """Publish ``link`` in one rename without ever removing its old target."""
+    canonical_target = target.resolve(strict=True)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.exists() and not link.is_symlink():
+        raise OSError(
+            f"cannot atomically publish over non-symlink runtime root: {link}"
+        )
+    temporary = link.parent / (f".{link.name}.tmp-{os.getpid()}-{os.urandom(6).hex()}")
+    relative_target = os.path.relpath(canonical_target, link.parent)
+    try:
+        temporary.symlink_to(relative_target, target_is_directory=True)
+        os.replace(temporary, link)
+    finally:
+        if temporary.is_symlink():
+            temporary.unlink()
+
+
+def _atomic_json_file(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.parent / (f".{path.name}.tmp-{os.getpid()}-{os.urandom(6).hex()}")
+    encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2) + "\n"
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        try:
+            view = memoryview(encoded.encode("utf-8"))
+            while view:
+                written = os.write(descriptor, view)
+                view = view[written:]
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary, path)
+        directory = os.open(
+            path.parent,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+        )
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if temporary.exists() or temporary.is_symlink():
+            temporary.unlink()
+
+
+def _atomic_bytes_file(path: Path, contents: bytes, *, mode: int) -> None:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    parent = path.parent.lstat()
+    if (
+        path.parent.is_symlink()
+        or not stat.S_ISDIR(parent.st_mode)
+        or parent.st_uid != os.geteuid()
+    ):
+        raise OSError(f"refusing atomic write through foreign directory {path.parent}")
+    if path.exists() or path.is_symlink():
+        current = path.lstat()
+        if (
+            path.is_symlink()
+            or not stat.S_ISREG(current.st_mode)
+            or current.st_uid != os.geteuid()
+        ):
+            raise OSError(f"refusing atomic write over foreign path {path}")
+    temporary = path.parent / (f".{path.name}.tmp-{os.getpid()}-{os.urandom(6).hex()}")
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        os.fchmod(descriptor, stat.S_IMODE(mode))
+        view = memoryview(contents)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError(f"could not persist atomic file {path}")
+            view = view[written:]
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temporary.exists() or temporary.is_symlink():
+            temporary.unlink()
+
+
+def _validate_runtime_payload_tree(path: Path) -> str:
+    metadata = path.lstat()
+    if path.is_symlink() or metadata.st_uid != os.geteuid():
+        raise OSError(f"runtime payload path is not user-owned and stable: {path}")
+    if stat.S_ISREG(metadata.st_mode):
+        if metadata.st_nlink != 1:
+            raise OSError(f"runtime payload file has multiple hard links: {path}")
+        return "file"
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise OSError(f"runtime payload path has an unsupported type: {path}")
+    for root, directories, filenames in os.walk(path, followlinks=False):
+        for name in [*directories, *filenames]:
+            candidate = Path(root) / name
+            item = candidate.lstat()
+            if candidate.is_symlink() or item.st_uid != os.geteuid():
+                raise OSError(
+                    f"runtime payload tree contains a foreign link or owner: {candidate}"
+                )
+            if not stat.S_ISDIR(item.st_mode) and not stat.S_ISREG(item.st_mode):
+                raise OSError(
+                    f"runtime payload tree contains an unsupported path: {candidate}"
+                )
+            if stat.S_ISREG(item.st_mode) and item.st_nlink != 1:
+                raise OSError(
+                    f"runtime payload tree contains a hard-linked file: {candidate}"
+                )
+    return "directory"
+
+
+def _runtime_payload_directory_flags() -> int:
+    directory = getattr(os, "O_DIRECTORY", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if not directory or not nofollow or os.open not in os.supports_dir_fd:
+        raise OSError(
+            "secure runtime payload rollback requires openat/O_NOFOLLOW support"
+        )
+    return os.O_RDONLY | directory | nofollow | getattr(os, "O_CLOEXEC", 0)
+
+
+def _runtime_payload_open_absolute_directory(
+    path: Path,
+    *,
+    create: bool,
+) -> int:
+    """Open an absolute directory one no-follow component at a time."""
+    path = Path(os.path.abspath(os.fspath(path)))
+    if not path.is_absolute() or path.anchor != os.sep:
+        raise OSError(f"runtime payload directory is not absolute: {path}")
+    flags = _runtime_payload_directory_flags()
+    descriptor = os.open(os.sep, flags)
+    try:
+        for component in path.parts[1:]:
+            if component in {"", ".", ".."} or os.sep in component:
+                raise OSError(
+                    f"runtime payload directory has an unsafe component: {path}"
+                )
+            try:
+                child = os.open(component, flags, dir_fd=descriptor)
+            except FileNotFoundError:
+                if not create:
+                    raise
+                try:
+                    os.mkdir(component, mode=0o700, dir_fd=descriptor)
+                except FileExistsError:
+                    pass
+                child = os.open(component, flags, dir_fd=descriptor)
+            except OSError as exc:
+                if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+                    raise OSError(
+                        f"runtime payload directory traverses a symlink: {path}"
+                    ) from exc
+                raise
+            os.close(descriptor)
+            descriptor = child
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.geteuid():
+            raise OSError(f"runtime payload directory is not user-owned: {path}")
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _runtime_payload_directory_matches_fd(path: Path, descriptor: int) -> bool:
+    try:
+        current = _runtime_payload_open_absolute_directory(path, create=False)
+    except OSError:
+        return False
+    try:
+        expected = os.fstat(descriptor)
+        observed = os.fstat(current)
+        return expected.st_dev == observed.st_dev and expected.st_ino == observed.st_ino
+    finally:
+        os.close(current)
+
+
+def _runtime_payload_assert_directory_current(
+    path: Path,
+    descriptor: int,
+) -> None:
+    if not _runtime_payload_directory_matches_fd(path, descriptor):
+        raise OSError(f"runtime payload parent identity changed: {path}")
+
+
+def _runtime_payload_kind(metadata: os.stat_result, *, label: str) -> str:
+    if metadata.st_uid != os.geteuid():
+        raise OSError(f"runtime payload path is not user-owned: {label}")
+    if stat.S_ISLNK(metadata.st_mode):
+        raise OSError(f"runtime payload path traverses a symlink: {label}")
+    if stat.S_ISREG(metadata.st_mode):
+        if metadata.st_nlink != 1:
+            raise OSError(f"runtime payload file has multiple hard links: {label}")
+        return "file"
+    if stat.S_ISDIR(metadata.st_mode):
+        return "directory"
+    raise OSError(f"runtime payload path has an unsupported type: {label}")
+
+
+def _runtime_payload_safe_name(name: str) -> str:
+    if name in {"", ".", ".."} or os.sep in name:
+        raise OSError(f"unsafe runtime payload entry name: {name!r}")
+    return name
+
+
+def _runtime_payload_open_entry_at(
+    parent_fd: int,
+    name: str,
+) -> tuple[int, str, os.stat_result]:
+    name = _runtime_payload_safe_name(name)
+    before = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    kind = _runtime_payload_kind(before, label=name)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if kind == "directory":
+        flags |= getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(name, flags, dir_fd=parent_fd)
+    try:
+        opened = os.fstat(descriptor)
+        opened_kind = _runtime_payload_kind(opened, label=name)
+        if (
+            opened_kind != kind
+            or opened.st_dev != before.st_dev
+            or opened.st_ino != before.st_ino
+        ):
+            raise OSError(f"runtime payload entry changed while opening: {name}")
+        return descriptor, kind, opened
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _runtime_payload_name_exists_at(parent_fd: int, name: str) -> bool:
+    try:
+        os.stat(
+            _runtime_payload_safe_name(name),
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _runtime_payload_stat_signature(
+    metadata: os.stat_result,
+) -> tuple[int, int, int, int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_uid,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _runtime_payload_hash_blob(digest: Any, value: bytes) -> None:
+    digest.update(struct.pack("!Q", len(value)))
+    digest.update(value)
+
+
+def _runtime_payload_digest_node(
+    descriptor: int,
+    kind: str,
+    name: bytes,
+    digest: Any,
+) -> None:
+    before = os.fstat(descriptor)
+    if _runtime_payload_kind(before, label=os.fsdecode(name) or "<root>") != kind:
+        raise OSError("runtime payload node changed type while hashing")
+    _runtime_payload_hash_blob(digest, kind.encode("ascii"))
+    _runtime_payload_hash_blob(digest, name)
+    _runtime_payload_hash_blob(
+        digest,
+        str(stat.S_IMODE(before.st_mode)).encode("ascii"),
+    )
+    _runtime_payload_hash_blob(
+        digest,
+        str(before.st_mtime_ns).encode("ascii"),
+    )
+    if kind == "file":
+        _runtime_payload_hash_blob(
+            digest,
+            str(before.st_size).encode("ascii"),
+        )
+        offset = 0
+        while True:
+            chunk = os.pread(descriptor, 1024 * 1024, offset)
+            if not chunk:
+                break
+            digest.update(chunk)
+            offset += len(chunk)
+    else:
+        names = sorted(os.listdir(descriptor), key=os.fsencode)
+        _runtime_payload_hash_blob(
+            digest,
+            str(len(names)).encode("ascii"),
+        )
+        for child_name in names:
+            child_fd, child_kind, _ = _runtime_payload_open_entry_at(
+                descriptor,
+                child_name,
+            )
+            try:
+                _runtime_payload_digest_node(
+                    child_fd,
+                    child_kind,
+                    os.fsencode(child_name),
+                    digest,
+                )
+            finally:
+                os.close(child_fd)
+    after = os.fstat(descriptor)
+    if _runtime_payload_stat_signature(before) != _runtime_payload_stat_signature(
+        after
+    ):
+        raise OSError("runtime payload changed while hashing")
+
+
+def _runtime_payload_digest_fd(descriptor: int, kind: str) -> str:
+    digest = hashlib.sha256()
+    _runtime_payload_hash_blob(digest, b"vibecrafted-runtime-payload-v1")
+    _runtime_payload_digest_node(descriptor, kind, b"", digest)
+    return digest.hexdigest()
+
+
+def _runtime_payload_remove_at(
+    parent_fd: int,
+    name: str,
+    *,
+    expected_identity: tuple[int, int] | None = None,
+) -> None:
+    name = _runtime_payload_safe_name(name)
+    try:
+        descriptor, kind, metadata = _runtime_payload_open_entry_at(parent_fd, name)
+    except FileNotFoundError:
+        return
+    try:
+        if (
+            expected_identity is not None
+            and (metadata.st_dev, metadata.st_ino) != expected_identity
+        ):
+            raise OSError(f"runtime payload removal identity changed: {name}")
+        if kind == "directory":
+            for child in os.listdir(descriptor):
+                _runtime_payload_remove_at(descriptor, child)
+        observed = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if observed.st_dev != metadata.st_dev or observed.st_ino != metadata.st_ino:
+            raise OSError(f"runtime payload removal target changed: {name}")
+    finally:
+        os.close(descriptor)
+    if kind == "directory":
+        os.rmdir(name, dir_fd=parent_fd)
+    else:
+        os.unlink(name, dir_fd=parent_fd)
+
+
+def _runtime_payload_write_all(descriptor: int, data: bytes) -> None:
+    view = memoryview(data)
+    while view:
+        written = os.write(descriptor, view)
+        if written <= 0:
+            raise OSError("runtime payload copy made no progress")
+        view = view[written:]
+
+
+def _runtime_payload_copy_node(
+    source_fd: int,
+    kind: str,
+    destination_parent_fd: int,
+    destination_name: str,
+) -> None:
+    destination_name = _runtime_payload_safe_name(destination_name)
+    source_before = os.fstat(source_fd)
+    if _runtime_payload_kind(source_before, label=destination_name) != kind:
+        raise OSError("runtime payload source changed type while copying")
+    created = False
+    destination_fd = -1
+    try:
+        if kind == "file":
+            destination_fd = os.open(
+                destination_name,
+                os.O_RDWR
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_CLOEXEC", 0),
+                0o600,
+                dir_fd=destination_parent_fd,
+            )
+            created = True
+            offset = 0
+            while True:
+                chunk = os.pread(source_fd, 1024 * 1024, offset)
+                if not chunk:
+                    break
+                _runtime_payload_write_all(destination_fd, chunk)
+                offset += len(chunk)
+        else:
+            os.mkdir(
+                destination_name,
+                mode=0o700,
+                dir_fd=destination_parent_fd,
+            )
+            created = True
+            destination_fd, destination_kind, _ = _runtime_payload_open_entry_at(
+                destination_parent_fd,
+                destination_name,
+            )
+            if destination_kind != "directory":
+                raise OSError("runtime payload staging directory changed type")
+            for child_name in sorted(os.listdir(source_fd), key=os.fsencode):
+                child_fd, child_kind, _ = _runtime_payload_open_entry_at(
+                    source_fd,
+                    child_name,
+                )
+                try:
+                    _runtime_payload_copy_node(
+                        child_fd,
+                        child_kind,
+                        destination_fd,
+                        child_name,
+                    )
+                finally:
+                    os.close(child_fd)
+        os.fchmod(destination_fd, stat.S_IMODE(source_before.st_mode))
+        os.utime(
+            destination_fd,
+            ns=(source_before.st_atime_ns, source_before.st_mtime_ns),
+        )
+        if kind == "file":
+            os.fsync(destination_fd)
+        source_after = os.fstat(source_fd)
+        if _runtime_payload_stat_signature(
+            source_before
+        ) != _runtime_payload_stat_signature(source_after):
+            raise OSError("runtime payload source changed while copying")
+    except BaseException:
+        if destination_fd >= 0:
+            os.close(destination_fd)
+            destination_fd = -1
+        if created:
+            _runtime_payload_remove_at(destination_parent_fd, destination_name)
+        raise
+    finally:
+        if destination_fd >= 0:
+            os.close(destination_fd)
+
+
+def _runtime_payload_validate_at(parent_fd: int, name: str) -> str:
+    descriptor, kind, _ = _runtime_payload_open_entry_at(parent_fd, name)
+    try:
+        _runtime_payload_digest_fd(descriptor, kind)
+    finally:
+        os.close(descriptor)
+    return kind
+
+
+def _runtime_payload_assert_retained_entry(
+    parent_fd: int,
+    name: str,
+    retained_fd: int,
+    kind: str,
+    expected_digest: str,
+) -> None:
+    retained = os.fstat(retained_fd)
+    if _runtime_payload_kind(retained, label=name) != kind:
+        raise OSError(f"retained runtime payload changed type: {name}")
+    if _runtime_payload_digest_fd(retained_fd, kind) != expected_digest:
+        raise OSError(f"retained runtime payload digest changed: {name}")
+    observed_fd, observed_kind, observed = _runtime_payload_open_entry_at(
+        parent_fd,
+        name,
+    )
+    try:
+        if (
+            observed_kind != kind
+            or observed.st_dev != retained.st_dev
+            or observed.st_ino != retained.st_ino
+        ):
+            raise OSError(f"runtime payload publication identity changed: {name}")
+        if _runtime_payload_digest_fd(observed_fd, observed_kind) != expected_digest:
+            raise OSError(f"runtime payload publication digest changed: {name}")
+    finally:
+        os.close(observed_fd)
+
+
+def _runtime_payload_open_backup_root(
+    backup: _RuntimePayloadBackup,
+) -> int:
+    descriptor = _runtime_payload_open_absolute_directory(
+        backup.root,
+        create=False,
+    )
+    metadata = os.fstat(descriptor)
+    if (metadata.st_dev, metadata.st_ino) != backup.root_identity:
+        os.close(descriptor)
+        raise OSError("runtime payload backup root identity changed")
+    return descriptor
+
+
+def _validate_runtime_payload_backup(backup: _RuntimePayloadBackup) -> None:
+    root_fd = _runtime_payload_open_backup_root(backup)
+    try:
+        for entry in backup.entries:
+            if entry.kind == "absent":
+                if entry.backup is not None or entry.digest is not None:
+                    raise OSError(
+                        f"absent runtime payload has backup state: {entry.path}"
+                    )
+                continue
+            if (
+                entry.backup is None
+                or entry.backup.parent != backup.root
+                or entry.digest is None
+            ):
+                raise OSError(
+                    f"runtime payload backup escaped its transaction root: {entry.path}"
+                )
+            descriptor, kind, _ = _runtime_payload_open_entry_at(
+                root_fd,
+                entry.backup.name,
+            )
+            try:
+                observed = _runtime_payload_digest_fd(descriptor, kind)
+            finally:
+                os.close(descriptor)
+            if kind != entry.kind or observed != entry.digest:
+                raise OSError(f"runtime payload backup digest changed for {entry.path}")
+    finally:
+        os.close(root_fd)
+
+
+def _stage_runtime_payload_restore(
+    entry: _RuntimePayloadEntryBackup,
+    *,
+    backup_root_fd: int,
+    destination_parent_fd: int,
+) -> tuple[str | None, int | None, str | None]:
+    if entry.kind == "absent":
+        if entry.backup is not None or entry.digest is not None:
+            raise OSError(f"absent runtime payload has backup state: {entry.path}")
+        return None, None, None
+    if entry.backup is None or entry.digest is None:
+        raise OSError(f"runtime payload backup is missing for {entry.path}")
+    source_fd, source_kind, _ = _runtime_payload_open_entry_at(
+        backup_root_fd,
+        entry.backup.name,
+    )
+    staged_name = f".{entry.path.name}.restore-{os.getpid()}-{os.urandom(6).hex()}"
+    staged_fd = -1
+    try:
+        if source_kind != entry.kind:
+            raise OSError(f"runtime payload backup type changed for {entry.path}")
+        _runtime_payload_copy_node(
+            source_fd,
+            source_kind,
+            destination_parent_fd,
+            staged_name,
+        )
+        staged_fd, staged_kind, _ = _runtime_payload_open_entry_at(
+            destination_parent_fd,
+            staged_name,
+        )
+        staged_digest = _runtime_payload_digest_fd(staged_fd, staged_kind)
+        if staged_kind != entry.kind or staged_digest != entry.digest:
+            raise OSError(f"runtime payload staged digest changed for {entry.path}")
+        return staged_name, staged_fd, staged_kind
+    except BaseException:
+        if staged_fd >= 0:
+            os.close(staged_fd)
+        _runtime_payload_remove_at(destination_parent_fd, staged_name)
+        raise
+    finally:
+        os.close(source_fd)
+
+
+def _runtime_payload_validate_capture_sources(
+    sources: Sequence[_RuntimePayloadCaptureSource],
+) -> None:
+    for source in sources:
+        if source.kind == "absent":
+            if source.parent_fd is not None:
+                _runtime_payload_assert_directory_current(
+                    source.path.parent,
+                    source.parent_fd,
+                )
+                if _runtime_payload_name_exists_at(
+                    source.parent_fd,
+                    source.path.name,
+                ):
+                    raise OSError(
+                        f"runtime payload appeared during capture: {source.path}"
+                    )
+                continue
+            try:
+                parent_fd = _runtime_payload_open_absolute_directory(
+                    source.path.parent,
+                    create=False,
+                )
+            except FileNotFoundError:
+                continue
+            try:
+                if _runtime_payload_name_exists_at(
+                    parent_fd,
+                    source.path.name,
+                ):
+                    raise OSError(
+                        f"runtime payload appeared during capture: {source.path}"
+                    )
+            finally:
+                os.close(parent_fd)
+            continue
+        if (
+            source.parent_fd is None
+            or source.source_fd is None
+            or source.digest is None
+            or source.opened is None
+        ):
+            raise OSError(
+                f"runtime payload capture source is incomplete: {source.path}"
+            )
+        _runtime_payload_assert_directory_current(
+            source.path.parent,
+            source.parent_fd,
+        )
+        if _runtime_payload_stat_signature(
+            source.opened
+        ) != _runtime_payload_stat_signature(os.fstat(source.source_fd)):
+            raise OSError(f"runtime payload changed after opening: {source.path}")
+        _runtime_payload_assert_retained_entry(
+            source.parent_fd,
+            source.path.name,
+            source.source_fd,
+            source.kind,
+            source.digest,
+        )
+
+
+def _capture_runtime_payload_backup(
+    shared_home: Path,
+    paths: Sequence[Path],
+) -> _RuntimePayloadBackup | None:
+    if not paths:
+        return None
+    expanded = tuple(
+        Path(os.path.abspath(os.fspath(path.expanduser()))) for path in paths
+    )
+    if len(set(expanded)) != len(expanded):
+        raise OSError("runtime payload transaction contains duplicate paths")
+    for outer in expanded:
+        for inner in expanded:
+            if outer != inner and outer in inner.parents:
+                raise OSError("runtime payload transaction contains nested paths")
+    root_parent = (
+        Path(os.path.abspath(os.fspath(shared_home.expanduser())))
+        / "install-transactions"
+    )
+    root_parent_fd = _runtime_payload_open_absolute_directory(
+        root_parent,
+        create=True,
+    )
+    root_name = f"runtime-payload-{os.getpid()}-{os.urandom(8).hex()}"
+    os.mkdir(root_name, mode=0o700, dir_fd=root_parent_fd)
+    root = root_parent / root_name
+    root_fd, root_kind, root_metadata = _runtime_payload_open_entry_at(
+        root_parent_fd,
+        root_name,
+    )
+    if root_kind != "directory":
+        os.close(root_fd)
+        os.close(root_parent_fd)
+        raise OSError("runtime payload backup root changed type")
+    entries: list[_RuntimePayloadEntryBackup] = []
+    try:
+        with ExitStack() as source_descriptors:
+            sources: list[_RuntimePayloadCaptureSource] = []
+            for path in expanded:
+                try:
+                    source_parent_fd = _runtime_payload_open_absolute_directory(
+                        path.parent,
+                        create=False,
+                    )
+                except FileNotFoundError:
+                    sources.append(
+                        _RuntimePayloadCaptureSource(
+                            path,
+                            None,
+                            None,
+                            "absent",
+                            None,
+                            None,
+                        )
+                    )
+                    continue
+                source_descriptors.callback(os.close, source_parent_fd)
+                try:
+                    source_fd, kind, source_opened = _runtime_payload_open_entry_at(
+                        source_parent_fd,
+                        path.name,
+                    )
+                except FileNotFoundError:
+                    sources.append(
+                        _RuntimePayloadCaptureSource(
+                            path,
+                            source_parent_fd,
+                            None,
+                            "absent",
+                            None,
+                            None,
+                        )
+                    )
+                    continue
+                source_descriptors.callback(os.close, source_fd)
+                source_digest = _runtime_payload_digest_fd(source_fd, kind)
+                if _runtime_payload_stat_signature(
+                    source_opened
+                ) != _runtime_payload_stat_signature(os.fstat(source_fd)):
+                    raise OSError(f"runtime payload changed before capture: {path}")
+                sources.append(
+                    _RuntimePayloadCaptureSource(
+                        path,
+                        source_parent_fd,
+                        source_fd,
+                        kind,
+                        source_digest,
+                        source_opened,
+                    )
+                )
+
+            _runtime_payload_validate_capture_sources(sources)
+            for index, source in enumerate(sources):
+                if source.kind == "absent":
+                    entries.append(
+                        _RuntimePayloadEntryBackup(
+                            source.path,
+                            None,
+                            "absent",
+                            None,
+                        )
+                    )
+                    continue
+                if source.source_fd is None or source.digest is None:
+                    raise OSError(
+                        f"runtime payload capture source is incomplete: {source.path}"
+                    )
+                backup_name = f"{index}-{source.path.name}"
+                _runtime_payload_copy_node(
+                    source.source_fd,
+                    source.kind,
+                    root_fd,
+                    backup_name,
+                )
+                if (
+                    _runtime_payload_digest_fd(
+                        source.source_fd,
+                        source.kind,
+                    )
+                    != source.digest
+                ):
+                    raise OSError(
+                        f"runtime payload changed during capture: {source.path}"
+                    )
+                backup_fd, backup_kind, _ = _runtime_payload_open_entry_at(
+                    root_fd,
+                    backup_name,
+                )
+                try:
+                    digest = _runtime_payload_digest_fd(backup_fd, backup_kind)
+                finally:
+                    os.close(backup_fd)
+                if backup_kind != source.kind or digest != source.digest:
+                    raise OSError(
+                        f"runtime payload backup changed during capture: {source.path}"
+                    )
+                entries.append(
+                    _RuntimePayloadEntryBackup(
+                        source.path,
+                        root / backup_name,
+                        source.kind,
+                        digest,
+                    )
+                )
+            _runtime_payload_validate_capture_sources(sources)
+        _runtime_payload_assert_directory_current(root, root_fd)
+        return _RuntimePayloadBackup(
+            root,
+            tuple(entries),
+            (root_metadata.st_dev, root_metadata.st_ino),
+        )
+    except BaseException:
+        _runtime_payload_remove_at(root_parent_fd, root_name)
+        raise
+    finally:
+        os.close(root_fd)
+        os.close(root_parent_fd)
+
+
+def _restore_runtime_payload_backup_open(
+    backup: _RuntimePayloadBackup,
+    backup_root_fd: int,
+    descriptors: ExitStack,
+) -> None:
+    operations: list[_RuntimePayloadRestoreOperation] = []
+    try:
+        for entry in backup.entries:
+            parent_fd = _runtime_payload_open_absolute_directory(
+                entry.path.parent,
+                create=True,
+            )
+            descriptors.callback(os.close, parent_fd)
+            staged_name, staged_fd, staged_kind = _stage_runtime_payload_restore(
+                entry,
+                backup_root_fd=backup_root_fd,
+                destination_parent_fd=parent_fd,
+            )
+            if staged_fd is not None:
+                descriptors.callback(os.close, staged_fd)
+            operation = _RuntimePayloadRestoreOperation(
+                entry=entry,
+                parent_fd=parent_fd,
+                staged_name=staged_name,
+                staged_fd=staged_fd,
+                staged_kind=staged_kind,
+                displaced_name=(
+                    f".{entry.path.name}.displaced-{os.getpid()}-{os.urandom(6).hex()}"
+                ),
+            )
+            operations.append(operation)
+            _runtime_payload_assert_directory_current(
+                entry.path.parent,
+                parent_fd,
+            )
+    except BaseException:
+        for operation in operations:
+            if operation.staged_name is not None:
+                _runtime_payload_remove_at(
+                    operation.parent_fd,
+                    operation.staged_name,
+                )
+        raise
+
+    try:
+        for operation in operations:
+            entry = operation.entry
+            _runtime_payload_assert_directory_current(
+                entry.path.parent,
+                operation.parent_fd,
+            )
+            if not _runtime_payload_name_exists_at(
+                operation.parent_fd,
+                entry.path.name,
+            ):
+                continue
+            current_fd, current_kind, current_opened = _runtime_payload_open_entry_at(
+                operation.parent_fd,
+                entry.path.name,
+            )
+            try:
+                current_digest = _runtime_payload_digest_fd(
+                    current_fd,
+                    current_kind,
+                )
+                if _runtime_payload_stat_signature(
+                    current_opened
+                ) != _runtime_payload_stat_signature(os.fstat(current_fd)):
+                    raise OSError(
+                        f"runtime payload changed before snapshot: {entry.path}"
+                    )
+                operation.precall_name = (
+                    f".{entry.path.name}.precall-{os.getpid()}-{os.urandom(6).hex()}"
+                )
+                _runtime_payload_copy_node(
+                    current_fd,
+                    current_kind,
+                    operation.parent_fd,
+                    operation.precall_name,
+                )
+                (
+                    operation.precall_fd,
+                    operation.precall_kind,
+                    _,
+                ) = _runtime_payload_open_entry_at(
+                    operation.parent_fd,
+                    operation.precall_name,
+                )
+                descriptors.callback(os.close, operation.precall_fd)
+                operation.precall_digest = _runtime_payload_digest_fd(
+                    operation.precall_fd,
+                    operation.precall_kind,
+                )
+                if (
+                    operation.precall_kind != current_kind
+                    or operation.precall_digest != current_digest
+                    or _runtime_payload_digest_fd(
+                        current_fd,
+                        current_kind,
+                    )
+                    != current_digest
+                ):
+                    raise OSError(
+                        f"runtime payload changed while snapshotting {entry.path}"
+                    )
+            finally:
+                os.close(current_fd)
+
+        # Establish one pre-apply boundary across the complete payload set.
+        for operation in operations:
+            entry = operation.entry
+            current_exists = _runtime_payload_name_exists_at(
+                operation.parent_fd,
+                entry.path.name,
+            )
+            if operation.precall_name is None:
+                if current_exists:
+                    raise OSError(
+                        f"runtime payload appeared before publication: {entry.path}"
+                    )
+                continue
+            if (
+                operation.precall_fd is None
+                or operation.precall_kind is None
+                or operation.precall_digest is None
+                or not current_exists
+            ):
+                raise OSError(
+                    f"runtime payload pre-call snapshot is incomplete: {entry.path}"
+                )
+            current_fd, current_kind, _ = _runtime_payload_open_entry_at(
+                operation.parent_fd,
+                entry.path.name,
+            )
+            try:
+                if (
+                    current_kind != operation.precall_kind
+                    or _runtime_payload_digest_fd(current_fd, current_kind)
+                    != operation.precall_digest
+                ):
+                    raise OSError(
+                        f"runtime payload changed before publication: {entry.path}"
+                    )
+            finally:
+                os.close(current_fd)
+    except BaseException:
+        for operation in operations:
+            if operation.staged_name is not None:
+                _runtime_payload_remove_at(
+                    operation.parent_fd,
+                    operation.staged_name,
+                )
+            if operation.precall_name is not None:
+                _runtime_payload_remove_at(
+                    operation.parent_fd,
+                    operation.precall_name,
+                )
+        raise
+
+    try:
+        for operation in operations:
+            entry = operation.entry
+            current_fd = -1
+            try:
+                _runtime_payload_assert_directory_current(
+                    entry.path.parent,
+                    operation.parent_fd,
+                )
+                current_exists = _runtime_payload_name_exists_at(
+                    operation.parent_fd,
+                    entry.path.name,
+                )
+                if operation.precall_name is None:
+                    if current_exists:
+                        raise OSError(
+                            f"runtime payload appeared during publication: {entry.path}"
+                        )
+                    current_digest: str | None = None
+                else:
+                    if (
+                        not current_exists
+                        or operation.precall_kind is None
+                        or operation.precall_digest is None
+                    ):
+                        raise OSError(
+                            f"runtime payload disappeared during publication: "
+                            f"{entry.path}"
+                        )
+                    current_fd, current_kind, _ = _runtime_payload_open_entry_at(
+                        operation.parent_fd,
+                        entry.path.name,
+                    )
+                    current_digest = operation.precall_digest
+                    if (
+                        operation.precall_kind != current_kind
+                        or _runtime_payload_digest_fd(
+                            current_fd,
+                            current_kind,
+                        )
+                        != current_digest
+                    ):
+                        raise OSError(
+                            f"runtime payload changed during publication: {entry.path}"
+                        )
+                if current_exists:
+                    try:
+                        os.replace(
+                            entry.path.name,
+                            operation.displaced_name,
+                            src_dir_fd=operation.parent_fd,
+                            dst_dir_fd=operation.parent_fd,
+                        )
+                    finally:
+                        operation.current_displaced = _runtime_payload_name_exists_at(
+                            operation.parent_fd,
+                            operation.displaced_name,
+                        )
+                    if (
+                        current_fd < 0
+                        or current_digest is None
+                        or _runtime_payload_digest_fd(
+                            current_fd,
+                            current_kind,
+                        )
+                        != current_digest
+                    ):
+                        raise OSError(
+                            f"runtime payload changed after displacement: {entry.path}"
+                        )
+                    _runtime_payload_assert_directory_current(
+                        entry.path.parent,
+                        operation.parent_fd,
+                    )
+                if operation.staged_name is not None:
+                    if (
+                        operation.staged_fd is None
+                        or operation.staged_kind is None
+                        or entry.digest is None
+                    ):
+                        raise OSError(
+                            f"runtime payload staging identity is incomplete: "
+                            f"{entry.path}"
+                        )
+                    _runtime_payload_assert_retained_entry(
+                        operation.parent_fd,
+                        operation.staged_name,
+                        operation.staged_fd,
+                        operation.staged_kind,
+                        entry.digest,
+                    )
+                    try:
+                        os.replace(
+                            operation.staged_name,
+                            entry.path.name,
+                            src_dir_fd=operation.parent_fd,
+                            dst_dir_fd=operation.parent_fd,
+                        )
+                    finally:
+                        operation.replacement_published = (
+                            not _runtime_payload_name_exists_at(
+                                operation.parent_fd,
+                                operation.staged_name,
+                            )
+                            and _runtime_payload_name_exists_at(
+                                operation.parent_fd,
+                                entry.path.name,
+                            )
+                        )
+                    if operation.replacement_published:
+                        # This rename is still tentative: the caller retains the
+                        # disabled service gate and lifecycle fence until every
+                        # retained FD passes this post-rename seal.
+                        _runtime_payload_assert_retained_entry(
+                            operation.parent_fd,
+                            entry.path.name,
+                            operation.staged_fd,
+                            operation.staged_kind,
+                            entry.digest,
+                        )
+                _runtime_payload_assert_directory_current(
+                    entry.path.parent,
+                    operation.parent_fd,
+                )
+            finally:
+                if current_fd >= 0:
+                    os.close(current_fd)
+
+        # One collective seal closes the interval in which later entries were
+        # still publishing after an earlier entry's per-rename validation.
+        for operation in operations:
+            entry = operation.entry
+            _runtime_payload_assert_directory_current(
+                entry.path.parent,
+                operation.parent_fd,
+            )
+            if operation.staged_name is None:
+                if _runtime_payload_name_exists_at(
+                    operation.parent_fd,
+                    entry.path.name,
+                ):
+                    raise OSError(
+                        f"absent runtime payload appeared before final seal: "
+                        f"{entry.path}"
+                    )
+                continue
+            if (
+                operation.staged_fd is None
+                or operation.staged_kind is None
+                or entry.digest is None
+            ):
+                raise OSError(f"runtime payload final seal is incomplete: {entry.path}")
+            _runtime_payload_assert_retained_entry(
+                operation.parent_fd,
+                entry.path.name,
+                operation.staged_fd,
+                operation.staged_kind,
+                entry.digest,
+            )
+    except BaseException as restore_exc:
+        rollback_errors: list[str] = []
+        for operation in reversed(operations):
+            try:
+                entry = operation.entry
+                if _runtime_payload_name_exists_at(
+                    operation.parent_fd,
+                    entry.path.name,
+                ):
+                    _runtime_payload_remove_at(
+                        operation.parent_fd,
+                        entry.path.name,
+                    )
+                if _runtime_payload_name_exists_at(
+                    operation.parent_fd,
+                    operation.displaced_name,
+                ):
+                    _runtime_payload_remove_at(
+                        operation.parent_fd,
+                        operation.displaced_name,
+                    )
+                if operation.precall_name is not None:
+                    if (
+                        operation.precall_fd is None
+                        or operation.precall_kind is None
+                        or operation.precall_digest is None
+                    ):
+                        raise OSError(
+                            f"runtime payload pre-call snapshot is missing: "
+                            f"{entry.path}"
+                        )
+                    _runtime_payload_assert_retained_entry(
+                        operation.parent_fd,
+                        operation.precall_name,
+                        operation.precall_fd,
+                        operation.precall_kind,
+                        operation.precall_digest,
+                    )
+                    try:
+                        os.replace(
+                            operation.precall_name,
+                            entry.path.name,
+                            src_dir_fd=operation.parent_fd,
+                            dst_dir_fd=operation.parent_fd,
+                        )
+                    finally:
+                        operation.precall_published = (
+                            not _runtime_payload_name_exists_at(
+                                operation.parent_fd,
+                                operation.precall_name,
+                            )
+                            and _runtime_payload_name_exists_at(
+                                operation.parent_fd,
+                                entry.path.name,
+                            )
+                        )
+                    if operation.precall_published:
+                        _runtime_payload_assert_retained_entry(
+                            operation.parent_fd,
+                            entry.path.name,
+                            operation.precall_fd,
+                            operation.precall_kind,
+                            operation.precall_digest,
+                        )
+                elif operation.precall_fd is not None:
+                    raise OSError(
+                        f"runtime payload absent snapshot is inconsistent: {entry.path}"
+                    )
+            except BaseException as rollback_exc:
+                if not isinstance(rollback_exc, Exception):
+                    raise
+                rollback_errors.append(f"{operation.entry.path}: {rollback_exc}")
+        for operation in operations:
+            if operation.staged_name is not None:
+                _runtime_payload_remove_at(
+                    operation.parent_fd,
+                    operation.staged_name,
+                )
+            if operation.precall_name is not None:
+                _runtime_payload_remove_at(
+                    operation.parent_fd,
+                    operation.precall_name,
+                )
+        if rollback_errors:
+            raise OSError(
+                "runtime payload restore failed and its partial swaps could not be "
+                f"reversed ({'; '.join(rollback_errors)})"
+            ) from restore_exc
+        raise
+
+    cleanup_errors: list[str] = []
+    for operation in operations:
+        try:
+            if _runtime_payload_name_exists_at(
+                operation.parent_fd,
+                operation.displaced_name,
+            ):
+                _runtime_payload_validate_at(
+                    operation.parent_fd,
+                    operation.displaced_name,
+                )
+                _runtime_payload_remove_at(
+                    operation.parent_fd,
+                    operation.displaced_name,
+                )
+            if operation.staged_name is not None:
+                _runtime_payload_remove_at(
+                    operation.parent_fd,
+                    operation.staged_name,
+                )
+            if operation.precall_name is not None:
+                _runtime_payload_remove_at(
+                    operation.parent_fd,
+                    operation.precall_name,
+                )
+        except OSError as cleanup_exc:
+            cleanup_errors.append(f"{operation.entry.path}: {cleanup_exc}")
+    if cleanup_errors:
+        raise OSError(
+            "runtime payload was restored but displaced payload cleanup failed "
+            f"({'; '.join(cleanup_errors)})"
+        )
+
+
+def _restore_runtime_payload_backup(backup: _RuntimePayloadBackup | None) -> None:
+    if backup is None:
+        return
+    _validate_runtime_payload_backup(backup)
+    with ExitStack() as descriptors:
+        backup_root_fd = _runtime_payload_open_backup_root(backup)
+        descriptors.callback(os.close, backup_root_fd)
+        _restore_runtime_payload_backup_open(
+            backup,
+            backup_root_fd,
+            descriptors,
+        )
+
+
+def _discard_runtime_payload_backup(backup: _RuntimePayloadBackup | None) -> None:
+    if backup is None:
+        return
+    _validate_runtime_payload_backup(backup)
+    try:
+        parent_fd = _runtime_payload_open_absolute_directory(
+            backup.root.parent,
+            create=False,
+        )
+    except FileNotFoundError:
+        return
+    root_fd = -1
+    quarantine_name = f".{backup.root.name}.discard-{os.getpid()}-{os.urandom(6).hex()}"
+    quarantined = False
+    try:
+        try:
+            root_fd, root_kind, root_metadata = _runtime_payload_open_entry_at(
+                parent_fd,
+                backup.root.name,
+            )
+        except FileNotFoundError:
+            return
+        try:
+            if (
+                root_kind != "directory"
+                or (root_metadata.st_dev, root_metadata.st_ino) != backup.root_identity
+            ):
+                raise OSError("runtime payload backup root identity changed")
+            os.replace(
+                backup.root.name,
+                quarantine_name,
+                src_dir_fd=parent_fd,
+                dst_dir_fd=parent_fd,
+            )
+            quarantined = not _runtime_payload_name_exists_at(
+                parent_fd,
+                backup.root.name,
+            ) and _runtime_payload_name_exists_at(
+                parent_fd,
+                quarantine_name,
+            )
+            quarantine_fd, quarantine_kind, quarantine_metadata = (
+                _runtime_payload_open_entry_at(
+                    parent_fd,
+                    quarantine_name,
+                )
+            )
+            try:
+                if (
+                    quarantine_kind != "directory"
+                    or (
+                        quarantine_metadata.st_dev,
+                        quarantine_metadata.st_ino,
+                    )
+                    != backup.root_identity
+                    or quarantine_metadata.st_dev != root_metadata.st_dev
+                    or quarantine_metadata.st_ino != root_metadata.st_ino
+                ):
+                    raise OSError("runtime payload backup changed during discard")
+            finally:
+                os.close(quarantine_fd)
+            _runtime_payload_remove_at(
+                parent_fd,
+                quarantine_name,
+                expected_identity=backup.root_identity,
+            )
+            quarantined = False
+        except BaseException:
+            if (
+                quarantined
+                and _runtime_payload_name_exists_at(
+                    parent_fd,
+                    quarantine_name,
+                )
+                and not _runtime_payload_name_exists_at(
+                    parent_fd,
+                    backup.root.name,
+                )
+            ):
+                os.replace(
+                    quarantine_name,
+                    backup.root.name,
+                    src_dir_fd=parent_fd,
+                    dst_dir_fd=parent_fd,
+                )
+            raise
+    finally:
+        if root_fd >= 0:
+            os.close(root_fd)
+        os.close(parent_fd)
+
+
+def _read_tools_handoff_path(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != _TOOLS_HANDOFF_SCHEMA
+        or payload.get("state") not in {"prepared", "rolled-back", "complete"}
+        or not isinstance(payload.get("old_target"), str)
+        or not isinstance(payload.get("new_target"), str)
+    ):
+        return None
+    return payload
+
+
+def _read_tools_handoff(shared_home: Path) -> dict[str, Any] | None:
+    return _read_tools_handoff_path(_tools_handoff_file(shared_home))
+
+
+def _tools_handoff_publication_boundary(shared_home: Path) -> datetime:
+    payload = _read_tools_handoff(shared_home)
+    if payload is None or payload["state"] != "prepared":
+        raise OSError("runtime publication has no prepared handoff receipt")
+    current_target = _symlink_target(_current_tools_link(shared_home))
+    expected_target = Path(payload["new_target"]).resolve(strict=False)
+    if current_target != expected_target:
+        raise OSError("runtime publication boundary targets a stale generation")
+    raw_boundary = payload.get("published_at")
+    if not isinstance(raw_boundary, str):
+        raise OSError("runtime publication has no exact publication boundary")
+    try:
+        boundary = datetime.fromisoformat(raw_boundary)
+    except ValueError as exc:
+        raise OSError("runtime publication boundary is malformed") from exc
+    if boundary.tzinfo is None:
+        raise OSError("runtime publication boundary has no timezone")
+    return boundary.astimezone(timezone.utc)
+
+
+def _tools_handoff_is_complete_current(
+    shared_home: Path,
+    *,
+    expected_target: Path,
+) -> bool:
+    payload = _read_tools_handoff(shared_home)
+    if payload is None or payload["state"] != "complete":
+        return False
+    current_target = _symlink_target(_current_tools_link(shared_home))
+    receipt_target = Path(payload["new_target"]).resolve(strict=False)
+    expected_target = expected_target.resolve(strict=False)
+    return current_target == expected_target == receipt_target
+
+
+def sync_control_plane_tree(
+    src: Path,
+    dst: Path,
+    dry_run: bool = False,
+    mirror: bool = False,
+    *,
+    install_version: str | None = None,
+) -> Path:
+    """Publish a complete immutable runtime generation through a symlink swap.
+
+    ``dst`` is the stable ``vibecrafted-current`` pointer, never a mutable
+    generation directory.  Staging, validation, and version stamping all happen
+    before the sole publication operation (``os.replace`` on the symlink).
+    """
+    if dry_run:
+        return dst
+    with _tools_install_lease(dst, operation=f"runtime-publish:{src}"):
+        return _sync_control_plane_tree_locked(
+            src,
+            dst,
+            mirror=mirror,
+            install_version=install_version,
+        )
+
+
+def _materialize_vc_frame_generation(runtime_root: Path) -> None:
+    """Build host-adapted vc-frame assets before a runtime can be published."""
+    module_path = (
+        runtime_root / "vibecrafted-core" / "vibecrafted_core" / "vc_frame_staging.py"
+    )
+    source = runtime_root / "config" / "vc-frame"
+    destination = runtime_root / "runtime" / "generated" / "vc-frame"
+    if not module_path.is_file():
+        raise OSError(
+            f"candidate runtime has no vc-frame staging implementation: {module_path}"
+        )
+    namespace = runpy.run_path(
+        str(module_path),
+        run_name="_vibecrafted_vc_frame_staging",
+    )
+    resolve_pane_shell = namespace.get("resolve_pane_shell")
+    resolve_clipboard_command = namespace.get("resolve_clipboard_command")
+    materialize = namespace.get("materialize_vc_frame_config")
+    if not all(
+        callable(value)
+        for value in (resolve_pane_shell, resolve_clipboard_command, materialize)
+    ):
+        raise OSError(f"candidate vc-frame staging API is incomplete: {module_path}")
+    pane_shell = resolve_pane_shell()
+    clipboard_command = resolve_clipboard_command()
+    materialize(
+        source,
+        destination,
+        pane_shell=pane_shell,
+        clipboard_command=clipboard_command,
+    )
+    required = (
+        destination / "config.kdl",
+        destination / "layouts",
+        destination / "themes",
+    )
+    if not required[0].is_file() or any(not path.is_dir() for path in required[1:]):
+        raise OSError(
+            f"candidate runtime has incomplete materialized vc-frame config: "
+            f"{destination}"
+        )
+
+
+def _sync_control_plane_tree_locked(
+    src: Path,
+    dst: Path,
+    *,
+    mirror: bool,
+    install_version: str | None,
+) -> Path:
     _ = mirror  # staged runtime is always an exact distribution payload
-    staging = dst.parent / f".{dst.name}.staging-{os.getpid()}"
-    previous = dst.parent / f".{dst.name}.previous-{os.getpid()}"
-    if staging.exists() or staging.is_symlink():
-        _remove_path(staging)
-    if previous.exists() or previous.is_symlink():
-        _remove_path(previous)
+    if dst.exists() and not dst.is_symlink():
+        raise OSError(
+            f"refusing non-atomic in-place runtime upgrade at {dst}; "
+            "vibecrafted-current must be a symlink pointer"
+        )
+
+    token = f"{os.getpid()}-{os.urandom(6).hex()}"
+    version_slug = (
+        re.sub(
+            r"[^A-Za-z0-9._+-]+",
+            "-",
+            (install_version or "local").strip(),
+        ).strip("-")
+        or "local"
+    )
+    staging = dst.parent / f".{dst.name}.staging-{token}"
+    generation = dst.parent / f"vibecrafted-generation-{version_slug}-{token}"
+    old_candidate = _symlink_target(dst)
+    pending = _read_tools_handoff_path(_tools_handoff_path(dst))
+    if (
+        pending is not None
+        and pending["state"] == "prepared"
+        and old_candidate == Path(pending["new_target"]).resolve(strict=False)
+    ):
+        pending_old = pending["old_target"]
+        old_target = (
+            Path(pending_old).resolve(strict=False)
+            if pending_old and _is_framework_source_root(Path(pending_old))
+            else None
+        )
+    else:
+        old_target = (
+            old_candidate
+            if old_candidate is not None and _is_framework_source_root(old_candidate)
+            else None
+        )
+    pointer_swapped = False
     try:
         stage_distribution_payload(src, staging, mirror=True)
-        if dst.exists() or dst.is_symlink():
-            dst.rename(previous)
-        staging.rename(dst)
-        if previous.exists() or previous.is_symlink():
-            _remove_path(previous)
+        if install_version:
+            stamp_install_version(staging, install_version)
+        _materialize_vc_frame_generation(staging)
+        staging.rename(generation)
+        handoff = {
+            "schema": _TOOLS_HANDOFF_SCHEMA,
+            "state": "prepared",
+            "old_target": str(old_target) if old_target is not None else "",
+            "new_target": str(generation),
+            "prepared_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _atomic_json_file(_tools_handoff_path(dst), handoff)
+        _atomic_symlink(generation, dst)
+        pointer_swapped = True
+        handoff["published_at"] = datetime.now(timezone.utc).isoformat()
+        _atomic_json_file(_tools_handoff_path(dst), handoff)
+        return generation
     except Exception:
         if staging.exists() or staging.is_symlink():
             _remove_path(staging)
-        if not dst.exists() and previous.exists():
-            previous.rename(dst)
+        if generation.exists() and not pointer_swapped:
+            _remove_path(generation)
         raise
+
+
+def _prune_tools_generations_locked(
+    shared_home: Path,
+    *,
+    keep: int = _TOOLS_GENERATIONS_TO_KEEP,
+) -> list[Path]:
+    if keep < 1:
+        raise ValueError("tools generation retention must keep at least one generation")
+    current_link = _current_tools_link(shared_home)
+    tools_dir = current_link.parent.resolve(strict=False)
+    current_target = _symlink_target(current_link)
+    payload = _read_tools_handoff_path(_tools_handoff_path(current_link))
+    protected: set[Path] = set()
+    if current_target is not None:
+        protected.add(current_target.resolve(strict=False))
+    if payload is not None:
+        old_raw = payload["old_target"]
+        if old_raw:
+            protected.add(Path(old_raw).resolve(strict=False))
+        if payload["state"] == "prepared":
+            protected.add(Path(payload["new_target"]).resolve(strict=False))
+
+    generations: list[tuple[int, str, Path]] = []
+    for candidate in tools_dir.glob("vibecrafted-generation-*"):
+        if candidate.is_symlink() or not candidate.is_dir():
+            continue
+        resolved = candidate.resolve(strict=False)
+        if resolved.parent != tools_dir or not _is_framework_source_root(resolved):
+            continue
+        try:
+            modified = os.stat(candidate, follow_symlinks=False).st_mtime_ns
+        except OSError:
+            continue
+        generations.append((modified, candidate.name, resolved))
+    generations.sort(reverse=True)
+    protected.update(item[2] for item in generations[:keep])
+
+    removed: list[Path] = []
+    for _, _, candidate in generations:
+        if candidate in protected:
+            continue
+        try:
+            _remove_path(candidate)
+        except OSError as exc:
+            print(
+                f"[install-tools] warning: could not prune old generation "
+                f"{candidate}: {exc}",
+                file=sys.stderr,
+            )
+            continue
+        removed.append(candidate)
+    return removed
+
+
+def prune_tools_generations(
+    shared_home: Path,
+    *,
+    keep: int = _TOOLS_GENERATIONS_TO_KEEP,
+) -> list[Path]:
+    """Bound immutable runtime history without touching live recovery targets."""
+    current_link = _current_tools_link(shared_home)
+    with _tools_install_lease(current_link, operation="runtime-generation-gc"):
+        return _prune_tools_generations_locked(shared_home, keep=keep)
+
+
+def _rollback_current_tools_locked(shared_home: Path) -> bool:
+    payload = _read_tools_handoff(shared_home)
+    if payload is None or payload["state"] != "prepared":
+        return False
+    old_raw = payload["old_target"]
+    new_target = Path(payload["new_target"])
+    current_link = _current_tools_link(shared_home)
+    current_target = _symlink_target(current_link)
+    if old_raw:
+        old_target = Path(old_raw)
+        if current_target == old_target.resolve(strict=False):
+            payload["state"] = "rolled-back"
+            payload["rolled_back_at"] = datetime.now(timezone.utc).isoformat()
+            _atomic_json_file(_tools_handoff_file(shared_home), payload)
+            return False
+    else:
+        old_target = None
+        if current_target is None and not (
+            current_link.exists() or current_link.is_symlink()
+        ):
+            payload["state"] = "rolled-back"
+            payload["rolled_back_at"] = datetime.now(timezone.utc).isoformat()
+            _atomic_json_file(_tools_handoff_file(shared_home), payload)
+            return False
+    if current_target != new_target.resolve(strict=False):
+        raise OSError(
+            "refusing runtime rollback because vibecrafted-current no longer "
+            "matches the pending handoff"
+        )
+    if old_target is not None:
+        _atomic_symlink(old_target, current_link)
+    else:
+        quarantine = current_link.parent / (
+            f".{current_link.name}.rollback-{os.getpid()}-{os.urandom(6).hex()}"
+        )
+        os.replace(current_link, quarantine)
+        if _symlink_target(quarantine) != new_target.resolve(strict=False):
+            os.replace(quarantine, current_link)
+            raise OSError(
+                "runtime pointer changed while rolling back the first generation"
+            )
+    payload["state"] = "rolled-back"
+    payload["rolled_back_at"] = datetime.now(timezone.utc).isoformat()
+    _atomic_json_file(_tools_handoff_file(shared_home), payload)
+    if old_target is None:
+        try:
+            quarantine.unlink(missing_ok=True)
+            directory = os.open(
+                current_link.parent,
+                os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+            )
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        except OSError as exc:
+            print(
+                "[install-tools] warning: first-install rollback is committed "
+                f"but quarantine cleanup needs retry: {exc}",
+                file=sys.stderr,
+            )
+    return True
+
+
+def rollback_current_tools(shared_home: Path) -> bool:
+    """Restore the runtime pointer recorded by the latest pending handoff."""
+    current_link = _current_tools_link(shared_home)
+    with _tools_install_lease(current_link, operation="runtime-rollback"):
+        return _rollback_current_tools_locked(shared_home)
+
+
+def _complete_current_tools_handoff_locked(shared_home: Path) -> bool:
+    payload = _read_tools_handoff(shared_home)
+    if payload is None or payload["state"] != "prepared":
+        return False
+    current_target = _symlink_target(_current_tools_link(shared_home))
+    expected = Path(payload["new_target"]).resolve(strict=False)
+    if current_target != expected:
+        raise OSError(
+            "cannot complete tools handoff: vibecrafted-current does not point "
+            "at the prepared generation"
+        )
+    payload["state"] = "complete"
+    payload["completed_at"] = datetime.now(timezone.utc).isoformat()
+    _atomic_json_file(_tools_handoff_file(shared_home), payload)
+    _prune_tools_generations_locked(shared_home)
+    return True
+
+
+def complete_current_tools_handoff(shared_home: Path) -> bool:
+    """Seal the latest runtime handoff after uv tools and service are verified."""
+    current_link = _current_tools_link(shared_home)
+    with _tools_install_lease(current_link, operation="runtime-handoff-complete"):
+        return _complete_current_tools_handoff_locked(shared_home)
 
 
 def _staged_sync_failure_detail(exc: Exception) -> str:
@@ -2670,13 +7089,14 @@ def _ensure_current_tools_target(shared_home: Path) -> Path:
         target = current_link.resolve(strict=False)
         if target.exists():
             return target
-        current_link.unlink()
     elif current_link.exists():
         return current_link
 
-    target = tools_dir / "vibecrafted-local"
+    target = tools_dir / (
+        f"vibecrafted-generation-bootstrap-{os.getpid()}-{os.urandom(6).hex()}"
+    )
     target.mkdir(parents=True, exist_ok=True)
-    current_link.symlink_to(target)
+    _atomic_symlink(target, current_link)
     return target
 
 
@@ -2690,26 +7110,39 @@ def refresh_current_tools(
     current_link = _current_tools_link(shared_home)
     if current_link.exists() or current_link.is_symlink():
         try:
-            if current_link.resolve(strict=False) == repo_root:
-                # Dev/portable: tools link points at the checkout. Do NOT write
-                # +gSHA into the live git tree (would dirty VERSION files).
-                # Display still uses get_install_version() at banner time.
-                return current_link
+            current_target = current_link.resolve(strict=False)
         except OSError:
-            pass
+            current_target = None
+        inherited_transaction = bool(os.environ.get(_TOOLS_INSTALL_LEASE_ENV))
+        if current_target == repo_root and not inherited_transaction:
+            # Dev/portable: tools link points at the checkout. Do NOT write
+            # +gSHA into the live git tree (would dirty VERSION files).
+            # Display still uses get_install_version() at banner time.
+            # A receipt from an older immutable-generation handoff must not
+            # survive this no-op path: a later failed install would
+            # otherwise mistake it for the transaction it should roll back.
+            if dry_run:
+                return current_link
+            with _tools_install_lease(
+                current_link,
+                operation="portable-runtime-reconcile",
+            ):
+                if current_link.resolve(strict=False) == repo_root:
+                    handoff = _tools_handoff_path(current_link)
+                    if handoff.exists() or handoff.is_symlink():
+                        _remove_path(handoff)
+                    return current_link
 
     if dry_run:
         return current_link
 
-    target = _ensure_current_tools_target(shared_home)
-    if target.resolve(strict=False) == repo_root:
-        return target
-
-    sync_control_plane_tree(repo_root, target, dry_run=dry_run, mirror=mirror)
-    # Staged install tree must carry X.Y.Z+gSHA on every VERSION surface.
-    # Source checkout stays plain semver for version-bump / git cleanliness.
-    if not dry_run:
-        stamp_install_version(target, get_install_version(repo_root))
+    sync_control_plane_tree(
+        repo_root,
+        current_link,
+        dry_run=dry_run,
+        mirror=mirror,
+        install_version=get_install_version(repo_root),
+    )
     return current_link
 
 
@@ -3055,6 +7488,43 @@ def create_skill_view_symlink(target: Path, link: Path, dry_run: bool = False) -
         elif link.is_dir():
             shutil.rmtree(link)
     link.symlink_to(target)
+
+
+def prune_shadowed_skill_views(
+    store_path: Path,
+    skill_names: list[str],
+    active_runtimes: list[str],
+    dry_run: bool = False,
+) -> list[Path]:
+    """Remove managed runtime views shadowed by the canonical .agents view."""
+    removed: list[Path] = []
+    canonical_root = runtime_skills_dir("agents")
+    for skill_name in skill_names:
+        expected = store_path / skill_name
+        canonical = canonical_root / skill_name
+        if not canonical.is_symlink() or canonical.resolve(
+            strict=False
+        ) != expected.resolve(strict=False):
+            continue
+        for runtime in SHADOWED_SKILL_VIEW_RUNTIMES:
+            if runtime in active_runtimes:
+                continue
+            shadow = runtime_skills_dir(runtime) / skill_name
+            if not shadow.is_symlink():
+                continue
+            raw_target = os.readlink(shadow)
+            resolved = shadow.resolve(strict=False)
+            managed_target = (
+                resolved == expected.resolve(strict=False)
+                or "/vibecrafted/tools/" in raw_target
+                or "/.vibecrafted/skills/" in raw_target
+            )
+            if not managed_target:
+                continue
+            if not dry_run:
+                shadow.unlink()
+            removed.append(shadow)
+    return removed
 
 
 def _copy_managed_launcher(src: Path, dst: Path) -> bool:
@@ -3776,13 +8246,22 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
             )
         )
 
-    # 4. Symlink views
-    for runtime in state.runtimes:
+    # 4. Symlink views — check what the manifest recorded PLUS the standard
+    # product surface. Claude Code and Codex read only their own skill dirs;
+    # a manifest that recorded just "agents" leaves their /vc-* decks dark,
+    # and doctor must surface that instead of trusting the manifest.
+    recorded_runtimes = list(state.runtimes)
+    view_runtimes = recorded_runtimes + [
+        rt for rt in STANDARD_VIEW_RUNTIMES if rt not in recorded_runtimes
+    ]
+    for runtime in view_runtimes:
+        strict = runtime in recorded_runtimes
+        severity = "fail" if strict else "warn"
         rt_skills = Path.home() / f".{runtime}" / "skills"
         if not rt_skills.exists():
             findings.append(
                 DoctorFinding(
-                    "fail", f"runtime:{runtime}", f"{rt_skills} does not exist"
+                    severity, f"runtime:{runtime}", f"{rt_skills} does not exist"
                 )
             )
             continue
@@ -3815,7 +8294,13 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
                 )
             else:
                 findings.append(
-                    DoctorFinding("fail", f"symlink:{runtime}/{skill_name}", "missing")
+                    DoctorFinding(
+                        severity,
+                        f"symlink:{runtime}/{skill_name}",
+                        "missing"
+                        if strict
+                        else "missing — deck dark for this CLI; rerun 'vibecrafted update'",
+                    )
                 )
 
     # 4b. Agent slash-command views. These are separate from skills and used by
@@ -4586,7 +9071,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     # --- Interactive Wizard ---
     step = 0
     selected_skills = list(skill_names)
-    all_runtimes = list(SYMLINK_TARGETS)
+    all_runtimes = list(STANDARD_VIEW_RUNTIMES)
     install_shell = cli_with_shell
     write_shell_rc = getattr(args, "write_shell_rc", False)
     installed_foundations: dict[str, dict] = {}
@@ -4918,6 +9403,10 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
             default = store_path / name
             link = rt_skills / name
             create_skill_view_symlink(default, link, dry_run=dry_run)
+    for shadow in prune_shadowed_skill_views(
+        store_path, selected_skills, all_runtimes, dry_run=dry_run
+    ):
+        print(f"  {dim('removed shadow')} {shadow}")
     print()
 
     # --- Execute: agent command surfaces ---
@@ -5238,7 +9727,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
 
     skill_names = [s.name for s in skills]
     selected_skills = list(skill_names)
-    all_runtimes = list(SYMLINK_TARGETS)
+    all_runtimes = list(STANDARD_VIEW_RUNTIMES)
     install_shell = cli_with_shell
     write_shell_rc = getattr(args, "write_shell_rc", False)
     installed_foundations: dict[str, dict] = {}
@@ -5399,6 +9888,10 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
                 default = store_path / name
                 link = rt_skills / name
                 create_skill_view_symlink(default, link, dry_run=dry_run)
+        for shadow in prune_shadowed_skill_views(
+            store_path, selected_skills, all_runtimes, dry_run=dry_run
+        ):
+            print(f"  removed shadow: {shadow}")
         print()
 
         print("Installing agent commands:")

@@ -77,6 +77,8 @@ pub struct SettlementBoardCounts {
     pub n: usize,
     /// Diagnostic detail inside `x`, not a fourth total bucket.
     pub invalid: usize,
+    /// Retained snapshots with no verdict and no terminal `n` fallback.
+    pub unclassified: usize,
     /// Canonical runtime-aware live runs (not part of `total_settled`).
     pub active: usize,
     /// Non-terminal runs without current live activity evidence.
@@ -105,6 +107,7 @@ impl SettlementBoardCounts {
             x: 0,
             n: 0,
             invalid: 0,
+            unclassified: 0,
             orphans: 0,
             total_settled: 0,
         };
@@ -118,7 +121,7 @@ impl SettlementBoardCounts {
                 }
                 Some(SettlementCell::NeedsAttention) => board.n += 1,
                 None if is_unsettled_settlement_terminal(run) => board.n += 1,
-                None => {}
+                None => board.unclassified += 1,
             }
         }
         board.total_settled = board.f + board.x + board.n;
@@ -129,11 +132,12 @@ impl SettlementBoardCounts {
     #[must_use]
     pub fn render_strip(&self) -> String {
         format!(
-            "settlement  f={} x={} n={} (+invalid={}) · active={} · stalled={} · orphans={} · total_settled={} · scope: {}",
+            "settlement  f={} x={} n={} (+invalid={}) · unclassified={} · active={} · stalled={} · orphans={} · total_settled={} · scope: {}",
             self.f,
             self.x,
             self.n,
             self.invalid,
+            self.unclassified,
             self.active,
             self.stalled,
             self.orphans,
@@ -1100,27 +1104,27 @@ fn failure_board_from_meta(
             Some(record.completed_at),
             FailureEntry {
                 run_id,
-            agent: record
-                .meta
-                .agent
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string()),
-            skill: record
-                .meta
-                .skill_code
-                .clone()
-                .or_else(|| record.meta.mode.clone())
-                .unwrap_or_else(|| "unknown".to_string()),
-            reason: record
-                .meta
-                .status
-                .clone()
-                .unwrap_or_else(|| match record.meta.exit_code {
-                    Some(code) => format!("exit_code {code}"),
-                    None => "failed".to_string(),
-                }),
-            age_label: relative_age(record.completed_at, now),
-            source_path: Some(record.path.clone()),
+                agent: record
+                    .meta
+                    .agent
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
+                skill: record
+                    .meta
+                    .skill_code
+                    .clone()
+                    .or_else(|| record.meta.mode.clone())
+                    .unwrap_or_else(|| "unknown".to_string()),
+                reason: record
+                    .meta
+                    .status
+                    .clone()
+                    .unwrap_or_else(|| match record.meta.exit_code {
+                        Some(code) => format!("exit_code {code}"),
+                        None => "failed".to_string(),
+                    }),
+                age_label: relative_age(record.completed_at, now),
+                source_path: Some(record.path.clone()),
             },
         ));
     }
@@ -1158,29 +1162,29 @@ fn failure_board_from_meta(
             timestamp,
             FailureEntry {
                 run_id: snapshot.run_id.clone(),
-            agent: snapshot
-                .agent
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string()),
-            skill: snapshot
-                .skill
-                .clone()
-                .or_else(|| snapshot.mode.clone())
-                .unwrap_or_else(|| "unknown".to_string()),
-            reason: snapshot
-                .last_error
-                .clone()
-                .or_else(|| snapshot.status.clone())
-                .or_else(|| snapshot.state.clone())
-                .unwrap_or_else(|| "failed".to_string()),
-            age_label: timestamp
-                .map(|ts| relative_age(ts, now))
-                .unwrap_or_else(|| "age unknown".to_string()),
-            source_path: snapshot
-                .latest_report
-                .as_deref()
-                .map(PathBuf::from)
-                .or_else(|| snapshot.root.as_deref().map(PathBuf::from)),
+                agent: snapshot
+                    .agent
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
+                skill: snapshot
+                    .skill
+                    .clone()
+                    .or_else(|| snapshot.mode.clone())
+                    .unwrap_or_else(|| "unknown".to_string()),
+                reason: snapshot
+                    .last_error
+                    .clone()
+                    .or_else(|| snapshot.status.clone())
+                    .or_else(|| snapshot.state.clone())
+                    .unwrap_or_else(|| "failed".to_string()),
+                age_label: timestamp
+                    .map(|ts| relative_age(ts, now))
+                    .unwrap_or_else(|| "age unknown".to_string()),
+                source_path: snapshot
+                    .latest_report
+                    .as_deref()
+                    .map(PathBuf::from)
+                    .or_else(|| snapshot.root.as_deref().map(PathBuf::from)),
             },
         ));
     }
@@ -2739,9 +2743,7 @@ mod tests {
             operator_session: None,
             latest_report: Some("/tmp/report.md".to_string()),
             latest_transcript: None,
-            last_error: Some(
-                "launcher_pid gone; heartbeat stale; recovery_required".to_string(),
-            ),
+            last_error: Some("launcher_pid gone; heartbeat stale; recovery_required".to_string()),
             extra,
         });
 
@@ -2986,6 +2988,7 @@ mod tests {
         assert_eq!(board.x, 2); // failed + invalid
         assert_eq!(board.invalid, 1);
         assert_eq!(board.n, 2); // needs_attention + unsettled terminal
+        assert_eq!(board.unclassified, 1); // live snapshot without a verdict
         assert_eq!(board.total_settled, 5);
         assert_eq!(board.active, 1);
         assert_eq!(board.stalled, 2);
@@ -2995,6 +2998,7 @@ mod tests {
         assert!(strip.contains("f=1"));
         assert!(strip.contains("x=2"));
         assert!(strip.contains("n=2"));
+        assert!(strip.contains("unclassified=1"));
         assert!(strip.contains("active=1"));
         assert!(strip.contains("stalled=2"));
         assert!(strip.contains("orphans=0"));

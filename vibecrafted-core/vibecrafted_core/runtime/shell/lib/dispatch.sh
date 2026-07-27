@@ -252,8 +252,16 @@ _vetcoders_skill_dispatch() {
     _vetcoders_skill_wrapper "$skill" "$@"
     return
   fi
-  if command -v vibecrafted >/dev/null 2>&1; then
-    command vibecrafted "$skill" "$@"
+  local deck_bin="${VIBECRAFTED_DECK_BIN-}"
+  if [ -z "${VIBECRAFTED_DECK_BIN+x}" ]; then
+    if [ "${VIBECRAFTED_TEST_MODE:-0}" = "1" ]; then
+      deck_bin=""
+    else
+      deck_bin="$(command -v vibecrafted 2>/dev/null || true)"
+    fi
+  fi
+  if [ -n "$deck_bin" ] && [ -x "$deck_bin" ]; then
+    "$deck_bin" "$skill" "$@"
     return
   fi
   printf 'vc-%s: vibecrafted helper layer is not loaded and no "vibecrafted" deck is on PATH.\n' "$skill" >&2
@@ -265,8 +273,16 @@ _vetcoders_command_dispatch() {
   local command_name="$1"
   local deck_command="$2"
   shift 2 || true
-  if command -v vibecrafted >/dev/null 2>&1; then
-    command vibecrafted "$deck_command" "$@"
+  local deck_bin="${VIBECRAFTED_DECK_BIN-}"
+  if [ -z "${VIBECRAFTED_DECK_BIN+x}" ]; then
+    if [ "${VIBECRAFTED_TEST_MODE:-0}" = "1" ]; then
+      deck_bin=""
+    else
+      deck_bin="$(command -v vibecrafted 2>/dev/null || true)"
+    fi
+  fi
+  if [ -n "$deck_bin" ] && [ -x "$deck_bin" ]; then
+    "$deck_bin" "$deck_command" "$@"
     return
   fi
   printf 'vc-%s: vibecrafted helper layer is not loaded and no "vibecrafted" deck is on PATH.\n' "$command_name" >&2
@@ -311,6 +327,8 @@ vc-review() { command vibecrafted review "$@"; }
 vc-followup() { command vibecrafted followup "$@"; }
 # Thin alias — must not invent a second help/parser (split-brain 2026-07-22).
 vc-scaffold() { command vibecrafted scaffold "$@"; }
+vc-trust() { command vibecrafted trust "$@"; }
+vc-guard() { command vibecrafted guard "$@"; }
 vc-workflow() { command vibecrafted workflow "$@"; }
 
 vc-help() {

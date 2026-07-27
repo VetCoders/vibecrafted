@@ -40,7 +40,7 @@ What's running _right now_. Each row:
 - skill (vc-implement / vc-ownership / vc-marbles / etc.)
 - wave + position in plan
 - elapsed wall-clock + ETA
-- live link to the watched terminal tab (per NIGDY HEADLESS rule)
+- live link to the transcript/state viewer; never a process-host tab
 
 **Authoritative sources**:
 
@@ -158,15 +158,15 @@ Control tab AND the standalone `vc-admin` renderer (`b534103`, scope fix
 `75bc7f5`, binary rename `65c5072`), with Insta snapshot armor in
 `vibecrafted-app/tui-agent/tests/mission_control_snapshots.rs`.
 
-| Panel                 | Status  | Landed shape                                                        | Still planned (not wired)                                         |
-| --------------------- | ------- | ------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Active dispatches     | LANDED  | control-plane live runs, all roots + root labels, age/ETA, wave     | pidfile + `tasks/*.output` JSONL join; live terminal-tab link     |
-| Wave atlas            | LANDED  | `prompt_id` grouping from `meta.json` + live runs, state glyphs     | tracker.md parsing; SHA-on-green; branch; dependency arrows       |
-| Per-agent stats       | LANDED  | 30d `meta.json` aggregation: runs/✓/✗/⌀dur/model-known rate         | peer-tier compliance; token/cost rollup; `aicx steer` cross-check |
-| Per-skill stats       | LANDED  | 30d invocations/✓/✗/⌀dur + quiet-skill ⚠ flag                       | 7/90d windows; last-invocation timestamp                          |
-| Fleet health          | PARTIAL | control-plane, artifact-root, meta-scan, model/duration parity      | disk per host; `aicx health`; MCP liveness; Tailscale link        |
-| Failure board         | LANDED  | 24h window from `meta.json` + live failed runs, reason + age        | failure modality classes; `recovers:` recovery links              |
-| Operator action queue | LANDED  | derived: stalled runs + failures + polarize intents + fresh reports | stop-point `.md` tailing; one-click fulfil actions                |
+| Panel                 | Status  | Landed shape                                                        | Still planned (not wired)                                           |
+| --------------------- | ------- | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Active dispatches     | LANDED  | control-plane live runs, all roots + root labels, age/ETA, wave     | pidfile + `tasks/*.output` JSONL join; transcript/state viewer link |
+| Wave atlas            | LANDED  | `prompt_id` grouping from `meta.json` + live runs, state glyphs     | tracker.md parsing; SHA-on-green; branch; dependency arrows         |
+| Per-agent stats       | LANDED  | 30d `meta.json` aggregation: runs/✓/✗/⌀dur/model-known rate         | peer-tier compliance; token/cost rollup; `aicx steer` cross-check   |
+| Per-skill stats       | LANDED  | 30d invocations/✓/✗/⌀dur + quiet-skill ⚠ flag                       | 7/90d windows; last-invocation timestamp                            |
+| Fleet health          | PARTIAL | control-plane, artifact-root, meta-scan, model/duration parity      | disk per host; `aicx health`; MCP liveness; Tailscale link          |
+| Failure board         | LANDED  | 24h window from `meta.json` + live failed runs, reason + age        | failure modality classes; `recovers:` recovery links                |
+| Operator action queue | LANDED  | derived: stalled runs + failures + polarize intents + fresh reports | stop-point `.md` tailing; one-click fulfil actions                  |
 
 Cross-cutting close-out notes:
 

@@ -1,14 +1,57 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from vibecrafted_core import control_plane, process_control, trust, workflow
+from vibecrafted_core.settlement import TrustReceiptV1
+
+_NATIVE_RESUME_CLAIM_SCRIPT = r"""
+import json
+import os
+import time
+
 from vibecrafted_core import workflow
+from vibecrafted_core.run_mutation import run_mutation_locks
+
+key = os.environ["NATIVE_RESUME_TEST_KEY"]
+parent = os.environ["NATIVE_RESUME_TEST_PARENT"]
+agent = os.environ.get("NATIVE_RESUME_TEST_AGENT", "codex")
+meta = {"attempt": 1}
+run = {"attempt": 1}
+with run_mutation_locks(
+    workflow.control_plane_home(),
+    run_id=parent,
+    resume_root=parent,
+    idempotency_key=key,
+):
+    record, created = workflow._claim_native_resume_idempotency(
+        key=key,
+        parent_run_id=parent,
+        agent=agent,
+        agent_session_id=f"{agent}-native-id",
+        parent_runtime_session_id="runtime-parent-id",
+        parent_meta=meta,
+        parent_run=run,
+        settlement_revision=7,
+        trust_receipt_id=os.environ.get("NATIVE_RESUME_TEST_RECEIPT", ""),
+    )
+    print(json.dumps({"created": created, "record": record}), flush=True)
+    if os.environ.get("NATIVE_RESUME_TEST_CRASH") == "1":
+        os._exit(91)
+    time.sleep(float(os.environ.get("NATIVE_RESUME_TEST_HOLD", "0")))
+"""
 
 
 def _source_dir(tmp_path: Path) -> Path:
@@ -591,6 +634,8 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     assert "vibecrafted_core.dispatcher" in script_body
     assert f"export PYTHONPATH={workflow._core_package_root()}" in script_body
     assert "export PYTHONDONTWRITEBYTECODE=1" in script_body
+    assert f"export VIBECRAFTED_WORKER_SESSION={tmp_path.name}" in script_body
+    assert f"export VIBECRAFTED_OPERATOR_SESSION={tmp_path.name}" in script_body
     assert "--tee-output" in script_body
     assert "--quiet" in script_body
     assert "--json" not in script_body
@@ -904,6 +949,8 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
     assert f"export VIBECRAFTED_CLAIM_DIGEST={digest}" in lane_bodies
     assert "export VIBECRAFTED_CANONICAL_REPORT_DIR=" in lane_bodies
     assert "export VIBECRAFTED_ARTIFACT_SLUG=map-it" in lane_bodies
+    assert f"export VIBECRAFTED_WORKER_SESSION={tmp_path.name}" in lane_bodies
+    assert f"export VIBECRAFTED_OPERATOR_SESSION={tmp_path.name}" in lane_bodies
     assert (
         f"export VIBECRAFTED_ARTIFACT_TS={workflow.time.strftime('%Y-%m-%d')}"
         in lane_bodies
@@ -1128,6 +1175,11 @@ def test_stop_run_terms_live_launcher_process_group(
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
     proc = subprocess.Popen(["sleep", "60"], start_new_session=True)
     try:
+        launcher_identity = process_control.process_identity_receipt(
+            proc.pid,
+            run_id="wflw-live-stop",
+        )
+        assert launcher_identity is not None
         _write_run_meta(
             home,
             {
@@ -1136,9 +1188,10 @@ def test_stop_run_terms_live_launcher_process_group(
                 "agent": "codex",
                 "mode": "workflow",
                 "root": str(tmp_path),
-                "updated_at": "2026-06-11T00:00:00+00:00",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
                 "skill_code": "wflw",
                 "launcher_pid": proc.pid,
+                "launcher_identity": launcher_identity,
                 "liveness": "pid_alive",
             },
         )
@@ -1164,6 +1217,217 @@ def test_stop_run_terms_live_launcher_process_group(
             proc.wait(timeout=2)
 
 
+def test_stop_run_real_dispatcher_worker_is_sticky_and_headless(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_GUARD", "0")
+    monkeypatch.setenv("VIBECRAFTED_REAPER", "0")
+    monkeypatch.setenv("VC_FRAME_SESSION_NAME", "operator-session-must-not-leak")
+    monkeypatch.setenv("VC_FRAME_TAB_NAME", "operator-tab-must-not-leak")
+    monkeypatch.setenv("VC_FRAME_PANE_ID", "999")
+    run_id = "wflw-real-dispatch-stop"
+    source = _source_dir(tmp_path)
+    owned_receipts: list[dict[str, Any]] = []
+
+    def wait_for(predicate: Any, *, timeout: float = 10.0) -> Any:
+        deadline = time.monotonic() + timeout
+        last: Any = None
+        while time.monotonic() < deadline:
+            last = predicate()
+            if last:
+                return last
+            time.sleep(0.05)
+        raise AssertionError(f"condition not met; last={last!r}")
+
+    def cleanup_owned(receipt: dict[str, Any]) -> None:
+        pid = int(receipt["pid"])
+        pgid = int(receipt["pgid"])
+        current, _reason, _identity = process_control.validate_process_identity(
+            receipt,
+            expected_pid=pid,
+            expected_pgid=pgid,
+            expected_run_id=run_id,
+            env_index={pid: run_id},
+        )
+        if not current:
+            return
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and workflow._pgid_is_alive(pgid):
+            time.sleep(0.05)
+        if not workflow._pgid_is_alive(pgid):
+            return
+        # Test cleanup may escalate only after revalidating the same receipt;
+        # a recycled group number is never fair game.
+        current, _reason, _identity = process_control.validate_process_identity(
+            receipt,
+            expected_pid=pid,
+            expected_pgid=pgid,
+            expected_run_id=run_id,
+            env_index={pid: run_id},
+        )
+        if current:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    try:
+        launched = workflow.launch_workflow(
+            workflow.WorkflowLaunchSpec(
+                agent="codex",
+                mode="workflow",
+                skill="workflow",
+                prompt="harmless stop lifecycle probe",
+                file="",
+                runtime="headless",
+                root=str(source),
+                run_id=run_id,
+            ),
+            source,
+            worker_command_override=[
+                sys.executable,
+                "-c",
+                (
+                    "import os,time; "
+                    "print(f'worker-ready:{os.getpid()}', flush=True); "
+                    "time.sleep(60)"
+                ),
+            ],
+        )
+        launcher_identity = launched["launcher_identity"]
+        assert isinstance(launcher_identity, dict)
+        owned_receipts.append(launcher_identity)
+
+        live = wait_for(
+            lambda: (
+                current
+                if (current := workflow.lookup_run(run_id))
+                and isinstance(current.get("worker_identity"), dict)
+                else None
+            )
+        )
+        worker_identity = live["worker_identity"]
+        owned_receipts.append(worker_identity)
+        worker_pid = int(live["worker_pid"])
+        launcher_pid = int(live["launcher_pid"])
+        assert worker_pid != launcher_pid
+        assert live["worker_pgid"] == worker_identity["pgid"]
+
+        payload = workflow.stop_run(
+            run_id,
+            reason="manual operator stop",
+            grace_seconds=1.0,
+        )
+
+        assert payload["accepted"] is True
+        assert payload["target"] == "worker_pgid"
+        assert payload["target_pid"] == worker_identity["pgid"]
+        assert payload["target_pgid"] == worker_identity["pgid"]
+        assert payload["signal_sent"] is True
+        assert payload["identity_qualification"] == "process_identity_current"
+
+        final = wait_for(
+            lambda: (
+                current
+                if (current := workflow.lookup_run(run_id))
+                and current.get("state") == "stopped"
+                and not workflow._pid_is_alive(launcher_pid)
+                else None
+            )
+        )
+        assert final["operator_stop_accepted"] is True
+        assert final["stop_reason"] == "manual operator stop"
+        assert final["artifact_gate"] == "stopped"
+        assert final["artifact_errors"] == []
+        assert final["recovery_required"] is False
+        assert final["lifecycle"]["stop"] is False
+        assert not workflow._pid_is_alive(worker_pid)
+
+        meta = json.loads(Path(final["meta"]).read_text(encoding="utf-8"))
+        assert meta["status"] == "stopped"
+        assert meta["operator_stop_accepted"] is True
+        assert "origin_session" not in meta
+        assert "operator_session" not in meta
+        assert "origin_tab" not in meta
+        assert "origin_pane_id" not in meta
+
+        events = list(
+            reversed(
+                [
+                    event
+                    for event in control_plane.read_event_tail(limit=100)
+                    if event.get("run_id") == run_id
+                ]
+            )
+        )
+        stop_index = next(
+            index
+            for index, event in enumerate(events)
+            if event.get("kind") == "audit:stop"
+        )
+        later_kinds = {
+            str(event.get("kind") or "") for event in events[stop_index + 1 :]
+        }
+        assert "lifecycle:failed" not in later_kinds
+        assert "lifecycle:report_missing" not in later_kinds
+    finally:
+        for receipt in reversed(owned_receipts):
+            cleanup_owned(receipt)
+
+
+def test_stop_run_refuses_live_pid_when_identity_receipt_is_stale(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    proc = subprocess.Popen(["sleep", "60"], start_new_session=True)
+    try:
+        identity = process_control.process_identity_receipt(
+            proc.pid,
+            run_id="wflw-stale-identity",
+        )
+        assert identity is not None
+        identity["command_sha256"] = "0" * 64
+        _write_run_meta(
+            home,
+            {
+                "run_id": "wflw-stale-identity",
+                "status": "running",
+                "agent": "codex",
+                "mode": "workflow",
+                "root": str(tmp_path),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "skill_code": "wflw",
+                "worker_pid": proc.pid,
+                "worker_pgid": proc.pid,
+                "worker_identity": identity,
+                "liveness": "pid_alive",
+            },
+        )
+
+        payload = workflow.stop_run(
+            "wflw-stale-identity",
+            reason="manual operator stop",
+            grace_seconds=0.05,
+        )
+
+        assert payload["accepted"] is False
+        assert payload["reason"] == "process_identity_mismatch"
+        assert payload["signal_sent"] is False
+        assert proc.poll() is None
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=2)
+
+
 def test_stop_run_records_already_dead_launcher_without_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1177,7 +1441,7 @@ def test_stop_run_records_already_dead_launcher_without_error(
             "agent": "codex",
             "mode": "workflow",
             "root": str(tmp_path),
-            "updated_at": "2026-06-11T00:00:00+00:00",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
             "skill_code": "wflw",
             "launcher_pid": 999999999,
             "liveness": "pid_alive",
@@ -1209,7 +1473,7 @@ def test_stop_run_terminal_record_is_noop(
             "agent": "codex",
             "mode": "workflow",
             "root": str(tmp_path),
-            "updated_at": "2026-06-11T00:00:00+00:00",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
             "skill_code": "wflw",
             "exit_code": 0,
             "launcher_pid": 999999999,
@@ -1325,6 +1589,1641 @@ def test_retry_run_relaunches_terminal_run(
     assert payload["accepted"] is True
     assert payload["retry_run_id"] == "wflw-020202-0002"
     assert captured["retry_of"] == "wflw-010101-0001"
+
+
+def _native_resume_parent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    agent: str = "codex",
+    run_fields: dict[str, Any] | None = None,
+    meta_fields: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    home = tmp_path / "home"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    run_id = "impl-parent"
+    claims = [
+        {
+            "claim": "recovery remains unfinished",
+            "grade": "strong",
+            "evidence": "worker exited before closure",
+        }
+    ]
+    claim_digest = trust._claims_digest(claims)
+    receipt = TrustReceiptV1.issue(
+        repo_root=str(tmp_path.resolve()),
+        run_id=run_id,
+        commit_sha="a" * 40,
+        trust_verdict="pass-with-gaps",
+        settlement_verdict="needs_attention",
+        settlement_tui="n",
+        settlement_revision=7,
+        claim_digest=claim_digest,
+    )
+    receipt_payload = receipt.to_payload()
+    settled_at = "2026-07-26T00:00:00+00:00"
+    settlement_reason = f"trust_pass_with_gaps:{receipt.commit_sha}"
+    settlement_projection = {
+        "run_id": run_id,
+        "root": receipt.repo_root,
+        "repo_root": receipt.repo_root,
+        "commit_sha": receipt.commit_sha,
+        "settlement_tui": receipt.settlement_tui,
+        "settlement_verdict": receipt.settlement_verdict,
+        "settlement_reason": settlement_reason,
+        "settlement_at": settled_at,
+        "settlement_source": "trust",
+        "settlement_revision": receipt.settlement_revision,
+        "settlement_waived": False,
+        "settlement_claim_digest": receipt.claim_digest,
+        "settlement": {
+            "verdict": receipt.settlement_verdict,
+            "reason": settlement_reason,
+            "settled_at": settled_at,
+            "source": "trust",
+            "claim_digest": receipt.claim_digest,
+            "waived": False,
+            "tui": receipt.settlement_tui,
+            "await_rc": None,
+            "await_outcome": "",
+        },
+        "trust_receipt": receipt_payload,
+    }
+    run = {
+        **settlement_projection,
+        "settlement": dict(settlement_projection["settlement"]),
+        "state": "failed",
+        "agent": agent,
+        "skill": "implement",
+        "exit_code": 9,
+        "worker_alive": False,
+        "recovery_required": True,
+    }
+    run.update(run_fields or {})
+    for top_level, nested in (
+        ("settlement_verdict", "verdict"),
+        ("settlement_reason", "reason"),
+        ("settlement_at", "settled_at"),
+        ("settlement_source", "source"),
+        ("settlement_claim_digest", "claim_digest"),
+        ("settlement_waived", "waived"),
+        ("settlement_tui", "tui"),
+        ("await_rc", "await_rc"),
+        ("await_outcome", "await_outcome"),
+    ):
+        if run_fields is not None and top_level in run_fields:
+            run["settlement"][nested] = run_fields[top_level]
+    meta = {
+        **settlement_projection,
+        "settlement": dict(settlement_projection["settlement"]),
+        "agent": agent,
+        "agent_session_id": f"{agent}-native-id",
+        "runtime_session_id": "runtime-parent-id",
+        "attempt": 1,
+    }
+    meta.update(meta_fields or {})
+    run_dir = home / "control_plane" / "runtime_runs" / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    journal = home / "trust" / "journal.jsonl"
+    journal.parent.mkdir(parents=True)
+    journal.write_text(
+        json.dumps(
+            {
+                "schema": trust.TRUST_JOURNAL_SCHEMA_V2,
+                "recorded_at": settled_at,
+                "repo_root": str(tmp_path.resolve()),
+                "sha": "a" * 40,
+                "author_name": "Codex",
+                "author_email": "agents@vetcoders.io",
+                "authored_at": "2026-07-26T00:00:00+00:00",
+                "subject": "[codex/codex] fix(runtime): retain recovery",
+                "verdict": "pass-with-gaps",
+                "settlement_tui": "n",
+                "run_id": run_id,
+                "claims": claims,
+                "claim_digest": claim_digest,
+                "trust_receipt": receipt_payload,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(workflow, "lookup_run", lambda _run_id: dict(run))
+    return run_id, run
+
+
+def _native_resume_claim_env(
+    tmp_path: Path,
+    *,
+    key: str,
+    parent: str,
+) -> dict[str, str]:
+    env = dict(os.environ)
+    core_root = str(Path(__file__).resolve().parents[1])
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (core_root, env.get("PYTHONPATH", "")) if part
+    )
+    env["VIBECRAFTED_HOME"] = str(tmp_path / "home")
+    env["NATIVE_RESUME_TEST_KEY"] = key
+    env["NATIVE_RESUME_TEST_PARENT"] = parent
+    journal = tmp_path / "home" / "trust" / "journal.jsonl"
+    if journal.is_file():
+        latest = json.loads(journal.read_text(encoding="utf-8").splitlines()[-1])
+        env["NATIVE_RESUME_TEST_RECEIPT"] = latest["trust_receipt"]["receipt_id"]
+    else:
+        env["NATIVE_RESUME_TEST_RECEIPT"] = "b" * 64
+    return env
+
+
+def test_manual_explicit_resume_launches_own_tracked_headless_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(workflow, "reserve_run_id", lambda _skill: "rsme-manual-1")
+    monkeypatch.setattr(
+        workflow, "ensure_session_id", lambda _value=None: "runtime-manual-1"
+    )
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launches: list[dict[str, Any]] = []
+
+    def fake_launch(
+        spec: workflow.WorkflowLaunchSpec,
+        source_dir: str | Path,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        launches.append({"spec": spec, "source_dir": source_dir, **kwargs})
+        return {
+            "accepted": True,
+            "run_id": spec.run_id,
+            "agent": spec.agent,
+            "skill": spec.skill,
+            "root": spec.root,
+            "status": "launching",
+        }
+
+    monkeypatch.setattr(workflow, "launch_workflow", fake_launch)
+
+    result = workflow.manual_resume_session(
+        "codex",
+        "codex-thread-42",
+        tmp_path,
+        prompt="continue from the verified session",
+        root=tmp_path,
+        model="gpt-5.5",
+    )
+
+    assert result["accepted"] is True
+    assert result["run_id"] == "rsme-manual-1"
+    assert result["resume_mode"] == "manual_explicit"
+    assert result["agent_session_id"] == "codex-thread-42"
+    assert result["runtime_session_id"] == "runtime-manual-1"
+    launch = launches[0]
+    assert launch["worker_command_override"] == [
+        "/verified/bin/codex",
+        "exec",
+        "-m",
+        "gpt-5.5",
+        "resume",
+        "--json",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "codex-thread-42",
+        "-",
+    ]
+    assert launch["spec"].mode == "manual_explicit"
+    assert launch["spec"].runtime == "headless"
+    assert launch["spec"].run_id == "rsme-manual-1"
+    assert launch["spec"].model == "gpt-5.5"
+    assert launch["spec"].prompt == "continue from the verified session"
+    assert launch["env"]["VIBECRAFTED_SESSION_ID"] == "runtime-manual-1"
+    assert launch["env"]["VIBECRAFTED_AGENT_SESSION_ID"] == "codex-thread-42"
+    assert launch["launch_meta"] == {
+        "run_id": "rsme-manual-1",
+        "agent": "codex",
+        "agent_session_id": "codex-thread-42",
+        "runtime_session_id": "runtime-manual-1",
+        "native_resume": True,
+        "resume_mode": "manual_explicit",
+        "manual_explicit": True,
+    }
+    forbidden_parent_claims = {
+        "resume_of",
+        "parent_runtime_session_id",
+        "resume_root",
+        "attempt",
+        "automatic_attempt_budget",
+        "automatic_attempt_number",
+        "resume_settlement_revision",
+        "resume_trust_receipt_id",
+        "resume_idempotency_key",
+        "settlement_revision",
+        "trust_receipt_id",
+    }
+    assert forbidden_parent_claims.isdisjoint(launch["launch_meta"])
+
+
+@pytest.mark.parametrize("agent", ["agy", "junie"])
+def test_manual_explicit_resume_fails_closed_for_unverified_providers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    agent: str,
+) -> None:
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda _agent: (_ for _ in ()).throw(
+            AssertionError("unverified provider must be rejected before probe")
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("unverified provider must never launch")
+        ),
+    )
+
+    result = workflow.manual_resume_session(
+        agent,
+        f"{agent}-session",
+        tmp_path,
+        prompt="continue",
+        root=tmp_path,
+    )
+
+    assert result["accepted"] is False
+    assert result["reason"] == "native_resume_unverified"
+    assert result["resume_mode"] == "manual_explicit"
+    assert result["terminal"] is True
+
+
+def test_manual_explicit_resume_requires_confirmed_runtime_probe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="probe_failed",
+            executable=None,
+            version=None,
+            detail="codex not found",
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("failed provider probe must never launch")
+        ),
+    )
+
+    result = workflow.manual_resume_session(
+        "codex",
+        "codex-thread-42",
+        tmp_path,
+        prompt="continue",
+        root=tmp_path,
+    )
+
+    assert result["accepted"] is False
+    assert result["reason"] == "native_resume_probe_failed"
+    assert result["detail"] == "codex not found"
+    assert result["retryable"] is True
+    assert result["terminal"] is False
+
+
+def test_native_resume_creates_new_tracked_monotonic_attempts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, _run = _native_resume_parent(
+        monkeypatch,
+        tmp_path,
+        run_fields={"model_requested": "gpt-5.5"},
+    )
+    child_ids = iter(("rsme-child-1", "rsme-child-2"))
+    monkeypatch.setattr(workflow, "reserve_run_id", lambda _skill: next(child_ids))
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launches: list[dict[str, Any]] = []
+
+    def fake_launch(
+        spec: workflow.WorkflowLaunchSpec,
+        source_dir: str | Path,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        launches.append({"spec": spec, "source_dir": source_dir, **kwargs})
+        return {"accepted": True, "run_id": spec.run_id}
+
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(workflow, "launch_workflow", fake_launch)
+    monkeypatch.setattr(
+        workflow, "append_event", lambda **kwargs: events.append(kwargs)
+    )
+
+    first = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        prompt="continue safely",
+        expected_agent="codex",
+        expected_agent_session_id="codex-native-id",
+        expected_settlement_revision=7,
+    )
+    second = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        expected_agent="codex",
+    )
+
+    assert first["accepted"] is True
+    assert first["retryable"] is False
+    assert first["terminal"] is True
+    assert first["resume_run_id"] == "rsme-child-1"
+    assert first["attempt"] == 2
+    assert second["resume_run_id"] == "rsme-child-2"
+    assert second["attempt"] == 3
+    assert first["runtime_session_id"] != "runtime-parent-id"
+    assert first["runtime_session_id"] != second["runtime_session_id"]
+    assert launches[0]["worker_command_override"] == [
+        "/verified/bin/codex",
+        "exec",
+        "-m",
+        "gpt-5.5",
+        "resume",
+        "--json",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "codex-native-id",
+        "-",
+    ]
+    assert launches[0]["env"]["VIBECRAFTED_AGENT_SESSION_ID"] == "codex-native-id"
+    assert launches[0]["launch_meta"]["resume_of"] == run_id
+    assert launches[0]["launch_meta"]["parent_runtime_session_id"] == (
+        "runtime-parent-id"
+    )
+    assert launches[0]["launch_meta"]["attempt"] == 2
+    assert launches[0]["launch_meta"]["resume_mode"] == "manual"
+    assert launches[0]["launch_meta"]["automatic_attempt_budget"] == 1
+    assert launches[0]["launch_meta"]["automatic_attempt_number"] == 0
+    assert (
+        launches[0]["launch_meta"]["resume_trust_receipt_id"]
+        == (first["trust_receipt_id"])
+    )
+    assert len(first["trust_receipt_id"]) == 64
+    assert launches[0]["spec"].runtime == "headless"
+    assert launches[0]["spec"].model == "gpt-5.5"
+    assert launches[0]["spec"].prompt == "continue safely"
+    assert events[-1]["kind"] == "audit:native_resume"
+    assert events[-1]["payload"]["new_run_id"] == "rsme-child-2"
+
+
+@pytest.mark.parametrize(
+    ("journal_mode", "expected_receipt_id", "reason"),
+    [
+        ("missing", "", "trust_journal_missing"),
+        ("legacy", "", "legacy_trust_record_not_resume_authority"),
+        ("current", "f" * 64, "expected_trust_receipt_mismatch"),
+    ],
+)
+def test_native_resume_direct_boundary_cannot_bypass_receipt_authority(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    journal_mode: str,
+    expected_receipt_id: str,
+    reason: str,
+) -> None:
+    run_id, _run = _native_resume_parent(monkeypatch, tmp_path)
+    journal = tmp_path / "home" / "trust" / "journal.jsonl"
+    if journal_mode == "missing":
+        journal.unlink()
+    elif journal_mode == "legacy":
+        journal.write_text(
+            json.dumps(
+                {
+                    "schema": "vibecrafted.trust-journal.v1",
+                    "repo_root": str(tmp_path.resolve()),
+                    "sha": "a" * 40,
+                    "verdict": "pass-with-gaps",
+                    "settlement_tui": "n",
+                    "run_id": run_id,
+                    "claims": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("receipt authority denial must launch nothing")
+        ),
+    )
+
+    result = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        expected_receipt_id=expected_receipt_id,
+    )
+
+    assert result["accepted"] is False
+    assert result["reason"] == reason
+    assert result["terminal"] is True
+
+
+def test_native_resume_never_uses_legacy_session_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, run = _native_resume_parent(
+        monkeypatch,
+        tmp_path,
+        meta_fields={"agent_session_id": "", "session_id": "legacy-session-id"},
+    )
+    run["session_id"] = "legacy-control-plane-id"
+    monkeypatch.setattr(workflow, "lookup_run", lambda _run_id: dict(run))
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        workflow, "append_event", lambda **kwargs: events.append(kwargs)
+    )
+
+    result = workflow.native_resume_run(run_id, source_dir=tmp_path)
+
+    assert result["accepted"] is False
+    assert result["reason"] == "native_resume_candidate_missing"
+    assert events[-1]["payload"]["reason"] == "native_resume_candidate_missing"
+
+
+def test_native_resume_requires_explicit_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, _run = _native_resume_parent(
+        monkeypatch,
+        tmp_path,
+        meta_fields={
+            "runtime_session_id": "",
+            "session_id": "legacy-ambiguous-id",
+        },
+    )
+
+    result = workflow.native_resume_run(run_id, source_dir=tmp_path)
+
+    assert result["accepted"] is False
+    assert result["reason"] == "missing_runtime_session_id"
+
+
+def test_native_resume_preserves_projected_lineage_when_meta_lacks_resume_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, _run = _native_resume_parent(
+        monkeypatch,
+        tmp_path,
+        run_fields={"resume_root": "impl-original", "attempt": 4},
+        meta_fields={"attempt": 4},
+    )
+    monkeypatch.setattr(workflow, "reserve_run_id", lambda _skill: "rsme-child")
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda *_args, **_kwargs: {"accepted": True, "run_id": "rsme-child"},
+    )
+
+    result = workflow.native_resume_run(run_id, source_dir=tmp_path)
+
+    assert result["accepted"] is True
+    assert result["resume_root"] == "impl-original"
+    assert result["attempt"] == 5
+
+
+def test_native_resume_idempotency_replay_returns_same_child_without_relaunch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, _run = _native_resume_parent(monkeypatch, tmp_path)
+    reserved: list[str] = []
+
+    def reserve(_skill: str) -> str:
+        reserved.append("rsme-idempotent")
+        return "rsme-idempotent"
+
+    monkeypatch.setattr(workflow, "reserve_run_id", reserve)
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launches: list[dict[str, Any]] = []
+
+    def fake_launch(
+        spec: workflow.WorkflowLaunchSpec,
+        _source_dir: str | Path,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        launches.append({"spec": spec, **kwargs})
+        return {
+            "accepted": True,
+            "run_id": spec.run_id,
+            "pid": 4242,
+            "status": "launching",
+        }
+
+    monkeypatch.setattr(workflow, "launch_workflow", fake_launch)
+    key = f"settlement:{run_id}:7"
+
+    first = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=key,
+    )
+    replay = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        expected_agent_session_id="codex-native-id",
+        expected_settlement_revision=7,
+        idempotency_key=key,
+    )
+    monkeypatch.setattr(workflow, "lookup_run", lambda _target: None)
+    archived_parent_replay = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=key,
+    )
+
+    assert first["accepted"] is True
+    assert first["deduplicated"] is False
+    assert replay["accepted"] is True
+    assert replay["deduplicated"] is True
+    assert replay["reason"] == "idempotent_replay"
+    assert replay["resume_run_id"] == first["resume_run_id"] == "rsme-idempotent"
+    assert replay["attempt"] == first["attempt"] == 2
+    assert archived_parent_replay["accepted"] is False
+    assert archived_parent_replay["reason"] == "run_not_found"
+    assert len(reserved) == 1
+    assert len(launches) == 1
+    assert launches[0]["launch_meta"]["resume_idempotency_key"] == key
+    receipts = list(
+        (tmp_path / "home" / "control_plane" / "native_resume_idempotency").glob(
+            "*.json"
+        )
+    )
+    assert len(receipts) == 1
+    receipt = json.loads(receipts[0].read_text(encoding="utf-8"))
+    assert receipt["idempotency_key"] == key
+    assert receipt["child_run_id"] == "rsme-idempotent"
+    assert receipt["state"] == "dispatched"
+
+
+def test_native_resume_idempotency_conflicts_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, run = _native_resume_parent(monkeypatch, tmp_path)
+    monkeypatch.setattr(workflow, "reserve_run_id", lambda _skill: "rsme-owned")
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launches: list[str] = []
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda spec, *_args, **_kwargs: (
+            launches.append(spec.run_id) or {"accepted": True, "run_id": spec.run_id}
+        ),
+    )
+    key = f"settlement:{run_id}:8"
+    first = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=key,
+    )
+
+    wrong_agent = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        expected_agent="claude",
+        idempotency_key=key,
+    )
+    other_run = {**run, "run_id": "impl-other"}
+    monkeypatch.setattr(
+        workflow,
+        "lookup_run",
+        lambda target: dict(other_run) if target == "impl-other" else dict(run),
+    )
+    wrong_parent = workflow.native_resume_run(
+        "impl-other",
+        source_dir=tmp_path,
+        idempotency_key=key,
+    )
+
+    assert first["accepted"] is True
+    assert wrong_agent["accepted"] is False
+    assert wrong_agent["reason"] == "idempotency_conflict"
+    assert wrong_agent["retryable"] is False
+    assert wrong_agent["terminal"] is True
+    assert wrong_parent["accepted"] is False
+    assert wrong_parent["reason"] == "idempotency_conflict"
+    assert launches == ["rsme-owned"]
+
+
+def test_native_resume_idempotency_recovers_kill_window_without_second_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, parent = _native_resume_parent(monkeypatch, tmp_path)
+    children: dict[str, dict[str, Any]] = {}
+    monkeypatch.setattr(
+        workflow,
+        "lookup_run",
+        lambda target: dict(parent) if target == run_id else children.get(target),
+    )
+    monkeypatch.setattr(workflow, "reserve_run_id", lambda _skill: "rsme-kill-window")
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launches: list[str] = []
+
+    def crash_after_dispatch(
+        spec: workflow.WorkflowLaunchSpec,
+        _source_dir: str | Path,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        launches.append(spec.run_id)
+        children[spec.run_id] = {
+            "run_id": spec.run_id,
+            "state": "process_spawned",
+            "launcher_pid": 4444,
+        }
+        raise KeyboardInterrupt("simulated kill after spawn before receipt")
+
+    monkeypatch.setattr(workflow, "launch_workflow", crash_after_dispatch)
+    key = f"settlement:{run_id}:9"
+
+    with pytest.raises(KeyboardInterrupt):
+        workflow.native_resume_run(
+            run_id,
+            source_dir=tmp_path,
+            idempotency_key=key,
+        )
+    replay = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=key,
+    )
+
+    assert replay["accepted"] is True
+    assert replay["deduplicated"] is True
+    assert replay["reason"] == "idempotent_replay"
+    assert replay["resume_run_id"] == "rsme-kill-window"
+    assert replay["idempotency_state"] == "reserved"
+    assert launches == ["rsme-kill-window"]
+
+
+def test_native_resume_idempotency_serializes_concurrent_duplicate_calls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, parent = _native_resume_parent(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        workflow,
+        "lookup_run",
+        lambda target: dict(parent) if target == run_id else None,
+    )
+    reserved: list[str] = []
+
+    def reserve(_skill: str) -> str:
+        reserved.append("rsme-concurrent")
+        return "rsme-concurrent"
+
+    monkeypatch.setattr(workflow, "reserve_run_id", reserve)
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launch_started = threading.Event()
+    release_launch = threading.Event()
+    launches: list[str] = []
+
+    def slow_launch(
+        spec: workflow.WorkflowLaunchSpec,
+        _source_dir: str | Path,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        launches.append(spec.run_id)
+        launch_started.set()
+        assert release_launch.wait(timeout=5)
+        return {"accepted": True, "run_id": spec.run_id}
+
+    monkeypatch.setattr(workflow, "launch_workflow", slow_launch)
+    key = f"settlement:{run_id}:10"
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(
+            workflow.native_resume_run,
+            run_id,
+            tmp_path,
+            idempotency_key=key,
+        )
+        assert launch_started.wait(timeout=5)
+        duplicate_future = executor.submit(
+            workflow.native_resume_run,
+            run_id,
+            tmp_path,
+            idempotency_key=key,
+        )
+        duplicate = duplicate_future.result(timeout=5)
+        release_launch.set()
+        first = first_future.result(timeout=5)
+
+    assert first["accepted"] is True
+    assert duplicate["accepted"] is False
+    assert duplicate["reason"] == "idempotency_in_progress"
+    assert duplicate["retryable"] is True
+    assert duplicate["terminal"] is False
+    assert duplicate["deduplicated"] is True
+    assert duplicate["resume_run_id"] == first["resume_run_id"] == "rsme-concurrent"
+    assert reserved == ["rsme-concurrent"]
+    assert launches == ["rsme-concurrent"]
+
+
+def test_native_resume_dead_owner_takes_over_pre_spawn_reservation_exactly(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    key = f"settlement:{run_id}:7"
+    env = _native_resume_claim_env(tmp_path, key=key, parent=run_id)
+    env["NATIVE_RESUME_TEST_CRASH"] = "1"
+    crashed = subprocess.run(
+        [sys.executable, "-c", _NATIVE_RESUME_CLAIM_SCRIPT],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert crashed.returncode == 91
+    reserved = json.loads(crashed.stdout)["record"]
+
+    monkeypatch.setattr(
+        workflow,
+        "reserve_run_id",
+        lambda _skill: (_ for _ in ()).throw(
+            AssertionError("takeover must reuse the reserved child id")
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launches: list[dict[str, Any]] = []
+
+    def launch(
+        spec: workflow.WorkflowLaunchSpec,
+        _source_dir: str | Path,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        launches.append({"spec": spec, **kwargs})
+        return {"accepted": True, "run_id": spec.run_id, "status": "launching"}
+
+    monkeypatch.setattr(workflow, "launch_workflow", launch)
+    result = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        expected_agent="codex",
+        idempotency_key=key,
+    )
+
+    assert result["accepted"] is True
+    assert result["resume_run_id"] == reserved["child_run_id"]
+    assert result["runtime_session_id"] == reserved["runtime_session_id"]
+    assert result["attempt"] == reserved["attempt"]
+    assert launches[0]["spec"].run_id == reserved["child_run_id"]
+    receipt = workflow._lookup_native_resume_idempotency(key)
+    assert receipt is not None
+    assert receipt["state"] == "dispatched"
+    assert receipt["lease_generation"] == 2
+
+
+def test_native_resume_reserved_receipt_ignores_unrelated_live_owner_pid(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    key = f"settlement:{run_id}:live-pid-reuse"
+    env = _native_resume_claim_env(tmp_path, key=key, parent=run_id)
+    env["NATIVE_RESUME_TEST_CRASH"] = "1"
+    crashed = subprocess.run(
+        [sys.executable, "-c", _NATIVE_RESUME_CLAIM_SCRIPT],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert crashed.returncode == 91
+    reserved = json.loads(crashed.stdout)["record"]
+
+    unrelated_live_pid = os.getppid()
+    os.kill(unrelated_live_pid, 0)
+    registry = workflow._native_resume_idempotency_registry()
+    receipt_path = workflow._native_resume_idempotency_path(registry, key)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["owner_token"] = "stale-owner-token"
+    receipt["owner_pid"] = unrelated_live_pid
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    budget_path = workflow._native_resume_automatic_budget_path(run_id)
+    budget = json.loads(budget_path.read_text(encoding="utf-8"))
+    budget["owner_token"] = receipt["owner_token"]
+    budget["owner_pid"] = unrelated_live_pid
+    budget_path.write_text(json.dumps(budget), encoding="utf-8")
+
+    monkeypatch.setattr(
+        workflow,
+        "reserve_run_id",
+        lambda _skill: (_ for _ in ()).throw(
+            AssertionError("takeover must preserve the reserved child identity")
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launches: list[str] = []
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda spec, *_args, **_kwargs: (
+            launches.append(spec.run_id)
+            or {"accepted": True, "run_id": spec.run_id, "status": "launching"}
+        ),
+    )
+
+    result = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        expected_agent="codex",
+        idempotency_key=key,
+    )
+
+    assert result["accepted"] is True
+    assert result["resume_run_id"] == reserved["child_run_id"]
+    assert result["runtime_session_id"] == reserved["runtime_session_id"]
+    assert launches == [reserved["child_run_id"]]
+    final_receipt = workflow._lookup_native_resume_idempotency(key)
+    assert final_receipt is not None
+    assert final_receipt["lease_generation"] == reserved["lease_generation"] + 1
+
+
+def test_native_resume_unknown_receipt_state_is_terminal_before_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    key = f"settlement:{run_id}:unknown-state"
+    registry = workflow._native_resume_idempotency_registry()
+    receipt_path = workflow._native_resume_idempotency_path(registry, key)
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "schema": workflow.NATIVE_RESUME_IDEMPOTENCY_SCHEMA,
+                "idempotency_key": key,
+                "parent_run_id": run_id,
+                "agent": "codex",
+                "agent_session_id": "codex-native-id",
+                "parent_runtime_session_id": "runtime-parent-id",
+                "child_run_id": "rsme-invalid-state",
+                "runtime_session_id": "runtime-invalid-state",
+                "resume_root": run_id,
+                "attempt": 2,
+                "settlement_revision": 7,
+                "state": "corrupt_future_state",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        workflow,
+        "lookup_run",
+        lambda _target: (_ for _ in ()).throw(
+            AssertionError("invalid receipt must fail before run lookup")
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda _agent: (_ for _ in ()).throw(
+            AssertionError("invalid receipt must fail before provider probe")
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("invalid receipt must never launch")
+        ),
+    )
+
+    results = [
+        workflow.native_resume_run(
+            run_id,
+            source_dir=tmp_path,
+            idempotency_key=key,
+        )
+        for _ in range(2)
+    ]
+
+    for result in results:
+        assert result["accepted"] is False
+        assert result["reason"] == "idempotency_record_invalid"
+        assert result["retryable"] is False
+        assert result["terminal"] is True
+        assert "corrupt_future_state" in result["detail"]
+
+
+def test_native_resume_unknown_ledger_state_is_terminal_without_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    key = f"settlement:{run_id}:unknown-ledger-state"
+    budget_path = workflow._native_resume_automatic_budget_path(run_id)
+    budget_path.write_text(
+        json.dumps({"state": "corrupt_future_state"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("invalid automatic ledger must never launch")
+        ),
+    )
+
+    result = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=key,
+    )
+
+    assert result["accepted"] is False
+    assert result["reason"] == "idempotency_claim_failed"
+    assert result["retryable"] is False
+    assert result["terminal"] is True
+    assert "corrupt_future_state" in result["detail"]
+
+
+def test_native_resume_claim_is_atomic_across_processes(
+    tmp_path: Path,
+) -> None:
+    run_id = "impl-multiprocess"
+    key = f"settlement:{run_id}:7"
+    env = _native_resume_claim_env(tmp_path, key=key, parent=run_id)
+    env["NATIVE_RESUME_TEST_HOLD"] = "0.2"
+    processes = [
+        subprocess.Popen(
+            [sys.executable, "-c", _NATIVE_RESUME_CLAIM_SCRIPT],
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        for _ in range(2)
+    ]
+    outputs = [process.communicate(timeout=10) for process in processes]
+    assert [process.returncode for process in processes] == [0, 0]
+    results = [json.loads(stdout) for stdout, _stderr in outputs]
+
+    assert sorted(result["created"] for result in results) == [False, True]
+    assert len({result["record"]["child_run_id"] for result in results}) == 1
+    assert len({result["record"]["runtime_session_id"] for result in results}) == 1
+    assert len({result["record"]["attempt"] for result in results}) == 1
+    receipts = list(
+        (tmp_path / "home" / "control_plane" / "native_resume_idempotency").glob(
+            "*.json"
+        )
+    )
+    assert len(receipts) == 1
+
+
+def test_native_resume_automatic_budget_is_one_per_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launched: list[str] = []
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda spec, *_args, **_kwargs: (
+            launched.append(spec.run_id) or {"accepted": True, "run_id": spec.run_id}
+        ),
+    )
+
+    first = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=f"settlement:{run_id}:7",
+    )
+    second = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=f"settlement:{run_id}:7:other-guardian",
+    )
+
+    assert first["accepted"] is True
+    assert first["resume_mode"] == "automatic"
+    assert first["automatic_attempt_budget"] == 1
+    assert first["automatic_attempt_number"] == 1
+    assert second["accepted"] is False
+    assert second["reason"] == "automatic_resume_budget_exhausted"
+    assert second["retryable"] is False
+    assert second["terminal"] is True
+    assert len(launched) == 1
+
+
+def test_native_resume_retryable_launch_failure_reuses_same_automatic_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    monkeypatch.setattr(workflow, "reserve_run_id", lambda _skill: "rsme-retry")
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launched: list[str] = []
+
+    def launch(spec, *_args, **_kwargs):
+        launched.append(spec.run_id)
+        accepted = len(launched) > 1
+        return {"accepted": accepted, "run_id": spec.run_id}
+
+    monkeypatch.setattr(workflow, "launch_workflow", launch)
+    key = f"settlement:{run_id}:7"
+
+    failed = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=key,
+    )
+    recovered = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=key,
+    )
+
+    assert failed["accepted"] is False
+    assert failed["reason"] == "launch_failed"
+    assert failed["retryable"] is True
+    assert failed["terminal"] is False
+    assert recovered["accepted"] is True
+    assert recovered["resume_run_id"] == failed["resume_run_id"] == "rsme-retry"
+    assert recovered["attempt"] == failed["attempt"]
+    assert launched == ["rsme-retry", "rsme-retry"]
+
+
+def test_native_resume_revision_cas_rejects_probe_window_change(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, parent = _native_resume_parent(monkeypatch, tmp_path)
+    lookups = 0
+
+    def lookup(target: str) -> dict[str, Any] | None:
+        nonlocal lookups
+        if target != run_id:
+            return None
+        lookups += 1
+        current = dict(parent)
+        current["settlement_revision"] = 7 if lookups == 1 else 8
+        return current
+
+    monkeypatch.setattr(workflow, "lookup_run", lookup)
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("changed settlement revision must not launch")
+        ),
+    )
+
+    result = workflow.native_resume_run(run_id, source_dir=tmp_path)
+
+    assert result["accepted"] is False
+    assert result["reason"] == "settlement_revision_changed"
+    assert result["detail"] == "expected=7 current=8"
+    assert result["retryable"] is False
+    assert result["terminal"] is True
+
+
+@pytest.mark.parametrize(
+    ("changed_identity", "reason", "detail"),
+    [
+        (
+            "agent_session",
+            "expected_agent_session_mismatch",
+            "expected=codex-native-id current=codex-replaced-id",
+        ),
+        (
+            "settlement_revision",
+            "expected_settlement_revision_mismatch",
+            "expected=7 current=8",
+        ),
+    ],
+)
+def test_native_resume_guardian_snapshot_rejects_probe_window_change(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    changed_identity: str,
+    reason: str,
+    detail: str,
+) -> None:
+    run_id, parent = _native_resume_parent(monkeypatch, tmp_path)
+    key = f"settlement:{run_id}:guardian-snapshot"
+    live_revision = 7
+
+    def lookup(target: str) -> dict[str, Any] | None:
+        if target != run_id:
+            return None
+        current = dict(parent)
+        current["settlement_revision"] = live_revision
+        return current
+
+    def change_snapshot_during_probe(agent: str) -> SimpleNamespace:
+        nonlocal live_revision
+        if changed_identity == "agent_session":
+            meta_path = (
+                tmp_path
+                / "home"
+                / "control_plane"
+                / "runtime_runs"
+                / run_id
+                / "meta.json"
+            )
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta["agent_session_id"] = "codex-replaced-id"
+            meta_path.write_text(json.dumps(meta), encoding="utf-8")
+        else:
+            live_revision = 8
+        return SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        )
+
+    monkeypatch.setattr(workflow, "lookup_run", lookup)
+    monkeypatch.setattr(workflow, "probe_provider", change_snapshot_during_probe)
+    launches: list[str] = []
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda spec, *_args, **_kwargs: (
+            launches.append(spec.run_id) or {"accepted": True, "run_id": spec.run_id}
+        ),
+    )
+
+    result = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        expected_agent_session_id="codex-native-id",
+        expected_settlement_revision=7,
+        idempotency_key=key,
+    )
+
+    assert result["accepted"] is False
+    assert result["reason"] == reason
+    assert result["detail"] == detail
+    assert result["retryable"] is False
+    assert result["terminal"] is True
+    assert launches == []
+    assert workflow._lookup_native_resume_idempotency(key) is None
+
+
+@pytest.mark.parametrize(
+    ("expectation", "reason"),
+    [
+        (
+            {"expected_agent_session_id": "pending"},
+            "invalid_expected_agent_session_id",
+        ),
+        (
+            {"expected_settlement_revision": 0},
+            "invalid_expected_settlement_revision",
+        ),
+        (
+            {"expected_settlement_revision": True},
+            "invalid_expected_settlement_revision",
+        ),
+    ],
+)
+def test_native_resume_rejects_invalid_guardian_expectations_before_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    expectation: dict[str, Any],
+    reason: str,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        workflow,
+        "lookup_run",
+        lambda _target: (_ for _ in ()).throw(
+            AssertionError("invalid Guardian expectation must fail before lookup")
+        ),
+    )
+
+    result = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        **expectation,
+    )
+
+    assert result["accepted"] is False
+    assert result["reason"] == reason
+    assert result["retryable"] is False
+    assert result["terminal"] is True
+
+
+def test_native_resume_holds_parent_mutation_lock_until_launch_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    monkeypatch.setattr(workflow, "reserve_run_id", lambda _skill: "rsme-lock")
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launch_started = threading.Event()
+    release_launch = threading.Event()
+
+    def slow_launch(
+        spec: workflow.WorkflowLaunchSpec,
+        _source_dir: str | Path,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        launch_started.set()
+        assert release_launch.wait(timeout=5)
+        return {"accepted": True, "run_id": spec.run_id}
+
+    monkeypatch.setattr(workflow, "launch_workflow", slow_launch)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        resume_future = executor.submit(
+            workflow.native_resume_run,
+            run_id,
+            tmp_path,
+        )
+        assert launch_started.wait(timeout=5)
+        block_future = executor.submit(workflow.block_run, run_id)
+        time.sleep(0.05)
+        assert block_future.done() is False
+        release_launch.set()
+        resumed = resume_future.result(timeout=5)
+        blocked = block_future.result(timeout=5)
+
+    assert resumed["accepted"] is True
+    assert blocked["accepted"] is False
+    assert blocked["reason"] == "run_terminal"
+
+
+def test_retry_run_waits_for_guardian_and_refuses_second_launch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id, _parent = _native_resume_parent(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        workflow,
+        "reserve_run_id",
+        lambda _skill: "rsme-guardian-owned",
+    )
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launch_started = threading.Event()
+    release_launch = threading.Event()
+    launches: list[str] = []
+
+    def slow_launch(
+        spec: workflow.WorkflowLaunchSpec,
+        _source_dir: str | Path,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        launches.append(spec.run_id)
+        launch_started.set()
+        assert release_launch.wait(timeout=5)
+        return {"accepted": True, "run_id": spec.run_id}
+
+    monkeypatch.setattr(workflow, "launch_workflow", slow_launch)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        resume_future = executor.submit(
+            workflow.native_resume_run,
+            run_id,
+            tmp_path,
+            idempotency_key=f"settlement:{run_id}:guardian-owner",
+        )
+        assert launch_started.wait(timeout=5)
+        retry_future = executor.submit(workflow.retry_run, run_id, tmp_path)
+        time.sleep(0.05)
+        assert retry_future.done() is False
+        release_launch.set()
+        resumed = resume_future.result(timeout=5)
+        retried = retry_future.result(timeout=5)
+
+    assert resumed["accepted"] is True
+    assert retried["accepted"] is False
+    assert retried["reason"] == "recovery_owned_by_guardian"
+    assert retried["retryable"] is False
+    assert retried["terminal"] is True
+    assert launches == ["rsme-guardian-owned"]
+
+
+@pytest.mark.parametrize(
+    ("run_fields", "reason"),
+    [
+        (
+            {"settlement_tui": "f", "settlement_verdict": "finalized"},
+            "settlement_f_not_resumable",
+        ),
+        (
+            {"settlement_tui": "", "settlement_verdict": ""},
+            "settlement_unknown_not_resumable",
+        ),
+        ({"settlement_source": "auto"}, "vc_trust_authority_missing"),
+        ({"recovery_required": False}, "recovery_not_required"),
+        ({"worker_alive": True}, "worker_not_confirmed_dead"),
+        ({"settlement_revision": None}, "settlement_revision_missing"),
+        (
+            {"state": "running", "exit_code": None, "liveness": "active"},
+            "run_not_terminal",
+        ),
+    ],
+)
+def test_native_resume_public_boundary_rejects_unsafe_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    run_fields: dict[str, Any],
+    reason: str,
+) -> None:
+    run_id, _parent = _native_resume_parent(
+        monkeypatch,
+        tmp_path,
+        run_fields=run_fields,
+    )
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda _agent: (_ for _ in ()).throw(
+            AssertionError("policy rejection must happen before provider probe")
+        ),
+    )
+
+    result = workflow.native_resume_run(run_id, source_dir=tmp_path)
+
+    assert result["accepted"] is False
+    assert result["reason"] == reason
+    assert result["retryable"] is (
+        reason
+        in {"recovery_not_required", "worker_not_confirmed_dead", "run_not_terminal"}
+    )
+    assert result["terminal"] is not result["retryable"]
+
+
+@pytest.mark.parametrize(
+    ("run_fields", "reason"),
+    [
+        ({"state": "stopped", "stop_reason": "operator stop request"}, "manual_stop"),
+        ({"state": "cancelled"}, "manual_stop"),
+        ({"state": "blocked"}, "blocked"),
+        ({"settlement_tui": "x", "settlement_source": "trust"}, "trust_x"),
+    ],
+)
+def test_native_resume_refuses_operator_and_trust_terminals(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    run_fields: dict[str, Any],
+    reason: str,
+) -> None:
+    run_id, _run = _native_resume_parent(
+        monkeypatch,
+        tmp_path,
+        run_fields=run_fields,
+    )
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        workflow, "append_event", lambda **kwargs: events.append(kwargs)
+    )
+
+    result = workflow.native_resume_run(run_id, source_dir=tmp_path)
+
+    assert result["accepted"] is False
+    assert result["reason"] == reason
+    assert result["retryable"] is False
+    assert result["terminal"] is True
+    assert events[-1]["payload"]["reason"] == reason
+
+
+@pytest.mark.parametrize(
+    ("agent", "reason"),
+    [
+        ("gemini", "native_resume_unsupported"),
+        ("agy", "native_resume_unverified"),
+        ("junie", "native_resume_unverified"),
+    ],
+)
+def test_native_resume_refuses_unsupported_or_unverified_providers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    agent: str,
+    reason: str,
+) -> None:
+    run_id, _run = _native_resume_parent(monkeypatch, tmp_path, agent=agent)
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        workflow, "append_event", lambda **kwargs: events.append(kwargs)
+    )
+
+    result = workflow.native_resume_run(run_id, source_dir=tmp_path)
+
+    assert result["accepted"] is False
+    assert result["reason"] == reason
+    assert result["retryable"] is False
+    assert result["terminal"] is True
+    assert events[-1]["payload"]["reason"] == reason
+
+
+def test_native_resume_requires_confirmed_runtime_probe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, _run = _native_resume_parent(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="probe_failed",
+            executable=None,
+            version=None,
+            detail="codex not found",
+        ),
+    )
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        workflow, "append_event", lambda **kwargs: events.append(kwargs)
+    )
+
+    result = workflow.native_resume_run(run_id, source_dir=tmp_path)
+
+    assert result["accepted"] is False
+    assert result["reason"] == "native_resume_probe_failed"
+    assert result["detail"] == "codex not found"
+    assert result["retryable"] is True
+    assert result["terminal"] is False
+
+
+def test_native_resume_missing_projection_is_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(workflow, "lookup_run", lambda _run_id: None)
+
+    result = workflow.native_resume_run("run-not-projected", source_dir=tmp_path)
+
+    assert result["accepted"] is False
+    assert result["reason"] == "run_not_found"
+    assert result["retryable"] is True
+    assert result["terminal"] is False
 
 
 def test_build_launch_command_uses_core_stdin_agent_command_not_legacy_deck(
@@ -1511,3 +3410,23 @@ def test_dispatcher_command_carries_lifecycle_state_flag() -> None:
 
     without_state = workflow._dispatcher_command(**base)
     assert "--lifecycle-state" not in without_state
+
+
+def test_dispatcher_command_salvages_only_verified_native_resume_streams() -> None:
+    base = {
+        "run_id": "resume-child",
+        "root": "/tmp/repo",
+        "meta_path": Path("/tmp/meta.json"),
+        "report_path": Path("/tmp/report.md"),
+        "transcript_path": Path("/tmp/transcript.log"),
+        "worker_command": ["codex", "exec", "resume", "native-id", "-"],
+    }
+
+    native_resume = workflow._dispatcher_command(
+        **base,
+        salvage_report_from_stream=True,
+    )
+    ordinary_worker = workflow._dispatcher_command(**base)
+
+    assert "--salvage-report-from-stream" in native_resume
+    assert "--salvage-report-from-stream" not in ordinary_worker

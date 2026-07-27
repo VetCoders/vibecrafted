@@ -1357,6 +1357,7 @@ public struct FfiSettlementBoard: Equatable, Hashable {
     public var x: UInt64
     public var n: UInt64
     public var invalid: UInt64
+    public var unclassified: UInt64
     public var active: UInt64
     public var stalled: UInt64
     public var orphans: UInt64
@@ -1365,11 +1366,12 @@ public struct FfiSettlementBoard: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(f: UInt64, x: UInt64, n: UInt64, invalid: UInt64, active: UInt64, stalled: UInt64, orphans: UInt64, totalSettled: UInt64, scope: String) {
+    public init(f: UInt64, x: UInt64, n: UInt64, invalid: UInt64, unclassified: UInt64, active: UInt64, stalled: UInt64, orphans: UInt64, totalSettled: UInt64, scope: String) {
         self.f = f
         self.x = x
         self.n = n
         self.invalid = invalid
+        self.unclassified = unclassified
         self.active = active
         self.stalled = stalled
         self.orphans = orphans
@@ -1395,6 +1397,7 @@ public struct FfiConverterTypeFfiSettlementBoard: FfiConverterRustBuffer {
                 x: FfiConverterUInt64.read(from: &buf),
                 n: FfiConverterUInt64.read(from: &buf),
                 invalid: FfiConverterUInt64.read(from: &buf),
+                unclassified: FfiConverterUInt64.read(from: &buf),
                 active: FfiConverterUInt64.read(from: &buf),
                 stalled: FfiConverterUInt64.read(from: &buf),
                 orphans: FfiConverterUInt64.read(from: &buf),
@@ -1408,6 +1411,7 @@ public struct FfiConverterTypeFfiSettlementBoard: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.x, into: &buf)
         FfiConverterUInt64.write(value.n, into: &buf)
         FfiConverterUInt64.write(value.invalid, into: &buf)
+        FfiConverterUInt64.write(value.unclassified, into: &buf)
         FfiConverterUInt64.write(value.active, into: &buf)
         FfiConverterUInt64.write(value.stalled, into: &buf)
         FfiConverterUInt64.write(value.orphans, into: &buf)

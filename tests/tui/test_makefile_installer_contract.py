@@ -46,7 +46,7 @@ def test_makefile_keeps_install_as_terminal_first_front_door() -> None:
         "foundations",
         "skills and launchers",
         "runtime tools",
-        "app and server",
+        "app binaries",
     ):
         assert f'$(INSTALL_STEP) "{label}"' in install_block, (
             f"front door must walk the `{label}` install step via $(INSTALL_STEP)"
@@ -187,6 +187,11 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
         (dst / "payload.txt").write_text("validated\n", encoding="utf-8")
 
     monkeypatch.setattr(installer, "stage_distribution_payload", fake_stage)
+    monkeypatch.setattr(
+        installer,
+        "_materialize_vc_frame_generation",
+        lambda runtime_root: seen.update(materialized=runtime_root),
+    )
 
     installer.sync_control_plane_tree(source, destination, mirror=True)
 
@@ -194,6 +199,7 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
     assert seen["destination"] != destination
     assert Path(seen["destination"]).parent == destination.parent
     assert seen["mirror"] is True
+    assert seen["materialized"] == seen["destination"]
     assert (destination / "payload.txt").read_text(encoding="utf-8") == "validated\n"
     source_text = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
         encoding="utf-8"
@@ -203,12 +209,18 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
 
 def test_install_manifest_post_install_uses_mirror_sync() -> None:
     text = (REPO_ROOT / "install.toml").read_text(encoding="utf-8")
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
 
+    assert "make --no-print-directory install-bundle-tools" in text
     assert (
-        'python3 scripts/vetcoders_install.py install --source "." '
+        '$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" '
         "--compact --non-interactive --mirror"
-    ) in text
-    assert "make --no-print-directory install-python-tools" in text
+    ) in makefile
+    assert "make --no-print-directory install-python-tools" not in text
+    assert "make --no-print-directory install-server\n" not in text
+    assert "$(MAKE) --no-print-directory build-server-release" in makefile
+    assert "$(MAKE) --no-print-directory install-server-payload" in makefile
+    assert "make --no-print-directory install-server-service" not in text
     assert (
         'bash "$PWD/vibecrafted-core/vibecrafted_core/runtime/scripts/'
         'install-frontier-config.sh" --source "$PWD"'
@@ -216,15 +228,28 @@ def test_install_manifest_post_install_uses_mirror_sync() -> None:
     assert "bash runtime/scripts/install-frontier-config.sh" not in text
 
 
-def test_make_install_stages_vc_frame_from_stable_runtime() -> None:
+def test_make_install_stages_vc_frame_from_published_runtime() -> None:
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     install_block = makefile.split("\ninstall:\n", 1)[1].split("\n# `make install`", 1)[
         0
     ]
 
     assert 'PYTHONPATH="$$stable_root/vibecrafted-core"' in install_block
-    assert "from vibecrafted_core.vc_frame_delivery import" in install_block
+    assert '"$$tool_python" -c' in install_block
+    assert "from runtime_paths import vibecrafted_tools_home" in install_block
+    assert install_block.index('export PATH="$$HOME/.local/bin:$$PATH"') < (
+        install_block.index("uv tool dir")
+    )
+    assert 'PYTHONPATH="$(SOURCE)/vibecrafted-core"' not in install_block
+    assert (
+        "from vibecrafted_core.vc_frame_delivery import "
+        "wire_vc_frame_config, ensure_zshrc"
+    ) in install_block
+    assert "stage_vc_frame_config" not in install_block
     assert "vc-frame config delivery skipped" not in install_block
+    assert install_block.index("skills and launchers") < install_block.index(
+        "vc-frame config"
+    )
 
 
 def test_installer_copies_skill_rules_to_fresh_skills_root(tmp_path: Path) -> None:
@@ -307,7 +332,7 @@ def test_install_all_default_output_is_quiet_and_points_to_vc_start() -> None:
         "frontier config",
         "skills and launchers",
         "runtime tools",
-        "app and server",
+        "app binaries",
     ):
         assert f'$(INSTALL_STEP) "{label}" --' in install_all_block
 
@@ -318,6 +343,37 @@ def test_install_all_default_output_is_quiet_and_points_to_vc_start() -> None:
     assert 'tee -a "$log_path"' in step_runner
     assert "Install failed during: %s" in step_runner
     assert "vibecrafted doctor" in step_runner
+
+
+def test_install_step_preserves_tty_failure_status(tmp_path: Path) -> None:
+    """The spinner must return the child status, not boolean-negation success."""
+    pty = pytest.importorskip("pty")
+    master_fd, slave_fd = pty.openpty()
+    log_path = tmp_path / "install.log"
+    environment = os.environ.copy()
+    environment["VIBECRAFTED_INSTALL_LOG"] = str(log_path)
+    environment["VERBOSE"] = "0"
+    try:
+        completed = subprocess.run(
+            [
+                "bash",
+                str(REPO_ROOT / "scripts" / "install-step.sh"),
+                "forced failure",
+                "--",
+                "bash",
+                "-c",
+                "exit 37",
+            ],
+            stdout=slave_fd,
+            stderr=slave_fd,
+            env=environment,
+            check=False,
+        )
+    finally:
+        os.close(slave_fd)
+        os.close(master_fd)
+
+    assert completed.returncode == 37
 
 
 def test_install_all_user_facing_output_has_no_ghost_anxiety_copy() -> None:
@@ -351,7 +407,7 @@ def test_install_all_installs_python_tools_with_uv_tool_install() -> None:
         "\n# install-all owns", 1
     )[0]
 
-    assert "make --no-print-directory install-python-tools" in install_all_block
+    assert "install-bundle-tools" in install_all_block
     # The uv-tool editable installs must source from the resolved stable home
     # ($$stable_root -> vibecrafted-current), not the dev checkout.
     assert (
@@ -373,7 +429,8 @@ def test_install_all_installs_python_tools_with_uv_tool_install() -> None:
         REPO_ROOT / "vibecrafted-mcp" / "pyproject.toml"
     ).read_text(encoding="utf-8")
 
-    assert "make --no-print-directory install-python-tools" in manifest
+    assert "make --no-print-directory install-bundle-tools" in manifest
+    assert "make --no-print-directory install-python-tools" not in manifest
 
 
 def test_install_all_covers_app_binaries_as_real_files() -> None:
@@ -389,7 +446,7 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
     install_all_block = makefile.split("install-all:", 1)[1].split("\nskills:", 1)[0]
     assert "install-vendored-binaries" in install_all_block
     assert "install-app-binaries" in install_all_block
-    assert "install-server" in install_all_block
+    assert "install-bundle-tools" in install_all_block
 
     assert (
         "VENDORED_FOUNDATION_BINARIES := vc-frame loctree-mcp loct aicx aicx-mcp"
@@ -403,7 +460,7 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
     assert "BIN_DIR := $(HOME)/.local/bin" in makefile
 
     app_block = makefile.split("\ninstall-app-binaries:", 1)[1].split("\nskills:", 1)[0]
-    assert "cargo build --release -p voc" in app_block
+    assert "cargo build --release --locked -p voc" in app_block
     assert "cargo install" not in app_block
     assert 'install -m 0755 "$(APP_DIR)/target/release/$$bin" "$(BIN_DIR)/$$bin"' in (
         app_block
@@ -411,7 +468,14 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
 
     assert "make --no-print-directory install-vendored-binaries" in manifest
     assert "make --no-print-directory install-app-binaries" in manifest
-    assert "make --no-print-directory install-server" in manifest
+    assert "make --no-print-directory install-server" not in manifest
+    assert "make --no-print-directory install-bundle-tools" in manifest
+    assert "build-server-release" in makefile
+    server_build_block = makefile.split("\nbuild-server-release:", 1)[1].split(
+        "\ninstall-server-payload:", 1
+    )[0]
+    assert "cargo build --release --locked -p $(SERVER_PACKAGE)" in server_build_block
+    assert "install-server-payload" in makefile
 
 
 def test_bin_dir_owned_entries_are_never_cargo_owned_symlink_drift() -> None:
@@ -647,6 +711,216 @@ def test_product_mcp_paths_do_not_hardcode_cargo_bin() -> None:
 def test_install_server_is_in_install_all() -> None:
     text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     assert "install-server:" in text
+    assert "install-server-payload:" in text
 
     install_all_block = text.split("install-all:", 1)[1].split("\nskills:", 1)[0]
-    assert "make --no-print-directory install-server" in install_all_block
+    assert "install-bundle-tools" in install_all_block
+    assert "make --no-print-directory install-server" not in install_all_block
+
+
+def test_make_install_verifies_server_supervisor_entrypoint() -> None:
+    text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    installer_text = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
+        encoding="utf-8"
+    )
+    cli_text = (
+        REPO_ROOT / "vibecrafted-core" / "vibecrafted_core" / "cli.py"
+    ).read_text(encoding="utf-8")
+    install_tools_block = text.split("install-tools:", 1)[1].split(
+        "\n# install-all owns", 1
+    )[0]
+    handoff_block = installer_text.split("def run_with_tools_install_lease(", 1)[
+        1
+    ].split("\ndef _symlink_target(", 1)[0]
+
+    assert "vc-server-supervisor" in install_tools_block
+    assert "expected executable entrypoint" in install_tools_block
+    assert '"$$resolved" --help' in install_tools_block
+    assert 'tool_root="$$(uv tool dir)/vibecrafted"' in install_tools_block
+    assert "expected uv tool target" in install_tools_block
+    assert "uv tool imports vibecrafted_core" in install_tools_block
+    assert "$$stable_root/vibecrafted-core" in install_tools_block
+    assert "uv tool uninstall" not in install_tools_block
+    assert "run_with_tools_install_lease" in install_tools_block
+    assert "INSTALL_TOOLS_SERVICE_POLICY ?= preserve" in text
+    assert 'service_policy=os.environ["VIBECRAFTED_INSTALL_SERVICE_POLICY"]' in (
+        install_tools_block
+    )
+    assert "install-bundle-tools:" in text
+    assert "install-tools-held" in install_tools_block
+    assert "VIBECRAFTED_INSTALL_LEASE_FD" in install_tools_block
+    assert "def _installer_lease_pass_fds(" in cli_text
+    assert "lease_pass_fds = _installer_lease_pass_fds(tools_home)" in cli_text
+    assert "pass_fds=lease_pass_fds" in cli_text
+    assert "staging runtime under the cross-process installer lease" in (
+        install_tools_block
+    )
+    assert "trap rollback_tools_handoff EXIT" not in install_tools_block
+    assert "runtime_service_active_for_install" not in install_tools_block
+    assert "prepare_runtime_service_for_install" not in install_tools_block
+    assert "activate_runtime_service_after_install" not in install_tools_block
+    assert "complete_current_tools_handoff" not in install_tools_block
+    assert install_tools_block.index(
+        '$(PYTHON) $(INSTALLER) install --source "$(SOURCE)"'
+    ) < install_tools_block.index("uv tool install --force --reinstall")
+    assert "outer lease owner will reconcile service ownership" in install_tools_block
+    assert "prepare_runtime_service_for_install" in handoff_block
+    assert "_runtime_lifecycle_handoff_fence" in handoff_block
+    assert "_runtime_supervisor_handoff_fence" in handoff_block
+    assert "_bootout_owned_runtime_launchd_job" in handoff_block
+    assert "_rollback_current_tools_locked" in handoff_block
+    assert "activate_runtime_service_after_install" in handoff_block
+    assert "_complete_current_tools_handoff_locked" in handoff_block
+    assert handoff_block.index(
+        "prepare_runtime_service_for_install"
+    ) < handoff_block.index("_runtime_lifecycle_handoff_fence")
+    assert handoff_block.index(
+        "_runtime_lifecycle_handoff_fence"
+    ) < handoff_block.index("_runtime_supervisor_handoff_fence")
+    assert handoff_block.index(
+        "_runtime_supervisor_handoff_fence"
+    ) < handoff_block.index("_run_install_child_with_lifecycle_guard")
+    assert handoff_block.index(
+        "_run_install_child_with_lifecycle_guard"
+    ) < handoff_block.index("activate_runtime_service_after_install")
+    assert handoff_block.index(
+        "activate_runtime_service_after_install"
+    ) < handoff_block.index("_complete_current_tools_handoff_locked")
+    assert "install-python-tools: install-tools" in text
+
+
+def test_make_install_enables_service_after_server_payload() -> None:
+    text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    install_block = text.split("\ninstall:\n", 1)[1].split("\n# `make install`", 1)[0]
+    held_block = text.split("\ninstall-tools-held:\n", 1)[1].split(
+        "\n# install-all owns", 1
+    )[0]
+    service_block = text.split("\ninstall-server-service:\n", 1)[1].split(
+        "\nserver-smoke:", 1
+    )[0]
+
+    assert "make --no-print-directory install-server'" not in install_block
+    assert "$(MAKE) --no-print-directory install-bundle-tools" in install_block
+    assert "$(MAKE) --no-print-directory install-server-payload" in held_block
+    assert held_block.index("install-server-payload") > held_block.index(
+        "uv tool install --force --reinstall"
+    )
+    assert "INSTALL_SERVER_SERVICE_POLICY ?= ensure" in text
+    assert "service_policy=service_policy" in text
+    assert 'if [ "$$(uname -s)" != "Darwin" ]' in service_block
+    assert 'export PATH="$(BIN_DIR):$$PATH"' in service_block
+    assert "command -v vibecrafted" in service_block
+    assert "command -v vc-server-supervisor" in service_block
+    assert '(cd / && "$$launcher" server service install)' in service_block
+    assert '(cd / && "$$launcher" server service restart)' in service_block
+
+
+def test_public_install_server_uses_transaction_and_payload_target_is_internal() -> (
+    None
+):
+    text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    install_server_block = text.rsplit("\ninstall-server:", 1)[1].split(
+        "\ninstall-server-service:", 1
+    )[0]
+    payload_block = text.split("\ninstall-server-payload:", 1)[1].split(
+        "\ninstall-server:", 1
+    )[0]
+
+    assert "build-server-release" in install_server_block
+    assert "run_with_tools_install_lease" in install_server_block
+    assert "require_tools_handoff=False" in install_server_block
+    assert "runtime_payload_paths=payload" in install_server_block
+    assert "install-server-payload" in install_server_block
+    assert "VIBECRAFTED_INSTALL_LEASE_FD" in payload_block
+    assert "_require_inherited_tools_install_lease" in payload_block
+    assert payload_block.index("VIBECRAFTED_INSTALL_LEASE_FD") < payload_block.index(
+        "command -v cargo"
+    )
+    assert payload_block.index(
+        "_require_inherited_tools_install_lease"
+    ) < payload_block.index("command -v cargo")
+
+    result = subprocess.run(
+        ["make", "--no-print-directory", "install-server-payload"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "VIBECRAFTED_INSTALL_LEASE_FD": "",
+        },
+    )
+
+    assert result.returncode != 0
+    assert "internal payload target requires" in result.stderr
+
+
+def test_internal_make_targets_reject_nonexistent_lease_descriptor(
+    tmp_path: Path,
+) -> None:
+    environment = {
+        **os.environ,
+        "HOME": str(tmp_path / "home"),
+        "PATH": "/usr/bin:/bin",
+        "VIBECRAFTED_HOME": str(tmp_path / "home" / ".vibecrafted"),
+        "VIBECRAFTED_TOOLS_HOME": str(tmp_path / "tools"),
+        "VIBECRAFTED_INSTALL_LEASE_FD": "999",
+    }
+    for target in ("install-tools-held", "install-server-payload"):
+        result = subprocess.run(
+            ["make", "--no-print-directory", target],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+        )
+
+        assert result.returncode != 0
+        assert "Bad file descriptor" in result.stderr
+
+
+def test_transactional_make_targets_select_non_mutating_dry_run_recipes(
+    tmp_path: Path,
+) -> None:
+    environment = {
+        **os.environ,
+        "HOME": str(tmp_path / "home"),
+        "VIBECRAFTED_HOME": str(tmp_path / "home" / ".vibecrafted"),
+        "VIBECRAFTED_TOOLS_HOME": str(tmp_path / "tools"),
+    }
+    for target, marker in (
+        ("install-server", "dry-run: install payload under runtime transaction"),
+        (
+            "install-bundle-tools",
+            "dry-run: build payload and run bundled install under one lease",
+        ),
+    ):
+        result = subprocess.run(
+            [
+                "make",
+                "-n",
+                "--no-print-directory",
+                target,
+                "PYTHON=/usr/bin/false",
+                "MAKE=/usr/bin/false",
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=environment,
+        )
+
+        assert result.returncode == 0
+        assert marker in result.stdout
+        assert "run_with_tools_install_lease" not in result.stdout
+
+
+def test_launcher_does_not_pin_stale_supervisor_binary() -> None:
+    launcher = (REPO_ROOT / "scripts" / "vibecrafted").read_text(encoding="utf-8")
+    resolver = launcher.split("_server_supervisor_binary() {", 1)[1].split("\n}", 1)[0]
+
+    assert "command -v vc-server-supervisor" in resolver
+    assert "$HOME/.local/bin/vc-server-supervisor" not in resolver

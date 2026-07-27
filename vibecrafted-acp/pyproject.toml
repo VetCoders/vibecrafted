@@ -1,9 +1,9 @@
 [project]
 name = "vibecrafted-acp"
-version = "3.6.0"
+version = "3.7.0"
 description = "Thin ACP v1 adapter over the Vibecrafted evidence runtime."
 requires-python = ">=3.11"
-dependencies = ["vibecrafted>=3.6.0"]
+dependencies = ["vibecrafted>=3.7.0"]
 
 [project.scripts]
 vibecrafted-acp = "vibecrafted_acp.server:main"

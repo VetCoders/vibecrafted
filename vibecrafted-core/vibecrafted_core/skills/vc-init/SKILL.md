@@ -109,6 +109,13 @@ MCP default is not your cwd.
 architecture is shaped this way and what duct-tape was applied late at night.
 Retrieve the decision context, then verify its current truth against perception.
 
+The fleet's paid-for experience is part of this sense: before dispatching,
+resuming, or recovering external runs, check the
+[Runtime Feedback Ledger](../RUNTIME_FEEDBACK.md) for the commands you are
+about to use (`aicx search -p VetCoders/vibecrafted '<command>'` reaches the
+same doctrine as retrieval). Repeating a mistake the ledger already prices is
+a process failure, not bad luck.
+
 ### Ground truth — over intuition
 
 - Git history: `zsh -ic repo-full` (or `git log --graph -n 15` + `git status -sb`).

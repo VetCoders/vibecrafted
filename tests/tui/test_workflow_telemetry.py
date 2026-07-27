@@ -227,7 +227,7 @@ def test_workflow_skill_helpers_create_run_context_before_prompt_text(
         run_id = payload["RUN_ID"]
         assert payload["TOOL"] == "codex"
         assert payload["MODE"] == "implement"
-        assert re.fullmatch(rf"{prefix}-\d{{6}}-\d+", run_id)
+        assert re.fullmatch(rf"{prefix}-\d{{6}}-\d{{6}}-\d{{5}}", run_id)
         assert payload["SKILL_CODE"] == prefix
         assert payload["SKILL_NAME"] == skill_name
 
@@ -268,7 +268,7 @@ def test_workflow_skill_helpers_export_registered_run_ids_and_locks(
             ["--prompt", f"{skill_name} telemetry smoke"],
         )
         run_id = payload["RUN_ID"]
-        assert re.fullmatch(rf"{prefix}-\d{{6}}-\d+", run_id)
+        assert re.fullmatch(rf"{prefix}-\d{{6}}-\d{{6}}-\d{{5}}", run_id)
         assert payload["SKILL_CODE"] == prefix
         assert payload["SKILL_NAME"] == skill_name
 
@@ -339,7 +339,7 @@ def test_workflow_helper_mints_fresh_run_when_ambient_id_is_stale(
         payload[key] = value
 
     assert payload["RUN_ID"] != "just-000000-1"
-    assert re.fullmatch(r"just-\d{6}-\d+", payload["RUN_ID"])
+    assert re.fullmatch(r"just-\d{6}-\d{6}-\d{5}", payload["RUN_ID"])
     assert payload["SKILL_CODE"] == "just"
     assert payload["SKILL_NAME"] == "justdo"
 
@@ -352,7 +352,7 @@ def test_review_helper_generates_real_run_id_and_lock(tmp_path: Path) -> None:
     payload = _run_helper(tmp_path, "codex-review", [str(plan_file)])
     run_id = payload["RUN_ID"]
 
-    assert re.fullmatch(r"rvew-\d{6}-\d+", run_id)
+    assert re.fullmatch(r"rvew-\d{6}-\d{6}-\d{5}", run_id)
     assert payload["SKILL_CODE"] == "rvew"
     assert payload["SKILL_NAME"] == "review"
 

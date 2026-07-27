@@ -76,7 +76,10 @@ vc-research --prompt 'State of the art for MCP streaming transports'
 vibecrafted research --file /path/to/research-plan.md
 ```
 
-Wywołany poza Zellij, framework dołącza/tworzy sesję operatora i działa w nowej zakładce. Preferuj `--file` dla istniejącego planu, `--prompt` dla intencji inline.
+Research domyślnie uruchamia odłączone lane'y headless zarówno wewnątrz, jak i
+poza vc-frame. Preferuj `--file` dla istniejącego planu, a `--prompt` dla
+intencji inline. Jawnego runtime'u terminal używaj tylko dla kompatybilnościowej
+lane'y, która wymaga TTY.
 
 <details>
 <summary>Foundation Dependencies</summary>
@@ -195,7 +198,11 @@ vc-research --file "$PLAN"
 
 Skrypty spawnu należące do repo pozostają wewnętrznym silnikiem. Nie dokumentuj surowych ścieżek `bash skills/...spawn.sh` jako entrypointu operatora.
 
-Launcher otwiera jedną współdzieloną zakładkę research w Zellij, używając `research.kdl`, utrzymuje wspólny `run_id` i startuje claude + codex + gemini na ten sam plan. Rozbieżność między raportami ujawnia martwe punkty.
+Launcher utrzymuje jeden wspólny `run_id` i uruchamia skonfigurowane lane'y
+headless na tym samym planie. Domyślne lane'y to claude + codex + agy. vc-frame
+może wyświetlić run; jawna kompatybilnościowa lane terminalowa używa jednej
+współdzielonej karty `research.kdl`. Rozbieżność między raportami ujawnia
+martwe punkty.
 
 Zaraz po spawnie operator dostaje launch card ze współdzielonym `run_id`, katalogiem runu, katalogiem raportów, ścieżką podsumowania i dokładną komendą oczekiwania. **Launch card to domyślna powierzchnia.** `observe --last` to narzędzie do drilldownu, nie podstawowe źródło prawdy.
 

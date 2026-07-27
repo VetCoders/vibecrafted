@@ -287,7 +287,10 @@ fn classify_run_success_evidence_beats_stale_last_error() {
     // watchdog left last_error/recovery_required on the snapshot.
     let mut extra = std::collections::HashMap::new();
     extra.insert("exit_code".into(), serde_json::json!(0));
-    extra.insert("completed_at".into(), serde_json::json!("2026-07-24T03:12:57Z"));
+    extra.insert(
+        "completed_at".into(),
+        serde_json::json!("2026-07-24T03:12:57Z"),
+    );
     extra.insert("health".into(), serde_json::json!("final"));
     extra.insert("liveness".into(), serde_json::json!("terminal"));
     extra.insert("recovery_required".into(), serde_json::json!(true));
@@ -305,13 +308,10 @@ fn classify_run_success_evidence_beats_stale_last_error() {
         last_heartbeat: Some("2026-07-24T03:00:20Z".to_string()),
         root: None,
         operator_session: None,
-        latest_report: Some(
-            "/tmp/2026-07-24_grok_zbadaj-i-doci_report.md".to_string(),
-        ),
+        latest_report: Some("/tmp/2026-07-24_grok_zbadaj-i-doci_report.md".to_string()),
         latest_transcript: None,
         last_error: Some(
-            "launcher_pid 18734 is not alive; heartbeat stale; recovery_required"
-                .to_string(),
+            "launcher_pid 18734 is not alive; heartbeat stale; recovery_required".to_string(),
         ),
         extra,
     };

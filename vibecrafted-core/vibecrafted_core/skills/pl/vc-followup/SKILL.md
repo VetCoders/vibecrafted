@@ -99,8 +99,9 @@ vibecrafted followup <agent> --file '/path/to/context.md'
 vc-followup <agent> --prompt '<prompt>'
 ```
 
-Jeśli `vc-followup <agent>` zostanie wywołany poza Zellij, framework dołączy do
-sesji operatora lub ją utworzy i uruchomi ten workflow w nowej karcie.
+`vc-followup <agent>` domyślnie uruchamia odłączonego workera headless zarówno
+wewnątrz, jak i poza vc-frame. Obserwuj go przez receipt, transkrypt i awaitowalny
+stan runu.
 
 ## Doktryna pracy z repozytorium
 

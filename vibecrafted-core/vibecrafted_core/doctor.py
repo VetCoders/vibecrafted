@@ -3,11 +3,13 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
+import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from xml.parsers.expat import ExpatError
 
 from .package_resources import deck_path, runtime_path, skills_path
 from .vc_frame_delivery import (
@@ -88,6 +90,95 @@ def _launcher_shim_findings(
             "launcher",
             f"vibecrafted on PATH ({path}) is neither the uv-tool shim nor the "
             f"known deck — verify the install channel",
+        )
+    ]
+
+
+def _server_supervision_findings(
+    *,
+    platform: str | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+    config_factory: Callable[..., Any] | None = None,
+    status_reader: Callable[[Any], Any] | None = None,
+) -> list[_Finding]:
+    """Fail closed when the macOS control-plane service is not truly supervised."""
+    resolved_platform = sys.platform if platform is None else platform
+    if resolved_platform != "darwin":
+        return [
+            _Finding(
+                "ok",
+                "server-supervisor",
+                f"LaunchAgent supervision not applicable on {resolved_platform}",
+            )
+        ]
+
+    resolved_launcher = which("vibecrafted")
+    if not resolved_launcher:
+        return [
+            _Finding(
+                "fail",
+                "server-supervisor",
+                "cannot verify supervised control plane because `vibecrafted` is "
+                "not on PATH — reinstall Vibecrafted",
+            )
+        ]
+
+    if config_factory is None or status_reader is None:
+        from .server_supervisor import default_config, service_status
+
+        config_factory = config_factory or default_config
+        status_reader = status_reader or service_status
+
+    try:
+        config = config_factory(launcher=Path(resolved_launcher))
+        status = status_reader(config)
+    except (
+        OSError,
+        RuntimeError,
+        ValueError,
+        subprocess.SubprocessError,
+        ExpatError,
+    ) as exc:
+        return [
+            _Finding(
+                "fail",
+                "server-supervisor",
+                "cannot prove the installed control-plane supervisor healthy: "
+                f"{exc}. Run `vibecrafted server service install`",
+            )
+        ]
+
+    supervisor_pid = getattr(status, "supervisor_pid", None)
+    required = {
+        "installed": bool(getattr(status, "installed", False)),
+        "loaded": bool(getattr(status, "loaded", False)),
+        "supervisor_live": bool(getattr(status, "supervisor_live", False)),
+        "supervisor_verified": bool(getattr(status, "supervisor_verified", False)),
+        "supervisor_service_managed": bool(
+            getattr(status, "supervisor_service_managed", False)
+        ),
+        "build_current": bool(getattr(status, "build_current", False)),
+        "pair_healthy": bool(getattr(status, "pair_healthy", False)),
+        "supervisor_pid": supervisor_pid is not None,
+    }
+    failed = [name for name, healthy in required.items() if not healthy]
+    if failed:
+        return [
+            _Finding(
+                "fail",
+                "server-supervisor",
+                "control plane is not durably supervised "
+                f"(failed: {', '.join(failed)}). Run "
+                "`vibecrafted server service install` and re-run doctor",
+            )
+        ]
+
+    return [
+        _Finding(
+            "ok",
+            "server-supervisor",
+            "verified LaunchAgent-managed supervisor and healthy server/guardian "
+            f"pair (pid={supervisor_pid}, current build)",
         )
     ]
 
@@ -176,6 +267,44 @@ def _vc_frame_delivery_findings(
         checkout = vc_frame_config_source()
     except FileNotFoundError:
         pass
+    use_repo = prefer_repo_vc_frame()
+    generated = current / "runtime" / "generated" / "vc-frame"
+    materialized_paths = (
+        generated / "config.kdl",
+        generated / "layouts",
+        generated / "themes",
+    )
+    materialized = all(
+        path.is_file() if path.suffix else path.is_dir() for path in materialized_paths
+    )
+    if use_repo:
+        findings.append(
+            _Finding(
+                "ok",
+                "vc-frame:runtime",
+                "dev-checkout channel does not require a published config generation",
+            )
+        )
+        view_repair = "`vibecrafted config install --prefer-repo`"
+    elif materialized:
+        findings.append(
+            _Finding(
+                "ok",
+                "vc-frame:runtime",
+                f"pre-materialized config present under {generated}",
+            )
+        )
+        view_repair = "`vibecrafted config install`"
+    else:
+        findings.append(
+            _Finding(
+                "fail",
+                "vc-frame:runtime",
+                f"published runtime has no complete pre-materialized config "
+                f"under {generated} — run `vibecrafted update`",
+            )
+        )
+        view_repair = "`vibecrafted update`"
 
     channels: list[str] = []
     for name in ("config.kdl", "layouts", "themes"):
@@ -187,7 +316,7 @@ def _vc_frame_delivery_findings(
                 _Finding(
                     "fail",
                     "vc-frame:view",
-                    f"{path} is a dangling symlink — run `vibecrafted config install`",
+                    f"{path} is a dangling symlink — run {view_repair}",
                 )
             )
         elif ch == "STALE-FILE":
@@ -196,7 +325,7 @@ def _vc_frame_delivery_findings(
                     "fail",
                     "vc-frame:view",
                     f"{path} is a regular file shadowing the store view — "
-                    f"run `vibecrafted config install` (backs up as .stale.*)",
+                    f"run {view_repair} (backs up as .stale.* when wiring)",
                 )
             )
         elif ch == "missing":
@@ -204,7 +333,7 @@ def _vc_frame_delivery_findings(
                 _Finding(
                     "warn",
                     "vc-frame:view",
-                    f"{path} missing — run `vibecrafted config install`",
+                    f"{path} missing — run {view_repair}",
                 )
             )
         elif ch == "foreign":
@@ -291,13 +420,20 @@ def _vc_frame_delivery_findings(
         ):
             unresolved.append(f"{kdl_file.name}:pbcopy")
     if unresolved:
+        remediation = (
+            "dev checkout is intentionally raw; install the referenced host "
+            "commands or unset VIBECRAFTED_PREFER_REPO_VC_FRAME and run "
+            "`vibecrafted update`"
+            if use_repo
+            else "republish host-adapted config via `vibecrafted update`"
+        )
         findings.append(
             _Finding(
                 "warn",
                 "vc-frame:pane-shell",
                 f"unresolved host commands for shell={shell!r}, "
                 f"clipboard={clipboard or 'internal'}: {', '.join(unresolved)}; "
-                "stage via config install",
+                f"{remediation}",
             )
         )
     else:
@@ -318,7 +454,7 @@ def _vc_frame_delivery_findings(
                 "fail",
                 "frontier:zombies",
                 f"{len(zombies)} dangling link(s) under {froot} — "
-                f"re-run install-frontier-config.sh or config install",
+                f"re-run install-frontier-config.sh or `vibecrafted update`",
             )
         )
     else:
@@ -330,7 +466,7 @@ def _vc_frame_delivery_findings(
             )
         )
 
-    if prefer_repo_vc_frame():
+    if use_repo:
         findings.append(
             _Finding(
                 "ok",
@@ -362,6 +498,7 @@ def doctor_run(
         findings = list(installer.run_doctor(resolved_store, resolved_state))
         findings.extend(_packaged_asset_findings())
     findings.extend(_launcher_shim_findings())
+    findings.extend(_server_supervision_findings())
     findings.extend(_vc_frame_delivery_findings())
     return findings
 

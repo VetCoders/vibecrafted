@@ -621,12 +621,19 @@ spawn_in_vc_frame_pane() {
         # --after-base (W2-B-4c): run tabs grow from the base card. Probe the
         # binary — a stale install without the flag keeps append placement.
         local placement_flag=""
-        if "$vc_frame_bin" action new-tab --help 2>&1 | command grep -q -- '--after-base'; then
+        local focus_flag=""
+        local new_tab_help=""
+        new_tab_help="$("$vc_frame_bin" action new-tab --help 2>&1 || true)"
+        if [[ "$new_tab_help" == *"--after-base"* ]]; then
           placement_flag="--after-base"
+        fi
+        if [[ "$new_tab_help" == *"--no-focus"* ]]; then
+          focus_flag="--no-focus"
         fi
         spawn_vc_frame_session_action "$vc_frame_bin" "$host_session" \
           action new-tab \
           ${placement_flag:+"$placement_flag"} \
+          ${focus_flag:+"$focus_flag"} \
           --name "$run_tab_name" \
           --cwd "${SPAWN_ROOT:-$(pwd)}" \
           -- "$cmd_script" || launch_status=$?
@@ -767,12 +774,19 @@ spawn_in_operator_session() {
     if [[ -z "$run_tab_id" ]]; then
       # --after-base probe (parity with spawn_in_vc_frame_pane / shell twin).
       local placement_flag=""
-      if "$vc_frame_bin" action new-tab --help 2>&1 | command grep -q -- '--after-base'; then
+      local focus_flag=""
+      local new_tab_help=""
+      new_tab_help="$("$vc_frame_bin" action new-tab --help 2>&1 || true)"
+      if [[ "$new_tab_help" == *"--after-base"* ]]; then
         placement_flag="--after-base"
+      fi
+      if [[ "$new_tab_help" == *"--no-focus"* ]]; then
+        focus_flag="--no-focus"
       fi
       spawn_vc_frame_session_action "$vc_frame_bin" "$session_name" \
         action new-tab \
         ${placement_flag:+"$placement_flag"} \
+        ${focus_flag:+"$focus_flag"} \
         --name "$run_tab_name" \
         --cwd "${SPAWN_ROOT:-$(pwd)}" \
         -- "$cmd_script" || launch_status=$?

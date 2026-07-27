@@ -60,6 +60,13 @@ Examples:
 
     /// Fail-closed CLI surface: product binaries must not treat --help as
     /// "start a listener and hang" (runtime contract for install-all bins).
+    fn valid_lifecycle_nonce(value: &str) -> bool {
+        value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    }
+
     fn consume_cli_meta() -> Option<i32> {
         let mut args = std::env::args().skip(1);
         while let Some(arg) = args.next() {
@@ -77,6 +84,25 @@ Examples:
                     let _ = args.next();
                 }
                 other if other.starts_with("--addr=") => {}
+                "--lifecycle-nonce" => {
+                    let Some(value) = args.next() else {
+                        eprintln!("vc-server: --lifecycle-nonce requires a value");
+                        return Some(2);
+                    };
+                    if !valid_lifecycle_nonce(&value) {
+                        eprintln!("vc-server: invalid lifecycle nonce");
+                        return Some(2);
+                    }
+                }
+                other if other.starts_with("--lifecycle-nonce=") => {
+                    let value = other
+                        .strip_prefix("--lifecycle-nonce=")
+                        .expect("guarded lifecycle nonce prefix");
+                    if !valid_lifecycle_nonce(value) {
+                        eprintln!("vc-server: invalid lifecycle nonce");
+                        return Some(2);
+                    }
+                }
                 other if other.starts_with('-') => {
                     eprintln!("vc-server: unknown option `{other}`");
                     eprintln!("Try `vc-server --help` for usage.");

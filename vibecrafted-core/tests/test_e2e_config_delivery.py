@@ -12,7 +12,13 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from vibecrafted_core.frontier_assets import vc_frame_config_source
 from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config
+from vibecrafted_core.vc_frame_staging import (
+    materialize_vc_frame_config,
+    resolve_clipboard_command,
+    resolve_pane_shell,
+)
 
 CORE = Path(__file__).resolve().parents[1]
 REPO = CORE.parent
@@ -172,15 +178,22 @@ def _run_stage_in_venv(
         (runtime_root / "runtime" / "scripts" / "codex_spawn.sh").write_text(
             "#!/usr/bin/env bash\\n", encoding="utf-8"
         )
-        current = tools / "vibecrafted-current"
-        current.parent.mkdir(parents=True, exist_ok=True)
-        current.symlink_to(runtime_root)
         if {prefer_repo!r}:
             os.environ["VIBECRAFTED_PREFER_REPO_VC_FRAME"] = "1"
         else:
             os.environ.pop("VIBECRAFTED_PREFER_REPO_VC_FRAME", None)
+        import vibecrafted_core
         from vibecrafted_core.frontier_assets import vc_frame_config_source
         from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config
+        from vibecrafted_core.vc_frame_staging import (
+            materialize_vc_frame_config,
+            resolve_clipboard_command,
+            resolve_pane_shell,
+        )
+        package_root = Path(vibecrafted_core.__file__).resolve()
+        assert "site-packages" in str(package_root) or "dist-packages" in str(
+            package_root
+        ), f"expected installed wheel import, got {{package_root}}"
         src = vc_frame_config_source()
         assert (src / "config.kdl").is_file(), src
         # Channel-1 must resolve package data inside the venv site-packages
@@ -188,6 +201,15 @@ def _run_stage_in_venv(
             assert "site-packages" in str(src.resolve()) or "dist-packages" in str(
                 src.resolve()
             ), f"expected packaged source, got {{src}}"
+            materialize_vc_frame_config(
+                src,
+                runtime_root / "runtime" / "generated" / "vc-frame",
+                pane_shell=resolve_pane_shell({path_env!r}),
+                clipboard_command=resolve_clipboard_command({path_env!r}),
+            )
+        current = tools / "vibecrafted-current"
+        current.parent.mkdir(parents=True, exist_ok=True)
+        current.symlink_to(runtime_root)
         plan = stage_vc_frame_config(
             home=home,
             tools_home=tools,
@@ -246,7 +268,8 @@ def _run_stage_in_venv(
     isolated_env = {**os.environ, "PATH": path_env}
     isolated_env.pop("PYTHONPATH", None)
     proc = subprocess.run(
-        [str(venv_python), "-c", script],
+        [str(venv_python), "-I", "-c", script],
+        cwd=str(home),
         capture_output=True,
         text=True,
         timeout=120,
@@ -360,6 +383,12 @@ def test_upgrade_flip_atomicity(tmp_path: Path, monkeypatch) -> None:
     (runtime / "Makefile").write_text("all:\n\t@true\n", encoding="utf-8")
     (runtime / "runtime" / "scripts" / "codex_spawn.sh").write_text(
         "#!/usr/bin/env bash\n", encoding="utf-8"
+    )
+    materialize_vc_frame_config(
+        vc_frame_config_source(),
+        runtime / "runtime" / "generated" / "vc-frame",
+        pane_shell=resolve_pane_shell(),
+        clipboard_command=resolve_clipboard_command(),
     )
     current = tools / "vibecrafted-current"
     current.parent.mkdir(parents=True, exist_ok=True)

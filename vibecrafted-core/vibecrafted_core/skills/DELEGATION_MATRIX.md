@@ -122,6 +122,8 @@ Grounded in `vibecrafted_core.cli.LAUNCHERS` + shell wrappers + lifecycle meta. 
 | `prune`     | [`vc-prune`](vc-prune/SKILL.md)         | `vibecrafted prune <agent>`     | `/vc-prune`     | Runtime cone / silencer strip                                                                   |
 | `intents`   | [`vc-intents`](vc-intents/SKILL.md)     | `vibecrafted intents <agent>`   | `/vc-intents`   | Plan-to-runtime truth                                                                           |
 | `delegate`  | [`vc-delegate`](vc-delegate/SKILL.md)   | `vibecrafted delegate <agent>`  | `/vc-delegate`  | **Native** subagent doctrine (bounded)                                                          |
+| `trust`     | [`vc-trust`](vc-trust/SKILL.md)         | `vibecrafted trust <agent>`     | `/vc-trust`     | READ; post-hoc commit-claim falsification (agent fairness + completeness) + settlement f/x/n    |
+| `guard`     | [`vc-guard`](vc-guard/SKILL.md)         | `vibecrafted guard <agent>`     | `/vc-guard`     | READ; gate inventory + refuse continuation on trust `block` (never invents settlement)          |
 | `paste`     | (runtime helper)                        | `vibecrafted paste …`           | —               | Prompt/paste helper; not a full ERi skill                                                       |
 
 ### Meta and orientation (not the same shape as skill workers)
@@ -207,5 +209,6 @@ Pick the cell by intent: ship-stage delivery → `implement`. Daily rescue / pro
 - **External fleet modes:** [`vc-agents`](vc-agents/SKILL.md)
 - **Verification (walk-around):** [`VERIFICATION_RULE.md`](VERIFICATION_RULE.md)
 - **Living Tree:** [`LIVING_TREE_RULE.md`](LIVING_TREE_RULE.md)
+- **Runtime feedback ledger (per-command corrections):** [`RUNTIME_FEEDBACK.md`](RUNTIME_FEEDBACK.md)
 
 <!-- /fleet-imperative -->

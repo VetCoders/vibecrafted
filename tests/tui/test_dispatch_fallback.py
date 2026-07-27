@@ -36,6 +36,9 @@ def _run_shell(
 def _fallback_env(bin_dir: Path) -> dict[str, str]:
     env = os.environ.copy()
     env["PATH"] = f"{bin_dir}:/usr/bin:/bin"
+    deck = bin_dir / "vibecrafted"
+    # Never let a fallback test discover the operator's live launcher.
+    env["VIBECRAFTED_DECK_BIN"] = str(deck) if deck.is_file() else ""
     return env
 
 
@@ -75,6 +78,37 @@ def test_vc_wrapper_reports_cleanly_when_no_deck_available(
     )
     result = _run_shell(shell, script, _fallback_env(empty_bin))
     assert result.returncode == 127
+    assert "helper layer is not loaded" in result.stderr
+
+
+@pytest.mark.parametrize("shell", ["bash", "zsh"])
+def test_test_mode_never_discovers_the_operator_deck(
+    shell: str, tmp_path: Path
+) -> None:
+    if shutil.which(shell) is None:
+        pytest.skip(f"{shell} not available")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    live_deck = bin_dir / "vibecrafted"
+    live_deck.write_text(
+        "#!/bin/sh\nprintf 'unsafe-live-deck\\n'\n",
+        encoding="utf-8",
+    )
+    live_deck.chmod(live_deck.stat().st_mode | stat.S_IEXEC)
+    env = os.environ.copy()
+    env["PATH"] = f"{bin_dir}:/usr/bin:/bin"
+    env["VIBECRAFTED_TEST_MODE"] = "1"
+    env.pop("VIBECRAFTED_DECK_BIN", None)
+    script = (
+        f'source "{DISPATCH}" 2>/dev/null || true; '
+        "unset -f _vetcoders_skill_wrapper 2>/dev/null; "
+        "vc-justdo codex --prompt hi"
+    )
+
+    result = _run_shell(shell, script, env)
+
+    assert result.returncode == 127
+    assert "unsafe-live-deck" not in result.stdout
     assert "helper layer is not loaded" in result.stderr
 
 

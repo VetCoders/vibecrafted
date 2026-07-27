@@ -75,6 +75,11 @@ name = "control_events_sse"
 path = "tests/control_events_sse.rs"
 required-features = ["ssr"]
 
+[[test]]
+name = "server_cli"
+path = "tests/server_cli.rs"
+required-features = ["ssr"]
+
 [package.metadata.leptos]
 output-name = "vibecrafted-server-web"
 site-root = "target/site"

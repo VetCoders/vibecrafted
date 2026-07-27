@@ -56,3 +56,4 @@ vibecrafted-io-link
 /.venv/
 **/.venv/
 /.prview
+/.agents/

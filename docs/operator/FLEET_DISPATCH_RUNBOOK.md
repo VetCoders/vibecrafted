@@ -63,12 +63,16 @@ vibecrafted <workflow> <agent> --prompt '<inline intent>'
 
 ## 5. Observe (metadata-first, not pane-first)
 
+- Ordinary fleet workers are detached and headless by default. vc-frame is an
+  optional projection of state and transcripts, never the process owner. A true
+  PTY is reserved for the User Session, a bare resume, or an explicit
+  `--runtime terminal` for a proven TTY-required path.
 - After dispatch, arm `vibecrafted <agent> await --run-id <id>` immediately,
-  supervisor-side. Control-plane JSON, report files, transcripts, panes, and
+  supervisor-side. Control-plane JSON, report files, transcripts, viewer panes, and
   scheduled wakeups are diagnostic only, not wake signals. Hedging await with
   ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
   do not normalize the hedge. See `docs/runtime/AGENT_OPS.md`.
-- Liveness is always 3-signal: await verdict, terminal run meta, worker pid
+- Liveness is always 3-signal: await verdict, terminal-state run meta, worker pid
   dead, plus promised report presence. Two agreeing signals are enough to act;
   three are required to declare done. Any disagreement means treat as live and
   re-arm await. Known skew: rc=0-on-live and meta stuck `active`/`stalled` after

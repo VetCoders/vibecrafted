@@ -1,10 +1,12 @@
 [project]
 name = "vibecrafted"
-version = "3.6.0"
+version = "3.7.0"
 description = "Core Python library for Vibecrafted runtime and synthesis surfaces."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "PyYAML>=6.0,<7",
+]
 
 [project.scripts]
 vibecrafted = "vibecrafted_core.cli:main"
@@ -30,8 +32,10 @@ vc-review = "vibecrafted_core.wrappers:review_main"
 vc-release = "vibecrafted_core.wrappers:release_main"
 vc-sandbox = "vibecrafted_core.wrappers:sandbox_main"
 vc-scaffold = "vibecrafted_core.wrappers:scaffold_main"
+vc-server-supervisor = "vibecrafted_core.server_supervisor:main"
 vc-workflow = "vibecrafted_core.wrappers:workflow_main"
 vc-cron = "vibecrafted_core.cron:main"
+vc-guardian = "vibecrafted_core.guardian:main"
 vc-loop = "vibecrafted_core.loop:main"
 vc-ship = "vibecrafted_core.ship:main"
 vibecrafted-resume = "vibecrafted_core.wrappers:resume_main"
