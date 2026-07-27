@@ -736,7 +736,12 @@ def test_make_install_verifies_server_supervisor_entrypoint() -> None:
     assert "vc-server-supervisor" in install_tools_block
     assert "expected executable entrypoint" in install_tools_block
     assert '"$$resolved" --help' in install_tools_block
-    assert 'tool_root="$$(uv tool dir)/vibecrafted"' in install_tools_block
+    # --color never is load-bearing: FORCE_COLOR-style env makes `uv tool dir`
+    # emit ANSI codes into command substitution, producing a nonexistent path
+    assert (
+        'tool_root="$$(uv tool dir --color never)/vibecrafted"' in install_tools_block
+    )
+    assert "uv tool dir)" not in install_tools_block
     assert "expected uv tool target" in install_tools_block
     assert "uv tool imports vibecrafted_core" in install_tools_block
     assert "$$stable_root/vibecrafted-core" in install_tools_block
