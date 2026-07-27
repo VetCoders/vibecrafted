@@ -1235,3 +1235,103 @@ def test_worker_spawn_scripts_default_to_headless(
     assert result.returncode == 0, result.stderr
     clean_stdout = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
     assert "runtime: headless" in clean_stdout
+
+
+@pytest.mark.parametrize("any_local_copy", [True, False])
+def test_aicx_resume_fallback_skips_provider_pruned_candidates(
+    tmp_path: Path, any_local_copy: bool
+) -> None:
+    """A native-resume candidate is only valid while the provider still holds
+    the session locally. aicx retains extracts after Claude Code prunes its
+    session store, so an unvalidated candidate dies at launch with
+    "No conversation found with session ID" (observed in the field 2026-07-28).
+    """
+    import datetime as dt
+
+    home = tmp_path / "home"
+    repo = tmp_path / "repo"
+    fake_bin = tmp_path / "bin"
+    for d in (home, repo, fake_bin):
+        d.mkdir()
+
+    now = dt.datetime.now(dt.timezone.utc)
+    fresh = now.isoformat().replace("+00:00", "Z")
+    pruned_src = tmp_path / "pruned-session.jsonl"  # deliberately absent
+    live_src = tmp_path / "live-session.jsonl"
+    sessions = [
+        {
+            # Newest + repo-matching: the old code always picked this one.
+            "session_id": "gone-aaaa-1111",
+            "agent": "claude",
+            "project": "repo",
+            "repo_path": str(repo),
+            "updated_at": fresh,
+            "source_path": str(pruned_src),
+            "title": "pruned upstream",
+        },
+    ]
+    if any_local_copy:
+        live_src.write_text("{}\n", encoding="utf-8")
+        sessions.append(
+            {
+                "session_id": "live-bbbb-2222",
+                "agent": "claude",
+                "project": "repo",
+                "repo_path": str(repo),
+                "updated_at": fresh,
+                "source_path": str(live_src),
+                "title": "still resumable",
+            }
+        )
+    sessions_json = tmp_path / "sessions.json"
+    sessions_json.write_text(json.dumps(sessions), encoding="utf-8")
+
+    _write_fake_command(
+        fake_bin / "aicx",
+        "#!/usr/bin/env bash\n"
+        'if [[ "$1 $2" == "sessions list" ]]; then\n'
+        f'  cat "{sessions_json}"\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                f'source "{SHELL_SH}"\n'
+                f"_vetcoders_aicx_resume_fallback claude {shlex.quote(str(repo))}"
+            ),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    fields = dict(
+        line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
+    )
+    if any_local_copy:
+        assert fields.get("SESSION_ID") == "live-bbbb-2222"
+        assert fields.get("MODE") == "native_resume"
+    else:
+        assert fields.get("SESSION_ID") == ""
+        assert fields.get("MODE") == "new_session"
+    meta_files = list((home / ".vibecrafted" / "tmp").glob("*.meta.json"))
+    assert meta_files, "fallback must persist its meta sidecar"
+    meta = json.loads(meta_files[0].read_text(encoding="utf-8"))
+    assert any(
+        d.startswith("native_candidate_missing_local:gone-aaaa-1111")
+        for d in meta["degradations"]
+    ), meta["degradations"]
