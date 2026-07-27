@@ -510,6 +510,7 @@ def test_root_cli_defaults_headless_but_honors_explicit_terminal(
 ) -> None:
     seen = {}
     monkeypatch.setenv("VIBECRAFTED_OPERATOR_SESSION", "vc-frame")
+    monkeypatch.setattr(cli, "_live_operator_session_exists", lambda _root: False)
 
     def fake_launch(spec, _source_dir):
         seen["runtime"] = spec.runtime
