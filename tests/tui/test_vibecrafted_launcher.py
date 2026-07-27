@@ -2735,9 +2735,10 @@ def test_server_service_preserves_high_installer_lease_fd_through_launcher(
         os.close(descriptor)
 
     assert result.returncode == 0, result.stderr
-    assert capture_file.read_text(
-        encoding="utf-8"
-    ) == f"fd={inherited_descriptor} size=0\n"
+    assert (
+        capture_file.read_text(encoding="utf-8")
+        == f"fd={inherited_descriptor} size=0\n"
+    )
 
 
 def _write_fake_claude_stream_agent(bin_dir: Path, final_message: str) -> None:
