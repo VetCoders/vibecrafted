@@ -346,6 +346,31 @@ exit 0
     assert lifecycle_log.read_text(encoding="utf-8").splitlines()[-1] == "stop"
 
 
+def test_run_child_does_not_wait_for_daemonized_descendant_capture(
+    tmp_path: Path,
+) -> None:
+    launcher = _executable(
+        tmp_path / "bin" / "launcher",
+        """#!/bin/sh
+(sleep 5) &
+printf 'launcher complete\n'
+exit 0
+""",
+    )
+
+    started = time.monotonic()
+    return_code, detail = supervisor._run_child(
+        [str(launcher)],
+        env=dict(os.environ),
+        timeout=2,
+        stop_event=threading.Event(),
+    )
+
+    assert time.monotonic() - started < 2
+    assert return_code == 0
+    assert detail == "launcher complete"
+
+
 def test_zero_exit_without_verified_pid_pair_is_degraded(
     tmp_path: Path,
 ) -> None:
@@ -582,7 +607,11 @@ def test_service_status_distinguishes_all_runtime_dimensions(
         "probe_supervisor",
         lambda _paths: _managed_probe(config, pid=9876),
     )
-    monkeypatch.setattr(supervisor, "_pair_healthy", lambda _launcher, _env: True)
+    monkeypatch.setattr(
+        supervisor,
+        "_pair_healthy",
+        lambda _launcher, _env, **_kwargs: True,
+    )
     monkeypatch.setattr(
         supervisor,
         "_managed_pair_snapshot",
@@ -707,7 +736,11 @@ def test_launcher_fingerprint_is_enforced_by_run_and_service_status(
         "probe_supervisor",
         lambda _paths: _managed_probe(config, pid=9876),
     )
-    monkeypatch.setattr(supervisor, "_pair_healthy", lambda _launcher, _env: True)
+    monkeypatch.setattr(
+        supervisor,
+        "_pair_healthy",
+        lambda _launcher, _env, **_kwargs: True,
+    )
     monkeypatch.setattr(
         supervisor,
         "_managed_pair_snapshot",

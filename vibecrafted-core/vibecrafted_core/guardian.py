@@ -3332,14 +3332,14 @@ def _recover_pending_trust_before_attach() -> None:
 def _recover_untriaged_runs_background() -> None:
     """Recover durable jobs, then sweep dispatcher-orphaned terminal runs."""
 
-    from .run_triage import OUTCOME_ERROR, sweep_untriaged_runs
+    from .run_triage import reconcile_untriaged_runs
 
     _recover_terminal_triage_outbox()
     control_plane = vibecrafted_home() / "control_plane"
     try:
-        swept = sweep_untriaged_runs(
+        report = reconcile_untriaged_runs(
             control_plane,
-            limit=TERMINAL_TRIAGE_OUTBOX_ATTEMPT_LIMIT,
+            attempt_limit=TERMINAL_TRIAGE_OUTBOX_ATTEMPT_LIMIT,
             scan_limit=TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT,
         )
     except Exception:
@@ -3348,16 +3348,19 @@ def _recover_untriaged_runs_background() -> None:
             control_plane,
         )
         return
-    for meta, outcome in swept:
-        if outcome.outcome == OUTCOME_ERROR:
-            LOGGER.error(
-                "terminal triage recovery failed for %s: %s",
-                meta,
-                outcome.reason,
-            )
+    for item in report.errors:
+        LOGGER.error(
+            "terminal triage recovery failed for %s: %s",
+            item.meta_path,
+            item.reason,
+        )
     LOGGER.info(
-        "terminal triage recovery complete: attempted=%s",
-        len(swept),
+        "terminal triage recovery complete: scanned=%s attempted=%s "
+        "errors=%s truncated=%s",
+        report.scanned,
+        report.attempted,
+        len(report.errors),
+        report.truncated,
     )
 
 

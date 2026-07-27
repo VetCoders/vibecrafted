@@ -12,6 +12,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from collections.abc import Sequence
@@ -101,7 +102,7 @@ class SupervisorConfig:
     port: int
     interval: float = 1.0
     maximum_backoff: float = 30.0
-    command_timeout: float = 30.0
+    command_timeout: float = 60.0
 
     @property
     def endpoint(self) -> str:
@@ -944,36 +945,55 @@ def _run_child(
     timeout: float,
     stop_event: threading.Event,
 ) -> tuple[int, str]:
-    process = subprocess.Popen(
-        list(argv),
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    deadline = time.monotonic() + timeout
-    while True:
-        try:
-            stdout, stderr = process.communicate(timeout=0.1)
-            detail = (stderr or stdout).strip()
-            return int(process.returncode or 0), detail[-4000:]
-        except subprocess.TimeoutExpired:
-            pass
-        if stop_event.is_set() or time.monotonic() >= deadline:
+    # Pipes make ``communicate`` wait for EOF from every descendant that inherited
+    # them, even after the direct launcher has exited. The shell deck deliberately
+    # daemonizes the server and guardian, so capture into private temporary files
+    # and wait only for the direct child.
+    with (
+        tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as stdout_file,
+        tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as stderr_file,
+    ):
+        process = subprocess.Popen(
+            list(argv),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            text=True,
+        )
+        deadline = time.monotonic() + timeout
+        timed_out = False
+        while process.poll() is None:
+            if stop_event.wait(0.1):
+                break
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+        if process.poll() is None:
             process.terminate()
             try:
-                stdout, stderr = process.communicate(timeout=5)
+                process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 process.kill()
-                stdout, stderr = process.communicate(timeout=5)
-            reason = (
-                "supervisor stopping" if stop_event.is_set() else "command timed out"
+                process.wait(timeout=5)
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        stdout = stdout_file.read()
+        stderr = stderr_file.read()
+        detail = (stderr or stdout).strip()
+        if stop_event.is_set():
+            return 143, (
+                f"supervisor stopping: {detail[-3800:]}"
+                if detail
+                else "supervisor stopping"
             )
-            detail = (stderr or stdout).strip()
-            return 143 if stop_event.is_set() else 124, (
-                f"{reason}: {detail[-3800:]}" if detail else reason
+        if timed_out:
+            return 124, (
+                f"command timed out: {detail[-3800:]}"
+                if detail
+                else "command timed out"
             )
+        return int(process.returncode or 0), detail[-4000:]
 
 
 def run_supervisor(
@@ -1090,7 +1110,11 @@ def run_supervisor(
                 canonical_pair_healthy = (
                     return_code == 0
                     and managed_pair_live
-                    and _pair_healthy(config.launcher, child_environment)
+                    and _pair_healthy(
+                        config.launcher,
+                        child_environment,
+                        timeout=config.command_timeout,
+                    )
                 )
                 if canonical_pair_healthy:
                     consecutive_failures = 0
@@ -1577,14 +1601,19 @@ def _wait_for_managed_supervisor(
     return probe
 
 
-def _pair_healthy(launcher: Path, environment: dict[str, str]) -> bool:
+def _pair_healthy(
+    launcher: Path,
+    environment: dict[str, str],
+    *,
+    timeout: float = 60.0,
+) -> bool:
     try:
         result = subprocess.run(
             [str(launcher), "server", "status"],
             check=False,
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=timeout,
             env=environment,
         )
     except (OSError, subprocess.SubprocessError):
@@ -1619,6 +1648,7 @@ def service_status(config: SupervisorConfig) -> ServiceStatus:
         and _pair_healthy(
             config.launcher,
             environment,
+            timeout=config.command_timeout,
         )
     )
     return ServiceStatus(
@@ -2112,7 +2142,7 @@ def _add_config_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--port", type=int, default=3024)
     parser.add_argument("--interval", type=float, default=1.0)
     parser.add_argument("--maximum-backoff", type=float, default=30.0)
-    parser.add_argument("--command-timeout", type=float, default=30.0)
+    parser.add_argument("--command-timeout", type=float, default=60.0)
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -3329,3 +3329,68 @@ def test_trust_recovery_sweep_reports_success_and_preserved_failures(
         for m in messages
     )
     assert any("recovery hit its bounded limit after 2 outboxes" in m for m in messages)
+
+
+def test_terminal_triage_startup_uses_current_reconciliation_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from vibecrafted_core import run_triage
+
+    control_plane = tmp_path / "control_plane"
+    observed: list[tuple[Path, int, int]] = []
+    report = SimpleNamespace(
+        scanned=5,
+        attempted=2,
+        errors=(
+            SimpleNamespace(
+                meta_path="/runtime_runs/broken/meta.json",
+                reason="proof missing",
+            ),
+        ),
+        truncated=True,
+    )
+
+    def reconcile(
+        root: Path,
+        *,
+        attempt_limit: int,
+        scan_limit: int,
+    ) -> object:
+        observed.append((root, attempt_limit, scan_limit))
+        return report
+
+    monkeypatch.setattr(
+        guardian_module,
+        "_recover_terminal_triage_outbox",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        guardian_module,
+        "vibecrafted_home",
+        lambda: tmp_path,
+    )
+    monkeypatch.setattr(run_triage, "reconcile_untriaged_runs", reconcile)
+
+    with caplog.at_level(logging.INFO, logger="vibecrafted_core.guardian"):
+        guardian_module._recover_untriaged_runs_background()
+
+    assert observed == [
+        (
+            control_plane,
+            guardian_module.TERMINAL_TRIAGE_OUTBOX_ATTEMPT_LIMIT,
+            guardian_module.TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT,
+        )
+    ]
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        "terminal triage recovery failed for "
+        "/runtime_runs/broken/meta.json: proof missing" in message
+        for message in messages
+    )
+    assert any(
+        "terminal triage recovery complete: scanned=5 attempted=2 "
+        "errors=1 truncated=True" in message
+        for message in messages
+    )
