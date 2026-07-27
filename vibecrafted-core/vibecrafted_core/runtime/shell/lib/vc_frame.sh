@@ -61,15 +61,115 @@ _vetcoders_in_vc_frame() {
   [[ -n "${VC_FRAME_PANE_ID:-}" ]] && [[ -n "${VC_FRAME_SESSION_NAME:-}" ]]
 }
 
-_vetcoders_guess_active_vc_frame_session() {
+# Live (non-EXITED) vc-frame session names. One name per line. Multi-word hosts
+# keep spaces (e.g. "vibecrafted workers"); status tags are stripped.
+_vetcoders_list_live_vc_frame_sessions() {
   local PATH="${PATH:-}"
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
   export PATH
   local vc_frame_bin=""
   vc_frame_bin="$(_vetcoders_vc_frame_bin)" || return 0
-  local active
-  active="$("$vc_frame_bin" ls 2>/dev/null | _vetcoders_strip_ansi | grep -E '\(attached\)|\(current\)' | head -1 | awk '{print $1}')"
-  printf '%s\n' "$active"
+  local listing=""
+  listing="$("$vc_frame_bin" list-sessions 2>/dev/null || true)"
+  [[ -n "$listing" ]] || listing="$("$vc_frame_bin" ls 2>/dev/null || true)"
+  printf '%s\n' "$listing" \
+    | _vetcoders_strip_ansi \
+    | awk '
+        NF == 0 { next }
+        /EXITED/ { next }
+        {
+          line = $0
+          sub(/[[:space:]]+\[.*$/, "", line)
+          sub(/[[:space:]]+\([^)]*\)$/, "", line)
+          gsub(/[[:space:]]+$/, "", line)
+          if (line != "") print line
+        }
+      '
+}
+
+# Typed owner for interactive surface targeting (init / bare resume / operator).
+# Policy (order is the contract — not provider-specific):
+#   1. attached/current marker from vc-frame listing
+#   2. repo-bound host (basename of root) when that session is live
+#   3. exactly one live session
+#   4. otherwise empty — callers fail closed for interactive (never silent headless)
+# Explicit VIBECRAFTED_OPERATOR_SESSION / in-frame env are handled by
+# _vetcoders_prepare_operator_runtime before this resolver runs.
+# On multi-candidate ambiguity, lists candidates on stderr so the fail message
+# is actionable instead of "no operator session" when sessions exist.
+_vetcoders_resolve_interactive_operator_target() {
+  local PATH="${PATH:-}"
+  PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
+  export PATH
+  local vc_frame_bin=""
+  vc_frame_bin="$(_vetcoders_vc_frame_bin)" || return 0
+
+  local listing=""
+  listing="$("$vc_frame_bin" list-sessions 2>/dev/null || true)"
+  [[ -n "$listing" ]] || listing="$("$vc_frame_bin" ls 2>/dev/null || true)"
+  listing="$(printf '%s\n' "$listing" | _vetcoders_strip_ansi)"
+
+  local attached=""
+  attached="$(
+    printf '%s\n' "$listing" \
+      | grep -E '\(attached\)|\(current\)' \
+      | head -1 \
+      | awk '{
+          line = $0
+          sub(/[[:space:]]+\[.*$/, "", line)
+          sub(/[[:space:]]+\([^)]*\)$/, "", line)
+          gsub(/[[:space:]]+$/, "", line)
+          print line
+        }'
+  )"
+  if [[ -n "$attached" ]]; then
+    printf '%s\n' "$attached"
+    return 0
+  fi
+
+  # Portable live list (bash + zsh): newline-separated names, no shell arrays.
+  local live_list="" live_count=0 first_live="" name=""
+  live_list="$(_vetcoders_list_live_vc_frame_sessions)"
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    ((live_count += 1))
+    if [[ -z "$first_live" ]]; then
+      first_live="$name"
+    fi
+  done <<< "$live_list"
+
+  local repo_root="" host=""
+  repo_root="${SPAWN_ROOT:-${VIBECRAFTED_ROOT:-${_vetcoders_contract_root:-}}}"
+  if [[ -z "$repo_root" ]]; then
+    repo_root="$(_vetcoders_repo_root 2>/dev/null || pwd)"
+  fi
+  host="$(basename "$repo_root")"
+  if [[ -n "$host" ]] && printf '%s\n' "$live_list" | grep -Fxq -- "$host"; then
+    printf '%s\n' "$host"
+    return 0
+  fi
+
+  if ((live_count == 1)); then
+    printf '%s\n' "$first_live"
+    return 0
+  fi
+
+  if ((live_count > 1)); then
+    printf 'Interactive operator target is ambiguous (%d live vc-frame sessions); pick one explicitly.\n' \
+      "$live_count" >&2
+    printf '  candidates:\n' >&2
+    while IFS= read -r name; do
+      [[ -n "$name" ]] || continue
+      printf '    - %s\n' "$name" >&2
+    done <<< "$live_list"
+    printf '  export VIBECRAFTED_OPERATOR_SESSION=<name>  # or attach a vc-frame tab\n' >&2
+  fi
+  return 0
+}
+
+# Back-compat alias — same typed owner as above.
+_vetcoders_guess_active_vc_frame_session() {
+  _vetcoders_resolve_interactive_operator_target
 }
 
 _vetcoders_current_vc_frame_session_name() {
@@ -389,9 +489,11 @@ _vetcoders_prepare_operator_runtime() {
     return 0
   fi
 
-  # If spawned by a headless agent, attempt to naturally latch onto the user's active session.
+  # Detected interactive target (typed owner — not provider-specific).
+  # Priority: attached/current → repo-bound live → single live.
+  # Multi-candidate ambiguity leaves session unset and prints candidates.
   local guessed_session
-  guessed_session="$(_vetcoders_guess_active_vc_frame_session)"
+  guessed_session="$(_vetcoders_resolve_interactive_operator_target)"
   if [[ -n "$guessed_session" ]]; then
     export VIBECRAFTED_OPERATOR_SESSION="$guessed_session"
     export VC_FRAME_SESSION_NAME="$guessed_session"
@@ -401,13 +503,13 @@ _vetcoders_prepare_operator_runtime() {
 
   # No attachable session exists, so the only remaining option is to CREATE
   # one — which vc-frame cannot do without a real PTY. Without a controlling TTY
-  # (scripts, CI, in-repo agent dispatch), degrade to headless instead of
-  # hard-failing: leave VIBECRAFTED_OPERATOR_SESSION unset and return success so
-  # the caller proceeds down the session-free dispatch path. The test bypass env
-  # lets the suite exercise the create branch without a real TTY.
-  # "brak TTY → headless" (runtime invariant: degrade, don't die).
+  # (scripts, CI, in-repo agent dispatch), leave VIBECRAFTED_OPERATOR_SESSION
+  # unset and return success so interactive callers can fail closed (refuse
+  # headless downgrade) while non-interactive callers continue on the
+  # session-free path. The test bypass env lets the suite exercise the create
+  # branch without a real TTY.
   if [[ ! -t 0 || ! -t 1 ]] && [[ -z "${VIBECRAFTED_TEST_ALLOW_NON_TTY_VC_FRAME:-}" ]]; then
-    printf 'no TTY; running headless (no operator session)\n' >&2
+    printf 'no TTY and no detected operator target; leaving operator session unset\n' >&2
     return 0
   fi
 

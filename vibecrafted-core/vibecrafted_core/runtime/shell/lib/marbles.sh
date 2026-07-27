@@ -802,13 +802,12 @@ _vetcoders_resume_agent() {
     fi
   fi
 
-  # Interactive resume: prepare operator seat and land there.
-  if [[ "$resume_mode" == interactive ]] && [[ "$runtime" =~ ^(terminal|visible)$ ]] && {
-    [[ "$tool" == codex ]] ||
-      _vetcoders_in_vc_frame ||
-      [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]] ||
-      [[ -t 0 && -t 1 ]]
-  }; then
+  # Interactive resume — provider-neutral policy (adapters only change argv):
+  #   bare resume → interactive → explicit or detected operator target
+  #   prompt/file → tracked headless worker (handled above)
+  # Prepare resolves: explicit env | in-frame | attached/current | repo-bound
+  # live | single live. Multi-candidate ambiguity fails closed with a list.
+  if [[ "$resume_mode" == interactive ]] && [[ "$runtime" =~ ^(terminal|visible)$ ]]; then
     _vetcoders_prepare_operator_runtime "$runtime" || return 1
     if [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then
       _vetcoders_spawn_into_operator_session "resume-${tool}" "$resume_cmd" || return 1
@@ -826,7 +825,18 @@ _vetcoders_resume_agent() {
   fi
 
   if [[ "$resume_mode" == interactive ]]; then
-    printf 'Interactive %s resume requires a vc-frame operator session; refusing to downgrade to a headless run.\n' "$tool" >&2
+    printf 'Interactive %s resume requires an explicit or detected operator target; refusing to downgrade to a headless run.\n' "$tool" >&2
+    printf '  export VIBECRAFTED_OPERATOR_SESSION=<session>  # jawny target\n' >&2
+    printf '  # or run from an attached vc-frame tab / leave exactly one live session\n' >&2
+    local live_hint=""
+    live_hint="$(_vetcoders_list_live_vc_frame_sessions 2>/dev/null | head -20 || true)"
+    if [[ -n "$live_hint" ]]; then
+      printf '  live vc-frame sessions:\n' >&2
+      while IFS= read -r live_name; do
+        [[ -n "$live_name" ]] || continue
+        printf '    - %s\n' "$live_name" >&2
+      done <<< "$live_hint"
+    fi
     return 1
   fi
 

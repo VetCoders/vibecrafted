@@ -379,18 +379,135 @@ def test_codex_positional_resume_compatibility_preserves_mode_contract(
     assert not prompt_aicx
 
 
-def test_interactive_codex_resume_fails_without_operator_surface(
+@pytest.mark.parametrize("agent", ["claude", "codex", "agy", "grok", "junie"])
+def test_interactive_resume_fails_without_operator_target_for_every_agent(
     tmp_path: Path,
+    agent: str,
 ) -> None:
+    """Provider-neutral: bare interactive resume never silently becomes headless."""
     result, command, aicx_called = _probe_codex_resume_contract(
-        tmp_path, ["--session", "sess-123"], operator_available=False
+        tmp_path / agent,
+        ["--session", "sess-123"],
+        agent=agent,
+        operator_available=False,
     )
 
     assert result.returncode != 0
     assert not command
     assert not aicx_called
-    assert "requires a vc-frame operator session" in result.stderr
+    assert "requires an explicit or detected operator target" in result.stderr
     assert "refusing to downgrade to a headless run" in result.stderr
+    assert "VIBECRAFTED_OPERATOR_SESSION" in result.stderr
+
+
+def _probe_interactive_operator_target(
+    tmp_path: Path,
+    *,
+    sessions_body: str,
+    repo_basename: str,
+) -> subprocess.CompletedProcess[str]:
+    """Resolve interactive target against a fake vc-frame listing only.
+
+    Bundled PATH priority would otherwise surface the host's real sessions, so
+    the probe pins ``_vetcoders_vc_frame_bin`` to the fixture binary.
+    """
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    listing = tmp_path / "sessions.txt"
+    listing.write_text(sessions_body, encoding="utf-8")
+    fake_vc_frame = fake_bin / "vc-frame"
+    _write_fake_command(
+        fake_vc_frame,
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'if [[ "${1:-}" == "list-sessions" || "${1:-}" == "ls" ]]; then\n'
+        f'  cat "{listing}"\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n",
+    )
+
+    env = os.environ.copy()
+    for key in (
+        "VIBECRAFTED_OPERATOR_SESSION",
+        "VC_FRAME",
+        "VC_FRAME_PANE_ID",
+        "VC_FRAME_SESSION_NAME",
+        "ZELLIJ",
+        "ZELLIJ_PANE_ID",
+        "ZELLIJ_SESSION_NAME",
+    ):
+        env.pop(key, None)
+    env["PATH"] = f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
+    env["VIBECRAFTED_ROOT"] = str(tmp_path / repo_basename)
+    (tmp_path / repo_basename).mkdir(exist_ok=True)
+
+    return subprocess.run(
+        [
+            "bash",
+            "--noprofile",
+            "--norc",
+            "-c",
+            "\n".join(
+                [
+                    f'source "{SHELL_SH}"',
+                    # Host/bundled vc-frame must not leak into this unit probe.
+                    f'_vetcoders_vc_frame_bin() {{ printf "%s\\n" "{fake_vc_frame}"; }}',
+                    '_vetcoders_path_with_bundled_bin_priority() { printf "%s\\n" "$1"; }',
+                    'target="$(_vetcoders_resolve_interactive_operator_target)"',
+                    'printf "target=[%s]\\n" "$target"',
+                ]
+            ),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+
+def test_interactive_target_prefers_repo_bound_live_session(
+    tmp_path: Path,
+) -> None:
+    """Detected target is not only (attached)/(current) — repo-bound live counts."""
+    result = _probe_interactive_operator_target(
+        tmp_path,
+        sessions_body="other [Created]\nvibecrafted [Created]\n",
+        repo_basename="vibecrafted",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "target=[vibecrafted]" in result.stdout
+
+
+def test_interactive_target_ambiguous_live_sessions_fail_closed(
+    tmp_path: Path,
+) -> None:
+    """Multiple live candidates without a unique pick must not invent a target."""
+    result = _probe_interactive_operator_target(
+        tmp_path,
+        sessions_body="alpha [Created]\nbeta [Created]\ngamma [Created]\n",
+        repo_basename="not-a-session",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "target=[]" in result.stdout
+    assert "ambiguous" in result.stderr
+    assert "alpha" in result.stderr
+    assert "beta" in result.stderr
+    assert "VIBECRAFTED_OPERATOR_SESSION" in result.stderr
+
+
+def test_interactive_target_single_live_session_is_detected(
+    tmp_path: Path,
+) -> None:
+    result = _probe_interactive_operator_target(
+        tmp_path,
+        sessions_body="solo-session [Created]\n",
+        repo_basename="other-repo",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "target=[solo-session]" in result.stdout
 
 
 def test_public_and_packaged_resume_help_describe_provider_neutral_contract() -> None:
