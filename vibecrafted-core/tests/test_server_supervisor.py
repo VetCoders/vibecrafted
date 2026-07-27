@@ -130,6 +130,59 @@ def _launchctl_job_snapshot(
 """
 
 
+def test_launchctl_start_diagnostics_allowlists_only_process_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = """gui/501/io.vetcoders.vibecrafted.server = {
+    state = waiting
+    runs = 1
+    last exit code = 78
+    environment = {
+        SECRET_TOKEN => do-not-leak
+    }
+}
+"""
+    monkeypatch.setattr(
+        supervisor,
+        "_launchctl",
+        lambda args: subprocess.CompletedProcess(args, 0, payload, ""),
+    )
+
+    detail, process_observed = supervisor._launchctl_start_diagnostics()
+
+    assert detail == (
+        "launchctl(state=waiting,pid=-,runs=1,last-exit-code=78)"
+    )
+    assert process_observed
+    assert "SECRET_TOKEN" not in detail
+    assert "do-not-leak" not in detail
+
+
+def test_bounded_service_stderr_reports_only_new_redacted_tail(
+    tmp_path: Path,
+) -> None:
+    stderr_log = tmp_path / "server" / "supervisor.stderr.log"
+    stderr_log.parent.mkdir(parents=True)
+    stderr_log.write_text("old diagnostic\n", encoding="utf-8")
+    cursor = supervisor._service_stderr_cursor(stderr_log)
+    with stderr_log.open("a", encoding="utf-8") as stream:
+        stream.write(
+            "vc-server-supervisor: runtime rejected "
+            "SECRET_TOKEN => do-not-leak Bearer bearer-secret\n"
+        )
+
+    detail = supervisor._bounded_service_stderr(stderr_log, cursor)
+
+    assert detail is not None
+    assert detail.startswith("vc-server-supervisor: runtime rejected")
+    assert "SECRET_TOKEN=<redacted>" in detail
+    assert "Bearer <redacted>" in detail
+    assert "do-not-leak" not in detail
+    assert "bearer-secret" not in detail
+    assert "old diagnostic" not in detail
+    assert len(detail) <= 512
+
+
 def test_plistlib_renderer_preserves_metacharacters_without_xml_injection(
     tmp_path: Path,
 ) -> None:
@@ -721,10 +774,111 @@ def test_start_service_rejects_foreground_marked_final_probe(
 
     with pytest.raises(
         supervisor.SupervisorError,
-        match="no current service-managed supervisor",
+        match="acquired the coordination lock but the installed identity was rejected",
     ) as failure:
         supervisor.start_service(config)
 
+    assert failure.value.exit_code == supervisor.EX_TEMPFAIL
+
+
+def test_start_service_reports_process_exit_before_lock_without_secret_dump(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    config = _config(tmp_path, launcher)
+    supervisor.install_service(config, supervisor_binary=supervisor_binary)
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: True)
+    missing = supervisor.SupervisorProbe(False, False, None, None)
+    monkeypatch.setattr(supervisor, "probe_supervisor", lambda _paths: missing)
+    monkeypatch.setattr(
+        supervisor,
+        "_wait_for_managed_supervisor",
+        lambda _config, *, identity, previous_pid=None: missing,
+    )
+    config.paths.stderr_log.write_text("", encoding="utf-8")
+
+    def fake_launchctl(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[0] == "kickstart":
+            with config.paths.stderr_log.open("a", encoding="utf-8") as stream:
+                stream.write(
+                    "vc-server-supervisor: runtime hash rejected "
+                    "SECRET_TOKEN=do-not-leak\n"
+                )
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            """service = {
+    state = waiting
+    runs = 1
+    last exit code = 78
+    environment = {
+        SECRET_TOKEN => do-not-leak
+    }
+}
+""",
+            "",
+        )
+
+    monkeypatch.setattr(supervisor, "_launchctl", fake_launchctl)
+
+    with pytest.raises(
+        supervisor.SupervisorError,
+        match="process started but exited or stalled before acquiring",
+    ) as failure:
+        supervisor.start_service(config)
+
+    message = str(failure.value)
+    assert "launchctl(state=waiting,pid=-,runs=1,last-exit-code=78)" in message
+    assert "vc-server-supervisor: runtime hash rejected" in message
+    assert "SECRET_TOKEN=<redacted>" in message
+    assert "do-not-leak" not in message
+    assert failure.value.exit_code == supervisor.EX_TEMPFAIL
+
+
+def test_start_service_reports_job_that_never_started(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    config = _config(tmp_path, launcher)
+    supervisor.install_service(config, supervisor_binary=supervisor_binary)
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: True)
+    missing = supervisor.SupervisorProbe(False, False, None, None)
+    monkeypatch.setattr(supervisor, "probe_supervisor", lambda _paths: missing)
+    monkeypatch.setattr(
+        supervisor,
+        "_wait_for_managed_supervisor",
+        lambda _config, *, identity, previous_pid=None: missing,
+    )
+
+    def fake_launchctl(args: list[str]) -> subprocess.CompletedProcess[str]:
+        if args[0] == "kickstart":
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            "service = {\n    state = waiting\n    runs = 0\n}\n",
+            "",
+        )
+
+    monkeypatch.setattr(supervisor, "_launchctl", fake_launchctl)
+
+    with pytest.raises(
+        supervisor.SupervisorError,
+        match="job did not start and no supervisor acquired",
+    ) as failure:
+        supervisor.start_service(config)
+
+    assert (
+        "launchctl(state=waiting,pid=-,runs=0,last-exit-code=-)"
+        in str(failure.value)
+    )
     assert failure.value.exit_code == supervisor.EX_TEMPFAIL
 
 

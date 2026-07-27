@@ -547,6 +547,86 @@ def _read_owned_text(path: Path) -> str | None:
         return None
 
 
+def _service_stderr_cursor(path: Path) -> tuple[int, int, int] | None:
+    try:
+        visible = path.lstat()
+        if (
+            path.is_symlink()
+            or not stat.S_ISREG(visible.st_mode)
+            or visible.st_uid != os.getuid()
+            or visible.st_nlink != 1
+        ):
+            return None
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except OSError:
+        return None
+    try:
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino):
+            return None
+        return opened.st_dev, opened.st_ino, opened.st_size
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+
+
+def _bounded_service_stderr(
+    path: Path,
+    cursor: tuple[int, int, int] | None,
+) -> str | None:
+    try:
+        visible = path.lstat()
+        if (
+            path.is_symlink()
+            or not stat.S_ISREG(visible.st_mode)
+            or visible.st_uid != os.getuid()
+            or visible.st_nlink != 1
+        ):
+            return None
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except OSError:
+        return None
+    try:
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino):
+            return None
+        start = max(0, opened.st_size - 4096)
+        if (
+            cursor is not None
+            and cursor[:2] == (opened.st_dev, opened.st_ino)
+            and 0 <= cursor[2] <= opened.st_size
+        ):
+            start = max(cursor[2], start)
+        os.lseek(descriptor, start, os.SEEK_SET)
+        encoded = os.read(descriptor, 4096)
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+    lines = [line.strip() for line in encoded.decode("utf-8", "replace").splitlines()]
+    if not (lines := [line for line in lines if line]):
+        return None
+    detail = re.sub(r"(?i)\bBearer\s+\S+", "Bearer <redacted>", lines[-1])
+    detail = re.sub(
+        (
+            r"(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|"
+            r"API_KEY|AUTH)[A-Z0-9_]*)\s*(?:=>|[:=])\s*\S+"
+        ),
+        r"\1=<redacted>",
+        detail,
+    )
+    detail = re.sub(r"\b[A-Za-z0-9_+/=-]{32,}\b", "<redacted-token>", detail)
+    detail = re.sub(r"[^\x20-\x7e]", "?", detail)
+    return detail[-512:]
+
+
 def _managed_pair_snapshot(paths: SupervisorPaths) -> dict[str, int | None]:
     snapshot: dict[str, int | None] = {
         "server_pid": None,
@@ -1359,6 +1439,51 @@ def _launchctl_print_value(
     return None
 
 
+def _launchctl_start_diagnostics() -> tuple[str, bool]:
+    try:
+        result = _launchctl(["print", _launch_target()])
+    except (OSError, subprocess.SubprocessError, SupervisorError):
+        return "launchctl(print=unavailable)", False
+    if result.returncode != 0:
+        return f"launchctl(print-exit={result.returncode})", False
+
+    state = _launchctl_print_value(result.stdout, "state", separator="=")
+    if state is None or re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,31}", state) is None:
+        state = "-"
+
+    numeric: dict[str, str] = {}
+    for rendered, key in (
+        ("pid", "pid"),
+        ("runs", "runs"),
+        ("last-exit-code", "last exit code"),
+    ):
+        value = _launchctl_print_value(result.stdout, key, separator="=")
+        numeric[rendered] = (
+            value
+            if value is not None and re.fullmatch(r"-?[0-9]{1,12}", value)
+            else "-"
+        )
+
+    pid = int(numeric["pid"]) if numeric["pid"] != "-" else None
+    runs = int(numeric["runs"]) if numeric["runs"] != "-" else None
+    last_exit = (
+        int(numeric["last-exit-code"])
+        if numeric["last-exit-code"] != "-"
+        else None
+    )
+    process_observed = (
+        (pid is not None and pid > 1)
+        or (runs is not None and runs > 0)
+        or last_exit is not None
+        or state in {"running", "spawned", "exited", "throttled"}
+    )
+    detail = (
+        f"launchctl(state={state},pid={numeric['pid']},runs={numeric['runs']},"
+        f"last-exit-code={numeric['last-exit-code']})"
+    )
+    return detail, process_observed
+
+
 def _launchctl_job_owns_paths(paths: SupervisorPaths) -> bool:
     result = _launchctl(["print", _launch_target()])
     if result.returncode != 0:
@@ -1537,6 +1662,7 @@ def start_service(config: SupervisorConfig) -> None:
         config.launcher,
         expected_sha256=identity.launcher_sha256,
     )
+    stderr_cursor = _service_stderr_cursor(config.paths.stderr_log)
     loaded = _launchctl_loaded()
     probe = probe_supervisor(config.paths)
     if loaded and probe.live and not _probe_is_supervisor(probe):
@@ -1593,9 +1719,31 @@ def start_service(config: SupervisorConfig) -> None:
             )
     probe = _wait_for_managed_supervisor(config, identity=identity)
     if not _probe_matches_identity(probe, identity, service_managed=True):
+        launchctl_detail, process_observed = _launchctl_start_diagnostics()
+        stderr_detail = _bounded_service_stderr(
+            config.paths.stderr_log,
+            stderr_cursor,
+        )
+        if probe.live:
+            failure = (
+                "launchd supervisor acquired the coordination lock but the "
+                "installed identity was rejected"
+            )
+        elif process_observed or stderr_detail is not None:
+            failure = (
+                "launchd supervisor process started but exited or stalled before "
+                "acquiring the coordination lock"
+            )
+        else:
+            failure = (
+                "launchd job did not start and no supervisor acquired the "
+                "coordination lock"
+            )
+        diagnostics = launchctl_detail
+        if stderr_detail is not None:
+            diagnostics += f"; supervisor-stderr={stderr_detail}"
         raise SupervisorError(
-            "launchd is loaded but no current service-managed supervisor "
-            "acquired its lock",
+            f"{failure}; {diagnostics}",
             EX_TEMPFAIL,
         )
 
