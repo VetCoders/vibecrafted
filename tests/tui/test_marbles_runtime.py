@@ -1492,7 +1492,11 @@ def test_marbles_verification_poll_survives_watcher_exit_without_job_noise(
     env["MARBLES_TEST_SKIP_VERIFIED_REPORT_LOOP"] = "1"
     env["VIBECRAFTED_MARBLES_VERIFICATION_TIMEOUT_S"] = "1"
     env["VIBECRAFTED_MARBLES_VERIFICATION_POLL_S"] = "1"
-    env["VIBECRAFTED_MARBLES_VERIFICATION_GRACE_S"] = "1"
+    # Force the terminal watcher to archive the state directory before the
+    # detached verifier reaches its one-second timeout. The verifier must
+    # follow that owned atomic move instead of writing only to the stale live
+    # path.
+    env["VIBECRAFTED_MARBLES_VERIFICATION_GRACE_S"] = "0"
     env.pop("VC_FRAME", None)
     env.pop("VC_FRAME_PANE_ID", None)
     env.pop("VC_FRAME_SESSION_NAME", None)
@@ -1522,11 +1526,9 @@ def test_marbles_verification_poll_survives_watcher_exit_without_job_noise(
     assert len(state_dirs) == 1
     state_path = state_dirs[0] / "state.json"
 
-    # The detached watcher reaches "timed_out" after timeout(1)+poll(1)+grace(1)
-    # ~= 3s of logical work, plus process-scheduling and FS-flush latency. A
-    # tight deadline flakes on contended CI runners (observed: macOS reading
-    # "pending"), so give the slow detached process generous wall-clock room.
-    # Fast machines still exit the loop the moment the status flips.
+    # The detached watcher reaches "timed_out" after timeout(1)+poll(1), after
+    # the terminal watcher has already moved the state into `_archived`.
+    # Scheduling and FS-flush latency are still bounded generously.
     deadline = time.monotonic() + 30
     verification_status = ""
     while time.monotonic() < deadline:
@@ -1539,3 +1541,71 @@ def test_marbles_verification_poll_survives_watcher_exit_without_job_noise(
     assert verification_status == "timed_out"
     assert "Terminated: 15" not in result.stdout
     assert "Terminated: 15" not in result.stderr
+
+
+def _pending_verification_state(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "loops": [
+                    {
+                        "loop": 1,
+                        "verification_status": "pending",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _run_verification_timeout(state_path: Path, tmp_path: Path) -> None:
+    report_path = tmp_path / "report.md"
+    env = os.environ.copy()
+    env["VIBECRAFTED_MARBLES_VERIFICATION_TIMEOUT_S"] = "0"
+    subprocess.run(
+        [
+            "bash",
+            str(REPO_ROOT / "runtime/scripts/marbles_verify_watch.sh"),
+            str(state_path),
+            "1",
+            str(report_path),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+    )
+
+
+def test_marbles_verifier_rejects_ambiguous_live_and_archived_state(
+    tmp_path: Path,
+) -> None:
+    marbles_root = tmp_path / "marbles"
+    live_state = marbles_root / "impl-260727-010000-00001/state.json"
+    archived_state = (
+        marbles_root / "_archived/2026-07-27/impl-260727-010000-00001/state.json"
+    )
+    _pending_verification_state(live_state)
+    _pending_verification_state(archived_state)
+
+    _run_verification_timeout(live_state, tmp_path)
+
+    for state_path in (live_state, archived_state):
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        assert state["loops"][0]["verification_status"] == "pending"
+
+
+def test_marbles_verifier_rejects_symlinked_archived_run(tmp_path: Path) -> None:
+    marbles_root = tmp_path / "marbles"
+    run_id = "impl-260727-010000-00002"
+    outside_state = tmp_path / "outside" / run_id / "state.json"
+    _pending_verification_state(outside_state)
+    archived_date = marbles_root / "_archived/2026-07-27"
+    archived_date.mkdir(parents=True)
+    (archived_date / run_id).symlink_to(outside_state.parent, target_is_directory=True)
+
+    _run_verification_timeout(marbles_root / run_id / "state.json", tmp_path)
+
+    state = json.loads(outside_state.read_text(encoding="utf-8"))
+    assert state["loops"][0]["verification_status"] == "pending"
