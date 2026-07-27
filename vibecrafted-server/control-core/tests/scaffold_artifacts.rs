@@ -335,6 +335,20 @@ fn global_catalog_lists_scaffold_truth_and_ignores_unrelated_manifests() {
         br#"{"schema":"loctree.context-atlas.v1","files":[]}"#,
     )
     .expect("unrelated manifest");
+    let deep_noise = home.join("artifacts/noise/deep/noncanonical/tree");
+    fs::create_dir_all(&deep_noise).expect("deep noise root");
+    fs::write(
+        deep_noise.join("manifest.json"),
+        br#"{
+          "schema_version":"1",
+          "plan_id":"deep-noise",
+          "org":"noise",
+          "repo":"deep",
+          "day":"noncanonical",
+          "artifacts":[]
+        }"#,
+    )
+    .expect("deep valid-looking noise manifest");
     let invalid_sibling = plan_root(&home, "invalid-sibling");
     fs::create_dir_all(&invalid_sibling).expect("invalid sibling root");
     fs::write(

@@ -326,7 +326,7 @@ impl ScaffoldArtifactStore {
     #[must_use]
     pub fn catalog(&self) -> Vec<ScaffoldPlanSummary> {
         let mut manifest_paths = Vec::new();
-        collect_manifest_paths(&self.home.join("artifacts"), &mut manifest_paths);
+        collect_scaffold_manifest_paths(&self.home.join("artifacts"), &mut manifest_paths);
         let mut plans = manifest_paths
             .into_iter()
             .filter_map(|path| {
@@ -1477,16 +1477,30 @@ fn validate_path_segment(value: &str, label: &str) -> ScaffoldResult<()> {
     Ok(())
 }
 
-fn collect_manifest_paths(root: &Path, output: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(root) else {
+fn collect_scaffold_manifest_paths(artifacts_root: &Path, output: &mut Vec<PathBuf>) {
+    let Ok(orgs) = fs::read_dir(artifacts_root) else {
         return;
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-            collect_manifest_paths(&path, output);
-        } else if path.file_name().and_then(|name| name.to_str()) == Some("manifest.json") {
-            output.push(path);
+    for org in orgs.flatten().filter(|entry| entry.path().is_dir()) {
+        let Ok(repos) = fs::read_dir(org.path()) else {
+            continue;
+        };
+        for repo in repos.flatten().filter(|entry| entry.path().is_dir()) {
+            let Ok(days) = fs::read_dir(repo.path()) else {
+                continue;
+            };
+            for day in days.flatten().filter(|entry| entry.path().is_dir()) {
+                let plans_root = day.path().join("plans");
+                let Ok(plans) = fs::read_dir(plans_root) else {
+                    continue;
+                };
+                for plan in plans.flatten().filter(|entry| entry.path().is_dir()) {
+                    let manifest = plan.path().join("manifest.json");
+                    if manifest.is_file() {
+                        output.push(manifest);
+                    }
+                }
+            }
         }
     }
 }
