@@ -4070,6 +4070,11 @@ def test_stale_complete_handoff_cannot_suppress_payload_rollback(
     old_target = tools / "vibecrafted-generation-old"
     current = tools / "vibecrafted-current"
     server_bin = home / ".local" / "bin" / "vc-server"
+    # Installer path helpers resolve the canonical tools root from the
+    # environment, so fence it before creating the synthetic receipt.
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(shared_home))
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
     _write_valid_runtime_generation(old_target)
     current.parent.mkdir(parents=True, exist_ok=True)
     current.symlink_to(old_target.name)
@@ -4085,9 +4090,6 @@ def test_stale_complete_handoff_cannot_suppress_payload_rollback(
             "completed_at": datetime.now(timezone.utc).isoformat(),
         },
     )
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("VIBECRAFTED_HOME", str(shared_home))
-    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
     monkeypatch.setattr(installer.sys, "platform", "linux")
     child = (
         "from pathlib import Path; import sys\n"
