@@ -1536,6 +1536,39 @@ def test_runtime_service_commands_pin_xdg_tools_lock_owner(
     )
 
 
+def test_runtime_service_commands_do_not_discover_the_installer_checkout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    shared_home = home / ".vibecrafted"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    current = tools / "vibecrafted-current"
+    checkout = tmp_path / "checkout"
+    launcher = home / ".local/bin/vibecrafted"
+    _write_executable(launcher, "#!/bin/sh\npwd\n")
+    checkout.mkdir()
+    monkeypatch.chdir(checkout)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(shared_home))
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
+
+    with installer._tools_install_lease(
+        current,
+        operation="test-neutral-service-cwd",
+    ) as descriptor, installer._inherited_tools_install_lease(descriptor):
+        result = installer._run_runtime_service_command(
+            launcher,
+            shared_home,
+            "service",
+            "status",
+            "--json",
+        )
+
+    assert result.returncode == 0
+    assert result.stdout == "/\n"
+
+
 def test_runtime_cutover_refuses_legacy_restart_race_before_publish(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

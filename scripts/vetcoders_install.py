@@ -3541,6 +3541,11 @@ def _run_runtime_service_command(
         capture_output=True,
         text=True,
         timeout=timeout_seconds,
+        # The shell launcher deliberately discovers a source checkout from its
+        # cwd for development commands. Runtime service transitions must never
+        # inherit the installer's checkout: that would render a LaunchAgent
+        # from unstamped source while launchd executes the stamped uv tool.
+        cwd=Path("/"),
         env=_runtime_service_environment(launcher, shared_home),
         pass_fds=(descriptor,),
     )

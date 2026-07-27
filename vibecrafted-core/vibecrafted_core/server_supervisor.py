@@ -278,7 +278,9 @@ def _supervisor_identity(
         )
     if expected_version and PACKAGE_VERSION != expected_version:
         raise SupervisorError(
-            "supervisor package version differs from the installed LaunchAgent",
+            "supervisor package version "
+            f"{PACKAGE_VERSION!r} differs from the installed LaunchAgent "
+            f"{expected_version!r}",
             EX_CONFIG,
         )
     if expected_runtime_sha256 and runtime_digest != expected_runtime_sha256:

@@ -63,6 +63,28 @@ def _managed_probe(
     )
 
 
+def test_supervisor_version_mismatch_names_both_public_versions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    monkeypatch.setattr(supervisor, "PACKAGE_VERSION", "3.6.0+gactual")
+
+    with pytest.raises(
+        supervisor.SupervisorError,
+        match=(
+            "supervisor package version '3.6.0\\+gactual' differs from the "
+            "installed LaunchAgent '3.6.0\\+gexpected'"
+        ),
+    ):
+        supervisor._supervisor_identity(
+            supervisor_binary,
+            launcher=launcher,
+            expected_version="3.6.0+gexpected",
+        )
+
+
 def test_trusted_system_owner_is_read_only_and_explicit() -> None:
     regular_executable = stat.S_IFREG | 0o755
     group_writable_executable = stat.S_IFREG | 0o775
