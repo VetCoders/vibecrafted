@@ -190,6 +190,10 @@ fn compute_view_reads_settlement_board_only_from_retained_snapshots() {
         "invalid cannot exceed the x bucket"
     );
     assert_eq!(board.n, 2, "needs_attention + unsettled terminal");
+    assert_eq!(
+        board.unclassified, 1,
+        "live unsettled snapshot remains visible outside f/x/n"
+    );
     assert_eq!(board.total_settled, board.f + board.x + board.n);
     assert_eq!(
         fs::read_to_string(&sync_lock).expect("read lock sentinel"),

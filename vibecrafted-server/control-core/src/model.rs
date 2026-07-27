@@ -707,6 +707,8 @@ pub enum SettlementScope {
 /// Typed f/x/n aggregate sourced only from persisted Python snapshots.
 ///
 /// `invalid` is diagnostic detail inside `x`, not a fourth total bucket.
+/// `unclassified` counts retained snapshots with no settlement verdict that
+/// are not terminal enough to fall back to `n`.
 /// `active` comes from the existing Rust live projection and is likewise not
 /// part of `total_settled`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -717,6 +719,7 @@ pub struct SettlementBoard {
     pub x: usize,
     pub n: usize,
     pub invalid: usize,
+    pub unclassified: usize,
     pub total_settled: usize,
 }
 
@@ -736,6 +739,7 @@ impl SettlementBoard {
             x: 0,
             n: 0,
             invalid: 0,
+            unclassified: 0,
             total_settled: 0,
         };
 
@@ -749,7 +753,7 @@ impl SettlementBoard {
                 }
                 Some(SettlementVerdict::NeedsAttention) => board.n += 1,
                 None if is_unsettled_settlement_terminal(run) => board.n += 1,
-                None => {}
+                None => board.unclassified += 1,
             }
         }
         board.total_settled = board.f + board.x + board.n;

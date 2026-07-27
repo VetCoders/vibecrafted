@@ -5,7 +5,7 @@ expression: buffer_text(&buffer)
 Vibecrafted Operator Console  no live runs loaded
 mission root: /fixture/repo  |  active runs: 0  |  scope: live  |  focus: Mission Control
 ┌Surface───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ Monitor live 0 │ Dispatch workflow/claude │ Controls 23 │ Mission 2|4                                                │
+│ Monitor live 0 │ Dispatch workflow/claude │ Controls 25 │ Mission 2|4                                                │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ┌Active dispatches─────────────────────┐┌History (30d)─────────────────────────┐┌Mission posture───────────────────────┐
 │2 running                             ││128 meta.json scanned                 ││model parity 40/128                   │

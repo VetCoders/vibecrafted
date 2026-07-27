@@ -49,12 +49,8 @@ fn main() -> ExitCode {
             .iter()
             .map(|value| value.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        ScaffoldArtifactStore::new(&values[0]).doctor(
-            &values[1],
-            &values[2],
-            &values[3],
-            &values[4],
-        )
+        ScaffoldArtifactStore::new(&values[0])
+            .doctor(&values[1], &values[2], &values[3], &values[4])
     } else {
         return usage();
     };
@@ -67,10 +63,7 @@ fn main() -> ExitCode {
                     "valid": false,
                     "error": error.to_string(),
                 });
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&payload).expect("json")
-                );
+                println!("{}", serde_json::to_string_pretty(&payload).expect("json"));
             } else {
                 eprintln!("scaffold-doctor: REFUSE — {error}");
             }

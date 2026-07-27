@@ -316,12 +316,7 @@ pub fn classify_run(snapshot: &RunSnapshot, now: DateTime<Utc>) -> RunKind {
 /// Disk/process proof that a run finished successfully, even if the watchdog
 /// stamped `last_error` / `recovery_required` during the heartbeat gap.
 fn has_success_evidence(snapshot: &RunSnapshot) -> bool {
-    if snapshot
-        .extra
-        .get("artifact_ok")
-        .and_then(Value::as_bool)
-        == Some(false)
-    {
+    if snapshot.extra.get("artifact_ok").and_then(Value::as_bool) == Some(false) {
         return false;
     }
     if let Some(Value::Array(errors)) = snapshot.extra.get("artifact_errors")
@@ -349,11 +344,7 @@ fn has_success_evidence(snapshot: &RunSnapshot) -> bool {
     if completed_at_timestamp(snapshot).is_some() {
         return true;
     }
-    snapshot
-        .extra
-        .get("liveness")
-        .and_then(Value::as_str)
-        == Some("terminal")
+    snapshot.extra.get("liveness").and_then(Value::as_str) == Some("terminal")
 }
 
 fn coerce_exit_code(snapshot: &RunSnapshot) -> Option<i64> {

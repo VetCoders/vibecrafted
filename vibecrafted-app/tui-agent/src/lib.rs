@@ -562,7 +562,13 @@ fn suspend_and_run(command: &LaunchCommand) -> Result<(), LaunchRunError> {
 /// readiness probe before giving up. Kept short so the operator does not
 /// freeze on a launch that never came up; long enough that real interactive
 /// launches on the host can register their named socket.
-pub const READINESS_DEADLINE: Duration = Duration::from_secs(2);
+/// Bounded startup window for a freshly launched vc-frame session.
+///
+/// Two seconds produced false failures under normal concurrent workspace load:
+/// the child was healthy but had not been scheduled early enough for the
+/// visibility probe. Five seconds remains fail-closed while tolerating brief
+/// host pressure from builds, indexing, and existing terminal sessions.
+pub const READINESS_DEADLINE: Duration = Duration::from_secs(5);
 
 pub fn wait_for_interactive_launch(
     command: &LaunchCommand,

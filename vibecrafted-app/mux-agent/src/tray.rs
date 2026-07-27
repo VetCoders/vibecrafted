@@ -263,19 +263,11 @@ pub fn load_icon_from_file(path: &Path) -> Option<LoadedIcon> {
 mod tests {
     use super::*;
     use crate::state::StatusLevel;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn tmp_path(name: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time went backwards")
-            .as_nanos();
-        PathBuf::from("target/test-tmp").join(format!("{}-{}", name, nanos))
-    }
 
     #[test]
     fn load_icon_from_file_works_for_png() {
-        let path = tmp_path("icon.png");
+        let temp = tempfile::tempdir().expect("create icon fixture directory");
+        let path = temp.path().join("icon.png");
         let mut file = std::fs::File::create(&path).expect("create icon file");
         // Tiny 2x2 RGBA white image encoded as PNG via image crate
         let buf = vec![255u8; 2 * 2 * 4];

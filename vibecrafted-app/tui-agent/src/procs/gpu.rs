@@ -58,10 +58,7 @@ fn extract_u64(hay: &str, key: &str) -> Option<u64> {
     let needle = format!("\"{key}\"=");
     let idx = hay.find(&needle)?;
     let rest = &hay[idx + needle.len()..];
-    let digits: String = rest
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
     digits.parse().ok()
 }
 

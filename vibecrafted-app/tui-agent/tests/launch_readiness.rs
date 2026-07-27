@@ -69,12 +69,11 @@ case "${1:-}" in
     case "${FAKE_INTERACTIVE_BEHAVIOR:-hang}" in
       quick-success) exit 0 ;;
       quick-failure) echo "interactive boom" >&2; exit 7 ;;
-      slow-visibility)
-        sleep 0.25
+      visible-before-exit)
         if [ -n "${FAKE_VISIBLE_FILE:-}" ]; then
           echo "$NAME" > "${FAKE_VISIBLE_FILE}"
         fi
-        sleep 0.30
+        sleep 0.10
         exit 0
         ;;
       *) sleep 30 ;;
@@ -160,14 +159,14 @@ fn quick_child_exit_before_visibility_reports_session_exited() {
 }
 
 #[test]
-fn slow_visibility_then_child_exits_returns_success() {
+fn visible_session_then_child_exits_returns_success() {
     let fake = fake_vc_frame();
     let session = "vc-op-fake-slow";
     let command = build_command(
         &fake.program,
         session,
         &fake.visible_file,
-        "slow-visibility",
+        "visible-before-exit",
         "ok",
     );
     let child = command
@@ -176,11 +175,11 @@ fn slow_visibility_then_child_exits_returns_success() {
     let started = Instant::now();
     let result = wait_for_interactive_launch(&command, child);
     let elapsed = started.elapsed();
-    let output = result.expect("slow-visibility should converge to success");
+    let output = result.expect("visible session should converge to success");
     assert!(output.status.success(), "fake child should exit zero");
     assert!(
         elapsed < READINESS_DEADLINE + Duration::from_secs(2),
-        "slow-visibility test took too long: {elapsed:?}"
+        "visible-session test took too long: {elapsed:?}"
     );
 }
 
@@ -235,8 +234,10 @@ fn probe_failure_surfaces_in_launch_error() {
         .clone()
         .expect("deadline kill must preserve the last probe diagnostic");
     assert!(
-        deadline_probe.contains("killed after 2000ms")
-            && deadline_probe.contains("last probe error:")
+        deadline_probe.contains(&format!(
+            "killed after {}ms",
+            READINESS_DEADLINE.as_millis()
+        )) && deadline_probe.contains("last probe error:")
             && deadline_probe.contains("probe config not found"),
         "deadline diagnostic should include kill timing and last probe error: {deadline_probe}"
     );

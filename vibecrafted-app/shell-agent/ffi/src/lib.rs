@@ -227,6 +227,7 @@ pub struct FfiSettlementBoard {
     pub x: u64,
     pub n: u64,
     pub invalid: u64,
+    pub unclassified: u64,
     pub active: u64,
     pub stalled: u64,
     pub orphans: u64,
@@ -298,6 +299,7 @@ impl From<mc::SettlementBoardCounts> for FfiSettlementBoard {
             x: value.x as u64,
             n: value.n as u64,
             invalid: value.invalid as u64,
+            unclassified: value.unclassified as u64,
             active: value.active as u64,
             stalled: value.stalled as u64,
             orphans: value.orphans as u64,
@@ -692,10 +694,11 @@ mod tests {
             x: 2,
             n: 3,
             invalid: 4,
-            active: 5,
-            stalled: 6,
-            orphans: 7,
-            total_settled: 8,
+            unclassified: 5,
+            active: 6,
+            stalled: 7,
+            orphans: 8,
+            total_settled: 9,
             scope: "retained snapshots".to_string(),
         };
 
@@ -705,10 +708,11 @@ mod tests {
         assert_eq!(ffi.x, 2);
         assert_eq!(ffi.n, 3);
         assert_eq!(ffi.invalid, 4);
-        assert_eq!(ffi.active, 5);
-        assert_eq!(ffi.stalled, 6);
-        assert_eq!(ffi.orphans, 7);
-        assert_eq!(ffi.total_settled, 8);
+        assert_eq!(ffi.unclassified, 5);
+        assert_eq!(ffi.active, 6);
+        assert_eq!(ffi.stalled, 7);
+        assert_eq!(ffi.orphans, 8);
+        assert_eq!(ffi.total_settled, 9);
         assert_eq!(ffi.scope, "retained snapshots");
     }
 }

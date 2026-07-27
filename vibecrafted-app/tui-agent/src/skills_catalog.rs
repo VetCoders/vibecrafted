@@ -235,6 +235,20 @@ pub const CATALOG: &[SkillEntry] = &[
         accepts: SkillPayloadKind::PromptOrFile,
     },
     SkillEntry {
+        slug: "vc-trust",
+        display: "Trust",
+        one_line: "Post-hoc claim falsification",
+        default_agent: SkillAgent::Any,
+        accepts: SkillPayloadKind::PromptOrFile,
+    },
+    SkillEntry {
+        slug: "vc-guard",
+        display: "Guard",
+        one_line: "In-flight process and gate enforcer",
+        default_agent: SkillAgent::Any,
+        accepts: SkillPayloadKind::PromptOrFile,
+    },
+    SkillEntry {
         slug: "vc-skillaunch",
         display: "Skillaunch",
         one_line: "Distill a workflow into a skill",
