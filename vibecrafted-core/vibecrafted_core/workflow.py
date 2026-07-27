@@ -115,7 +115,10 @@ def reserve_run_id(skill: str) -> str:
     """Return a safe control-plane run id without creating runtime state."""
     stamp = time.strftime("%y%m%d-%H%M%S")
     code = (skill or "run")[:4].ljust(4, "x")
-    entropy = int(time.time_ns() % 100000)
+    # CSPRNG entropy: clock-derived time_ns % 100000 collides when the OS
+    # quantizes the clock (macOS CI ticks in whole ms → identical remainder
+    # within one second, observed as duplicate run ids).
+    entropy = int.from_bytes(os.urandom(3), "big") % 100000
     return f"{code}-{stamp}-{entropy:05d}"
 
 

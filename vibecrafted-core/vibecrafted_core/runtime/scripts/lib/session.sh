@@ -79,11 +79,11 @@ spawn_generate_run_id() {
   local prefix="${1:-impl}"
   local entropy=""
   entropy="$(python3 - <<'PY' 2>/dev/null || true
-import time
-print(f"{time.time_ns() % 100000:05d}")
+import os
+print(f"{int.from_bytes(os.urandom(3), 'big') % 100000:05d}")
 PY
 )"
-  [[ -n "$entropy" ]] || entropy="$(printf '%05d' "${RANDOM:-0}")"
+  [[ -n "$entropy" ]] || entropy="$(printf '%05d' "$(( (${RANDOM:-0} * 32768 + ${RANDOM:-0}) % 100000 ))")"
   # Canonical run-id grammar — identical to
   # vibecrafted_core.workflow.reserve_run_id ({code}-{%y%m%d-%H%M%S}-{entropy}).
   # ONE id shape across the Python dispatcher and every shell fallback keeps

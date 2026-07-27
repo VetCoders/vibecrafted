@@ -308,7 +308,8 @@ class LifecycleRunSpec:
 def _lifecycle_run_id(workflow_id: str) -> str:
     stamp = time.strftime("%y%m%d-%H%M%S")
     code = workflow_id.removeprefix("vc-")[:4].ljust(4, "x")
-    entropy = int(time.time_ns() % 100000)
+    # CSPRNG, not clock remainder — see workflow.reserve_run_id.
+    entropy = int.from_bytes(os.urandom(3), "big") % 100000
     return f"life-{code}-{stamp}-{entropy:05d}"
 
 
