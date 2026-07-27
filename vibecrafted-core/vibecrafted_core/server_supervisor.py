@@ -1570,7 +1570,11 @@ def start_service(config: SupervisorConfig) -> None:
                 result.returncode or 1,
             )
     probe = probe_supervisor(config.paths)
-    if not _probe_matches_identity(probe, identity, service_managed=True):
+    if loaded and not _probe_matches_identity(
+        probe,
+        identity,
+        service_managed=True,
+    ):
         result = _launchctl(["kickstart", "-k", _launch_target()])
         if result.returncode != 0:
             raise SupervisorError(

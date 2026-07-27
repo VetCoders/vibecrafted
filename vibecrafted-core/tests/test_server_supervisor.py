@@ -400,7 +400,7 @@ def test_zero_exit_with_foreign_live_minimal_identities_is_degraded(
     assert result == [0]
 
 
-def test_start_service_bootstraps_and_kickstarts_only_when_needed(
+def test_start_service_does_not_kill_a_freshly_bootstrapped_supervisor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -439,7 +439,7 @@ def test_start_service_bootstraps_and_kickstarts_only_when_needed(
     )
 
     supervisor.start_service(config)
-    assert [call[0] for call in calls] == ["bootstrap", "kickstart"]
+    assert [call[0] for call in calls] == ["bootstrap"]
 
     calls.clear()
     monkeypatch.setattr(
@@ -449,6 +449,42 @@ def test_start_service_bootstraps_and_kickstarts_only_when_needed(
     )
     supervisor.start_service(config)
     assert calls == []
+
+
+def test_start_service_kickstarts_a_loaded_job_without_current_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    config = _config(tmp_path, launcher)
+    supervisor.install_service(config, supervisor_binary=supervisor_binary)
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: True)
+    monkeypatch.setattr(
+        supervisor,
+        "probe_supervisor",
+        lambda _paths: supervisor.SupervisorProbe(False, False, None, None),
+    )
+    calls: list[list[str]] = []
+
+    def fake_launchctl(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(supervisor, "_launchctl", fake_launchctl)
+    monkeypatch.setattr(
+        supervisor,
+        "_wait_for_managed_supervisor",
+        lambda _config, *, identity, previous_pid=None: _managed_probe(
+            config,
+            pid=1234,
+        ),
+    )
+
+    supervisor.start_service(config)
+
+    assert calls == [["kickstart", "-k", supervisor._launch_target()]]
 
 
 def test_service_status_distinguishes_all_runtime_dimensions(
@@ -802,30 +838,35 @@ def test_hermetic_service_upgrade_restarts_into_new_provenance(
         service_process.terminate()
         service_process.wait(timeout=10)
 
+    def start_process() -> None:
+        nonlocal service_process
+        payload = plistlib.loads(config.paths.launch_agent_file.read_bytes())
+        environment = os.environ.copy()
+        environment.update(payload["EnvironmentVariables"])
+        environment["PYTHONPATH"] = str(
+            Path(supervisor.__file__).resolve().parents[1]
+        )
+        service_process = subprocess.Popen(
+            payload["ProgramArguments"],
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+
     def fake_launchctl(args: list[str]) -> subprocess.CompletedProcess[str]:
         nonlocal loaded, service_process
         action = args[0]
         if action == "bootstrap":
             loaded = True
+            start_process()
         elif action == "bootout":
             loaded = False
             stop_process()
         elif action == "kickstart":
             stop_process()
-            payload = plistlib.loads(config.paths.launch_agent_file.read_bytes())
-            environment = os.environ.copy()
-            environment.update(payload["EnvironmentVariables"])
-            environment["PYTHONPATH"] = str(
-                Path(supervisor.__file__).resolve().parents[1]
-            )
-            service_process = subprocess.Popen(
-                payload["ProgramArguments"],
-                env=environment,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
+            start_process()
         return subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: loaded)
