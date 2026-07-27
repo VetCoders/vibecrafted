@@ -1236,13 +1236,6 @@ _server_supervisor_cli() {
   shift || true
   local core_dir python_bin launcher supervisor_bin
   local -a common_args command_args
-  core_dir="$(_core_module_dir 2>/dev/null || true)"
-  [[ -n "$core_dir" ]] || {
-    printf '%b✗%b server_supervisor runtime module not found; reinstall Vibecrafted.\n' \
-      "$_red" "$_reset" >&2
-    return 78
-  }
-  python_bin="$(_vibecrafted_python)"
   common_args=(
     --home "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
     --runtime-home "${VIBECRAFTED_RUNTIME_HOME:-$HOME/.local/share/vibecrafted}"
@@ -1260,12 +1253,28 @@ _server_supervisor_cli() {
       command_args+=(--launcher "$launcher")
       if [[ "$command_name" == "service" ]]; then
         supervisor_bin="$(_server_supervisor_binary 2>/dev/null || true)"
-        if [[ -n "$supervisor_bin" ]]; then
-          command_args+=(--supervisor-bin "$supervisor_bin")
-        fi
+        [[ -n "$supervisor_bin" ]] || {
+          printf '%b✗%b vc-server-supervisor entrypoint not found; reinstall Vibecrafted.\n' \
+            "$_red" "$_reset" >&2
+          return 78
+        }
+        command_args+=(--supervisor-bin "$supervisor_bin")
+        # The exact staged executable which renders the LaunchAgent is also
+        # written into ProgramArguments. Never import a checkout-selected
+        # module here: its PACKAGE_VERSION may differ from the process launchd
+        # is about to execute.
+        "$supervisor_bin" "${command_args[@]}" "${common_args[@]}"
+        return
       fi
       ;;
   esac
+  core_dir="$(_core_module_dir 2>/dev/null || true)"
+  [[ -n "$core_dir" ]] || {
+    printf '%b✗%b server_supervisor runtime module not found; reinstall Vibecrafted.\n' \
+      "$_red" "$_reset" >&2
+    return 78
+  }
+  python_bin="$(_vibecrafted_python)"
   PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" \
     "$python_bin" -m vibecrafted_core.server_supervisor \
     "${command_args[@]}" "${common_args[@]}"

@@ -1536,37 +1536,212 @@ def test_runtime_service_commands_pin_xdg_tools_lock_owner(
     )
 
 
-def test_runtime_service_commands_do_not_discover_the_installer_checkout(
+def test_service_install_executes_exact_staged_supervisor_from_repo_cwd(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     home = tmp_path / "home"
     shared_home = home / ".vibecrafted"
-    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    runtime_home = home / ".local" / "share" / "vibecrafted"
+    tools = runtime_home / "tools"
     current = tools / "vibecrafted-current"
+    bin_dir = home / ".local" / "bin"
     checkout = tmp_path / "checkout"
-    launcher = home / ".local/bin/vibecrafted"
-    _write_executable(launcher, "#!/bin/sh\npwd\n")
-    checkout.mkdir()
-    monkeypatch.chdir(checkout)
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("VIBECRAFTED_HOME", str(shared_home))
-    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
+    staged_core = current / "staged-core"
+    staged_package = staged_core / "vibecrafted_core"
+    source_package = checkout / "vibecrafted-core" / "vibecrafted_core"
+    deck = current / "scripts" / "vibecrafted"
+    launcher = bin_dir / "vibecrafted"
+    supervisor_binary = bin_dir / "vc-server-supervisor"
+    launch_agent = (
+        home
+        / "Library"
+        / "LaunchAgents"
+        / "io.vetcoders.vibecrafted.server.plist"
+    )
+    record = tmp_path / "service-install-record.json"
+    source_version = "1.0.0+gcheckout"
+    staged_version = "9.9.9+gstaged"
 
-    with installer._tools_install_lease(
-        current,
-        operation="test-neutral-service-cwd",
-    ) as descriptor, installer._inherited_tools_install_lease(descriptor):
-        result = installer._run_runtime_service_command(
-            launcher,
-            shared_home,
-            "service",
-            "status",
-            "--json",
+    for directory in (
+        checkout / "scripts",
+        checkout / "skills",
+        checkout / "runtime",
+        source_package,
+        staged_package,
+        deck.parent,
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+    (checkout / "VERSION").write_text(source_version + "\n", encoding="utf-8")
+    (checkout / "scripts" / "vibecrafted").write_text(
+        "#!/bin/sh\nexit 86\n",
+        encoding="utf-8",
+    )
+    (source_package / "__init__.py").write_text(
+        f"__version__ = {source_version!r}\n",
+        encoding="utf-8",
+    )
+    (source_package / "dispatcher.py").write_text("", encoding="utf-8")
+    (source_package / "server_supervisor.py").write_text(
+        "import sys\n"
+        "print('checkout supervisor executed', file=sys.stderr)\n"
+        "raise SystemExit(86)\n",
+        encoding="utf-8",
+    )
+
+    deck.write_bytes((REPO_ROOT / "scripts" / "vibecrafted").read_bytes())
+    deck.chmod(0o755)
+    (staged_package / "__init__.py").write_text(
+        f"__version__ = {staged_version!r}\n",
+        encoding="utf-8",
+    )
+    shutil.copy2(
+        REPO_ROOT / "vibecrafted-core" / "vibecrafted_core" / "server_supervisor.py",
+        staged_package / "server_supervisor.py",
+    )
+    _write_executable(
+        launcher,
+        (
+            f"#!{Path(sys.executable).resolve()}\n"
+            "import sys\n"
+            "raise SystemExit(1 if sys.argv[1:3] == ['server', 'start'] else 0)\n"
+        ),
+    )
+    _write_executable(
+        supervisor_binary,
+        f"""#!{Path(sys.executable).resolve()}
+from __future__ import annotations
+
+import json
+import os
+import plistlib
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, {str(staged_core)!r})
+from vibecrafted_core import server_supervisor as runtime
+
+LAUNCH_AGENT = Path({str(launch_agent)!r})
+RECORD = Path({str(record)!r})
+
+
+def service_main() -> int:
+    loaded = False
+    child = None
+    payload = None
+
+    def start_child() -> None:
+        nonlocal child, payload
+        payload = plistlib.loads(LAUNCH_AGENT.read_bytes())
+        environment = os.environ.copy()
+        environment.update(payload["EnvironmentVariables"])
+        child = subprocess.Popen(
+            payload["ProgramArguments"],
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
         )
 
-    assert result.returncode == 0
-    assert result.stdout == "/\n"
+    def launchctl(arguments):
+        nonlocal loaded
+        action = arguments[0]
+        if action == "bootstrap":
+            loaded = True
+            start_child()
+        elif action == "kickstart" and (
+            child is None or child.poll() is not None
+        ):
+            start_child()
+        return subprocess.CompletedProcess(arguments, 0, "", "")
+
+    runtime.sys.platform = "darwin"
+    runtime._launchctl = launchctl
+    runtime._launchctl_loaded = lambda: loaded
+    runtime._launchctl_job_owns_paths = lambda _paths: loaded
+    try:
+        result = runtime.main()
+        if result != 0:
+            return result
+        payload = plistlib.loads(LAUNCH_AGENT.read_bytes())
+        arguments = payload["ProgramArguments"]
+        paths = runtime.SupervisorPaths.create(
+            home=Path(os.environ["VIBECRAFTED_HOME"]),
+            runtime_home=Path(os.environ["VIBECRAFTED_RUNTIME_HOME"]),
+            operator_home=Path(os.environ["HOME"]),
+        )
+        probe = runtime.probe_supervisor(paths)
+        RECORD.write_text(
+            json.dumps(
+                {{
+                    "renderer_version": runtime.PACKAGE_VERSION,
+                    "expected_version": arguments[
+                        arguments.index("--expected-build-version") + 1
+                    ],
+                    "environment_version": payload["EnvironmentVariables"][
+                        "VIBECRAFTED_SERVER_SUPERVISOR_VERSION"
+                    ],
+                    "program": arguments[0],
+                    "probe_live": probe.live,
+                    "probe_verified": probe.verified,
+                    "probe_version": probe.build_version,
+                    "probe_executable": probe.executable,
+                }},
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        return 0
+    finally:
+        if child is not None and child.poll() is None:
+            child.terminate()
+            child.wait(timeout=10)
+
+
+if sys.argv[1:2] == ["service"]:
+    raise SystemExit(service_main())
+raise SystemExit(runtime.main())
+""",
+    )
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "HOME": str(home),
+            "PATH": (
+                f"{bin_dir}:{Path(sys.executable).resolve().parent}:/usr/bin:/bin"
+            ),
+            "VIBECRAFTED_HOME": str(shared_home),
+            "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
+            "VIBECRAFTED_TOOLS_HOME": str(tools),
+        }
+    )
+    environment.pop("VIBECRAFTED_INSTALL_LEASE_FD", None)
+    environment.pop("PYTHONPATH", None)
+
+    result = subprocess.run(
+        [str(deck), "server", "service", "install"],
+        cwd=checkout,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "checkout supervisor executed" not in result.stderr
+    observed = json.loads(record.read_text(encoding="utf-8"))
+    assert {
+        observed["renderer_version"],
+        observed["expected_version"],
+        observed["environment_version"],
+        observed["probe_version"],
+    } == {staged_version}
+    assert Path(observed["program"]).samefile(supervisor_binary)
+    assert Path(observed["probe_executable"]).samefile(supervisor_binary)
+    assert observed["probe_live"] is True
+    assert observed["probe_verified"] is True
 
 
 def test_runtime_cutover_refuses_legacy_restart_race_before_publish(
