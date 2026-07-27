@@ -299,7 +299,7 @@ install-app-binaries:
 	set -e; \
 	mkdir -p "$(HOME)/.vibecrafted" "$(BIN_DIR)"; \
 	echo "[app] building release binaries ($(APP_BINARIES)) from $(APP_DIR)"; \
-	( cd $(APP_DIR) && cargo build --release -p voc $(INSTALL_QUIET) ); \
+	( cd $(APP_DIR) && cargo build --release --locked -p voc $(INSTALL_QUIET) ); \
 	for bin in $(APP_BINARIES); do \
 		rm -f "$(BIN_DIR)/$$bin"; \
 		install -m 0755 "$(APP_DIR)/target/release/$$bin" "$(BIN_DIR)/$$bin"; \

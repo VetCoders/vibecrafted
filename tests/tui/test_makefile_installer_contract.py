@@ -345,6 +345,37 @@ def test_install_all_default_output_is_quiet_and_points_to_vc_start() -> None:
     assert "vibecrafted doctor" in step_runner
 
 
+def test_install_step_preserves_tty_failure_status(tmp_path: Path) -> None:
+    """The spinner must return the child status, not boolean-negation success."""
+    pty = pytest.importorskip("pty")
+    master_fd, slave_fd = pty.openpty()
+    log_path = tmp_path / "install.log"
+    environment = os.environ.copy()
+    environment["VIBECRAFTED_INSTALL_LOG"] = str(log_path)
+    environment["VERBOSE"] = "0"
+    try:
+        completed = subprocess.run(
+            [
+                "bash",
+                str(REPO_ROOT / "scripts" / "install-step.sh"),
+                "forced failure",
+                "--",
+                "bash",
+                "-c",
+                "exit 37",
+            ],
+            stdout=slave_fd,
+            stderr=slave_fd,
+            env=environment,
+            check=False,
+        )
+    finally:
+        os.close(slave_fd)
+        os.close(master_fd)
+
+    assert completed.returncode == 37
+
+
 def test_install_all_user_facing_output_has_no_ghost_anxiety_copy() -> None:
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     output_lines = [
@@ -429,7 +460,7 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
     assert "BIN_DIR := $(HOME)/.local/bin" in makefile
 
     app_block = makefile.split("\ninstall-app-binaries:", 1)[1].split("\nskills:", 1)[0]
-    assert "cargo build --release -p voc" in app_block
+    assert "cargo build --release --locked -p voc" in app_block
     assert "cargo install" not in app_block
     assert 'install -m 0755 "$(APP_DIR)/target/release/$$bin" "$(BIN_DIR)/$$bin"' in (
         app_block

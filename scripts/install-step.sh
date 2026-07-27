@@ -66,13 +66,14 @@ if [[ -t 1 ]]; then
     index=$(((index + 1) % ${#frames[@]}))
     sleep 0.1
   done
-  if ! wait "$pid"; then
+  if wait "$pid"; then
+    printf '\r  ✓ %s\n' "$step_name"
+  else
     status="$?"
     printf '\r'
     fail "$status"
     exit "$status"
   fi
-  printf '\r  ✓ %s\n' "$step_name"
 else
   if "$@" >>"$log_path" 2>&1; then
     printf '  ✓ %s\n' "$step_name"
