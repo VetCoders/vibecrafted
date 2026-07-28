@@ -1713,6 +1713,12 @@ def start_service(config: SupervisorConfig) -> None:
             EX_TEMPFAIL,
         )
     if not loaded:
+        result = _launchctl(["enable", _launch_target()])
+        if result.returncode != 0:
+            raise SupervisorError(
+                f"launchctl enable failed: {result.stderr.strip()}",
+                result.returncode or 1,
+            )
         result = _launchctl(
             [
                 "bootstrap",

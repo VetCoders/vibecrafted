@@ -538,6 +538,7 @@ def test_start_service_does_not_kill_a_freshly_bootstrapped_supervisor(
 
     supervisor.start_service(config)
     assert calls == [
+        ["enable", supervisor._launch_target()],
         [
             "bootstrap",
             supervisor._launch_domain(),
@@ -554,6 +555,39 @@ def test_start_service_does_not_kill_a_freshly_bootstrapped_supervisor(
     )
     supervisor.start_service(config)
     assert calls == []
+
+
+def test_start_service_refuses_bootstrap_when_launchctl_enable_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    config = _config(tmp_path, launcher)
+    supervisor.install_service(config, supervisor_binary=supervisor_binary)
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: False)
+    monkeypatch.setattr(
+        supervisor,
+        "probe_supervisor",
+        lambda _paths: supervisor.SupervisorProbe(False, False, None, None),
+    )
+    calls: list[list[str]] = []
+
+    def fake_launchctl(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 5, "", "retained gate rejected")
+
+    monkeypatch.setattr(supervisor, "_launchctl", fake_launchctl)
+
+    with pytest.raises(
+        supervisor.SupervisorError,
+        match="launchctl enable failed: retained gate rejected",
+    ) as failure:
+        supervisor.start_service(config)
+
+    assert failure.value.exit_code == 5
+    assert calls == [["enable", supervisor._launch_target()]]
 
 
 def test_start_service_kickstarts_a_loaded_job_without_current_identity(

@@ -474,7 +474,17 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
     server_build_block = makefile.split("\nbuild-server-release:", 1)[1].split(
         "\ninstall-server-payload:", 1
     )[0]
-    assert "cargo build --release --locked -p $(SERVER_PACKAGE)" in server_build_block
+    assert "cargo leptos build --release" in server_build_block
+    assert '--bin-cargo-args="--locked"' in server_build_block
+    assert '--lib-cargo-args="--locked"' in server_build_block
+    assert "wasm-bindgen CLI $$cli_version does not match Cargo.lock" in (
+        server_build_block
+    )
+    assert (
+        "cargo install --force wasm-bindgen-cli --version $$lock_version --locked"
+        in (server_build_block)
+    )
+    assert "hydration wasm is missing" in server_build_block
     assert "install-server-payload" in makefile
 
 
@@ -745,6 +755,11 @@ def test_make_install_verifies_server_supervisor_entrypoint() -> None:
     assert "expected uv tool target" in install_tools_block
     assert "uv tool imports vibecrafted_core" in install_tools_block
     assert "$$stable_root/vibecrafted-core" in install_tools_block
+    assert (
+        "unset PYTHONPATH; \\\n"
+        "\tuv tool install --force --reinstall --editable "
+        '"$$stable_root/vibecrafted-core"; \\' in install_tools_block
+    )
     assert "uv tool uninstall" not in install_tools_block
     assert "run_with_tools_install_lease" in install_tools_block
     assert "INSTALL_TOOLS_SERVICE_POLICY ?= preserve" in text
@@ -838,6 +853,15 @@ def test_public_install_server_uses_transaction_and_payload_target_is_internal()
     assert "install-server-payload" in install_server_block
     assert "VIBECRAFTED_INSTALL_LEASE_FD" in payload_block
     assert "_require_inherited_tools_install_lease" in payload_block
+    assert 'cp -R "$(SERVER_BUILD_SITE_ROOT)/." "$(SERVER_INSTALL_SITE_ROOT)/"' in (
+        payload_block
+    )
+    service_block = text.split("\ninstall-server-service:", 1)[1].split(
+        "\nserver-smoke:", 1
+    )[0]
+    assert service_block.index("unset PYTHONPATH") < service_block.index(
+        'launcher="$$(command -v vibecrafted'
+    )
     assert payload_block.index("VIBECRAFTED_INSTALL_LEASE_FD") < payload_block.index(
         "command -v cargo"
     )

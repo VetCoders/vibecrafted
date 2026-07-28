@@ -194,6 +194,9 @@ endif
 # both the tools-install lease and, on macOS, the post-drain supervisor fence
 # across publish -> uv replacement. Service reconciliation and handoff sealing
 # remain in the outer Python owner so a shell failure cannot strand ownership.
+# Dispatched workers legitimately carry PYTHONPATH for their immutable runtime
+# generation; clear it only after source-side staging so it cannot override the
+# replacement uv tool or its exact-generation import check.
 install-tools-held:
 	@set -eu; \
 	if [ -z "$${VIBECRAFTED_INSTALL_LEASE_FD:-}" ]; then \
@@ -217,6 +220,7 @@ install-tools-held:
 		echo "[install-tools] FATAL: stable runtime home not staged at $$stable_root; refusing to source the uv-tool from the dev checkout" >&2; \
 		exit 1; \
 	fi; \
+	unset PYTHONPATH; \
 	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-core"; \
 	uv tool install --force --reinstall --editable "$$stable_root/plugins/iterm2"; \
 	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-mcp" --with-editable "$$stable_root/vibecrafted-core"; \
@@ -722,6 +726,7 @@ SERVER_BIN  := vc-server
 SERVER_COMPAT_BIN := vibecrafted-server-web
 SERVER_ADDR ?= 127.0.0.1:3024
 VIBECRAFTED_RUNTIME_HOME ?= $(HOME)/.local/share/vibecrafted
+SERVER_BUILD_SITE_ROOT := $(SERVER_DIR)/target/site
 SERVER_INSTALL_SITE_ROOT := $(VIBECRAFTED_RUNTIME_HOME)/server/site
 
 server-build:
@@ -748,8 +753,29 @@ build-server-release:
 		exit 0; \
 	fi; \
 	set -e; \
-	echo "[server] building release package ($(SERVER_PACKAGE))"; \
-	ulimit -f unlimited; ( cd $(SERVER_DIR) && cargo build --release --locked -p $(SERVER_PACKAGE) --no-default-features --features ssr $(INSTALL_QUIET) )
+	if ! command -v cargo-leptos >/dev/null 2>&1; then \
+		echo "[server] FATAL: cargo-leptos is required to build the interactive server shell" >&2; \
+		exit 1; \
+	fi; \
+	if command -v wasm-bindgen >/dev/null 2>&1; then \
+		lock_version="$$(cd "$(SERVER_DIR)" && $(PYTHON) -c 'import pathlib, tomllib; packages = tomllib.loads(pathlib.Path("Cargo.lock").read_text())["package"]; print(next(item["version"] for item in packages if item["name"] == "wasm-bindgen"))')"; \
+		cli_version="$$(wasm-bindgen --version | awk '{print $$2}')"; \
+		if [ "$$cli_version" != "$$lock_version" ]; then \
+			echo "[server] FATAL: wasm-bindgen CLI $$cli_version does not match Cargo.lock $$lock_version" >&2; \
+			echo "[server] repair: cargo install --force wasm-bindgen-cli --version $$lock_version --locked" >&2; \
+			exit 1; \
+		fi; \
+	fi; \
+	echo "[server] building release package + hydration assets ($(SERVER_PACKAGE))"; \
+	ulimit -f unlimited; ( cd $(SERVER_DIR) && cargo leptos build --release --bin-cargo-args="--locked" --lib-cargo-args="--locked" ); \
+	if [ ! -x "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" ] || [ ! -d "$(SERVER_BUILD_SITE_ROOT)/pkg" ]; then \
+		echo "[server] FATAL: cargo-leptos did not produce the server + site package" >&2; \
+		exit 1; \
+	fi; \
+	if ! find "$(SERVER_BUILD_SITE_ROOT)/pkg" -type f -name '*.wasm' -print -quit | grep -q .; then \
+		echo "[server] FATAL: hydration wasm is missing from $(SERVER_BUILD_SITE_ROOT)/pkg" >&2; \
+		exit 1; \
+	fi
 
 install-server-payload:
 	@set -eu; \
@@ -770,9 +796,9 @@ install-server-payload:
 	rm -f "$(BIN_DIR)/$(SERVER_BIN)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"; \
 	install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_BIN)"; \
 	install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"; \
-	echo "[server] copying public assets/fonts to $(SERVER_INSTALL_SITE_ROOT)"; \
+	echo "[server] copying interactive site assets to $(SERVER_INSTALL_SITE_ROOT)"; \
 	rm -rf "$(SERVER_INSTALL_SITE_ROOT)"/*; \
-	cp -R "$(SERVER_DIR)/web/public/"* "$(SERVER_INSTALL_SITE_ROOT)/"; \
+	cp -R "$(SERVER_BUILD_SITE_ROOT)/." "$(SERVER_INSTALL_SITE_ROOT)/"; \
 	echo "[server] installed: $(SERVER_BIN) -> $(BIN_DIR) (real file)"; \
 	echo "[server] compat: $(SERVER_COMPAT_BIN) -> $(BIN_DIR) (real file)"; \
 	echo "[server] assets -> $(SERVER_INSTALL_SITE_ROOT)"
@@ -795,6 +821,7 @@ install-server-service:
 	fi; \
 	set -e; \
 	export PATH="$(BIN_DIR):$$PATH"; \
+	unset PYTHONPATH; \
 	launcher="$$(command -v vibecrafted 2>/dev/null || true)"; \
 	supervisor="$$(command -v vc-server-supervisor 2>/dev/null || true)"; \
 	if [ -z "$$launcher" ] || [ ! -x "$$launcher" ]; then \
