@@ -1420,7 +1420,7 @@ pub mod api {
         setMode(panel, next);
       });
     }
-    // Event delegation: status chips rewrite raw + re-render rich.
+    // Event delegation: status chips rewrite raw + re-render rich + post typed status update.
     var rich = panel.querySelector(".rich-pane");
     if (rich) {
       rich.addEventListener("click", function (ev) {
@@ -1429,6 +1429,13 @@ pub mod api {
         ev.preventDefault();
         var ta = panel.querySelector("textarea.raw-pane");
         if (!ta) return;
+        var form = panel.querySelector("form.editor-form");
+        var org = form ? (form.querySelector("input[name=org]") || {}).value : "";
+        var repo = form ? (form.querySelector("input[name=repo]") || {}).value : "";
+        var day = form ? (form.querySelector("input[name=day]") || {}).value : "";
+        var plan_id = form ? (form.querySelector("input[name=plan_id]") || {}).value : "";
+        var artifact_id = form ? (form.querySelector("input[name=artifact_id]") || {}).value : "";
+
         var occ = Number(chip.getAttribute("data-task-occ"));
         var cur = chip.getAttribute("data-mark") || " ";
         var nxt = nextMark(cur);
@@ -1436,6 +1443,27 @@ pub mod api {
         markFormDirty(panel);
         // Keep rich open and re-parse so indices stay consistent.
         renderRich(panel);
+
+        if (org && repo && day && plan_id && artifact_id) {
+          fetch("/api/scaffold/status", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              org: org,
+              repo: repo,
+              day: day,
+              plan_id: plan_id,
+              artifact_id: artifact_id,
+              item_index: occ,
+              status: nxt
+            })
+          }).then(function (res) {
+            if (res.ok && form && ta) {
+              form.dataset.baseline = ta.value;
+              form.dataset.dirty = "";
+            }
+          }).catch(function () {});
+        }
       });
     }
   });
