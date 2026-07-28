@@ -116,11 +116,7 @@ pub mod api {
                 } else {
                     detailed.skipped
                 };
-                Html(render_plan_picker(
-                    &plan_card_views(&store, plans),
-                    &skips,
-                ))
-                .into_response()
+                Html(render_plan_picker(&plan_card_views(&store, plans), &skips)).into_response()
             }
             Err(error) => {
                 let store = ScaffoldArtifactStore::new(vibecrafted_home());
@@ -235,10 +231,7 @@ pub mod api {
         )
     }
 
-    async fn save_status(
-        headers: axum::http::HeaderMap,
-        body: String,
-    ) -> impl IntoResponse {
+    async fn save_status(headers: axum::http::HeaderMap, body: String) -> impl IntoResponse {
         let is_json = headers
             .get(header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
@@ -1422,14 +1415,21 @@ pub mod api {
     }
     // Event delegation: status chips rewrite raw + re-render rich + post typed status update.
     var rich = panel.querySelector(".rich-pane");
+    var form = panel.querySelector("form.editor-form");
+    var ta = panel.querySelector("textarea.raw-pane");
     if (rich) {
+      // A raw edit supersedes any in-flight chip write. Its response must not
+      // bless newer textarea bytes as saved.
+      if (form && ta) {
+        ta.addEventListener("input", function () {
+          form.dataset.statusRequestSeq = String(Number(form.dataset.statusRequestSeq || "0") + 1);
+        });
+      }
       rich.addEventListener("click", function (ev) {
         var chip = ev.target.closest(".md-status");
         if (!chip || !rich.contains(chip)) return;
         ev.preventDefault();
-        var ta = panel.querySelector("textarea.raw-pane");
         if (!ta) return;
-        var form = panel.querySelector("form.editor-form");
         var org = form ? (form.querySelector("input[name=org]") || {}).value : "";
         var repo = form ? (form.querySelector("input[name=repo]") || {}).value : "";
         var day = form ? (form.querySelector("input[name=day]") || {}).value : "";
@@ -1445,6 +1445,11 @@ pub mod api {
         renderRich(panel);
 
         if (org && repo && day && plan_id && artifact_id) {
+          // Multiple clicks and raw edits can overtake this request. Only the
+          // latest untouched textarea may adopt the server's canonical bytes.
+          var requestSeq = Number(form.dataset.statusRequestSeq || "0") + 1;
+          form.dataset.statusRequestSeq = String(requestSeq);
+          var requestedContent = ta.value;
           fetch("/api/scaffold/status", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1458,7 +1463,12 @@ pub mod api {
               status: nxt
             })
           }).then(function (res) {
-            if (res.ok && form && ta) {
+            if (!res.ok) throw new Error("status update failed");
+            return res.json();
+          }).then(function (payload) {
+            if (Number(form.dataset.statusRequestSeq || "0") === requestSeq && ta.value === requestedContent) {
+              var canonical = payload && payload.artifact && payload.artifact.content;
+              if (typeof canonical === "string") ta.value = canonical;
               form.dataset.baseline = ta.value;
               form.dataset.dirty = "";
             }
@@ -1778,7 +1788,10 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
                 "missing clickable status chip class"
             );
             // Structure upgrades that stop the tracker from flattening.
-            assert!(html.contains("md-table"), "GFM tables required for trackers");
+            assert!(
+                html.contains("md-table"),
+                "GFM tables required for trackers"
+            );
             assert!(
                 html.contains("md-frontmatter"),
                 "YAML frontmatter must render as a meta card, not a soup line"
@@ -1790,6 +1803,14 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
             assert!(
                 html.contains("markFormDirty"),
                 "status click must mark editor-form dirty for save-on-close"
+            );
+            assert!(
+                html.contains("statusRequestSeq"),
+                "a stale chip response must not clear a newer local edit"
+            );
+            assert!(
+                html.contains("return res.json()"),
+                "a successful chip write must reconcile with canonical server bytes"
             );
         }
 

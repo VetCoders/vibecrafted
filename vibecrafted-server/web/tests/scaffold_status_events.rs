@@ -47,13 +47,7 @@ impl TempHome {
         }
     }
 
-    fn setup_scaffold_plan(
-        &self,
-        org: &str,
-        repo: &str,
-        day: &str,
-        plan_id: &str,
-    ) -> PathBuf {
+    fn setup_scaffold_plan(&self, org: &str, repo: &str, day: &str, plan_id: &str) -> PathBuf {
         let plan_dir = self
             .path
             .join("artifacts")

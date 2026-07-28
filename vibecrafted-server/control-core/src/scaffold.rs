@@ -1908,7 +1908,11 @@ fn emit_scaffold_control_event(
         return;
     };
 
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(events_path) {
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(events_path)
+    {
         let _ = writeln!(file, "{line}");
     }
 }
