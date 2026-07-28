@@ -1857,7 +1857,11 @@ body:has(.review-shell){height:100vh;overflow:hidden}
 .review-main>.status{position:absolute;z-index:5;left:16px;right:16px;top:12px;margin:0}
 .status{display:none;border:1px solid #4d7041;background:#162114;padding:10px;border-radius:8px}.status:target{display:block}.status-error{border-color:var(--bad);background:#2b1717}
 /* One active document only — never stack every artifact */
-.artifact-panel{display:none;height:100%;min-height:0;border:0;border-radius:0;background:var(--panel);overflow:hidden;grid-template-rows:auto minmax(0,1fr)}
+/* Rows: editor-form fills, trailing forms (pre-JS checkpoint) auto. The
+ * .artifact-head is permanently display:none (chrome lives in the topbar) and
+ * the checkpoint form is relocated into the inspector by JS, so the form must
+ * own the flexible track — `auto 1fr` collapsed it to 0 (empty document). */
+.artifact-panel{display:none;height:100%;min-height:0;border:0;border-radius:0;background:var(--panel);overflow:hidden;grid-template-rows:minmax(0,1fr) auto}
 .artifact-panel.is-active{display:grid}
 .artifact-panel.is-active .editor-form{display:grid;grid-template-rows:minmax(0,1fr) auto;min-height:0;height:100%}
 /* Absolute fill — Safari %height on textarea inside grid-fr collapses to content (black void). */
