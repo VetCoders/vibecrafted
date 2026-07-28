@@ -626,7 +626,9 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
 #[cfg(all(test, feature = "ssr"))]
 mod tests {
     use std::fs;
+    use std::io::ErrorKind;
     use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use chrono::Utc;
     use control_core::ControlPlane;
@@ -638,11 +640,30 @@ mod tests {
     use crate::theme::provide_theme_context;
 
     fn temp_home() -> PathBuf {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        std::env::temp_dir().join(format!("vc-web-settlement-{}-{nanos}", std::process::id()))
+        let base = std::env::var_os("TMPDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/tmp"));
+
+        for attempt in 0..100 {
+            let nonce = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+            let candidate = base.join(format!(
+                "vc-web-settlement-{}-{nanos}-{nonce}-{attempt}",
+                std::process::id()
+            ));
+            match fs::create_dir(&candidate) {
+                Ok(()) => return candidate,
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("create isolated fixture home: {error}"),
+            }
+        }
+
+        panic!("could not allocate an isolated fixture home")
     }
 
     fn write_snapshot(runs_dir: &Path, run_id: &str, verdict: &str, tui: &str) {
