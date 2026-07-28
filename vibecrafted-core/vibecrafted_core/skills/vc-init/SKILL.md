@@ -112,7 +112,7 @@ Retrieve the decision context, then verify its current truth against perception.
 The fleet's paid-for experience is part of this sense: before dispatching,
 resuming, or recovering external runs, check the
 [Runtime Feedback Ledger](../RUNTIME_FEEDBACK.md) for the commands you are
-about to use (`aicx search -p VetCoders/vibecrafted '<command>'` reaches the
+about to use (`aicx search -p Vetcoders/vibecrafted '<command>'` reaches the
 same doctrine as retrieval). Repeating a mistake the ledger already prices is
 a process failure, not bad luck.
 

@@ -84,9 +84,27 @@ if [ -n "${TAILSCALE_AUTHKEY:-}" ]; then
             TS_IP="unknown"; sleep 1
         done
         ok "tailnet up: $TS_HOSTNAME @ $TS_IP"
-        ok "Tailscale SSH on — peers reach this box: ssh root@$TS_HOSTNAME"
+        ok "Tailscale SSH on port 22 — peers: ssh root@$TS_HOSTNAME (may require browser check)"
     else
         warn "tailscale up failed — check /var/log/tailscaled.log"
+    fi
+
+    # OpenSSH key path on :2222 (batch/agent-friendly; no Tailscale check URL).
+    # Tailscale SSH owns :22; key auth goes through serve → local sshd.
+    if command -v sshd >/dev/null 2>&1 || [ -x /usr/sbin/sshd ]; then
+        mkdir -p /var/run/sshd /root/.ssh
+        chmod 700 /root/.ssh
+        ssh-keygen -A >/dev/null 2>&1 || true
+        if ! pgrep -x sshd >/dev/null 2>&1; then
+            /usr/sbin/sshd -p 2222 || warn "sshd -p 2222 failed to start"
+        fi
+        if tailscale serve --bg --tcp 2222 tcp://127.0.0.1:2222 >/dev/null 2>&1; then
+            ok "OpenSSH key auth: ssh -p 2222 root@$TS_HOSTNAME (or Host vetcoders)"
+        else
+            warn "tailscale serve :2222 failed — key SSH not exposed on tailnet"
+        fi
+    else
+        warn "openssh-server not installed — only Tailscale SSH (port 22) available"
     fi
 else
     warn "TAILSCALE_AUTHKEY not set — skipping tailnet (set to join mesh)"
