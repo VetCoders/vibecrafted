@@ -882,11 +882,10 @@ pub mod api {
         } else {
             "needs checkpoint"
         };
-        // Codescribe C2b pattern: raw is default (disk bytes as mono source);
-        // rich markdown is per-panel opt-in via the meta-row toggle. Button label
-        // names the mode a click switches TO (action-verb, not current-state).
+        // Default view is formatted rich markdown. "Edit" opens the mono
+        // source textarea; "Save" persists (if dirty) and returns to rich.
         format!(
-            r#"<article class="artifact-panel" id="{}" data-render-mode="raw">
+            r#"<article class="artifact-panel" id="{}" data-render-mode="rich">
   <header class="artifact-head">
     <div>
       <p class="eyebrow">{}</p>
@@ -894,17 +893,17 @@ pub mod api {
       <p class="path">{}</p>
     </div>
     <div class="artifact-head-actions">
-      <button type="button" class="render-mode-btn" data-next="rich" title="Render as markdown" aria-label="Switch to rich markdown">rich</button>
+      <button type="button" class="render-mode-btn" data-next="edit" title="Edit markdown source" aria-label="Edit markdown source">Edit</button>
       <span class="checkpoint-state">{}</span>
     </div>
   </header>
   <form method="post" action="/api/scaffold/artifact" class="editor-form">
     {}
     <div class="editor-body">
-      <textarea name="content" class="raw-pane" spellcheck="false">{}</textarea>
-      <div class="rich-pane md-body" hidden aria-live="polite"></div>
+      <textarea name="content" class="raw-pane" spellcheck="false" hidden>{}</textarea>
+      <div class="rich-pane md-body" aria-live="polite"></div>
     </div>
-    <button type="submit">Save artifact</button>
+    <button type="submit" class="save-artifact-btn" hidden>Save artifact</button>
   </form>
   <form method="post" action="/api/scaffold/checkpoint" class="checkpoint-form">
     {}
@@ -1383,39 +1382,54 @@ pub mod api {
     var ta = panel.querySelector("textarea.raw-pane");
     var rich = panel.querySelector(".rich-pane");
     var btn = panel.querySelector(".render-mode-btn");
+    var saveBtn = panel.querySelector(".save-artifact-btn");
     if (!ta || !rich || !btn) return;
+    // Normalize legacy "raw" alias to edit mode.
+    if (mode === "raw") mode = "edit";
     panel.setAttribute("data-render-mode", mode);
     if (mode === "rich") {
       renderRich(panel);
       rich.hidden = false;
       ta.hidden = true;
-      btn.dataset.next = "raw";
-      btn.textContent = "raw";
-      btn.title = "Show raw text";
-      btn.setAttribute("aria-label", "Switch to raw text");
+      if (saveBtn) saveBtn.hidden = true;
+      btn.dataset.next = "edit";
+      btn.textContent = "Edit";
+      btn.title = "Edit markdown source";
+      btn.setAttribute("aria-label", "Edit markdown source");
     } else {
       rich.hidden = true;
       rich.innerHTML = "";
       ta.hidden = false;
+      if (saveBtn) saveBtn.hidden = false;
       btn.dataset.next = "rich";
-      btn.textContent = "rich";
-      btn.title = "Render as markdown";
-      btn.setAttribute("aria-label", "Switch to rich markdown");
+      btn.textContent = "Save";
+      btn.title = "Save and show formatted view";
+      btn.setAttribute("aria-label", "Save and show formatted view");
       ta.focus({ preventScroll: true });
     }
   }
 
   document.querySelectorAll(".artifact-panel").forEach(function (panel) {
     var btn = panel.querySelector(".render-mode-btn");
+    var form = panel.querySelector("form.editor-form");
     if (btn) {
       btn.addEventListener("click", function () {
-        var next = btn.dataset.next === "raw" ? "raw" : "rich";
+        var next = btn.dataset.next === "edit" || btn.dataset.next === "raw" ? "edit" : "rich";
+        if (next === "rich") {
+          // Leaving edit: persist if dirty, then return to formatted view.
+          markFormDirty(panel);
+          if (form && form.dataset.dirty === "1") {
+            form.requestSubmit();
+            return;
+          }
+        }
         setMode(panel, next);
       });
     }
+    // Default: formatted rich view (not mono source).
+    setMode(panel, "rich");
     // Event delegation: status chips rewrite raw + re-render rich + post typed status update.
     var rich = panel.querySelector(".rich-pane");
-    var form = panel.querySelector("form.editor-form");
     var ta = panel.querySelector("textarea.raw-pane");
     if (rich) {
       // A raw edit supersedes any in-flight chip write. Its response must not
@@ -1737,19 +1751,23 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
         #[test]
         fn editor_embeds_raw_rich_render_mode_toggle() {
             let html = render_editor(&fixture());
-            // Codescribe contract: raw default, button names the mode a click
-            // switches TO, rich is a live re-parse of the textarea.
+            // Formatted rich is the default; Edit opens mono source, Save
+            // returns to rich (and posts if dirty).
             assert!(
-                html.contains(r#"data-render-mode="raw""#),
-                "artifact panels default to raw (disk-byte mono)"
+                html.contains(r#"data-render-mode="rich""#),
+                "artifact panels default to formatted rich view"
             );
             assert!(
                 html.contains(r#"class="render-mode-btn""#),
-                "missing per-panel raw↔rich toggle"
+                "missing per-panel Edit/Save control"
             );
             assert!(
-                html.contains(r#"data-next="rich""#),
-                "button must advertise the next mode (rich when raw is active)"
+                html.contains(r#"data-next="edit""#),
+                "view mode must offer Edit"
+            );
+            assert!(
+                html.contains(">Edit</button>"),
+                "meta button label must be Edit in default view"
             );
             assert!(
                 html.contains(r#"class="rich-pane md-body""#),
@@ -1760,10 +1778,10 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
                 "editor must ship the client markdown renderer for live rich toggle"
             );
             assert!(
-                html.contains("setMode(panel, next)"),
-                "toggle must flip panel mode without a full page reload"
+                html.contains(r#"setMode(panel, "rich")"#),
+                "panels must init into rich view on load"
             );
-            // Save still posts the raw textarea — rich never becomes a write path.
+            // Source textarea remains the write path (hidden until Edit).
             assert!(html.contains(r#"name="content" class="raw-pane""#));
         }
 
