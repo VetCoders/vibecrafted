@@ -75,6 +75,17 @@ def test_vc_alias_matrix_script_exists_and_is_executable_gate() -> None:
     assert "STANDALONE" in body
 
 
+def test_sync_script_covers_both_deck_paths() -> None:
+    """Install sync must copy scripts/vibecrafted AND packaged deck twin."""
+    script = REPO_ROOT / "scripts" / "sync-vc-alias-runtime.sh"
+    assert script.is_file()
+    body = script.read_text(encoding="utf-8")
+    assert "scripts/vibecrafted" in body
+    assert "vibecrafted_core/deck/vibecrafted" in body
+    assert "runtime/shell/lib/dispatch.sh" in body
+    assert "runtime/shell/lib/marbles.sh" in body
+
+
 def test_interactive_zsh_resume_help_does_not_create_runs(tmp_path: Path) -> None:
     """Real user path: zsh -ic 'vc-resume --help' must not mint control-plane runs."""
     runs_dir = Path.home() / ".vibecrafted" / "control_plane" / "runs"
