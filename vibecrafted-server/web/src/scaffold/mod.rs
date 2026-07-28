@@ -427,16 +427,21 @@ pub mod api {
     }
 
     fn render_editor(workspace: &ScaffoldWorkspace) -> String {
+        let first_id = workspace
+            .artifacts
+            .first()
+            .map(|a| a.id.as_str())
+            .unwrap_or("");
         let tabs = workspace
             .artifacts
             .iter()
-            .map(render_tab)
+            .map(|artifact| render_tab(artifact, artifact.id == first_id))
             .collect::<Vec<_>>()
             .join("");
         let panels = workspace
             .artifacts
             .iter()
-            .map(|artifact| render_panel(workspace, artifact))
+            .map(|artifact| render_panel(workspace, artifact, artifact.id == first_id))
             .collect::<Vec<_>>()
             .join("");
         let approved = workspace
@@ -455,7 +460,7 @@ pub mod api {
 <style>{}</style>
 </head>
 <body>
-<main class="review-shell">
+<main class="review-shell" data-first-artifact="{}">
   <nav class="review-sidebar" aria-label="Scaffold artifacts">
     <div class="brand">vibecrafted server</div>
     <div class="summary">
@@ -463,37 +468,80 @@ pub mod api {
       <span>{} / {} checkpointed</span>
       <span>{}</span>
     </div>
-    <div class="tabs">{}</div>
-    <a class="api-link" href="/api/scaffold/artifacts?org={}&repo={}&day={}&plan_id={}">artifact endpoint</a>
-    <a class="api-link" href="/api/scaffold/changes?org={}&repo={}&day={}&plan_id={}">change endpoint</a>
+    <div class="tabs" role="tablist">{}</div>
   </nav>
-  <section class="review-main">
-    <div id="status-saved" class="status">Saved. Agent endpoint is current.</div>
-    <div id="status-error" class="status status-error">Save failed. Check server logs.</div>
-    {}
-  </section>
+
+  <div class="review-workspace">
+    <header class="review-topbar" aria-label="Active artifact strip">
+      <div class="review-topbar-id">
+        <span class="mono-cap" id="active-role">—</span>
+        <strong id="active-title">Select an artifact</strong>
+        <span class="path" id="active-path"></span>
+      </div>
+      <div class="review-topbar-actions" id="active-actions"></div>
+    </header>
+
+    <section class="review-main" aria-label="Artifact canvas">
+      <div id="status-saved" class="status">Saved. Agent endpoint is current.</div>
+      <div id="status-error" class="status status-error">Save failed. Check server logs.</div>
+      {}
+    </section>
+
+    <footer class="review-statusbar" aria-label="Plan statistics">
+      <span><b id="stat-mode">rich</b> view</span>
+      <span id="stat-chars">0 chars</span>
+      <span>{} / {} checkpointed</span>
+      <span class="stat-plan">{} · {}</span>
+    </footer>
+  </div>
+
+  <aside class="review-inspector" aria-label="Tools and status">
+    <div class="inspector-head mono-cap">Inspector</div>
+    <div class="inspector-block">
+      <h3>Status</h3>
+      <p id="inspector-checkpoint" class="inspector-pill">—</p>
+      <p class="inspector-meta" id="inspector-role">role —</p>
+      <p class="inspector-meta" id="inspector-id">id —</p>
+    </div>
+    <div class="inspector-block" id="inspector-checkpoint-slot">
+      <h3>Checkpoint</h3>
+      <p class="inspector-hint">Switch artifact to load checkpoint controls.</p>
+    </div>
+    <div class="inspector-block">
+      <h3>Endpoints</h3>
+      <a class="api-link" href="/api/scaffold/artifacts?org={}&repo={}&day={}&plan_id={}">artifact endpoint</a>
+      <a class="api-link" href="/api/scaffold/changes?org={}&repo={}&day={}&plan_id={}">change endpoint</a>
+    </div>
+  </aside>
 </main>
+{}
 {}
 {}
 </body>
 </html>"#,
             editor_css(),
+            escape_attr(first_id),
             escape_html(&workspace.repo),
             approved,
             total,
             escape_html(&workspace.day),
             tabs,
-            url_component(&workspace.org),
-            url_component(&workspace.repo),
-            url_component(&workspace.day),
-            url_component(&workspace.plan_id),
-            url_component(&workspace.org),
-            url_component(&workspace.repo),
-            url_component(&workspace.day),
-            url_component(&workspace.plan_id),
             panels,
+            approved,
+            total,
+            escape_html(&workspace.repo),
+            escape_html(&workspace.day),
+            url_component(&workspace.org),
+            url_component(&workspace.repo),
+            url_component(&workspace.day),
+            url_component(&workspace.plan_id),
+            url_component(&workspace.org),
+            url_component(&workspace.repo),
+            url_component(&workspace.day),
+            url_component(&workspace.plan_id),
             save_on_close_guard(),
-            render_mode_script()
+            render_mode_script(),
+            panel_nav_script()
         )
     }
 
@@ -856,22 +904,26 @@ pub mod api {
         )
     }
 
-    fn render_tab(artifact: &ScaffoldArtifact) -> String {
+    fn render_tab(artifact: &ScaffoldArtifact, active: bool) -> String {
         let checkpoint = if artifact.checkpoint.approved {
             "done"
         } else {
             "open"
         };
+        let active_class = if active { " is-active" } else { "" };
+        let selected = if active { "true" } else { "false" };
         format!(
-            r##"<a class="tab tab-{}" href="#{}"><span>{}</span><small>{}</small></a>"##,
+            r##"<a class="tab tab-{}{}" href="#{}" role="tab" aria-selected="{}"><span>{}</span><small>{}</small></a>"##,
             checkpoint,
+            active_class,
             escape_attr(&artifact.id),
+            selected,
             escape_html(&artifact.title),
             artifact.role.as_str()
         )
     }
 
-    fn render_panel(workspace: &ScaffoldWorkspace, artifact: &ScaffoldArtifact) -> String {
+    fn render_panel(workspace: &ScaffoldWorkspace, artifact: &ScaffoldArtifact, active: bool) -> String {
         let checked = if artifact.checkpoint.approved {
             " checked"
         } else {
@@ -882,10 +934,13 @@ pub mod api {
         } else {
             "needs checkpoint"
         };
+        let active_class = if active { " is-active" } else { "" };
+        let hidden_attr = if active { "" } else { " hidden" };
         // Default view is formatted rich markdown. "Edit" opens the mono
         // source textarea; "Save" persists (if dirty) and returns to rich.
+        // Only the active panel is visible (studio shell — one document).
         format!(
-            r#"<article class="artifact-panel" id="{}" data-render-mode="rich">
+            r#"<article class="artifact-panel{}" id="{}" data-render-mode="rich"{} aria-hidden="{}">
   <header class="artifact-head">
     <div>
       <p class="eyebrow">{}</p>
@@ -912,7 +967,10 @@ pub mod api {
     <button type="submit">Update checkpoint</button>
   </form>
 </article>"#,
+            active_class,
             escape_attr(&artifact.id),
+            hidden_attr,
+            if active { "false" } else { "true" },
             artifact.role.as_str(),
             escape_html(&artifact.title),
             escape_html(&artifact.relative_path),
@@ -1378,6 +1436,18 @@ pub mod api {
     rich.innerHTML = mdToHtml(ta.value);
   }
 
+  function syncTopbarEditProxy(btn) {
+    // Studio topbar mirrors the live panel button; keep label/state in lockstep.
+    var actions = document.getElementById("active-actions");
+    if (!actions || !btn) return;
+    var proxy = actions.querySelector(".render-mode-btn");
+    if (!proxy) return;
+    proxy.textContent = btn.textContent;
+    proxy.dataset.next = btn.dataset.next;
+    proxy.title = btn.title || "";
+    proxy.setAttribute("aria-label", btn.getAttribute("aria-label") || "");
+  }
+
   function setMode(panel, mode) {
     var ta = panel.querySelector("textarea.raw-pane");
     var rich = panel.querySelector(".rich-pane");
@@ -1406,6 +1476,13 @@ pub mod api {
       btn.title = "Save and show formatted view";
       btn.setAttribute("aria-label", "Save and show formatted view");
       ta.focus({ preventScroll: true });
+    }
+    if (panel.classList.contains("is-active") || !document.querySelector(".artifact-panel.is-active")) {
+      syncTopbarEditProxy(btn);
+    }
+    var statMode = document.getElementById("stat-mode");
+    if (statMode && (panel.classList.contains("is-active") || !document.querySelector(".artifact-panel.is-active"))) {
+      statMode.textContent = mode;
     }
   }
 
@@ -1495,6 +1572,207 @@ pub mod api {
 </script>"#
     }
 
+    /// Single-document studio navigation (GlyphPulse / unicode-puzzles-portal shape).
+    ///
+    /// Hash + left tabs drive one `.artifact-panel.is-active`. Everything else
+    /// stays hidden so the page never becomes a 30m scroll of every artifact.
+    /// Topbar, inspector, and statusbar mirror the active panel.
+    fn panel_nav_script() -> &'static str {
+        r##"<script>
+(function () {
+  var shell = document.querySelector(".review-shell");
+  if (!shell) return;
+
+  var tabs = Array.prototype.slice.call(document.querySelectorAll(".tabs .tab"));
+  var panels = Array.prototype.slice.call(document.querySelectorAll(".artifact-panel"));
+  var firstId = shell.getAttribute("data-first-artifact") || (panels[0] && panels[0].id) || "";
+
+  var elRole = document.getElementById("active-role");
+  var elTitle = document.getElementById("active-title");
+  var elPath = document.getElementById("active-path");
+  var elActions = document.getElementById("active-actions");
+  var elCheckpoint = document.getElementById("inspector-checkpoint");
+  var elRoleMeta = document.getElementById("inspector-role");
+  var elIdMeta = document.getElementById("inspector-id");
+  var slot = document.getElementById("inspector-checkpoint-slot");
+  var statMode = document.getElementById("stat-mode");
+  var statChars = document.getElementById("stat-chars");
+
+  var homeMarkup = slot
+    ? slot.innerHTML
+    : '<h3>Checkpoint</h3><p class="inspector-hint">Switch artifact to load checkpoint controls.</p>';
+
+  function panelIdFromHash() {
+    var h = (location.hash || "").replace(/^#/, "");
+    if (!h || h.indexOf("status-") === 0) return "";
+    return h;
+  }
+
+  function findPanel(id) {
+    for (var i = 0; i < panels.length; i++) {
+      if (panels[i].id === id) return panels[i];
+    }
+    return null;
+  }
+
+  function updateStats(panel) {
+    if (!panel) return;
+    var ta = panel.querySelector("textarea.raw-pane");
+    var mode = panel.getAttribute("data-render-mode") || "rich";
+    var text = ta ? ta.value : "";
+    if (statMode) statMode.textContent = mode;
+    if (statChars) {
+      var lines = text ? text.split(/\n/).length : 0;
+      statChars.textContent = text.length + " chars · " + lines + " lines";
+    }
+  }
+
+  function bindStats(panel) {
+    var ta = panel.querySelector("textarea.raw-pane");
+    if (!ta || ta.dataset.statsBound === "1") return;
+    ta.dataset.statsBound = "1";
+    ta.addEventListener("input", function () {
+      if (panel.classList.contains("is-active")) updateStats(panel);
+    });
+    var btn = panel.querySelector(".render-mode-btn");
+    if (btn) {
+      btn.addEventListener("click", function () {
+        // setMode runs first on the other listener; defer one tick.
+        setTimeout(function () {
+          if (panel.classList.contains("is-active")) updateStats(panel);
+        }, 0);
+      });
+    }
+  }
+
+  function activate(id, opts) {
+    opts = opts || {};
+    var panel = findPanel(id);
+    if (!panel) {
+      if (firstId && id !== firstId) return activate(firstId, opts);
+      return;
+    }
+
+    panels.forEach(function (p) {
+      var on = p.id === panel.id;
+      p.classList.toggle("is-active", on);
+      p.hidden = !on;
+      p.setAttribute("aria-hidden", on ? "false" : "true");
+    });
+
+    tabs.forEach(function (t) {
+      var href = (t.getAttribute("href") || "").replace(/^#/, "");
+      var on = href === panel.id;
+      t.classList.toggle("is-active", on);
+      t.setAttribute("aria-selected", on ? "true" : "false");
+    });
+
+    var eyebrow = panel.querySelector(".eyebrow");
+    var h2 = panel.querySelector(".artifact-head h2");
+    var path = panel.querySelector(".path");
+    var state = panel.querySelector(".checkpoint-state");
+    var actions = panel.querySelector(".artifact-head-actions");
+
+    if (elRole) elRole.textContent = eyebrow ? eyebrow.textContent : "—";
+    if (elTitle) elTitle.textContent = h2 ? h2.textContent : panel.id;
+    if (elPath) elPath.textContent = path ? path.textContent : "";
+    if (elActions) {
+      elActions.innerHTML = "";
+      if (actions) {
+        // Mirror Edit + checkpoint pill into the fixed topbar (same plane).
+        Array.prototype.slice.call(actions.children).forEach(function (node) {
+          if (node.classList && node.classList.contains("render-mode-btn")) {
+            // Keep the live button in the panel head (hidden by CSS in studio);
+            // clone a proxy that forwards clicks so topbar stays interactive.
+            var proxy = node.cloneNode(true);
+            proxy.addEventListener("click", function (ev) {
+              ev.preventDefault();
+              node.click();
+              // Refresh proxy label after setMode mutates the source button.
+              setTimeout(function () {
+                proxy.textContent = node.textContent;
+                proxy.dataset.next = node.dataset.next;
+                proxy.title = node.title || "";
+                proxy.setAttribute("aria-label", node.getAttribute("aria-label") || "");
+                updateStats(panel);
+              }, 0);
+            });
+            elActions.appendChild(proxy);
+          } else {
+            elActions.appendChild(node.cloneNode(true));
+          }
+        });
+      }
+    }
+
+    if (elCheckpoint) {
+      elCheckpoint.textContent = state ? state.textContent : "—";
+      elCheckpoint.classList.toggle(
+        "is-done",
+        !!(state && /checkpointed/i.test(state.textContent || ""))
+      );
+    }
+    if (elRoleMeta) elRoleMeta.textContent = "role " + (eyebrow ? eyebrow.textContent : "—");
+    if (elIdMeta) elIdMeta.textContent = "id " + panel.id;
+
+    // Relocate the live checkpoint form into the inspector (one at a time).
+    if (slot) {
+      // Return any previously parked form to its home panel.
+      var parked = slot.querySelector("form.checkpoint-form");
+      if (parked && parked.dataset.homePanel) {
+        var home = document.getElementById(parked.dataset.homePanel);
+        if (home) home.appendChild(parked);
+      }
+      slot.innerHTML = "<h3>Checkpoint</h3>";
+      var form = panel.querySelector("form.checkpoint-form");
+      if (form) {
+        form.dataset.homePanel = panel.id;
+        slot.appendChild(form);
+      } else {
+        slot.insertAdjacentHTML("beforeend", '<p class="inspector-hint">No checkpoint controls on this artifact.</p>');
+      }
+    }
+
+    bindStats(panel);
+    updateStats(panel);
+
+    if (!opts.skipHash) {
+      var next = "#" + panel.id;
+      if (location.hash !== next) {
+        if (history.replaceState) history.replaceState(null, "", next);
+        else location.hash = panel.id;
+      }
+    }
+
+    // Keep the active tab visible in the left rail.
+    var activeTab = document.querySelector('.tabs .tab.is-active');
+    if (activeTab && activeTab.scrollIntoView) {
+      activeTab.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  tabs.forEach(function (t) {
+    t.addEventListener("click", function (ev) {
+      var href = (t.getAttribute("href") || "").replace(/^#/, "");
+      if (!href || !findPanel(href)) return;
+      ev.preventDefault();
+      activate(href);
+    });
+  });
+
+  window.addEventListener("hashchange", function () {
+    var id = panelIdFromHash();
+    if (id) activate(id, { skipHash: true });
+  });
+
+  // Init: hash wins, else first artifact. Never leave every panel visible.
+  var boot = panelIdFromHash() || firstId;
+  if (boot) activate(boot);
+  else panels.forEach(function (p) { p.hidden = true; });
+})();
+</script>"##
+    }
+
     fn hidden_context(workspace: &ScaffoldWorkspace, artifact: &ScaffoldArtifact) -> String {
         format!(
             r#"<input type="hidden" name="org" value="{}">
@@ -1517,6 +1795,8 @@ pub mod api {
 :root{color-scheme:dark;--bg:#0d0f10;--panel:#151819;--panel-lift:#1b1f20;--line:#2b3033;--text:#f3eee7;--muted:#a9b1b4;--accent:#b8ef7d;--teal:#4d9b8e;--amber:#d8a640;--warn:#ffd166;--bad:#ff8a8a}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
 a{color:inherit}
+/* Studio editor locks the viewport; plan library / blocked pages still scroll. */
+body:has(.review-shell){height:100vh;overflow:hidden}
 .plan-library{min-height:100vh;background:radial-gradient(circle at 83% 7%,rgba(77,155,142,.13),transparent 31rem),var(--bg)}
 .library-header{padding:26px clamp(24px,5vw,76px) 54px;border-bottom:1px solid var(--line)}
 .library-nav{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-bottom:clamp(64px,9vw,130px)}
@@ -1552,25 +1832,68 @@ a{color:inherit}
 .blocked-plan-head{display:flex;align-items:end;justify-content:space-between;gap:30px;padding-bottom:36px;border-bottom:1px solid var(--line)}.blocked-plan-head h1{max-width:900px;margin:10px 0 0;font:400 clamp(44px,6.5vw,88px)/.92 Georgia,'Times New Roman',serif;letter-spacing:-.045em}.blocked-pill{flex:0 0 auto;border:1px solid rgba(255,138,138,.35);border-radius:99px;padding:7px 11px;color:var(--bad);font:10px ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase;letter-spacing:.1em}
 .blocked-plan-grid{display:grid;grid-template-columns:minmax(280px,.72fr) minmax(0,1.28fr);gap:clamp(36px,7vw,110px);padding-top:42px}.blocked-explainer h2{margin:8px 0 18px;font:400 clamp(31px,4vw,52px)/.98 Georgia,'Times New Roman',serif}.blocked-explainer>p:not(.eyebrow){max-width:520px;color:var(--muted);font-size:16px;line-height:1.6}.blocked-explainer dl{display:grid;gap:12px;margin:36px 0 0}.blocked-explainer dl div{display:grid;grid-template-columns:80px 1fr;gap:16px;padding-top:10px;border-top:1px solid var(--line)}.blocked-explainer dt{color:var(--muted);font:10px ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase}.blocked-explainer dd{min-width:0;margin:0;overflow-wrap:anywhere;font:12px ui-monospace,SFMono-Regular,Menlo,monospace}
 .blocked-findings{border:1px solid var(--line);border-radius:9px;background:var(--panel);overflow:hidden}.blocked-findings-head{display:flex;align-items:end;justify-content:space-between;gap:20px;padding:18px 20px;border-bottom:1px solid var(--line)}.blocked-findings-head p{margin:0}.blocked-findings-head strong{color:var(--bad);font:11px ui-monospace,SFMono-Regular,Menlo,monospace}.blocked-findings ol{max-height:68vh;margin:0;padding:0;overflow:auto;list-style:none}.blocked-findings li{padding:17px 20px;border-bottom:1px solid var(--line)}.blocked-findings li:last-child{border:0}.blocked-findings li div{display:flex;justify-content:space-between;gap:14px}.blocked-findings li span{color:var(--bad);font:11px ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase}.blocked-findings li code{color:var(--teal);font:11px ui-monospace,SFMono-Regular,Menlo,monospace}.blocked-findings li p{margin:8px 0 0;color:var(--muted);line-height:1.5}
-.review-shell{display:grid;grid-template-columns:280px minmax(0,1fr);min-height:100vh}
-.review-sidebar{border-right:1px solid var(--line);padding:18px 14px;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:14px;background:#101314}
+/* --- Scaffold studio shell (GlyphPulse shape: nav | canvas | inspector + stats) --- */
+.review-shell{display:grid;grid-template-columns:280px minmax(0,1fr) 300px;height:100vh;overflow:hidden;background:var(--bg)}
+.review-sidebar{border-right:1px solid var(--line);padding:18px 14px;height:100vh;display:flex;flex-direction:column;gap:14px;background:#101314;min-height:0;overflow:hidden}
 .brand{font:700 12px/1.1 ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase;letter-spacing:.08em;color:var(--accent)}
-.summary{display:grid;gap:3px;color:var(--muted)}.summary strong{color:var(--text);font-size:16px}
-.tabs{display:flex;flex-direction:column;gap:6px;overflow:auto;padding-right:4px}
+.summary{display:grid;gap:3px;color:var(--muted);flex:0 0 auto}.summary strong{color:var(--text);font-size:16px}
+.tabs{display:flex;flex-direction:column;gap:6px;overflow:auto;padding-right:4px;min-height:0;flex:1 1 auto}
 .tab{display:grid;gap:2px;text-decoration:none;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px 10px;background:#171b1d}
-.tab:hover,.tab:focus{border-color:var(--accent);outline:none}.tab small{color:var(--muted);font:11px ui-monospace,SFMono-Regular,Menlo,monospace}.tab-done{border-color:#4d7041}
-.api-link{color:var(--accent);font:12px ui-monospace,SFMono-Regular,Menlo,monospace;text-decoration:none}
-.review-main{padding:22px;display:grid;gap:18px}.status{display:none;border:1px solid #4d7041;background:#162114;padding:10px;border-radius:8px}.status:target{display:block}.status-error{border-color:var(--bad);background:#2b1717}
-.artifact-panel{border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow:hidden;min-height:78vh;display:grid;grid-template-rows:auto minmax(420px,1fr) auto}
+.tab:hover,.tab:focus{border-color:var(--accent);outline:none}
+.tab.is-active{border-color:var(--teal);background:var(--panel-lift);box-shadow:inset 2px 0 0 var(--accent)}
+.tab small{color:var(--muted);font:11px ui-monospace,SFMono-Regular,Menlo,monospace}.tab-done{border-color:#4d7041}
+.tab-done.is-active{border-color:var(--accent)}
+.api-link{display:block;color:var(--accent);font:12px ui-monospace,SFMono-Regular,Menlo,monospace;text-decoration:none;margin:6px 0}
+.api-link:hover{text-decoration:underline}
+/* Center column: topbar + one document + statusbar */
+.review-workspace{display:grid;grid-template-rows:auto minmax(0,1fr) auto;min-width:0;min-height:0;height:100vh;overflow:hidden;border-right:1px solid var(--line)}
+.review-topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 16px;border-bottom:1px solid var(--line);background:#101314;min-height:52px;flex:0 0 auto}
+.review-topbar-id{display:grid;gap:2px;min-width:0}
+.review-topbar-id .mono-cap{color:var(--teal);font:10px ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase;letter-spacing:.12em}
+.review-topbar-id strong{font:600 15px/1.2 Inter,ui-sans-serif,system-ui,sans-serif;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.review-topbar-id .path{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.review-topbar-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.review-main{position:relative;min-height:0;overflow:hidden;padding:0;display:block;background:var(--bg)}
+.review-main>.status{position:absolute;z-index:5;left:16px;right:16px;top:12px;margin:0}
+.status{display:none;border:1px solid #4d7041;background:#162114;padding:10px;border-radius:8px}.status:target{display:block}.status-error{border-color:var(--bad);background:#2b1717}
+/* One active document only — never stack every artifact */
+.artifact-panel{display:none;height:100%;min-height:0;border:0;border-radius:0;background:var(--panel);overflow:hidden;grid-template-rows:auto minmax(0,1fr)}
+.artifact-panel.is-active{display:grid}
+.artifact-panel.is-active .editor-form{display:grid;grid-template-rows:minmax(0,1fr) auto;min-height:0;height:100%}
+/* Absolute fill — Safari %height on textarea inside grid-fr collapses to content (black void). */
+.artifact-panel.is-active .editor-body{position:relative;min-height:0;height:100%;overflow:hidden}
+/* Panel chrome lives in topbar; keep DOM for JS but hide visual double-header */
+.artifact-panel .artifact-head{display:none}
 .artifact-head{display:flex;justify-content:space-between;gap:16px;padding:16px;border-bottom:1px solid var(--line)}.artifact-head h2{margin:3px 0 0;font-size:22px;letter-spacing:0}
-.artifact-head-actions{display:flex;align-items:flex-start;gap:10px;flex:0 0 auto}
-.render-mode-btn{margin:0;border:1px solid transparent;background:transparent;color:var(--muted);border-radius:6px;padding:4px 8px;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:500;cursor:pointer;letter-spacing:.02em}
-.render-mode-btn:hover,.render-mode-btn:focus-visible{color:var(--text);border-color:var(--line);outline:none}
-.eyebrow,.path{margin:0;color:var(--muted);font:12px ui-monospace,SFMono-Regular,Menlo,monospace}.checkpoint-state{align-self:start;border:1px solid var(--line);border-radius:999px;padding:5px 9px;color:var(--warn);font-size:12px}
-.editor-form{display:grid;grid-template-rows:1fr auto;min-height:520px}
-.editor-body{min-height:520px;display:grid}
-.editor-form textarea.raw-pane{width:100%;min-height:520px;resize:vertical;border:0;border-bottom:1px solid var(--line);background:#0f1213;color:var(--text);padding:16px;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
-.rich-pane.md-body{min-height:520px;padding:22px clamp(18px,3vw,36px) 36px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#101314 0%,#0c0e0f 100%);color:var(--text);font:14.5px/1.6 Inter,ui-sans-serif,system-ui,sans-serif;overflow:auto}
+.artifact-head-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+/* Edit/Save + checkpoint pills share the same plane (radius/padding/border) */
+.render-mode-btn,.checkpoint-state,.inspector-pill{
+  display:inline-flex;align-items:center;justify-content:center;align-self:center;
+  margin:0;border:1px solid var(--line);border-radius:999px;padding:5px 11px;
+  font:12px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.02em;
+  background:#171b1d;color:var(--muted);white-space:nowrap
+}
+button.render-mode-btn{cursor:pointer;font-weight:500;color:var(--text);background:#1b1f20}
+button.render-mode-btn:hover,button.render-mode-btn:focus-visible{border-color:var(--teal);color:var(--text);outline:none;background:var(--panel-lift)}
+button.render-mode-btn[data-next="rich"]{border-color:rgba(184,239,125,.45);color:var(--accent);background:rgba(184,239,125,.08)}
+.checkpoint-state{color:var(--warn)}.checkpoint-state:empty{display:none}
+.inspector-pill{color:var(--warn)}.inspector-pill.is-done{color:var(--accent);border-color:#4d7041}
+.eyebrow,.path{margin:0;color:var(--muted);font:12px ui-monospace,SFMono-Regular,Menlo,monospace}
+.editor-form{display:grid;grid-template-rows:1fr auto;min-height:0}
+.editor-body{position:relative;min-height:0}
+.editor-form textarea.raw-pane{
+  position:absolute;inset:0;box-sizing:border-box;width:100%;height:100%;min-height:0;
+  resize:none;border:0;margin:0;outline:none;
+  background:#0f1213;color:var(--text);-webkit-text-fill-color:var(--text);caret-color:var(--accent);
+  padding:16px 18px;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;overflow:auto;white-space:pre-wrap
+}
+.editor-form textarea.raw-pane:focus{outline:none;box-shadow:inset 0 0 0 1px rgba(77,155,142,.35)}
+.rich-pane.md-body{
+  position:absolute;inset:0;box-sizing:border-box;min-height:0;
+  padding:22px clamp(18px,3vw,36px) 36px;border:0;
+  background:linear-gradient(180deg,#101314 0%,#0c0e0f 100%);color:var(--text);
+  font:14.5px/1.6 Inter,ui-sans-serif,system-ui,sans-serif;overflow:auto
+}
 .rich-pane.md-body h1,.rich-pane.md-body h2,.rich-pane.md-body h3,.rich-pane.md-body h4{margin:1.25em 0 .5em;line-height:1.22;letter-spacing:-.02em;color:var(--text);font-weight:600}
 .rich-pane.md-body h1{font-size:1.65em;padding-bottom:.35em;border-bottom:1px solid var(--line)}
 .rich-pane.md-body h2{font-size:1.32em;padding-bottom:.28em;border-bottom:1px solid rgba(43,48,51,.85)}
@@ -1608,9 +1931,45 @@ button.md-status.md-status-maybe{border-color:rgba(77,155,142,.5);color:var(--te
 button.md-status.md-status-blocked{border-color:rgba(255,138,138,.55);color:var(--bad);background:rgba(255,138,138,.08)}
 button.md-status.md-status-done{border-color:rgba(184,239,125,.55);color:var(--accent);background:rgba(184,239,125,.08)}
 button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#22321f;color:var(--text);border-radius:7px;padding:8px 12px;font-weight:700;cursor:pointer}
-.checkpoint-form{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:0 0 14px}.checkpoint-form input[name=note]{min-width:280px;flex:1;border:1px solid var(--line);background:#0f1213;color:var(--text);border-radius:7px;padding:8px}
+/* Save sits in the form's bottom auto-row (not floating in the black void). */
+.artifact-panel .save-artifact-btn{
+  margin:0;padding:8px 14px;justify-self:start;align-self:center;
+  border-radius:7px;border:1px solid #5e7f47;background:#22321f;color:var(--text);font-weight:700
+}
+.artifact-panel.is-active .editor-form>.save-artifact-btn{margin:8px 16px 12px}
+.checkpoint-form{display:flex;flex-direction:column;align-items:stretch;gap:10px;padding:0;margin:0}
+.checkpoint-form label{display:flex;align-items:center;gap:8px;color:var(--text);font-size:13px}
+.checkpoint-form input[name=note]{width:100%;min-width:0;border:1px solid var(--line);background:#0f1213;color:var(--text);border-radius:7px;padding:8px;font:13px Inter,ui-sans-serif,system-ui,sans-serif}
+.checkpoint-form button{margin:0;width:100%;justify-self:stretch}
+/* Right inspector (tools + status) */
+.review-inspector{height:100vh;min-height:0;overflow:auto;padding:14px 14px 20px;background:#0f1213;display:flex;flex-direction:column;gap:14px}
+.inspector-head{color:var(--muted);font:10px ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase;letter-spacing:.14em;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.inspector-block{display:grid;gap:8px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.inspector-block h3{margin:0;font:600 12px/1.2 Inter,ui-sans-serif,system-ui,sans-serif;color:var(--text);letter-spacing:.02em}
+.inspector-meta{margin:0;color:var(--muted);font:11px ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
+.inspector-hint{margin:0;color:var(--muted);font-size:12px;line-height:1.45}
+.mono-cap{font:10px ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase;letter-spacing:.12em;color:var(--muted)}
+/* Bottom stats bar */
+.review-statusbar{display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:8px 16px;border-top:1px solid var(--line);background:#101314;color:var(--muted);font:11px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;flex:0 0 auto}
+.review-statusbar b{color:var(--text);font-weight:600}
+.review-statusbar .stat-plan{margin-left:auto;color:var(--teal)}
 .empty{max-width:720px;margin:12vh auto;border:1px solid var(--line);border-radius:8px;padding:24px;background:var(--panel)}
-@media(max-width:820px){.library-intro,.blocked-plan-grid{grid-template-columns:1fr}.library-nav{margin-bottom:64px}.library-stats{max-width:none}.plan-toolbar{align-items:stretch;flex-direction:column}.plan-search{width:100%}.blocked-plan-head{align-items:start;flex-direction:column}.review-shell{grid-template-columns:1fr}.review-sidebar{position:relative;height:auto}.artifact-panel{min-height:auto}}
+@media(max-width:1100px){
+  .review-shell{grid-template-columns:240px minmax(0,1fr) 260px}
+}
+@media(max-width:820px){
+  .library-intro,.blocked-plan-grid{grid-template-columns:1fr}
+  .library-nav{margin-bottom:64px}.library-stats{max-width:none}
+  .plan-toolbar{align-items:stretch;flex-direction:column}.plan-search{width:100%}
+  .blocked-plan-head{align-items:start;flex-direction:column}
+  body:has(.review-shell){height:auto;overflow:auto}
+  .review-shell{grid-template-columns:1fr;grid-template-rows:auto minmax(60vh,1fr) auto;height:auto;min-height:100vh;overflow:visible}
+  .review-sidebar{position:relative;height:auto;max-height:40vh;border-right:0;border-bottom:1px solid var(--line)}
+  .review-workspace{height:auto;min-height:60vh;border-right:0}
+  .review-inspector{height:auto;border-top:1px solid var(--line)}
+  .artifact-panel.is-active{min-height:50vh}
+  .review-statusbar .stat-plan{margin-left:0}
+}
 @media(max-width:520px){.library-header,.plan-field{padding-left:18px;padding-right:18px}.library-intro h1{font-size:48px}.library-stats dd{font-size:22px}.plan-grid{grid-template-columns:1fr}}
 "#
     }
@@ -1783,6 +2142,53 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
             );
             // Source textarea remains the write path (hidden until Edit).
             assert!(html.contains(r#"name="content" class="raw-pane""#));
+        }
+
+        #[test]
+        fn editor_ships_single_document_studio_shell() {
+            let html = render_editor(&fixture());
+            // GlyphPulse / unicode-puzzles-portal shape: left nav, canvas, right
+            // inspector, bottom stats — never a 30m scroll of every artifact.
+            assert!(
+                html.contains(r#"class="review-shell""#),
+                "missing studio shell root"
+            );
+            assert!(
+                html.contains(r#"class="review-workspace""#),
+                "missing center workspace column"
+            );
+            assert!(
+                html.contains(r#"class="review-topbar""#),
+                "missing top status strip"
+            );
+            assert!(
+                html.contains(r#"class="review-inspector""#),
+                "missing right tools/status inspector"
+            );
+            assert!(
+                html.contains(r#"class="review-statusbar""#),
+                "missing bottom statistics bar"
+            );
+            assert!(
+                html.contains("panel_nav") || html.contains("function activate"),
+                "missing panel navigation script that activates one document"
+            );
+            assert!(
+                html.contains("artifact-panel.is-active")
+                    || html.contains(r#".is-active"#),
+                "CSS must gate visibility on .is-active (one document)"
+            );
+            assert!(
+                html.contains("grid-template-columns:280px minmax(0,1fr) 300px")
+                    || html.contains("review-inspector"),
+                "studio must be a three-column shell"
+            );
+            // Edit shares the pill plane with checkpoint-state (not a ghost link).
+            assert!(
+                html.contains(".render-mode-btn,.checkpoint-state")
+                    || html.contains("border-radius:999px"),
+                "Edit control must share pill geometry with checkpoint-state"
+            );
         }
 
         #[test]

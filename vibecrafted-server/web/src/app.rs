@@ -146,7 +146,7 @@ fn load_dashboard_data_from(
     }
 
     let state = crate::control::api::state_payload(plane, now);
-    let lifecycle_runs = plane.load_lifecycle_run_summaries();
+    let lifecycle_runs = plane.load_recent_lifecycle_run_summaries(24);
     let settlement = state.settlement_counts;
     let loctree_report = state
         .active_runs
