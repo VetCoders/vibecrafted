@@ -15,10 +15,10 @@ struct DashboardData {
     settlement: DashboardSettlement,
     active_runs: Vec<DashboardRun>,
     recent_runs: Vec<DashboardRun>,
-    all_runs: Vec<DashboardRun>,
     lifecycle_runs: Vec<DashboardLifecycleRun>,
     warnings: Vec<String>,
     events: Vec<DashboardEvent>,
+    loctree_report: String,
 }
 
 #[derive(Clone, Default)]
@@ -59,7 +59,6 @@ struct DashboardLifecycleRun {
     human_controls: Vec<String>,
     human_controls_count: usize,
     operator_actions_count: usize,
-    report_path: String,
     updated_at: String,
 }
 
@@ -127,15 +126,23 @@ fn load_dashboard_data_from(
             human_controls: run.human_controls,
             human_controls_count: run.human_controls_count,
             operator_actions_count: run.operator_actions_count,
-            report_path: run.report_path,
             updated_at: run.updated_at,
         }
     }
 
     let state = crate::control::api::state_payload(plane, now);
-    let all_runs = plane.load_snapshots();
     let lifecycle_runs = plane.load_lifecycle_run_summaries();
     let settlement = state.settlement_counts;
+    let loctree_report = state
+        .active_runs
+        .iter()
+        .chain(state.recent_runs.iter())
+        .filter_map(|run| {
+            let path = std::path::Path::new(&run.root).join(".loctree/report.html");
+            path.is_file().then(|| path.to_string_lossy().into_owned())
+        })
+        .next()
+        .unwrap_or_default();
 
     DashboardData {
         control_plane: state.control_plane,
@@ -155,10 +162,10 @@ fn load_dashboard_data_from(
         },
         active_runs: state.active_runs.into_iter().map(run_summary).collect(),
         recent_runs: state.recent_runs.into_iter().map(run_summary).collect(),
-        all_runs: all_runs.into_iter().map(run_summary).collect(),
         lifecycle_runs: lifecycle_runs.into_iter().map(lifecycle_summary).collect(),
         warnings: state.warnings,
         events: state.events.into_iter().map(event_summary).collect(),
+        loctree_report,
     }
 }
 
@@ -199,7 +206,44 @@ fn run_cards(runs: Vec<DashboardRun>) -> impl IntoView {
         .collect_view()
 }
 
-fn lifecycle_cards(runs: Vec<DashboardLifecycleRun>) -> impl IntoView {
+fn is_terminal_state(state: &str) -> bool {
+    matches!(
+        state.to_ascii_lowercase().as_str(),
+        "report_validated"
+            | "completed"
+            | "closed"
+            | "converged"
+            | "finalized"
+            | "failed"
+            | "blocked"
+            | "cancelled"
+            | "stopped"
+    )
+}
+
+fn is_quarantined_run(run: &DashboardRun) -> bool {
+    run.run_id == "smoke-nonexistent"
+        || run.run_id.starts_with("smoke-")
+        || (run.skill.eq_ignore_ascii_case("marbles") && run.health != "active")
+}
+
+fn operator_active_runs(runs: Vec<DashboardRun>) -> Vec<DashboardRun> {
+    runs.into_iter()
+        .filter(|run| {
+            run.health == "active" && !is_terminal_state(&run.state) && !is_quarantined_run(run)
+        })
+        .take(8)
+        .collect()
+}
+
+fn operator_action_runs(runs: Vec<DashboardLifecycleRun>) -> Vec<DashboardLifecycleRun> {
+    runs.into_iter()
+        .filter(|run| !is_terminal_state(&run.status) && !run.run_id.starts_with("smoke-"))
+        .take(6)
+        .collect()
+}
+
+fn action_cards(runs: Vec<DashboardLifecycleRun>) -> impl IntoView {
     runs.into_iter()
         .map(|run| {
             let stage_label = if run.current_stage.is_empty() {
@@ -207,25 +251,20 @@ fn lifecycle_cards(runs: Vec<DashboardLifecycleRun>) -> impl IntoView {
             } else {
                 run.current_stage.clone()
             };
-            let baton_label = match (run.next_stage.is_empty(), run.next_agent.is_empty()) {
-                (true, true) => "baton clear".to_string(),
-                (false, true) => format!("next {}", run.next_stage),
-                (true, false) => format!("next agent {}", run.next_agent),
-                (false, false) => format!("next {} / {}", run.next_stage, run.next_agent),
-            };
-            let report_label = if run.report_path.is_empty() {
-                "no report".to_string()
+            let next_action = if let Some(control) = run.human_controls.first() {
+                format!("Operator: {control}")
+            } else if !run.next_stage.is_empty() && !run.next_agent.is_empty() {
+                format!("Launch {} with {}", run.next_stage, run.next_agent)
+            } else if !run.next_stage.is_empty() {
+                format!("Advance to {}", run.next_stage)
+            } else if !run.next_agent.is_empty() {
+                format!("Hand off to {}", run.next_agent)
             } else {
-                run.report_path.clone()
-            };
-            let controls_label = if run.human_controls.is_empty() {
-                "controls none".to_string()
-            } else {
-                format!("controls {}", run.human_controls.join(", "))
+                "Inspect the latest runtime event".to_string()
             };
 
             view! {
-                <article class="control-run-row">
+                <article class="operator-action-row">
                     <div class="control-run-primary">
                         <span class="control-run-id">{run.run_id}</span>
                         <span class="control-run-root">{run.workflow}</span>
@@ -233,16 +272,16 @@ fn lifecycle_cards(runs: Vec<DashboardLifecycleRun>) -> impl IntoView {
                     <div class="control-run-tags">
                         <span class="control-badge">{run.status}</span>
                         <span class="control-badge">{stage_label}</span>
-                        <span class="control-badge">{baton_label}</span>
                         <span class="control-badge">{run.dou_label}</span>
                         <span class="control-badge">{format!("accepted {}", run.accepted_dou)}</span>
                     </div>
+                    <div class="operator-next-action">
+                        <strong>"Next action"</strong>
+                        <span>{next_action}</span>
+                    </div>
                     <div class="control-run-meta">
                         <span>{run.updated_at}</span>
-                        <span>{controls_label}</span>
-                        <span>{format!("control count {}", run.human_controls_count)}</span>
-                        <span>{format!("actions {}", run.operator_actions_count)}</span>
-                        <span>{report_label}</span>
+                        <span>{format!("{} controls / {} actions", run.human_controls_count, run.operator_actions_count)}</span>
                     </div>
                 </article>
             }
@@ -276,8 +315,8 @@ fn warning_rows(warnings: Vec<String>) -> impl IntoView {
 fn settlement_board(settlement: DashboardSettlement) -> impl IntoView {
     view! {
         <section
-            class="settlement-board"
-            aria-label="Settlement board"
+            class="operator-summary-strip"
+            aria-label="Operator summary"
             data-scope=settlement.scope.clone()
             data-active=settlement.active
             data-f=settlement.f
@@ -287,34 +326,31 @@ fn settlement_board(settlement: DashboardSettlement) -> impl IntoView {
             data-unclassified=settlement.unclassified
             data-total-settled=settlement.total_settled
         >
-            <div class="settlement-board-head">
-                <div>
-                    <p class="section-eyebrow">"settlement truth"</p>
-                    <h2>"f / x / n"</h2>
-                </div>
-                <div class="settlement-scope">
-                    <span>"scope"</span>
-                    <strong>{settlement.scope.clone()}</strong>
-                </div>
+            <div class="operator-summary-title">
+                <span class="mono-cap">"runtime truth"</span>
+                <strong>{settlement.scope.clone()}</strong>
             </div>
-            <dl class="settlement-cells">
-                <div class="settlement-cell settlement-cell-f">
-                    <dt><kbd>"f"</kbd> "Finalized"</dt>
+            <dl class="operator-summary-cells">
+                <a class="operator-summary-cell" href="#fleet">
+                    <dt>"alive"</dt>
+                    <dd>{settlement.active}</dd>
+                </a>
+                <a class="operator-summary-cell" href="#fleet">
+                    <dt>"final"</dt>
                     <dd>{settlement.f}</dd>
-                </div>
-                <div class="settlement-cell settlement-cell-x">
-                    <dt><kbd>"x"</kbd> "Failed"</dt>
+                </a>
+                <a class="operator-summary-cell" href="#fleet">
+                    <dt>"failed"</dt>
                     <dd>{settlement.x}</dd>
-                    <small>{format!("{} invalid", settlement.invalid)}</small>
-                </div>
-                <div class="settlement-cell settlement-cell-n">
-                    <dt><kbd>"n"</kbd> "Needs attention"</dt>
+                </a>
+                <a class="operator-summary-cell" href="#fleet">
+                    <dt>"attention"</dt>
                     <dd>{settlement.n}</dd>
-                </div>
+                </a>
             </dl>
-            <div class="settlement-board-foot">
-                <span>{format!("{} active", settlement.active)}</span>
-                <span>{format!("{} unclassified snapshots", settlement.unclassified)}</span>
+            <div class="operator-summary-detail">
+                <span>{format!("{} invalid", settlement.invalid)}</span>
+                <span>{format!("{} unclassified", settlement.unclassified)}</span>
                 <span>{format!("{} settled", settlement.total_settled)}</span>
             </div>
         </section>
@@ -381,22 +417,40 @@ pub fn ConsolePage() -> impl IntoView {
 
 fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
     let theme = use_theme();
-    let active_count = dashboard.active_runs.len();
-    let recent_count = dashboard.recent_runs.len();
-    let all_count = dashboard.all_runs.len();
-    let lifecycle_count = dashboard.lifecycle_runs.len();
-    let warning_count = dashboard.warnings.len();
-    let event_count = dashboard.events.len();
-    let settlement = dashboard.settlement.clone();
-    let no_active_runs = dashboard.active_runs.is_empty();
-    let no_all_runs = dashboard.all_runs.is_empty();
-    let no_lifecycle_runs = dashboard.lifecycle_runs.is_empty();
-    let no_warnings = dashboard.warnings.is_empty();
-    let no_events = dashboard.events.is_empty();
-    let theme_state = move || match theme.get() {
-        Theme::Dark => "dark",
-        Theme::Light => "light",
+    let DashboardData {
+        control_plane,
+        generated_at,
+        settlement,
+        active_runs,
+        recent_runs,
+        lifecycle_runs,
+        warnings,
+        events,
+        loctree_report,
+    } = dashboard;
+    let active_runs = operator_active_runs(active_runs);
+    let action_runs = operator_action_runs(lifecycle_runs);
+    let recent_runs = recent_runs
+        .into_iter()
+        .filter(|run| !is_quarantined_run(run))
+        .take(8)
+        .collect::<Vec<_>>();
+    let events = events.into_iter().take(16).collect::<Vec<_>>();
+    let active_count = active_runs.len();
+    let action_count = action_runs.len();
+    let recent_count = recent_runs.len();
+    let warning_count = warnings.len();
+    let event_count = events.len();
+    let no_active_runs = active_runs.is_empty();
+    let no_action_runs = action_runs.is_empty();
+    let no_warnings = warnings.is_empty();
+    let no_events = events.is_empty();
+    let loctree_link = if loctree_report.is_empty() {
+        None
+    } else {
+        Some(format!("file://{loctree_report}"))
     };
+    let has_loctree_link = loctree_link.is_some();
 
     view! {
         <main class="server-console-shell">
@@ -407,54 +461,88 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
             <section class="server-console-hero">
                 <div class="server-console-topbar">
                     <span class="server-console-brand mono-cap">"vc-server"</span>
-                    <span class="server-console-pill">{theme_state}</span>
+                    <button
+                        type="button"
+                        class="server-console-toggle"
+                        aria-label="Toggle color theme"
+                        aria-pressed=move || theme.get() == Theme::Light
+                        on:click=move |_| theme.update(|current| *current = current.toggle())
+                    >
+                        {move || format!("{} mode", theme.get().code())}
+                    </button>
                 </div>
 
+                <nav class="operator-rail" aria-label="Operator rail">
+                    <a href="#now">"NOW"</a>
+                    <a href="#fleet">"Fleet"</a>
+                    <a href="#context">"Context"</a>
+                    <a href="#structure">"Structure"</a>
+                </nav>
+
                 <div class="server-console-grid">
-                    <div class="server-console-copy">
+                    <div class="server-console-copy" id="now">
                         <p class="section-eyebrow">"control plane"</p>
-                        <h1>"vc-server"</h1>
+                        <h1>"Operator Console"</h1>
                         <p>
-                            "One typed read-model over the Vibecrafted runtime: active runs, recent state, events, warnings, and every stored run snapshot."
+                            "One live shell for what is running, what needs a decision, and where the supporting context lives."
                         </p>
-                        <p>
+                        <p class="server-console-links">
                             <a class="server-console-link" href="/scaffold">
                                 "Open scaffold review"
+                            </a>
+                            <a
+                                class="server-console-link"
+                                href="http://127.0.0.1:8033/?q=vibecrafted+server&sort=oldest"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                            >
+                                "Open AICX context"
+                            </a>
+                            <a class="server-console-link" href="#structure">
+                                "Jump to structure"
                             </a>
                         </p>
                     </div>
 
                     <aside class="server-console-panel" aria-label="Console status preview">
                         <div class="server-console-panel-head">
-                            <span class="mono-cap">"snapshot"</span>
-                            <span class="server-console-pill">{theme_state}</span>
+                            <span class="mono-cap">"right now"</span>
+                            <button
+                                type="button"
+                                class="server-console-toggle server-console-toggle-compact"
+                                aria-label="Toggle color theme"
+                                aria-pressed=move || theme.get() == Theme::Light
+                                on:click=move |_| theme.update(|current| *current = current.toggle())
+                            >
+                                {move || theme.get().code()}
+                            </button>
                         </div>
-                        <dl>
-                            <div>
-                                <dt>"active"</dt>
+                        <dl class="operator-now-cells">
+                            <a class="operator-summary-cell" href="#fleet">
+                                <dt>"alive"</dt>
                                 <dd>{active_count}</dd>
-                            </div>
-                            <div>
+                            </a>
+                            <a class="operator-summary-cell" href="#fleet">
+                                <dt>"next"</dt>
+                                <dd>{action_count}</dd>
+                            </a>
+                            <a class="operator-summary-cell" href="#fleet">
+                                <dt>"warnings"</dt>
+                                <dd>{warning_count}</dd>
+                            </a>
+                            <a class="operator-summary-cell" href="#context">
                                 <dt>"recent"</dt>
                                 <dd>{recent_count}</dd>
-                            </div>
-                            <div>
-                                <dt>"all runs"</dt>
-                                <dd>{all_count}</dd>
-                            </div>
-                            <div>
-                                <dt>"lifecycle"</dt>
-                                <dd>{lifecycle_count}</dd>
-                            </div>
+                            </a>
                         </dl>
                     </aside>
                 </div>
             </section>
 
-            <section class="control-plane-band" aria-label="Control-plane dashboard">
+            <section class="control-plane-band" id="fleet" aria-label="Control-plane dashboard">
                 <div class="control-plane-meta">
-                    <span>{dashboard.control_plane}</span>
-                    <span>{dashboard.generated_at}</span>
+                    <span>{control_plane}</span>
+                    <span>{generated_at}</span>
                 </div>
 
                 <div class="control-dashboard-grid">
@@ -463,8 +551,10 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
                             <h2>"Active"</h2>
                             <span>{active_count}</span>
                         </div>
-                        <p class="control-empty" hidden={!no_active_runs}>"No active runs are visible in the typed state view."</p>
-                        {run_cards(dashboard.active_runs)}
+                        <p class="control-empty" hidden={!no_active_runs}>"No live workers need the hero right now."</p>
+                        <div class="control-run-list">
+                            {run_cards(active_runs)}
+                        </div>
                     </section>
 
                     <section class="control-panel" aria-label="Warnings">
@@ -474,53 +564,60 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
                         </div>
                         <p class="control-empty" hidden={!no_warnings}>"No warnings."</p>
                         <ul class="control-warning-list">
-                            {warning_rows(dashboard.warnings)}
+                            {warning_rows(warnings)}
                         </ul>
                     </section>
                 </div>
 
-                <section class="control-panel control-panel-wide" aria-label="Lifecycle runs">
+                <section class="control-panel control-panel-wide" aria-label="Action plan">
                     <div class="control-panel-head">
-                        <h2>"Lifecycle"</h2>
-                        <span>{lifecycle_count}</span>
+                        <h2>"Action Plan"</h2>
+                        <span>{action_count}</span>
                     </div>
-                    <p class="control-empty" hidden={!no_lifecycle_runs}>"No lifecycle runs found under the control plane."</p>
-                    <div class="control-run-list">
-                        {lifecycle_cards(dashboard.lifecycle_runs)}
+                    <p class="control-empty" hidden={!no_action_runs}>"No lifecycle baton currently needs an operator action."</p>
+                    <div class="operator-action-list">
+                        {action_cards(action_runs)}
                     </div>
                 </section>
 
-                <section class="control-panel control-panel-wide" aria-label="All runs">
-                    <div class="control-panel-head">
-                        <h2>"All Runs"</h2>
-                        <span>{all_count}</span>
-                    </div>
-                    <p class="control-empty" hidden={!no_all_runs}>"No run snapshots found under the control plane."</p>
-                    <div class="control-run-list">
-                        {run_cards(dashboard.all_runs)}
-                    </div>
-                </section>
-
-                <div class="control-dashboard-grid">
+                <div class="control-dashboard-grid" id="context">
                     <section class="control-panel" aria-label="Recent state view">
                         <div class="control-panel-head">
-                            <h2>"Recent State View"</h2>
+                            <h2>"Recent truth"</h2>
                             <span>{recent_count}</span>
                         </div>
-                        {run_cards(dashboard.recent_runs)}
+                        <div class="control-run-list">
+                            {run_cards(recent_runs)}
+                        </div>
                     </section>
 
                     <section class="control-panel" aria-label="Event tail">
                         <div class="control-panel-head">
-                            <h2>"Events"</h2>
+                            <h2>"Runtime context"</h2>
                             <span>{event_count}</span>
                         </div>
                         <p class="control-empty" hidden={!no_events}>"No events in the current tail."</p>
                         <ul class="control-event-list">
-                            {event_rows(dashboard.events)}
+                            {event_rows(events)}
                         </ul>
                     </section>
                 </div>
+
+                <section class="control-panel control-panel-wide" id="structure" aria-label="Structure">
+                    <div class="control-panel-head">
+                        <h2>"Structure"</h2>
+                        <span>"Loctree + scaffold"</span>
+                    </div>
+                    <div class="structure-links">
+                        {loctree_link.map(|href| view! {
+                            <a class="server-console-link" href=href>"Open last Loctree report"</a>
+                        })}
+                        <a class="server-console-link" href="/scaffold">"Open scaffold review"</a>
+                    </div>
+                    <p class="control-empty" hidden=has_loctree_link>
+                        "No Loctree report is known for the roots in the canonical state view."
+                    </p>
+                </section>
             </section>
         </main>
     }
@@ -536,7 +633,7 @@ mod tests {
     use leptos::prelude::*;
     use serde_json::{Value, json};
 
-    use super::{console_dashboard, load_dashboard_data_from};
+    use super::{DashboardRun, console_dashboard, load_dashboard_data_from, operator_active_runs};
     use crate::control::api::state_payload;
     use crate::theme::provide_theme_context;
 
@@ -638,37 +735,73 @@ mod tests {
         }
         let scope = board["scope"].as_str().expect("scope string");
         assert!(html.contains(&format!("data-scope=\"{scope}\"")));
-        assert!(html.contains("Finalized"));
-        assert!(html.contains("Failed"));
-        assert!(html.contains("Needs attention"));
-        let board_position = html.find("aria-label=\"Settlement board\"").expect("board");
+        assert!(html.contains("final"));
+        assert!(html.contains("failed"));
+        assert!(html.contains("attention"));
+        assert!(html.contains("aria-label=\"Toggle color theme\""));
+        assert!(html.contains("http://127.0.0.1:8033/"));
+        assert!(html.contains("operator-rail"));
+        assert!(html.contains("href=\"#fleet\""));
+        assert!(!html.contains("aria-label=\"All runs\""));
+        let board_position = html
+            .find("aria-label=\"Operator summary\"")
+            .expect("summary");
         let active_position = html
             .find("aria-label=\"Active runs\"")
             .expect("active runs");
         let warnings_position = html.find("aria-label=\"Warnings\"").expect("warnings");
-        let lifecycle_position = html
-            .find("aria-label=\"Lifecycle runs\"")
-            .expect("lifecycle runs");
-        let all_runs_position = html.find("aria-label=\"All runs\"").expect("all runs");
+        let action_position = html
+            .find("aria-label=\"Action plan\"")
+            .expect("action plan");
         let recent_position = html
             .find("aria-label=\"Recent state view\"")
             .expect("recent state");
         let events_position = html.find("aria-label=\"Event tail\"").expect("event tail");
+        let structure_position = html.find("aria-label=\"Structure\"").expect("structure");
         assert!(
             board_position < active_position,
-            "settlement must be the first fleet summary"
+            "operator summary must be the first fleet summary"
         );
         assert!(board_position < warnings_position);
-        assert!(active_position < lifecycle_position);
-        assert!(warnings_position < lifecycle_position);
-        assert!(lifecycle_position < all_runs_position);
-        assert!(all_runs_position < recent_position);
+        assert!(active_position < action_position);
+        assert!(warnings_position < action_position);
+        assert!(action_position < recent_position);
         assert!(recent_position < events_position);
+        assert!(events_position < structure_position);
         assert_eq!(board["f"], 1);
         assert_eq!(board["x"], 2);
         assert_eq!(board["invalid"], 1);
         assert_eq!(board["n"], 1);
 
         fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn active_hero_quarantines_smoke_terminal_and_stale_marbles_noise() {
+        fn run(run_id: &str, state: &str, health: &str, skill: &str) -> DashboardRun {
+            DashboardRun {
+                run_id: run_id.to_string(),
+                state: state.to_string(),
+                health: health.to_string(),
+                skill: skill.to_string(),
+                ..DashboardRun::default()
+            }
+        }
+
+        let visible = operator_active_runs(vec![
+            run("smoke-nonexistent", "running", "active", "implement"),
+            run("smoke-old", "running", "active", "implement"),
+            run("marb-old", "completed", "final", "marbles"),
+            run(
+                "terminal-but-marked-active",
+                "completed",
+                "active",
+                "implement",
+            ),
+            run("real-worker", "running", "active", "ownership"),
+        ]);
+
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].run_id, "real-worker");
     }
 }
