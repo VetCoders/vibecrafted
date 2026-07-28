@@ -49,21 +49,28 @@ def test_dispatch_defines_passthrough_helper() -> None:
         text,
     )
     assert "vc-research() { _vetcoders_research" not in text
-    # start/dashboard/help are deck verbs, not raw vc-frame help
-    assert re.search(r"vc-start\(\)\s*\{\s*_vetcoders_vc_passthrough start", text)
-    assert re.search(
+    # start/dashboard MUST implement launch locally (no full-verb passthrough
+    # re-entry: Python→deck→helper→Python fork-bombs).
+    assert "_vetcoders_launch_dashboard" in text
+    assert not re.search(r"vc-start\(\)\s*\{\s*_vetcoders_vc_passthrough start", text)
+    assert not re.search(
         r"vc-dashboard\(\)\s*\{\s*_vetcoders_vc_passthrough dashboard", text
     )
+    start_body = text.split("vc-start()")[1].split("vc-frontier-paths")[0]
+    # Only --help may call into the deck; bare start must launch dashboard.
+    assert "_vetcoders_launch_dashboard operator" in start_body
+    assert "command vibecrafted start --help" in start_body
+    assert re.search(r"command vibecrafted start\s+\"\$@\"", start_body) is None
 
 
-def test_resume_is_deck_passthrough_not_parser() -> None:
+def test_resume_is_local_helper_not_deck_reentry() -> None:
+    """vc-resume must call _vetcoders_resume_agent, not re-enter the deck."""
     text = MARBLES.read_text(encoding="utf-8")
-    assert "command vibecrafted resume" in text
-    # Old side-effecting body must not remain as the public entrypoint.
-    assert (
-        "_vetcoders_resume_agent"
-        not in text.split("vc-resume()")[1].split("codex-marbles")[0]
-    )
+    body = text.split("vc-resume()")[1].split("codex-marbles")[0]
+    assert "_vetcoders_resume_agent" in body
+    # Help-only deck touch is OK; full-arg passthrough is the fork bomb.
+    assert "command vibecrafted resume --help" in body
+    assert re.search(r"command vibecrafted resume\s+\"\$@\"", body) is None
 
 
 def test_vc_alias_matrix_script_exists_and_is_executable_gate() -> None:

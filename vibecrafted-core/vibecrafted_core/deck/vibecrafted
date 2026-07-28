@@ -4288,8 +4288,19 @@ cmd_start() {
   local status
   _ensure_helpers_loaded || return 1
   export VIBECRAFTED_PREFER_REPO_VC_FRAME=1
-  _run_helper vc-start "$@"
-  status=$?
+  # Call frame launcher directly — never re-enter via public vc-start alias
+  # (thin passthrough to `vibecrafted start` fork-bombs: Python→deck→helper).
+  if [[ "${1:-}" == "resume" ]]; then
+    shift || true
+    _vetcoders_resume_operator_session "$@"
+    status=$?
+  else
+    if [[ "${1:-}" == "operator" || "${1:-}" == "vibecrafted" ]]; then
+      shift || true
+    fi
+    _vetcoders_launch_dashboard operator "$@"
+    status=$?
+  fi
   if [[ -n "${previous_repo_vc_frame_pref}" ]]; then
     export VIBECRAFTED_PREFER_REPO_VC_FRAME="${previous_repo_vc_frame_pref}"
   else
@@ -4687,13 +4698,13 @@ cmd_dashboard() {
     gc)
       shift || true
       _ensure_helpers_loaded || return 1
-      _run_helper vc-dashboard gc "$@"
+      _vetcoders_launch_dashboard gc "$@"
       return
       ;;
   esac
 
   _ensure_helpers_loaded || return 1
-  _run_helper vc-dashboard "$@"
+  _vetcoders_launch_dashboard "$@"
 }
 
 cmd_stats() {
@@ -5071,7 +5082,9 @@ cmd_resume() {
     return 1
   }
   _ensure_helpers_loaded || return 1
-  _run_helper vc-resume "$agent" "$@"
+  # Direct impl — public vc-resume must never be `command vibecrafted resume`
+  # (same Python↔deck re-entry bomb as start).
+  _vetcoders_resume_agent "$agent" "$@"
 }
 
 # Core owns the agent lifecycle verbs (observe / await / stop): they resolve a

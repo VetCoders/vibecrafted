@@ -1015,10 +1015,32 @@ print(sorted(matches)[-1][1])
 PY
 }
 
-# Exact deck pass-through. Critical: leading --help must never reach resume
-# parsers (audit 2026-07-28: `vc-resume --help` launched a tracked resume).
+# Real resume helper used by deck cmd_resume via _run_helper.
+# NEVER `command vibecrafted resume` here — that re-enters Python lifecycle →
+# deck → this function forever (fork bomb, 2026-07-28).
+# Leading --help must not enter resume parsers (audit: accidental control runs).
 vc-resume() {
-  command vibecrafted resume "$@"
+  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    command vibecrafted resume --help
+    return $?
+  fi
+  local tool="${1:-}"
+  [[ -n "$tool" ]] || {
+    echo "Usage: vc-resume <claude|codex|agy|junie|grok> [<session_id>] [prompt ...] | --session <session_id> [--prompt <text>] [--file <path>]" >&2
+    echo "  Without session_id: AICX multi-agent continuity pack (last ${VIBECRAFTED_RESUME_AICX_HOURS:-48}h) → native resume if a same-agent session is found, else NEW session." >&2
+    return 1
+  }
+  if [[ "$tool" == "--session" ]]; then
+    _vetcoders_parse_contract "$@" || return 1
+    tool="$(_vetcoders_agent_for_session "$_vetcoders_contract_session")" || {
+      echo "Could not infer agent for session: $_vetcoders_contract_session" >&2
+      echo "Usage: vc-resume <claude|codex|agy|junie|grok> --session $_vetcoders_contract_session" >&2
+      return 1
+    }
+  else
+    shift || true
+  fi
+  _vetcoders_resume_agent "$tool" "$@"
 }
 
 codex-marbles() { _vetcoders_marbles codex "$@"; }
