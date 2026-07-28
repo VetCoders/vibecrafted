@@ -188,7 +188,7 @@ def test_render_contains_drift_tokens() -> None:
                 "primary_drift": rr.DRIFT_SOURCE_AHEAD,
                 "drift": [rr.DRIFT_SOURCE_AHEAD, rr.DRIFT_UNPUSHED],
                 "chain": {
-                    "owner_repo": "VetCoders/vc-frame",
+                    "owner_repo": "Vetcoders/vc-frame",
                     "branch": "develop",
                     "checkout_sha": "7fa51c66",
                     "dirty": False,

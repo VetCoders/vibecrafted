@@ -8,7 +8,7 @@ authors.workspace = true
 description = "Voc Agent — the Rust terminal cockpit for Vibecrafted"
 readme = "README.md"
 homepage = "https://vibecrafted.io"
-repository = "https://github.com/VetCoders/vibecrafted"
+repository = "https://github.com/Vetcoders/vibecrafted"
 documentation = "https://docs.rs/voc"
 
 [[bin]]

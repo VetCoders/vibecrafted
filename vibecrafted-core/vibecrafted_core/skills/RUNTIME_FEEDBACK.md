@@ -235,7 +235,7 @@ session start is already dense (vc-init, loctree context card, AICX
 living-tree pack), and every additional automatic prompt dilutes the previous
 ones. Instead it rides the channel every agent already opens: the
 **intentions sense of `vc-init`** points here before any fleet dispatch,
-resume, or recovery, and `aicx search -p VetCoders/vibecrafted '<command>'`
+resume, or recovery, and `aicx search -p Vetcoders/vibecrafted '<command>'`
 reaches the same doctrine as retrieval. Workers receive it whenever a brief
 cites a command listed here — cite the entry, not the whole file.
 
@@ -259,4 +259,4 @@ incident, not optional hygiene.
 - Loctree hak backlog: `~/.vibecrafted/loctree/loctree-fail.md` (operator-side,
   append-only)
 
-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
