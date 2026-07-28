@@ -385,13 +385,12 @@ fn settlement_board(settlement: DashboardSettlement) -> impl IntoView {
 
 #[cfg(feature = "ssr")]
 pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
+    use leptos::hydration::HydrationScripts;
     use leptos_meta::MetaTags;
 
     const STYLE_TOKENS: &str = include_str!("../styles/tokens.css");
     const STYLE_FONTS: &str = include_str!("../styles/fonts.css");
     const STYLE_MAIN: &str = include_str!("../styles/main.css");
-
-    let _ = options;
 
     view! {
         <!DOCTYPE html>
@@ -400,6 +399,7 @@ pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
                 <meta charset="utf-8"/>
                 <meta name="viewport" content="width=device-width, initial-scale=1"/>
                 <MetaTags/>
+                <HydrationScripts options=options/>
                 <style>{STYLE_TOKENS}</style>
                 <style>{STYLE_FONTS}</style>
                 <style>{STYLE_MAIN}</style>
