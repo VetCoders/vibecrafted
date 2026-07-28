@@ -1,18 +1,37 @@
 //! Read-only Rust eye on lifecycle runs written by the Python lifecycle runner.
 
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::Utc;
 use control_core::ControlPlane;
 use serde_json::json;
 
 fn temp_home(name: &str) -> PathBuf {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
-    std::env::temp_dir().join(format!("control-core-{name}-{nanos}"))
+    let base = std::env::var_os("TMPDIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp"));
+    for attempt in 0..100 {
+        let nonce = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let candidate = base.join(format!(
+            "control-core-{name}-{}-{nanos}-{nonce}-{attempt}",
+            std::process::id()
+        ));
+        match fs::create_dir(&candidate) {
+            Ok(()) => return candidate,
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => panic!("create isolated fixture home: {error}"),
+        }
+    }
+    panic!("could not allocate an isolated fixture home")
 }
 
 fn write_lifecycle_run(home: &Path, run_id: &str, state_dou: Option<i64>) {

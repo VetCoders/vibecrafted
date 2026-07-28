@@ -1731,15 +1731,35 @@ mod tests {
     use chrono::{Duration, Utc};
     use serde_json::json;
     use std::fs;
+    use std::io::ErrorKind;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn temp_home(prefix: &str) -> PathBuf {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+        let base = std::env::var_os("TMPDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/tmp"));
+        let nanos = Utc::now().timestamp_nanos_opt().unwrap_or_default();
+        for attempt in 0..100 {
+            let nonce = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+            let candidate = base.join(format!(
+                "control-core-{prefix}-{}-{nanos}-{nonce}-{attempt}",
+                std::process::id()
+            ));
+            match fs::create_dir(&candidate) {
+                Ok(()) => return candidate,
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("create isolated fixture home: {error}"),
+            }
+        }
+        panic!("could not allocate an isolated fixture home")
+    }
 
     #[test]
     fn accepted_operator_stop_survives_later_supervisor_failures() {
-        let unique = format!(
-            "control-core-sticky-stop-{}-{}",
-            std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        );
-        let home = std::env::temp_dir().join(unique);
+        let home = temp_home("sticky-stop");
         let control_plane = home.join("control_plane");
         let snapshots = control_plane.join("runs");
         fs::create_dir_all(&snapshots).expect("snapshots");
@@ -1845,12 +1865,7 @@ mod tests {
 
     #[test]
     fn event_only_run_survives_rotation_via_snapshot() {
-        let unique = format!(
-            "control-core-snapshot-after-rotation-{}-{}",
-            std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        );
-        let home = std::env::temp_dir().join(unique);
+        let home = temp_home("snapshot-after-rotation");
         let control_plane = home.join("control_plane");
         let snapshots = control_plane.join("runs");
         fs::create_dir_all(&snapshots).expect("snapshots");
@@ -1914,12 +1929,7 @@ mod tests {
 
     #[test]
     fn compute_view_reads_only_active_events_after_rotation() {
-        let unique = format!(
-            "control-core-active-segment-only-{}-{}",
-            std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        );
-        let home = std::env::temp_dir().join(unique);
+        let home = temp_home("active-segment-only");
         let control_plane = home.join("control_plane");
         let archive = control_plane.join("events_archive");
         fs::create_dir_all(&archive).expect("event archive");
@@ -1981,12 +1991,7 @@ mod tests {
 
     #[test]
     fn active_truth_separates_stalls_and_quarantines_pytest_events() {
-        let unique = format!(
-            "control-core-active-truth-{}-{}",
-            std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        );
-        let home = std::env::temp_dir().join(unique);
+        let home = temp_home("active-truth");
         let control_plane = home.join("control_plane");
         fs::create_dir_all(&control_plane).expect("control plane");
         let now = Utc::now();
@@ -2140,12 +2145,7 @@ mod tests {
 
     #[test]
     fn lookup_run_projects_typed_trust_receipt_from_runtime_meta() {
-        let unique = format!(
-            "control-core-trust-receipt-{}-{}",
-            std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        );
-        let home = std::env::temp_dir().join(unique);
+        let home = temp_home("trust-receipt");
         let control_plane = home.join("control_plane");
         let runtime = control_plane.join("runtime_runs/receipt-run");
         let snapshots = control_plane.join("runs");
