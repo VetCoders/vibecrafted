@@ -753,9 +753,33 @@ repo-full() {
   echo "==================== DONE ===================="
 }
 
-# start/dashboard are deck verbs (SHELL_WRAPPER_VERBS) — not raw vc-frame help.
-vc-start() { _vetcoders_vc_passthrough start "$@"; }
-vc-dashboard() { _vetcoders_vc_passthrough dashboard "$@"; }
+# start/dashboard MUST NOT passthrough to `vibecrafted start|dashboard`.
+# Deck cmd_start/cmd_dashboard call these helpers after sourcing this file;
+# a thin alias re-enters Python → deck → helper forever (fork bomb, 2026-07-28).
+# --help only may touch the deck (help exits before _run_helper).
+vc-start() {
+  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    command vibecrafted start --help
+    return $?
+  fi
+  if [[ "${1:-}" == "resume" ]]; then
+    shift || true
+    _vetcoders_resume_operator_session "$@"
+    return
+  fi
+  if [[ "${1:-}" == "operator" || "${1:-}" == "vibecrafted" ]]; then
+    shift || true
+  fi
+  _vetcoders_launch_dashboard operator "$@"
+}
+
+vc-dashboard() {
+  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    command vibecrafted dashboard --help
+    return $?
+  fi
+  _vetcoders_launch_dashboard "$@"
+}
 
 vc-frontier-paths() {
   local starship_config atuin_config vc_frame_config
