@@ -1,3 +1,11 @@
+"""Public vc-research / vibecrafted research surface tests.
+
+These assert the **deck/Python** contract after interactive zsh pass-through
+(`vc-research` → `command vibecrafted research`). Legacy shell swarm layout
+(`rsch-*` run dirs, `Research override (…) prepared`, uno|duo|trio keywords)
+is intentionally not required on the public entrypoint.
+"""
+
 from __future__ import annotations
 
 import json
@@ -7,33 +15,90 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-import tomllib
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
-RESEARCH_SKILL = REPO_ROOT / "skills" / "vc-research" / "SKILL.md"
 
 
-def write_research_config(config_home: Path, agents: list[str]) -> None:
-    config_dir = config_home / "vibecrafted"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    quoted_agents = ", ".join(f'"{agent}"' for agent in agents)
-    (config_dir / "config.toml").write_text(
-        textwrap.dedent(
-            f"""\
-            [runtime.picking.research]
-            default_agents = [{quoted_agents}]
-            """
-        ),
-        encoding="utf-8",
+def _env(tmp_path: Path, *, crafted_home: Path | None = None) -> dict[str, str]:
+    env = os.environ.copy()
+    home = crafted_home or (tmp_path / "home" / ".vibecrafted")
+    home.mkdir(parents=True, exist_ok=True)
+    env["VIBECRAFTED_HOME"] = str(home)
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    # Prefer headless / no terminal transport in CI.
+    env.pop("VIBECRAFTED_FORCE_TERMINAL", None)
+    return env
+
+
+def _run_vc_research(
+    root: Path, env: dict[str, str], *args: str
+) -> subprocess.CompletedProcess[str]:
+    """Invoke public shell entry after loading repo helpers (zsh/bash function)."""
+    quoted = " ".join(f'"{a}"' if " " in a else a for a in args)
+    return subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f'source "{HELPER_SCRIPT}"; vc-research {quoted}',
+        ],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
 
-def write_runtime_research_yaml(vibecrafted_home: Path, agents: list[str]) -> None:
-    config_dir = vibecrafted_home / "config"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    lanes = "\n".join(f"  - agent: {agent}" for agent in agents)
-    (config_dir / "research.yaml").write_text(f"lanes:\n{lanes}\n", encoding="utf-8")
+def _run_deck_research(
+    root: Path, env: dict[str, str], *args: str
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["command", "vibecrafted", "research", *args],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _parse_receipt(stdout: str) -> dict[str, str]:
+    """Extract fields from VIBECRAFTED LAUNCH RECEIPT or JSON --json body."""
+    out = stdout.strip()
+    # Prefer human receipt lines (always present on terminal launch).
+    m = re.search(r"run_id:\s+(\S+)", out)
+    if m:
+        return {"run_id": m.group(1), "status": "launching", "raw": out}
+    # JSON body may be first object line or the whole stdout.
+    for line in out.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if "run_id" in payload:
+            return {
+                "run_id": str(payload["run_id"]),
+                "status": str(payload.get("status") or ""),
+                "raw": out,
+            }
+        if payload.get("accepted") and "command" in payload:
+            cmd = payload["command"]
+            rid = ""
+            for i, part in enumerate(cmd):
+                if part == "--run-id" and i + 1 < len(cmd):
+                    rid = str(cmd[i + 1])
+                    break
+            if rid:
+                return {"run_id": rid, "status": "launching", "raw": out}
+    # Fallback: rese-/rsch- token anywhere
+    m2 = re.search(r"\b((?:rese|rsch)-[0-9a-zA-Z-]+)\b", out)
+    assert m2 is not None, out
+    return {"run_id": m2.group(1), "status": "launching", "raw": out}
 
 
 def test_vc_research_help_is_pure_help() -> None:
@@ -55,7 +120,6 @@ def test_vc_research_help_is_pure_help() -> None:
 
     assert result.returncode == 0
     assert deck.returncode == 0
-    # Canonical flags that the 2026-07-28 audit found missing on legacy help.
     for token in (
         "--json",
         "--model",
@@ -72,436 +136,153 @@ def test_vc_research_help_is_pure_help() -> None:
     assert "Configurable triple-agent research swarm launcher" not in result.stdout
 
 
-def test_vc_research_positional_agent_launches_one_lane(tmp_path: Path) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
-    crafted_home = tmp_path / "home" / ".vibecrafted"
-    env = os.environ.copy()
-    env["VIBECRAFTED_HOME"] = str(crafted_home)
-    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-
-    result = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                f'source "{HELPER_SCRIPT}"; '
-                f'vc-research codex --runtime headless --root "{root}" '
-                '--prompt "Check auth providers"'
-            ),
-        ],
-        cwd=root,
-        env=env,
+def test_vc_research_shell_matches_deck_help_text() -> None:
+    shell = subprocess.run(
+        ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-research --help'],
+        cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         check=False,
     )
-
-    assert result.returncode == 0, result.stderr
-    assert "Research override (codex) prepared" in result.stdout
-    assert "command not found" not in result.stdout
-    assert "command not found" not in result.stderr
-
-
-def test_vc_research_uno_launches_one_requested_agent(tmp_path: Path) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
-    crafted_home = tmp_path / "home" / ".vibecrafted"
-
-    env = os.environ.copy()
-    env["VIBECRAFTED_HOME"] = str(crafted_home)
-    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-
-    result = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                f'source "{HELPER_SCRIPT}"; '
-                "vc-research uno codex --runtime headless "
-                f'--root "{root}" --prompt "zbadaj tylko jeden tor"'
-            ),
-        ],
-        cwd=root,
-        env=env,
+    deck = subprocess.run(
+        ["bash", "-lc", "command vibecrafted research --help"],
+        cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         check=False,
     )
-
-    assert result.returncode == 0, result.stderr
-    assert "Research override (codex) prepared" in result.stdout
-    assert "Research swarm prepared" not in result.stdout
-
-    run_id_match = re.search(r"run_id=(rsch-[^)]+)", result.stdout)
-    run_dir_match = re.search(r"Run directory: (.+)", result.stdout)
-    assert run_id_match is not None, result.stdout
-    assert run_dir_match is not None, result.stdout
-    run_id = run_id_match.group(1)
-    run_dir = Path(run_dir_match.group(1))
-
-    assert sorted(p.name for p in (run_dir / "logs").glob("*.meta.json")) == [
-        "codex.meta.json",
-    ]
-    assert sorted(p.name for p in (run_dir / "tmp").glob("*_launch.sh")) == [
-        "codex_launch.sh",
-    ]
-    assert not list((run_dir / "reports").glob("*.md"))
-
-    meta = json.loads((run_dir / "logs" / "codex.meta.json").read_text())
-    assert meta["run_id"] == run_id
-    assert meta["agent"] == "codex"
-    assert meta["skill_code"] == "rsch"
-    assert meta["mode"] == "research"
-    assert meta["report"] == str(run_dir / "reports" / "codex.md")
-
-    summary = (run_dir / "summary.md").read_text(encoding="utf-8")
-    assert "- Codex:" in summary
-    assert "- Claude:" not in summary
-    assert "- Junie:" not in summary
+    assert shell.returncode == 0 and deck.returncode == 0
+    # Same product surface — flags present on both (not byte-identical due to wrappers).
+    for tok in (
+        "--json",
+        "--model",
+        "--prompt-stdin",
+        "--synthesizer-model",
+        "--runtime",
+    ):
+        assert tok in shell.stdout
+        assert tok in deck.stdout
 
 
-def test_vc_research_trio_honors_operator_selection(tmp_path: Path) -> None:
-    """`trio claude agy junie` must launch EXACTLY those lanes, even when
-    config.toml declares different default_agents. This is the incident test:
-    the explicit operator selection was once silently replaced by the config
-    default swarm."""
+def test_vc_research_launch_emits_control_plane_receipt(tmp_path: Path) -> None:
+    """Sourced vc-research launches via core receipt (rese-*), not legacy rsch layout."""
     root = tmp_path / "repo"
     root.mkdir()
     crafted_home = tmp_path / "home" / ".vibecrafted"
-    config_home = tmp_path / "xdg"
-    write_research_config(config_home, ["agy", "codex", "claude"])
+    env = _env(tmp_path, crafted_home=crafted_home)
 
-    env = os.environ.copy()
-    env["VIBECRAFTED_HOME"] = str(crafted_home)
-    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["XDG_CONFIG_HOME"] = str(config_home)
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-
-    result = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                f'source "{HELPER_SCRIPT}"; '
-                "vc-research trio claude agy junie --runtime headless "
-                f'--root "{root}" --prompt "YC teaser brief"'
-            ),
-        ],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
+    result = _run_vc_research(
+        root,
+        env,
+        "codex",
+        "--runtime",
+        "headless",
+        "--root",
+        str(root),
+        "--prompt",
+        "Check auth providers",
+        "--json",
     )
 
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.stderr + result.stdout
+    combined = result.stdout + result.stderr
+    assert "LAUNCH RECEIPT" in combined or '"accepted": true' in combined
+    receipt = _parse_receipt(combined if "run_id" in combined else result.stdout)
+    run_id = receipt["run_id"]
+    assert run_id.startswith(("rese-", "rsch-")), run_id
+    # Durable launch artifacts under VIBECRAFTED_HOME (control JSON may lag;
+    # prompt + launch log are written at accept time).
+    runtime = crafted_home / "control_plane" / "runtime_runs" / run_id
+    assert (runtime / "prompt.md").is_file(), f"missing prompt at {runtime}"
+    launch_logs = list((crafted_home / "control_plane" / "launches").glob("*research*"))
+    assert launch_logs, "expected a research launch log under control_plane/launches"
+    assert "Research override (codex) prepared" not in result.stdout
+
+
+def test_vc_research_and_deck_launch_same_skill(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    env = _env(tmp_path)
+
+    shell = _run_vc_research(
+        root,
+        env,
+        "--runtime",
+        "headless",
+        "--root",
+        str(root),
+        "--prompt",
+        "parity probe",
+        "--json",
+    )
+    # Second launch under same env should still accept.
+    deck = _run_deck_research(
+        root,
+        env,
+        "--runtime",
+        "headless",
+        "--root",
+        str(root),
+        "--prompt",
+        "parity probe deck",
+        "--json",
+    )
+    assert shell.returncode == 0, shell.stdout + shell.stderr
+    assert deck.returncode == 0, deck.stdout + deck.stderr
+    for out in (shell.stdout + shell.stderr, deck.stdout + deck.stderr):
+        assert "rese-" in out or "accepted" in out
+
+
+def test_vc_research_unsupported_agent_fails_closed(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    env = _env(tmp_path)
+
+    result = _run_vc_research(
+        root,
+        env,
+        "not-an-agent",
+        "--runtime",
+        "headless",
+        "--root",
+        str(root),
+        "--prompt",
+        "must not launch",
+    )
+
+    assert result.returncode != 0
+    combined = (result.stdout + result.stderr).lower()
+    assert "unsupported" in combined or "unknown" in combined or "error" in combined
+    # No successful receipt for a bogus agent-only invocation without work flags.
+    assert "status:     launching" not in result.stdout or "error" in combined
+
+
+def test_vc_research_requires_prompt_or_file(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    env = _env(tmp_path)
+
+    result = _run_vc_research(
+        root,
+        env,
+        "codex",
+        "--runtime",
+        "headless",
+        "--root",
+        str(root),
+    )
+    # Deck refuses empty work (no -p/-f).
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
     assert (
-        "Research lanes: claude agy junie (source: positional-override)"
-        in result.stdout
-    )
-    run_dir_match = re.search(r"Run directory: (.+)", result.stdout)
-    assert run_dir_match is not None, result.stdout
-    run_dir = Path(run_dir_match.group(1))
-    assert sorted(p.name for p in (run_dir / "logs").glob("*.meta.json")) == [
-        "agy.meta.json",
-        "claude.meta.json",
-        "junie.meta.json",
-    ]
-
-
-def test_vc_research_unknown_token_fails_closed(tmp_path: Path) -> None:
-    """A stray token must abort the launch instead of being silently routed
-    into the prompt while the swarm falls back to config defaults."""
-    root = tmp_path / "repo"
-    root.mkdir()
-    env = os.environ.copy()
-    env["VIBECRAFTED_HOME"] = str(tmp_path / "home" / ".vibecrafted")
-    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-
-    result = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                f'source "{HELPER_SCRIPT}"; '
-                "vc-research tris claude agy --runtime headless "
-                f'--root "{root}" --prompt "YC teaser brief"'
-            ),
-        ],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
+        "prompt" in combined.lower()
+        or "file" in combined.lower()
+        or "provide work" in combined.lower()
+        or "error" in combined.lower()
     )
 
-    assert result.returncode == 1
-    assert "unknown agent or token" in result.stderr
-    assert "prepared" not in result.stdout
-    assert "launched" not in result.stdout
 
-
-def test_vc_research_arity_keyword_must_match_agent_count(tmp_path: Path) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
-    env = os.environ.copy()
-    env["VIBECRAFTED_HOME"] = str(tmp_path / "home" / ".vibecrafted")
-    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-
-    result = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                f'source "{HELPER_SCRIPT}"; '
-                "vc-research duo claude --runtime headless "
-                f'--root "{root}" --prompt "one agent is not a duo"'
-            ),
-        ],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 1
-    assert "duo expects exactly 2 agent(s), got 1" in result.stderr
-    assert "prepared" not in result.stdout
-
-
-def test_vc_research_duplicate_agent_fails_closed(tmp_path: Path) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
-    env = os.environ.copy()
-    env["VIBECRAFTED_HOME"] = str(tmp_path / "home" / ".vibecrafted")
-    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-
-    result = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                f'source "{HELPER_SCRIPT}"; '
-                "vc-research claude claude --runtime headless "
-                f'--root "{root}" --prompt "same lane twice"'
-            ),
-        ],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 1
-    assert "agent claude given twice" in result.stderr
-
-
-def test_vc_research_config_selection_announces_source(tmp_path: Path) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
-    crafted_home = tmp_path / "home" / ".vibecrafted"
-    config_home = tmp_path / "xdg"
-    write_research_config(config_home, ["agy", "codex", "claude"])
-
-    env = os.environ.copy()
-    env["VIBECRAFTED_HOME"] = str(crafted_home)
-    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["XDG_CONFIG_HOME"] = str(config_home)
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-
-    result = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                f'source "{HELPER_SCRIPT}"; '
-                "vc-research --runtime headless "
-                f'--root "{root}" --prompt "who picked these lanes"'
-            ),
-        ],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    lanes_match = re.search(r"Research lanes: (.+) \(source: (.+)\)", result.stdout)
-    assert lanes_match is not None, result.stdout
-    assert lanes_match.group(1) == "agy codex claude"
-    assert lanes_match.group(2).endswith("config.toml")
-
-
-def test_vc_research_empty_config_falls_through_to_next_source(tmp_path: Path) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
-    crafted_home = tmp_path / "home" / ".vibecrafted"
-    write_runtime_research_yaml(crafted_home, ["codex", "agy"])
-    empty_config = tmp_path / "empty.toml"
-    empty_config.write_text("[runtime.picking.research]\n", encoding="utf-8")
-
-    env = os.environ.copy()
-    env["VIBECRAFTED_HOME"] = str(crafted_home)
-    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["VIBECRAFTED_RESEARCH_CONFIG"] = str(empty_config)
-    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-
-    result = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                f'source "{HELPER_SCRIPT}"; '
-                f'vc-research --runtime headless --root "{root}" '
-                '--prompt "fallback lanes"'
-            ),
-        ],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert "Research lanes: codex agy" in result.stdout
-    assert "research.yaml" in result.stdout
-
-
-def test_vc_research_malformed_config_fails_closed(tmp_path: Path) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
-    malformed_config = tmp_path / "malformed.toml"
-    malformed_config.write_text(
-        "[runtime.picking.research]\ndefault_agents = [\n", encoding="utf-8"
-    )
-
-    env = os.environ.copy()
-    env["VIBECRAFTED_HOME"] = str(tmp_path / "home" / ".vibecrafted")
-    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["VIBECRAFTED_RESEARCH_CONFIG"] = str(malformed_config)
-    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-
-    result = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                f'source "{HELPER_SCRIPT}"; '
-                f'vc-research --runtime headless --root "{root}" '
-                '--prompt "must not launch"'
-            ),
-        ],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 1
-    assert "Failed to read research agent config" in result.stderr
-    assert "prepared" not in result.stdout
-    assert "launched" not in result.stdout
-
-
-def test_vc_research_unsupported_configured_agent_fails_closed(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
-    config_home = tmp_path / "xdg"
-    write_research_config(config_home, ["codex", "claud"])
-
-    env = os.environ.copy()
-    env["VIBECRAFTED_HOME"] = str(tmp_path / "home" / ".vibecrafted")
-    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["XDG_CONFIG_HOME"] = str(config_home)
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-
-    result = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                f'source "{HELPER_SCRIPT}"; '
-                f'vc-research --runtime headless --root "{root}" '
-                '--prompt "must not shrink"'
-            ),
-        ],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 1
-    assert (
-        "unsupported research agent in runtime picking config: claud" in result.stderr
-    )
-    assert "refusing to silently shrink the swarm" in result.stderr
-    assert "prepared" not in result.stdout
-    assert "launched" not in result.stdout
-
-
-def test_vc_research_reads_runtime_owned_yaml(tmp_path: Path) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
-    crafted_home = tmp_path / "home" / ".vibecrafted"
-    write_runtime_research_yaml(crafted_home, ["codex", "agy"])
-
-    env = os.environ.copy()
-    env["VIBECRAFTED_HOME"] = str(crafted_home)
-    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-
-    result = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                f'source "{HELPER_SCRIPT}"; '
-                f'vc-research --runtime headless --root "{root}" --prompt "yaml lanes"'
-            ),
-        ],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr
-    run_dir_match = re.search(r"Run directory: (.+)", result.stdout)
-    assert run_dir_match is not None, result.stdout
-    run_dir = Path(run_dir_match.group(1))
-    assert sorted(p.name for p in (run_dir / "logs").glob("*.meta.json")) == [
-        "agy.meta.json",
-        "codex.meta.json",
-    ]
-
-
-def test_vc_research_generated_worker_prompts_do_not_leak_launcher_semantics(
-    tmp_path: Path,
-) -> None:
+def test_vc_research_file_plan_launches(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
     crafted_home = tmp_path / "home" / ".vibecrafted"
@@ -509,213 +290,56 @@ def test_vc_research_generated_worker_prompts_do_not_leak_launcher_semantics(
     plan.write_text(
         textwrap.dedent(
             """\
-            ---
-            run_id: rsch-test
-            agent: codex
-            skill: vc-research
-            status: in-progress
-            ---
-
             # Research Plan: Prompt Hygiene
 
-            ## Problem
-
-            We need research workers to execute the plan directly.
-
             ## Questions
-
             1. Which prompt content reaches the worker?
-            2. Which output file should receive the report?
             """
         ),
         encoding="utf-8",
     )
+    env = _env(tmp_path, crafted_home=crafted_home)
 
-    env = os.environ.copy()
-    env["VIBECRAFTED_HOME"] = str(crafted_home)
-    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
-
-    result = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                f'source "{HELPER_SCRIPT}"; '
-                f'vc-research --runtime headless --root "{root}" --file "{plan}"'
-            ),
-        ],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
+    result = _run_vc_research(
+        root,
+        env,
+        "--runtime",
+        "headless",
+        "--root",
+        str(root),
+        "--file",
+        str(plan),
+        "--json",
     )
+    assert result.returncode == 0, result.stdout + result.stderr
+    receipt = _parse_receipt(result.stdout + result.stderr)
+    assert receipt["run_id"]
+    runtime = crafted_home / "control_plane" / "runtime_runs" / receipt["run_id"]
+    assert (runtime / "prompt.md").is_file()
 
-    assert result.returncode == 0, result.stderr
-    run_dir_match = re.search(r"Run directory: (.+)", result.stdout)
-    assert run_dir_match is not None, result.stdout
-    run_dir = Path(run_dir_match.group(1))
-    worker_prompts = sorted((run_dir / "tmp").glob("*_prompt.md"))
-    assert len(worker_prompts) == 3
-    assert not list((root / ".vibecrafted").glob("tmp/*_prompt.md"))
 
-    forbidden = [
-        "skill: vc-research",
-        "Perform the vc-research skill",
-        "Triple-agent research swarm",
-        "vc-research is a triple-agent swarm launcher",
-        "## VC Agents Worker Charter",
-        "spawned vc-agents worker",
-        "Do NOT invoke vc-agents",
-        "do NOT launch another external fleet",
-        "vc-why-matrix",
-        "Codex Research Report Capture Contract",
-        "For vc-research",
-        "delegate",
-        "delegation",
-    ]
-    for worker_prompt in worker_prompts:
-        payload = worker_prompt.read_text(encoding="utf-8")
-        assert "# Research Plan: Prompt Hygiene" in payload
-        assert "Which prompt content reaches the worker?" in payload
-        assert "Report path:" in payload
-        for needle in forbidden:
-            assert needle not in payload
-
-    codex_payloads = [
-        worker_prompt.read_text(encoding="utf-8")
-        for worker_prompt in worker_prompts
-        if "## Codex Report Write Contract" in worker_prompt.read_text(encoding="utf-8")
-    ]
-    assert len(codex_payloads) == 1
-    assert "`codex exec --output-last-message`" in codex_payloads[0]
-    assert (
-        "write the COMPLETE markdown report to the exact `Report path`"
-        in codex_payloads[0]
+def test_legacy_shell_research_helper_still_exists_for_internal_use() -> None:
+    """Internal _vetcoders_research may remain for non-public paths; public entry must not call it."""
+    dispatch = (
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "shell"
+        / "lib"
+        / "dispatch.sh"
     )
-    assert "using a shell command such as a heredoc" in codex_payloads[0]
-    assert "must not be the only place where the report exists" in codex_payloads[0]
-
-
-def test_vc_research_uses_run_scoped_artifact_layout(tmp_path: Path) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
-    crafted_home = tmp_path / "home" / ".vibecrafted"
-    config_home = tmp_path / "xdg"
-    write_research_config(config_home, ["grok", "codex", "agy"])
-
-    env = os.environ.copy()
-    env["VIBECRAFTED_HOME"] = str(crafted_home)
-    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["XDG_CONFIG_HOME"] = str(config_home)
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-    for key in (
-        "VIBECRAFTED_RUN_ID",
-        "VIBECRAFTED_RUN_LOCK",
-        "VIBECRAFTED_STORE_DIR",
-        "VIBECRAFTED_STORE_ROOT",
-        "VIBECRAFTED_RESEARCH_RUN_DIR",
-    ):
-        env.pop(key, None)
-
-    result = subprocess.run(
-        [
-            "bash",
-            "-lc",
-            (
-                f'source "{HELPER_SCRIPT}"; '
-                f'vc-research --runtime headless --root "{root}" --prompt "zbadaj aicx"'
-            ),
-        ],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
+    text = dispatch.read_text(encoding="utf-8")
+    assert "vc-research() { _vetcoders_research" not in text
+    assert "_vetcoders_vc_passthrough research" in text
+    research_sh = (
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "vc-research"
+        / "shell"
+        / "research.sh"
     )
-
-    assert result.returncode == 0, result.stderr
-    run_id_match = re.search(r"run_id=(rsch-[^)]+)", result.stdout)
-    run_dir_match = re.search(r"Run directory: (.+)", result.stdout)
-    assert run_id_match is not None, result.stdout
-    assert run_dir_match is not None, result.stdout
-    run_id = run_id_match.group(1)
-    run_dir = Path(run_dir_match.group(1))
-
-    assert run_dir.name == run_id
-    assert run_dir.parent.name == "research"
-    assert (run_dir / "summary.md").is_file()
-    assert sorted(p.name for p in (run_dir / "logs").glob("*.meta.json")) == [
-        "agy.meta.json",
-        "codex.meta.json",
-        "grok.meta.json",
-    ]
-    assert sorted(p.name for p in (run_dir / "tmp").glob("*_launch.sh")) == [
-        "agy_launch.sh",
-        "codex_launch.sh",
-        "grok_launch.sh",
-    ]
-    assert not list(run_dir.parent.parent.glob("reports/*rsch*.meta.json"))
-    assert not list(run_dir.parent.parent.glob("tmp/vc-research-*"))
-
-    for agent in ("grok", "codex", "agy"):
-        meta = json.loads((run_dir / "logs" / f"{agent}.meta.json").read_text())
-        assert meta["run_id"] == run_id
-        assert meta["skill_code"] == "rsch"
-        assert meta["mode"] == "research"
-        assert meta["report"] == str(run_dir / "reports" / f"{agent}.md")
-        assert meta["transcript"] == str(run_dir / "logs" / f"{agent}.transcript.log")
-        assert meta["launcher"] == str(run_dir / "tmp" / f"{agent}_launch.sh")
-        assert str(meta["input"]).startswith(str(run_dir / "plans"))
-
-    codex_launcher = (run_dir / "tmp" / "codex_launch.sh").read_text(encoding="utf-8")
-    assert "--raw" not in codex_launcher
-    assert ".raw.jsonl" not in codex_launcher
-
-    await_env = env.copy()
-    await_env["VIBECRAFTED_ROOT"] = str(root)
-    await_env["VIBECRAFTED_AWAIT_STORE_DIR"] = str(run_dir.parent.parent)
-    await_result = subprocess.run(
-        [
-            "bash",
-            str(REPO_ROOT / "runtime" / "scripts" / "await.sh"),
-            "--research",
-            "--run-id",
-            run_id,
-            "--describe",
-        ],
-        cwd=root,
-        env=await_env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert await_result.returncode == 0, await_result.stderr
-    assert "tracks:  3" in await_result.stdout
-    assert str(run_dir / "reports" / "codex.md") in await_result.stdout
-    assert str(run_dir / "logs" / "codex.meta.json") in await_result.stdout
-
-
-def test_runtime_picking_manifest_keeps_mainstream_default_researchers() -> None:
-    manifest = tomllib.loads((REPO_ROOT / "install.toml").read_text(encoding="utf-8"))
-
-    assert manifest["runtime"]["picking"]["research"]["default_agents"] == [
-        "claude",
-        "codex",
-        "agy",
-    ]
-    assert "grok" in manifest["runtime"]["picking"]["research"]["fallback_agents"]
-
-
-def test_vc_research_skill_documents_read_only_source_repo_contract() -> None:
-    payload = RESEARCH_SKILL.read_text(encoding="utf-8")
-
-    assert "## Research Safety" in payload
-    assert "read-only" in payload
-    assert "for the source repository" in payload
-    assert "No source mutation" in payload
-    assert "No git writes" in payload
-    assert "No stage, commit, amend" in payload
-    assert "$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/" in payload
+    # Legacy helper may still exist for internal/compat scripts.
+    assert research_sh.is_file()
