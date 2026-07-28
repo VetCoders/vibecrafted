@@ -37,6 +37,7 @@ def write_runtime_research_yaml(vibecrafted_home: Path, agents: list[str]) -> No
 
 
 def test_vc_research_help_is_pure_help() -> None:
+    """Public vc-research --help must match the deck (not legacy shell help)."""
     result = subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-research --help'],
         cwd=REPO_ROOT,
@@ -44,15 +45,31 @@ def test_vc_research_help_is_pure_help() -> None:
         text=True,
         check=False,
     )
+    deck = subprocess.run(
+        ["bash", "-lc", "command vibecrafted research --help"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
     assert result.returncode == 0
-    assert "Configurable triple-agent research swarm launcher" in result.stdout
-    assert "Positional agents override the YAML lane set" in result.stdout
-    assert "uno|duo|trio <agent...>" in result.stdout
-    assert "Agent picking policy (explicit, fail-closed):" in result.stdout
+    assert deck.returncode == 0
+    # Canonical flags that the 2026-07-28 audit found missing on legacy help.
+    for token in (
+        "--json",
+        "--model",
+        "--prompt-stdin",
+        "--synthesizer-model",
+        "vibecrafted research",
+    ):
+        assert token in result.stdout, f"missing canonical token {token!r}"
+        assert token in deck.stdout, f"deck missing {token!r}"
     assert "Research swarm launched" not in result.stdout
     assert "command not found" not in result.stdout
     assert "command not found" not in result.stderr
+    # Legacy shell-only help strings must not reappear (split-brain).
+    assert "Configurable triple-agent research swarm launcher" not in result.stdout
 
 
 def test_vc_research_positional_agent_launches_one_lane(tmp_path: Path) -> None:
