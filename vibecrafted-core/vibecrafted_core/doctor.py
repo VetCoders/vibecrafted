@@ -67,10 +67,12 @@ def _launcher_shim_findings(
     except OSError as exc:
         return [_Finding("warn", "launcher", f"cannot read {path}: {exc}")]
 
+    findings: list[_Finding] = []
     if "vibecrafted_core.cli" in head and "import main" in head:
-        return [_Finding("ok", "launcher", f"uv-tool shim on PATH -> {path}")]
-
-    if head.lstrip().startswith("#!") and "bash" in head.splitlines()[0]:
+        findings.append(
+            _Finding("ok", "launcher", f"Python package entrypoint on PATH -> {path}")
+        )
+    elif head.lstrip().startswith("#!") and "bash" in head.splitlines()[0]:
         shim = _uv_tool_shim()
         shim_hint = f" (uv-tool shim lives at {shim})" if shim.exists() else ""
         return [
@@ -83,15 +85,86 @@ def _launcher_shim_findings(
                 f"wins PATH.",
             )
         ]
-
-    return [
-        _Finding(
-            "warn",
-            "launcher",
-            f"vibecrafted on PATH ({path}) is neither the uv-tool shim nor the "
-            f"known deck — verify the install channel",
+    else:
+        findings.append(
+            _Finding(
+                "warn",
+                "launcher",
+                f"vibecrafted on PATH ({path}) is neither a package entrypoint "
+                f"nor the known deck — verify the install channel",
+            )
         )
-    ]
+
+    # Version identity: bare package VERSION (no +gSHA) means an unstamped
+    # editable / living-tree checkout. Even when resolve lifts to the staged
+    # stamp for --version honesty, surface the PATH shadow so doctor is not
+    # "190 ok" while Homebrew editable wins the binary.
+    from . import __file__ as package_file
+    from . import __version__ as resolved_version
+    from .runtime_paths import (
+        read_staged_tools_version,
+        read_version_file,
+        version_is_stamped,
+        vibecrafted_tools_home,
+    )
+
+    staged = read_staged_tools_version()
+    package_dir = Path(package_file).resolve().parent
+    package_version = read_version_file(package_dir)
+    tools_home = vibecrafted_tools_home().resolve()
+    package_outside_tools = tools_home not in package_dir.parents
+
+    if not version_is_stamped(resolved_version):
+        staged_hint = (
+            f" Staged install stamp is {staged}."
+            if version_is_stamped(staged)
+            else " Run `make install` to stamp tools/vibecrafted-current."
+        )
+        findings.append(
+            _Finding(
+                "fail",
+                "version",
+                f"vibecrafted --version is unstamped ({resolved_version}) — "
+                f"install identity must be X.Y.Z+gSHORTSHA.{staged_hint} "
+                f"Common cause: Homebrew/pip editable install of the living "
+                f"tree shadows ~/.local/bin (PATH order). Uninstall the "
+                f"editable package or put ~/.local/bin first.",
+            )
+        )
+    else:
+        findings.append(
+            _Finding("ok", "version", f"stamped install identity {resolved_version}")
+        )
+
+    if (
+        package_outside_tools
+        and not version_is_stamped(package_version)
+        and version_is_stamped(staged)
+    ):
+        findings.append(
+            _Finding(
+                "fail",
+                "launcher",
+                f"loaded package tree is unstamped ({package_version} at "
+                f"{package_dir}) while make-install stamp is {staged}. "
+                f"PATH winner {path} is almost certainly a pip/Homebrew "
+                f"editable living-tree install. Uninstall it "
+                f"(`python3 -m pip uninstall vibecrafted`) or ensure "
+                f"~/.local/bin precedes Homebrew on PATH.",
+            )
+        )
+    elif version_is_stamped(staged) and resolved_version != staged:
+        findings.append(
+            _Finding(
+                "warn",
+                "version",
+                f"resolved version {resolved_version} differs from staged "
+                f"tools stamp {staged} — re-run make install or clear an "
+                f"editable PATH shadow",
+            )
+        )
+
+    return findings
 
 
 def _server_supervision_findings(
