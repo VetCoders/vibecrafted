@@ -183,6 +183,19 @@ fn lifecycle_summaries_surface_baton_and_report_dou_fallback() {
 }
 
 #[test]
+fn recent_lifecycle_summaries_bound_the_dashboard_projection() {
+    let home = temp_home("lifecycle-summary-limit");
+    for suffix in ["one", "two", "three"] {
+        write_lifecycle_run(&home, &format!("life-ship-{suffix}"), Some(0));
+    }
+
+    let plane = ControlPlane::new(&home);
+
+    assert!(plane.load_recent_lifecycle_run_summaries(0).is_empty());
+    assert_eq!(plane.load_recent_lifecycle_run_summaries(2).len(), 2);
+}
+
+#[test]
 fn lifecycle_summary_reads_live_dou_from_latest_stage_report() {
     let home = temp_home("lifecycle-stage-report");
     let run_id = "life-ship-smoke-stage-report";

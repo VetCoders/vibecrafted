@@ -562,6 +562,44 @@ impl ControlPlane {
             .collect()
     }
 
+    /// Compact summaries for only the newest lifecycle candidates.
+    ///
+    /// Directory metadata is cheap enough to rank the full set, while parsing
+    /// every nested state and report is not. Dashboard callers use this bounded
+    /// projection; the unbounded list API remains available above.
+    #[must_use]
+    pub fn load_recent_lifecycle_run_summaries(&self, limit: usize) -> Vec<LifecycleRunSummary> {
+        if limit == 0 {
+            return Vec::new();
+        }
+        let Ok(entries) = fs::read_dir(self.lifecycle_runs_dir()) else {
+            return Vec::new();
+        };
+        let mut state_paths = entries
+            .flatten()
+            .filter_map(|entry| {
+                entry
+                    .path()
+                    .is_dir()
+                    .then(|| entry.path().join("state.json"))
+            })
+            .map(|state_path| (modified_at(&state_path), state_path))
+            .collect::<Vec<_>>();
+        state_paths.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+        state_paths
+            .into_iter()
+            .filter_map(|(_, state_path)| {
+                let mut run = read_json::<LifecycleRun>(&state_path)?;
+                if run.run_id.is_empty() {
+                    return None;
+                }
+                run.project_delivery_axes();
+                Some(self.lifecycle_run_summary(&run))
+            })
+            .take(limit)
+            .collect()
+    }
+
     /// Every lifecycle run as a flat status projection for existing state views.
     #[must_use]
     pub fn iter_lifecycle_run_status(&self) -> Vec<RunStatus> {
