@@ -11,6 +11,41 @@ def read_version_file(root: str | Path) -> str:
     return "unknown"
 
 
+def version_is_stamped(version: str) -> bool:
+    """Install contract: ``X.Y.Z+gSHORTSHA`` (see docs/INSTALL.md).
+
+    Bare ``X.Y.Z`` is not an install identity — it is either an unstamped
+    living-tree checkout or a broken editable install that must not win PATH.
+    """
+    if not version or version == "unknown":
+        return False
+    # Accept +gabc1234 style only (not arbitrary local labels).
+    plus = version.find("+g")
+    if plus < 0:
+        return False
+    sha = version[plus + 2 :]
+    return bool(sha) and all(c in "0123456789abcdefABCDEF" for c in sha)
+
+
+def read_staged_tools_version() -> str:
+    """VERSION stamped by ``make install`` into tools/vibecrafted-current.
+
+    Prefer the root VERSION, then the package-local file next to the staged
+    ``vibecrafted_core`` package (mirrors how the live package reads itself).
+    """
+    current = vibecrafted_tools_home() / "vibecrafted-current"
+    for candidate in (
+        current / "VERSION",
+        current / "vibecrafted-core" / "vibecrafted_core" / "VERSION",
+        current / "vibecrafted-core" / "VERSION",
+    ):
+        if candidate.is_file():
+            text = candidate.read_text(encoding="utf-8").strip()
+            if text:
+                return text
+    return "unknown"
+
+
 def resolve_env_path(name: str, default: Path) -> Path:
     raw = os.environ.get(name)
     if raw:

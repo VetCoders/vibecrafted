@@ -44,22 +44,102 @@ from .perception import (
     watcher_running,
 )
 from .runtime_paths import (
+    read_staged_tools_version,
     read_version_file,
     resolve_env_path,
+    version_is_stamped,
     vibecrafted_home,
     xdg_config_home,
 )
 from .supervisor_async import AsyncRunHandle, AsyncSupervisor
 
 
-def _resolve_installed_version() -> str:
-    packaged_version = read_version_file(Path(__file__).resolve().parent)
-    if packaged_version != "unknown":
-        return packaged_version
+def _version_from_git(package_dir: Path, base: str) -> str | None:
+    """Lift a bare semver to ``base+gSHORTSHA`` when the package sits in a git tree.
+
+    Used only after staged install stamp and package VERSION fail to provide
+    ``+g`` — never as a substitute for ``make install``.
+    """
+    import subprocess
+
+    if not base or base == "unknown":
+        return None
+    root = package_dir
+    for _ in range(8):
+        if (root / ".git").exists():
+            break
+        if root.parent == root:
+            return None
+        root = root.parent
+    else:
+        return None
     try:
-        return importlib.metadata.version("vibecrafted")
+        proc = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--short=8", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    sha = (proc.stdout or "").strip()
+    if not sha or any(c not in "0123456789abcdefABCDEF" for c in sha):
+        return None
+    bare = base.split("+", 1)[0]
+    return f"{bare}+g{sha}"
+
+
+def _mark_unstamped(version: str) -> str:
+    """Never claim release identity without a git stamp."""
+    if version_is_stamped(version) or version.endswith("+UNSTAMPED"):
+        return version
+    if version == "unknown":
+        return version
+    return f"{version}+UNSTAMPED"
+
+
+def _resolve_installed_version() -> str:
+    """Resolve the operator-facing install identity.
+
+    Priority (docs/INSTALL.md — ``VERSION`` / ``--version`` share ``+g<sha>``):
+
+    1. Stamped package VERSION next to this module (staged tools tree).
+    2. Stamped ``make install`` tools/vibecrafted-current — wins over a bare
+       living-tree editable (classic Homebrew ``pip install -e`` shadow).
+    3. Stamped ``importlib.metadata`` version.
+    4. Git short SHA lifted onto a bare package VERSION (dev checkout honesty).
+    5. Bare version marked ``+UNSTAMPED`` — never silent ``3.7.0`` alone.
+    """
+    package_dir = Path(__file__).resolve().parent
+    packaged_version = read_version_file(package_dir)
+    staged_version = read_staged_tools_version()
+
+    if version_is_stamped(packaged_version):
+        return packaged_version
+    if version_is_stamped(staged_version):
+        return staged_version
+
+    try:
+        meta_version = importlib.metadata.version("vibecrafted")
     except importlib.metadata.PackageNotFoundError:
-        return "unknown"
+        meta_version = None
+    if meta_version and version_is_stamped(meta_version):
+        return meta_version
+
+    bare = (
+        packaged_version
+        if packaged_version != "unknown"
+        else (meta_version or "unknown")
+    )
+    if bare != "unknown":
+        git_version = _version_from_git(package_dir, bare)
+        if git_version and version_is_stamped(git_version):
+            return git_version
+        return _mark_unstamped(bare)
+    return "unknown"
 
 
 __version__ = _resolve_installed_version()
@@ -184,6 +264,7 @@ __all__ = [
     "read_delivery_axes",
     "read_event_tail",
     "read_settlement_ledger",
+    "read_staged_tools_version",
     "read_version_file",
     "repo_full",
     "repo_full_summary",
@@ -196,6 +277,7 @@ __all__ = [
     "sync_state",
     "transition_allowed",
     "validate_artifacts",
+    "version_is_stamped",
     "vibecrafted_home",
     "vibecrafted_launcher",
     "watcher_running",
