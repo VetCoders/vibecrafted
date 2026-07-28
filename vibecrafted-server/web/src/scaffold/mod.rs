@@ -33,8 +33,8 @@ pub mod api {
     use axum::{Json, Router};
     use control_core::{
         ScaffoldArtifact, ScaffoldArtifactPatch, ScaffoldArtifactStore, ScaffoldCheckpointPatch,
-        ScaffoldDoctorReport, ScaffoldError, ScaffoldPlanSummary, ScaffoldWorkspace,
-        vibecrafted_home,
+        ScaffoldDoctorReport, ScaffoldError, ScaffoldPlanSummary, ScaffoldStatusPatch,
+        ScaffoldWorkspace, vibecrafted_home,
     };
     use serde::Deserialize;
 
@@ -70,6 +70,22 @@ pub mod api {
         note: String,
     }
 
+    #[derive(Debug, Clone, Deserialize)]
+    pub struct SaveStatusForm {
+        pub org: String,
+        pub repo: String,
+        pub day: String,
+        pub plan_id: String,
+        pub artifact_id: String,
+        #[serde(default)]
+        pub item_id: Option<String>,
+        #[serde(default)]
+        pub item_index: Option<usize>,
+        pub status: String,
+        #[serde(default)]
+        pub note: Option<String>,
+    }
+
     #[derive(Debug, Clone)]
     struct ScaffoldPlanCard {
         plan: ScaffoldPlanSummary,
@@ -84,6 +100,7 @@ pub mod api {
             .route("/api/scaffold/changes", get(changes))
             .route("/api/scaffold/artifact", post(save_artifact))
             .route("/api/scaffold/checkpoint", post(save_checkpoint))
+            .route("/api/scaffold/status", post(save_status))
     }
 
     async fn editor(Query(query): Query<ScaffoldQuery>) -> impl IntoResponse {
@@ -91,8 +108,19 @@ pub mod api {
             Ok(workspace) => Html(render_editor(&workspace)).into_response(),
             Err(ScaffoldError::SelectionRequired { plan_ids }) => {
                 let store = ScaffoldArtifactStore::new(vibecrafted_home());
+                let detailed = store.catalog_detailed();
                 let plans = matching_plans(&store, &query, &plan_ids);
-                Html(render_plan_picker(&plan_card_views(&store, plans))).into_response()
+                // Keep skipped list only when not filtering to a single plan_id.
+                let skips = if query.plan_id.is_some() {
+                    Vec::new()
+                } else {
+                    detailed.skipped
+                };
+                Html(render_plan_picker(
+                    &plan_card_views(&store, plans),
+                    &skips,
+                ))
+                .into_response()
             }
             Err(error) => {
                 let store = ScaffoldArtifactStore::new(vibecrafted_home());
@@ -122,7 +150,12 @@ pub mod api {
     async fn plans(Query(query): Query<ScaffoldQuery>) -> impl IntoResponse {
         let store = ScaffoldArtifactStore::new(vibecrafted_home());
         let Some((org, repo, day)) = explicit_day(&query) else {
-            return Json(serde_json::json!({"plans": store.catalog()})).into_response();
+            let detailed = store.catalog_detailed();
+            return Json(serde_json::json!({
+                "plans": detailed.plans,
+                "skipped": detailed.skipped,
+            }))
+            .into_response();
         };
         match store.plans(org, repo, day) {
             Ok(plans) => Json(serde_json::json!({"plans": plans})).into_response(),
@@ -200,6 +233,75 @@ pub mod api {
             &form.plan_id,
             result.err(),
         )
+    }
+
+    async fn save_status(
+        headers: axum::http::HeaderMap,
+        body: String,
+    ) -> impl IntoResponse {
+        let is_json = headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|ct| ct.contains("application/json"))
+            .unwrap_or(false);
+
+        let form: SaveStatusForm = if is_json {
+            match serde_json::from_str(&body) {
+                Ok(form) => form,
+                Err(error) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({ "error": error.to_string() })),
+                    )
+                        .into_response();
+                }
+            }
+        } else {
+            match serde_urlencoded::from_str(&body) {
+                Ok(form) => form,
+                Err(error) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({ "error": error.to_string() })),
+                    )
+                        .into_response();
+                }
+            }
+        };
+
+        let store = ScaffoldArtifactStore::new(vibecrafted_home());
+        let result = store.write_status(
+            &form.org,
+            &form.repo,
+            &form.day,
+            &form.plan_id,
+            ScaffoldStatusPatch {
+                artifact_id: form.artifact_id,
+                item_id: form.item_id,
+                item_index: form.item_index,
+                status: form.status,
+                note: form.note,
+            },
+        );
+
+        if is_json {
+            match result {
+                Ok(refreshed) => Json(serde_json::json!({
+                    "status": "ok",
+                    "artifact": refreshed
+                }))
+                .into_response(),
+                Err(error) => scaffold_error_response(error),
+            }
+        } else {
+            redirect_after_mutation(
+                &form.org,
+                &form.repo,
+                &form.day,
+                &form.plan_id,
+                result.err(),
+            )
+        }
     }
 
     fn redirect_after_mutation(
@@ -379,6 +481,7 @@ pub mod api {
   </section>
 </main>
 {}
+{}
 </body>
 </html>"#,
             editor_css(),
@@ -396,12 +499,16 @@ pub mod api {
             url_component(&workspace.day),
             url_component(&workspace.plan_id),
             panels,
-            save_on_close_guard()
+            save_on_close_guard(),
+            render_mode_script()
         )
     }
 
-    fn render_plan_picker(plans: &[ScaffoldPlanCard]) -> String {
-        if plans.is_empty() {
+    fn render_plan_picker(
+        plans: &[ScaffoldPlanCard],
+        skipped: &[control_core::ScaffoldCatalogSkip],
+    ) -> String {
+        if plans.is_empty() && skipped.is_empty() {
             return render_empty("No manifest-backed scaffold plans are available.");
         }
         let repositories = plans
@@ -420,6 +527,52 @@ pub mod api {
             .map(|(index, card)| plan_picker_card(index, card))
             .collect::<Vec<_>>()
             .join("");
+        let invalid_band = if skipped.is_empty() {
+            String::new()
+        } else {
+            let rows = skipped
+                .iter()
+                .map(|skip| {
+                    let id = skip
+                        .guessed_plan_id
+                        .as_deref()
+                        .unwrap_or("(unknown plan_id)");
+                    format!(
+                        r#"<article class="plan-card plan-card-invalid" data-search="{}">
+  <div class="plan-card-top">
+    <span class="plan-number">!</span>
+    <span class="plan-access">invalid</span>
+  </div>
+  <div class="plan-card-title">
+    <p>manifest unreadable</p>
+    <h3>{}</h3>
+  </div>
+  <p class="plan-skip-reason">{}</p>
+  <p class="plan-skip-path"><code>{}</code></p>
+</article>"#,
+                        escape_attr(&format!("{} {}", id, skip.plan_root).to_ascii_lowercase()),
+                        escape_html(&humanize_plan_id(id)),
+                        escape_html(&skip.reason),
+                        escape_html(&skip.plan_root),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            format!(
+                r#"<section class="plan-field plan-invalid-field" aria-labelledby="plan-invalid-title">
+  <div class="plan-toolbar">
+    <div>
+      <p class="eyebrow">Not in index</p>
+      <h2 id="plan-invalid-title">Broken manifests ({})</h2>
+    </div>
+  </div>
+  <p class="library-lede">These packages sit under <code>…/plans/&lt;id&gt;/manifest.json</code> but failed to load. Fix the role enum / schema — illegal values like <code>"mission"</code> must be <code>"other"</code> for MISSION.md.</p>
+  <div class="plan-grid">{}</div>
+</section>"#,
+                skipped.len(),
+                rows
+            )
+        };
         format!(
             r#"<!doctype html>
 <html lang="en">
@@ -441,13 +594,14 @@ pub mod api {
         <p class="eyebrow">Plan control room</p>
         <h1>Choose the truth<br>you want to move.</h1>
       </div>
-      <p class="library-lede">Every manifest-backed scaffold package available to this runtime. Search the field, open a plan, then edit and checkpoint its actual artifacts.</p>
+      <p class="library-lede">Every manifest-backed scaffold package available to this runtime. Search the field, open a plan, then edit and checkpoint its actual artifacts. Invalid packages no longer vanish — they surface below as broken manifests.</p>
     </div>
     <dl class="library-stats">
       <div><dt>plans</dt><dd>{}</dd></div>
       <div><dt>repositories</dt><dd>{}</dd></div>
       <div><dt>reviewable</dt><dd>{}</dd></div>
       <div><dt>artifacts</dt><dd>{}</dd></div>
+      <div><dt>invalid</dt><dd>{}</dd></div>
     </dl>
   </header>
 
@@ -471,6 +625,7 @@ pub mod api {
       <button type="button" id="clear-search">Clear search</button>
     </div>
   </section>
+  {}
 </main>
 {}
 </body>
@@ -480,8 +635,10 @@ pub mod api {
             repositories,
             reviewable_count,
             artifact_count,
+            skipped.len(),
             plans.len(),
             cards,
+            invalid_band,
             plan_picker_script(),
         )
     }
@@ -732,19 +889,28 @@ pub mod api {
         } else {
             "needs checkpoint"
         };
+        // Codescribe C2b pattern: raw is default (disk bytes as mono source);
+        // rich markdown is per-panel opt-in via the meta-row toggle. Button label
+        // names the mode a click switches TO (action-verb, not current-state).
         format!(
-            r#"<article class="artifact-panel" id="{}">
+            r#"<article class="artifact-panel" id="{}" data-render-mode="raw">
   <header class="artifact-head">
     <div>
       <p class="eyebrow">{}</p>
       <h2>{}</h2>
       <p class="path">{}</p>
     </div>
-    <span class="checkpoint-state">{}</span>
+    <div class="artifact-head-actions">
+      <button type="button" class="render-mode-btn" data-next="rich" title="Render as markdown" aria-label="Switch to rich markdown">rich</button>
+      <span class="checkpoint-state">{}</span>
+    </div>
   </header>
   <form method="post" action="/api/scaffold/artifact" class="editor-form">
     {}
-    <textarea name="content" spellcheck="false">{}</textarea>
+    <div class="editor-body">
+      <textarea name="content" class="raw-pane" spellcheck="false">{}</textarea>
+      <div class="rich-pane md-body" hidden aria-live="polite"></div>
+    </div>
     <button type="submit">Save artifact</button>
   </form>
   <form method="post" action="/api/scaffold/checkpoint" class="checkpoint-form">
@@ -836,6 +1002,447 @@ pub mod api {
 </script>"#
     }
 
+    /// Per-panel raw↔rich toggle — Codescribe Agent-chat contract, ported to the
+    /// scaffold artifact review surface, with Pensieve-ish document structure and
+    /// Codescribe-tray rolling status chips for tracker glyphs.
+    ///
+    /// - Default mode is **raw** (textarea = disk bytes; mono source of truth).
+    /// - Button label is the mode a click switches **to** (action verb).
+    /// - Rich re-parses the live textarea on each switch so edits are never lost.
+    /// - Tracker status tokens (`[ ]`/`[~]`/`[?]`/`[!]`/`[x]`) are clickable
+    ///   chips that cycle like tray Auto Format (Off→…→Max); each click rewrites
+    ///   the matching occurrence in the raw textarea and marks the form dirty.
+    /// - Save always posts the textarea; rich is view + status-toggle only.
+    fn render_mode_script() -> &'static str {
+        r#"<script>
+(function () {
+  // Tracker legend order (runtime-enclave style). Click advances one step —
+  // same rolling-state affordance as Codescribe tray Auto Format.
+  var STATUS_CYCLE = [" ", "~", "?", "!", "x"];
+  var STATUS_META = {
+    " ": { label: "todo", glyph: " " },
+    "~": { label: "running", glyph: "~" },
+    "?": { label: "done?", glyph: "?" },
+    "!": { label: "blocked", glyph: "!" },
+    x: { label: "green", glyph: "x" },
+    X: { label: "green", glyph: "x" },
+  };
+  // Matches backtick-wrapped tracker tokens and bare [x] task markers.
+  // Intentionally does NOT match [links](url).
+  var STATUS_RE = /`?\[([ xX~!?])\]`?/g;
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function normalizeMark(m) {
+    return m === "X" ? "x" : m;
+  }
+
+  function nextMark(m) {
+    var cur = normalizeMark(m);
+    var idx = STATUS_CYCLE.indexOf(cur);
+    if (idx < 0) idx = 0;
+    return STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length];
+  }
+
+  function statusChip(mark, occ) {
+    var m = normalizeMark(mark);
+    var meta = STATUS_META[m] || STATUS_META[" "];
+    return (
+      '<button type="button" class="md-status md-status-' +
+      (m === " " ? "todo" : m === "?" ? "maybe" : m === "!" ? "blocked" : m === "~" ? "run" : "done") +
+      '" data-task-occ="' +
+      occ +
+      '" data-mark="' +
+      esc(m) +
+      '" title="Cycle status (now: ' +
+      meta.label +
+      ')" aria-label="Status ' +
+      meta.label +
+      ', click to cycle">' +
+      "<span class=\"md-status-glyph\">[" +
+      esc(meta.glyph) +
+      "]</span>" +
+      '<span class="md-status-label">' +
+      esc(meta.label) +
+      "</span></button>"
+    );
+  }
+
+  // Enumerate every status token in source order so click can rewrite the
+  // matching occurrence without ambiguous search. Fenced code is skipped so
+  // occurrence indices stay in lockstep with mdToHtml (which also lifts fences
+  // before scanning body tokens).
+  function findStatusMatches(src) {
+    var fenceRanges = [];
+    var fre = /```[\s\S]*?```/g;
+    var fm;
+    while ((fm = fre.exec(src)) !== null) {
+      fenceRanges.push([fm.index, fm.index + fm[0].length]);
+    }
+    function inFence(pos) {
+      for (var fi = 0; fi < fenceRanges.length; fi++) {
+        if (pos >= fenceRanges[fi][0] && pos < fenceRanges[fi][1]) return true;
+      }
+      return false;
+    }
+    var re = new RegExp(STATUS_RE.source, "g");
+    var hits = [];
+    var m;
+    while ((m = re.exec(src)) !== null) {
+      if (inFence(m.index)) continue;
+      hits.push({
+        index: m.index,
+        length: m[0].length,
+        mark: normalizeMark(m[1]),
+        raw: m[0],
+        backticked: m[0].charAt(0) === "`",
+      });
+    }
+    return hits;
+  }
+
+  function replaceStatusOcc(src, occ, newMark) {
+    var hits = findStatusMatches(src);
+    if (occ < 0 || occ >= hits.length) return src;
+    var hit = hits[occ];
+    var repl = hit.backticked
+      ? "`[" + newMark + "]`"
+      : "[" + newMark + "]";
+    return src.slice(0, hit.index) + repl + src.slice(hit.index + hit.length);
+  }
+
+  function mdToHtml(src) {
+    var text = String(src || "").replace(/\r\n/g, "\n");
+    var occCounter = { n: 0 };
+
+    // Extract fenced code first (placeholders survive block scan).
+    var fences = [];
+    text = text.replace(/```([^\n`]*)\n([\s\S]*?)```/g, function (_, lang, body) {
+      var i = fences.length;
+      fences.push(
+        '<pre class="md-code"><code' +
+          (lang && lang.trim()
+            ? ' data-lang="' + esc(lang.trim()) + '"'
+            : "") +
+          ">" +
+          esc(body.replace(/\n$/, "")) +
+          "</code></pre>"
+      );
+      return "\n%%FENCE" + i + "%%\n";
+    });
+
+    var lines = text.split("\n");
+    var out = [];
+    var i = 0;
+
+    // YAML frontmatter: leading --- ... ---
+    if (lines[0] === "---") {
+      var fm = [];
+      i = 1;
+      while (i < lines.length && lines[i] !== "---") {
+        fm.push(lines[i]);
+        i++;
+      }
+      if (i < lines.length && lines[i] === "---") i++;
+      var rows = fm
+        .filter(function (l) {
+          return l.trim().length;
+        })
+        .map(function (l) {
+          var colon = l.indexOf(":");
+          if (colon < 0) {
+            return (
+              '<div class="md-fm-row"><span class="md-fm-val">' +
+              inline(l, occCounter) +
+              "</span></div>"
+            );
+          }
+          return (
+            '<div class="md-fm-row"><span class="md-fm-key">' +
+            esc(l.slice(0, colon).trim()) +
+            '</span><span class="md-fm-val">' +
+            inline(l.slice(colon + 1).trim(), occCounter) +
+            "</span></div>"
+          );
+        })
+        .join("");
+      out.push('<section class="md-frontmatter">' + rows + "</section>");
+    }
+
+    function isTableSep(line) {
+      return /^\s*\|?[\s:|-]+\|[\s|:|-]+\|?\s*$/.test(line) && /\|/.test(line) && /-/.test(line);
+    }
+    function isTableRow(line) {
+      return /\|/.test(line) && !isTableSep(line);
+    }
+    function splitRow(line) {
+      var s = line.trim();
+      if (s.charAt(0) === "|") s = s.slice(1);
+      if (s.charAt(s.length - 1) === "|") s = s.slice(0, -1);
+      return s.split("|").map(function (c) {
+        return c.trim();
+      });
+    }
+
+    while (i < lines.length) {
+      var line = lines[i];
+      var fence = line.match(/^%%FENCE(\d+)%%$/);
+      if (fence) {
+        out.push(fences[Number(fence[1])]);
+        i++;
+        continue;
+      }
+      if (/^\s*$/.test(line)) {
+        i++;
+        continue;
+      }
+      var h = line.match(/^(#{1,6})\s+(.*)$/);
+      if (h) {
+        var lvl = h[1].length;
+        out.push(
+          "<h" + lvl + ">" + inline(h[2], occCounter) + "</h" + lvl + ">"
+        );
+        i++;
+        continue;
+      }
+      if (/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+        out.push("<hr>");
+        i++;
+        continue;
+      }
+      // GFM table: header + separator + body rows
+      if (
+        isTableRow(line) &&
+        i + 1 < lines.length &&
+        isTableSep(lines[i + 1])
+      ) {
+        var header = splitRow(line);
+        i += 2;
+        var bodyRows = [];
+        while (i < lines.length && isTableRow(lines[i])) {
+          bodyRows.push(splitRow(lines[i]));
+          i++;
+        }
+        var thead =
+          "<thead><tr>" +
+          header
+            .map(function (c) {
+              return "<th>" + inline(c, occCounter) + "</th>";
+            })
+            .join("") +
+          "</tr></thead>";
+        var tbody =
+          "<tbody>" +
+          bodyRows
+            .map(function (row) {
+              return (
+                "<tr>" +
+                row
+                  .map(function (c) {
+                    return "<td>" + inline(c, occCounter) + "</td>";
+                  })
+                  .join("") +
+                "</tr>"
+              );
+            })
+            .join("") +
+          "</tbody>";
+        out.push('<div class="md-table-wrap"><table class="md-table">' + thead + tbody + "</table></div>");
+        continue;
+      }
+      if (/^>\s?/.test(line)) {
+        var q = [];
+        while (i < lines.length && /^>\s?/.test(lines[i])) {
+          q.push(lines[i].replace(/^>\s?/, ""));
+          i++;
+        }
+        // Preserve newlines inside quotes as <br>, never flatten to one line.
+        out.push(
+          "<blockquote>" +
+            q
+              .map(function (ql) {
+                return inline(ql, occCounter);
+              })
+              .join("<br>") +
+            "</blockquote>"
+        );
+        continue;
+      }
+      if (/^\s*([-*+]|\d+\.)\s+/.test(line)) {
+        var ordered = /^\s*\d+\.\s+/.test(line);
+        var tag = ordered ? "ol" : "ul";
+        var items = [];
+        while (i < lines.length && /^\s*([-*+]|\d+\.)\s+/.test(lines[i])) {
+          var rawItem = lines[i];
+          var task = rawItem.match(/^(\s*[-*+]\s+)\[([ xX~!?])\]\s+(.*)$/);
+          if (task) {
+            var mark = normalizeMark(task[2]);
+            var chip = statusChip(mark, occCounter.n++);
+            items.push(
+              '<li class="md-task md-task-' +
+                (mark === " " ? "todo" : mark === "?" ? "maybe" : mark === "!" ? "blocked" : mark === "~" ? "run" : "done") +
+                '">' +
+                chip +
+                " " +
+                inline(task[3], occCounter) +
+                "</li>"
+            );
+          } else {
+            items.push(
+              "<li>" +
+                inline(rawItem.replace(/^\s*([-*+]|\d+\.)\s+/, ""), occCounter) +
+                "</li>"
+            );
+          }
+          i++;
+        }
+        out.push("<" + tag + ' class="md-list">' + items.join("") + "</" + tag + ">");
+        continue;
+      }
+      // Paragraph: keep line breaks as <br> (do NOT join with spaces — that
+      // is what flattened YAML/table leftovers into one soup).
+      var para = [];
+      while (
+        i < lines.length &&
+        !/^\s*$/.test(lines[i]) &&
+        !/^%%FENCE\d+%%$/.test(lines[i]) &&
+        !/^(#{1,6})\s+/.test(lines[i]) &&
+        !/^>\s?/.test(lines[i]) &&
+        !/^\s*([-*+]|\d+\.)\s+/.test(lines[i]) &&
+        !/^(-{3,}|\*{3,}|_{3,})\s*$/.test(lines[i]) &&
+        !(
+          isTableRow(lines[i]) &&
+          i + 1 < lines.length &&
+          isTableSep(lines[i + 1])
+        )
+      ) {
+        para.push(lines[i]);
+        i++;
+      }
+      out.push(
+        "<p>" +
+          para
+            .map(function (pl) {
+              return inline(pl, occCounter);
+            })
+            .join("<br>") +
+          "</p>"
+      );
+    }
+    return out.join("\n");
+
+    function inline(s, counter) {
+      // Lift status tokens first so backtick/code pass does not eat them.
+      var parts = [];
+      var re = new RegExp(STATUS_RE.source, "g");
+      var last = 0;
+      var m;
+      var str = String(s);
+      while ((m = re.exec(str)) !== null) {
+        if (m.index > last) parts.push({ t: "text", v: str.slice(last, m.index) });
+        parts.push({ t: "status", mark: normalizeMark(m[1]), occ: counter.n++ });
+        last = m.index + m[0].length;
+      }
+      if (last < str.length) parts.push({ t: "text", v: str.slice(last) });
+      if (!parts.length) parts.push({ t: "text", v: str });
+
+      return parts
+        .map(function (p) {
+          if (p.t === "status") return statusChip(p.mark, p.occ);
+          var t = esc(p.v);
+          t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
+          t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+          t = t.replace(/(^|[^\*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>");
+          t = t.replace(
+            /\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
+            '<a href="$2" rel="noopener noreferrer" target="_blank">$1</a>'
+          );
+          return t;
+        })
+        .join("");
+    }
+  }
+
+  function markFormDirty(panel) {
+    var form = panel.querySelector("form.editor-form");
+    var ta = panel.querySelector("textarea.raw-pane");
+    if (!form || !ta) return;
+    if (typeof form.dataset.baseline === "undefined") {
+      form.dataset.baseline = ta.value;
+    }
+    form.dataset.dirty = ta.value !== form.dataset.baseline ? "1" : "";
+  }
+
+  function renderRich(panel) {
+    var ta = panel.querySelector("textarea.raw-pane");
+    var rich = panel.querySelector(".rich-pane");
+    if (!ta || !rich) return;
+    rich.innerHTML = mdToHtml(ta.value);
+  }
+
+  function setMode(panel, mode) {
+    var ta = panel.querySelector("textarea.raw-pane");
+    var rich = panel.querySelector(".rich-pane");
+    var btn = panel.querySelector(".render-mode-btn");
+    if (!ta || !rich || !btn) return;
+    panel.setAttribute("data-render-mode", mode);
+    if (mode === "rich") {
+      renderRich(panel);
+      rich.hidden = false;
+      ta.hidden = true;
+      btn.dataset.next = "raw";
+      btn.textContent = "raw";
+      btn.title = "Show raw text";
+      btn.setAttribute("aria-label", "Switch to raw text");
+    } else {
+      rich.hidden = true;
+      rich.innerHTML = "";
+      ta.hidden = false;
+      btn.dataset.next = "rich";
+      btn.textContent = "rich";
+      btn.title = "Render as markdown";
+      btn.setAttribute("aria-label", "Switch to rich markdown");
+      ta.focus({ preventScroll: true });
+    }
+  }
+
+  document.querySelectorAll(".artifact-panel").forEach(function (panel) {
+    var btn = panel.querySelector(".render-mode-btn");
+    if (btn) {
+      btn.addEventListener("click", function () {
+        var next = btn.dataset.next === "raw" ? "raw" : "rich";
+        setMode(panel, next);
+      });
+    }
+    // Event delegation: status chips rewrite raw + re-render rich.
+    var rich = panel.querySelector(".rich-pane");
+    if (rich) {
+      rich.addEventListener("click", function (ev) {
+        var chip = ev.target.closest(".md-status");
+        if (!chip || !rich.contains(chip)) return;
+        ev.preventDefault();
+        var ta = panel.querySelector("textarea.raw-pane");
+        if (!ta) return;
+        var occ = Number(chip.getAttribute("data-task-occ"));
+        var cur = chip.getAttribute("data-mark") || " ";
+        var nxt = nextMark(cur);
+        ta.value = replaceStatusOcc(ta.value, occ, nxt);
+        markFormDirty(panel);
+        // Keep rich open and re-parse so indices stay consistent.
+        renderRich(panel);
+      });
+    }
+  });
+})();
+</script>"#
+    }
+
     fn hidden_context(workspace: &ScaffoldWorkspace, artifact: &ScaffoldArtifact) -> String {
         format!(
             r#"<input type="hidden" name="org" value="{}">
@@ -865,7 +1472,12 @@ a{color:inherit}
 .library-intro{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(280px,.6fr);gap:clamp(28px,6vw,90px);align-items:end}
 .library-intro h1{max-width:850px;margin:12px 0 0;font:400 clamp(48px,7vw,102px)/.89 Georgia,'Times New Roman',serif;letter-spacing:-.055em}
 .library-lede{max-width:540px;margin:0 0 8px;color:var(--muted);font-size:clamp(15px,1.5vw,19px);line-height:1.55}
-.library-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));max-width:780px;margin:54px 0 0;border-top:1px solid var(--line)}
+.library-stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));max-width:920px;margin:54px 0 0;border-top:1px solid var(--line)}
+.plan-card-invalid{border-color:rgba(255,209,102,.35);background:linear-gradient(145deg,#1b1914,#111415);cursor:default}
+.plan-card-invalid:hover{transform:none;border-color:rgba(255,209,102,.45)}
+.plan-skip-reason{margin:0;color:var(--warn);font-size:13px;line-height:1.45}
+.plan-skip-path{margin:8px 0 0;color:var(--muted);font:11px ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
+.plan-invalid-field{padding-top:8px;border-top:1px solid var(--line)}
 .library-stats div{padding:14px 24px 0 0}.library-stats dt,.plan-card-meta dt{color:var(--muted);font:10px ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase;letter-spacing:.12em}
 .library-stats dd{margin:2px 0 0;color:var(--amber);font:28px ui-monospace,SFMono-Regular,Menlo,monospace}
 .plan-field{padding:42px clamp(24px,5vw,76px) 80px}
@@ -899,8 +1511,50 @@ a{color:inherit}
 .review-main{padding:22px;display:grid;gap:18px}.status{display:none;border:1px solid #4d7041;background:#162114;padding:10px;border-radius:8px}.status:target{display:block}.status-error{border-color:var(--bad);background:#2b1717}
 .artifact-panel{border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow:hidden;min-height:78vh;display:grid;grid-template-rows:auto minmax(420px,1fr) auto}
 .artifact-head{display:flex;justify-content:space-between;gap:16px;padding:16px;border-bottom:1px solid var(--line)}.artifact-head h2{margin:3px 0 0;font-size:22px;letter-spacing:0}
+.artifact-head-actions{display:flex;align-items:flex-start;gap:10px;flex:0 0 auto}
+.render-mode-btn{margin:0;border:1px solid transparent;background:transparent;color:var(--muted);border-radius:6px;padding:4px 8px;font:11px ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:500;cursor:pointer;letter-spacing:.02em}
+.render-mode-btn:hover,.render-mode-btn:focus-visible{color:var(--text);border-color:var(--line);outline:none}
 .eyebrow,.path{margin:0;color:var(--muted);font:12px ui-monospace,SFMono-Regular,Menlo,monospace}.checkpoint-state{align-self:start;border:1px solid var(--line);border-radius:999px;padding:5px 9px;color:var(--warn);font-size:12px}
-.editor-form{display:grid;grid-template-rows:1fr auto;min-height:520px}.editor-form textarea{width:100%;min-height:520px;resize:vertical;border:0;border-bottom:1px solid var(--line);background:#0f1213;color:var(--text);padding:16px;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
+.editor-form{display:grid;grid-template-rows:1fr auto;min-height:520px}
+.editor-body{min-height:520px;display:grid}
+.editor-form textarea.raw-pane{width:100%;min-height:520px;resize:vertical;border:0;border-bottom:1px solid var(--line);background:#0f1213;color:var(--text);padding:16px;font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
+.rich-pane.md-body{min-height:520px;padding:22px clamp(18px,3vw,36px) 36px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#101314 0%,#0c0e0f 100%);color:var(--text);font:14.5px/1.6 Inter,ui-sans-serif,system-ui,sans-serif;overflow:auto}
+.rich-pane.md-body h1,.rich-pane.md-body h2,.rich-pane.md-body h3,.rich-pane.md-body h4{margin:1.25em 0 .5em;line-height:1.22;letter-spacing:-.02em;color:var(--text);font-weight:600}
+.rich-pane.md-body h1{font-size:1.65em;padding-bottom:.35em;border-bottom:1px solid var(--line)}
+.rich-pane.md-body h2{font-size:1.32em;padding-bottom:.28em;border-bottom:1px solid rgba(43,48,51,.85)}
+.rich-pane.md-body h3{font-size:1.12em}
+.rich-pane.md-body p{margin:.65em 0;max-width:78ch}
+.rich-pane.md-body ul.md-list,.rich-pane.md-body ol.md-list{margin:.55em 0;padding-left:1.35em}
+.rich-pane.md-body li{margin:.28em 0}
+.rich-pane.md-body li.md-task{list-style:none;margin-left:-.4em;display:flex;align-items:flex-start;gap:8px}
+.rich-pane.md-body blockquote{margin:.8em 0;padding:.2em 0 .2em 14px;border-left:3px solid rgba(77,155,142,.55);color:var(--muted)}
+.rich-pane.md-body hr{border:0;border-top:1px solid var(--line);margin:1.2em 0}
+.rich-pane.md-body code{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--accent);background:rgba(184,239,125,.08);padding:.1em .35em;border-radius:4px}
+.rich-pane.md-body pre.md-code{margin:.85em 0;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:#0a0c0d;overflow:auto}
+.rich-pane.md-body pre.md-code code{background:transparent;padding:0;color:var(--text);font-size:12.5px;line-height:1.5;white-space:pre}
+.rich-pane.md-body a{color:var(--teal)}.rich-pane.md-body strong{color:#fff;font-weight:650}
+/* Frontmatter as meta card (Notion property table vibe) */
+.md-frontmatter{display:grid;gap:6px;margin:0 0 1.4em;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:rgba(27,31,32,.85)}
+.md-fm-row{display:grid;grid-template-columns:minmax(96px,160px) minmax(0,1fr);gap:10px;align-items:baseline;padding:3px 0}
+.md-fm-key{color:var(--muted);font:11px ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase;letter-spacing:.06em}
+.md-fm-val{font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text);overflow-wrap:anywhere}
+/* GFM tables */
+.md-table-wrap{margin:.9em 0 1.1em;overflow:auto;border:1px solid var(--line);border-radius:10px;background:#0f1213}
+.md-table{width:100%;border-collapse:collapse;font-size:13px;line-height:1.45}
+.md-table th,.md-table td{padding:9px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+.md-table th{color:var(--muted);font:11px ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase;letter-spacing:.06em;background:rgba(255,255,255,.02);position:sticky;top:0}
+.md-table tr:last-child td{border-bottom:0}
+.md-table tr:hover td{background:rgba(255,255,255,.015)}
+/* Rolling status chips — Codescribe tray Auto Format affordance */
+button.md-status{display:inline-flex;align-items:center;gap:6px;margin:0 2px;padding:2px 8px 2px 6px;border:1px solid var(--line);border-radius:999px;background:#171b1d;color:var(--muted);font:11px ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer;vertical-align:middle;line-height:1.3;transition:border-color .12s ease,color .12s ease,background .12s ease}
+button.md-status:hover,button.md-status:focus-visible{border-color:var(--teal);color:var(--text);outline:none}
+button.md-status .md-status-glyph{font-weight:700;letter-spacing:.02em}
+button.md-status .md-status-label{opacity:.85;text-transform:lowercase}
+button.md-status.md-status-todo{border-color:rgba(169,177,180,.35);color:var(--muted)}
+button.md-status.md-status-run{border-color:rgba(216,166,64,.55);color:var(--amber);background:rgba(216,166,64,.08)}
+button.md-status.md-status-maybe{border-color:rgba(77,155,142,.5);color:var(--teal);background:rgba(77,155,142,.08)}
+button.md-status.md-status-blocked{border-color:rgba(255,138,138,.55);color:var(--bad);background:rgba(255,138,138,.08)}
+button.md-status.md-status-done{border-color:rgba(184,239,125,.55);color:var(--accent);background:rgba(184,239,125,.08)}
 button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#22321f;color:var(--text);border-radius:7px;padding:8px 12px;font-weight:700;cursor:pointer}
 .checkpoint-form{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:0 0 14px}.checkpoint-form input[name=note]{min-width:280px;flex:1;border:1px solid var(--line);background:#0f1213;color:var(--text);border-radius:7px;padding:8px}
 .empty{max-width:720px;margin:12vh auto;border:1px solid var(--line);border-radius:8px;padding:24px;background:var(--panel)}
@@ -942,8 +1596,10 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
         };
 
         fn fixture() -> ScaffoldWorkspace {
+            // org/repo casing follows git ground truth (github.com/vetcoders/*),
+            // not historical branding mutants.
             ScaffoldWorkspace {
-                org: "Vetcoders".into(),
+                org: "vetcoders".into(),
                 repo: "vibecrafted".into(),
                 day: "2026_0615".into(),
                 plan_id: "plan-a".into(),
@@ -959,7 +1615,7 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
                     relative_path: "operator/master-dispatch.md".into(),
                     editable: true,
                     required: true,
-                    content: "# atlas".into(),
+                    content: "# atlas\n\n**bold** and `code`\n".into(),
                     content_hash: "sha256:test".into(),
                     bytes: 7,
                     modified_at: "2026-06-15T00:00:00Z".into(),
@@ -1023,7 +1679,7 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
         #[test]
         fn form_mutation_error_redirects_back_to_editor_status() {
             let response = redirect_after_mutation(
-                "Vetcoders",
+                "vetcoders",
                 "vibecrafted",
                 "2026_0615",
                 "plan-a",
@@ -1036,24 +1692,96 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
             assert_eq!(response.status(), StatusCode::SEE_OTHER);
             assert_eq!(
                 response.headers().get(header::LOCATION).unwrap(),
-                "/scaffold/editor?org=Vetcoders&repo=vibecrafted&day=2026_0615&plan_id=plan-a#status-error"
+                "/scaffold/editor?org=vetcoders&repo=vibecrafted&day=2026_0615&plan_id=plan-a#status-error"
+            );
+        }
+
+        #[test]
+        fn editor_embeds_raw_rich_render_mode_toggle() {
+            let html = render_editor(&fixture());
+            // Codescribe contract: raw default, button names the mode a click
+            // switches TO, rich is a live re-parse of the textarea.
+            assert!(
+                html.contains(r#"data-render-mode="raw""#),
+                "artifact panels default to raw (disk-byte mono)"
+            );
+            assert!(
+                html.contains(r#"class="render-mode-btn""#),
+                "missing per-panel raw↔rich toggle"
+            );
+            assert!(
+                html.contains(r#"data-next="rich""#),
+                "button must advertise the next mode (rich when raw is active)"
+            );
+            assert!(
+                html.contains(r#"class="rich-pane md-body""#),
+                "missing rich markdown pane"
+            );
+            assert!(
+                html.contains("function mdToHtml"),
+                "editor must ship the client markdown renderer for live rich toggle"
+            );
+            assert!(
+                html.contains("setMode(panel, next)"),
+                "toggle must flip panel mode without a full page reload"
+            );
+            // Save still posts the raw textarea — rich never becomes a write path.
+            assert!(html.contains(r#"name="content" class="raw-pane""#));
+        }
+
+        #[test]
+        fn rich_mode_ships_rolling_tracker_status_and_structured_blocks() {
+            let html = render_editor(&fixture());
+            // Rolling cycle matches tracker legend / Codescribe tray Auto Format.
+            assert!(
+                html.contains(r#"STATUS_CYCLE = [" ", "~", "?", "!", "x"]"#),
+                "status cycle must follow tracker legend order"
+            );
+            assert!(
+                html.contains("replaceStatusOcc"),
+                "click must rewrite the matching occurrence in raw textarea"
+            );
+            assert!(
+                html.contains("data-task-occ"),
+                "each status chip needs a stable occurrence index"
+            );
+            assert!(
+                html.contains("md-status"),
+                "missing clickable status chip class"
+            );
+            // Structure upgrades that stop the tracker from flattening.
+            assert!(html.contains("md-table"), "GFM tables required for trackers");
+            assert!(
+                html.contains("md-frontmatter"),
+                "YAML frontmatter must render as a meta card, not a soup line"
+            );
+            assert!(
+                html.contains(r#".join("<br>")"#),
+                "paragraph newlines must become <br>, not spaces"
+            );
+            assert!(
+                html.contains("markFormDirty"),
+                "status click must mark editor-form dirty for save-on-close"
             );
         }
 
         #[test]
         fn selection_renders_searchable_plan_library_with_typed_editor_links() {
-            let html = render_plan_picker(&[ScaffoldPlanCard {
-                plan: ScaffoldPlanSummary {
-                    plan_id: "runtime-truth-v1".into(),
-                    org: "vetcoders".into(),
-                    repo: "vibecrafted".into(),
-                    day: "2026_0727".into(),
-                    plan_root: "/tmp/runtime-truth-v1".into(),
-                    artifact_count: 12,
-                    legacy_read_only: false,
-                },
-                reviewable: true,
-            }]);
+            let html = render_plan_picker(
+                &[ScaffoldPlanCard {
+                    plan: ScaffoldPlanSummary {
+                        plan_id: "runtime-truth-v1".into(),
+                        org: "vetcoders".into(),
+                        repo: "vibecrafted".into(),
+                        day: "2026_0727".into(),
+                        plan_root: "/tmp/runtime-truth-v1".into(),
+                        artifact_count: 12,
+                        legacy_read_only: false,
+                    },
+                    reviewable: true,
+                }],
+                &[],
+            );
 
             assert!(html.contains("Choose the truth"));
             assert!(html.contains("id=\"plan-search\""));
@@ -1062,6 +1790,20 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
                 "/scaffold/editor?org=vetcoders&amp;repo=vibecrafted&amp;day=2026_0727&amp;plan_id=runtime-truth-v1"
             ));
             assert!(!html.contains("scaffold plan selection required"));
+        }
+
+        #[test]
+        fn invalid_manifests_surface_in_plan_picker() {
+            let skipped = [control_core::ScaffoldCatalogSkip {
+                plan_root: "/tmp/plans/vc-server-mcp-slack-gateway".into(),
+                reason: "manifest unreadable: unknown variant `mission`".into(),
+                guessed_plan_id: Some("vc-server-mcp-slack-gateway".into()),
+            }];
+            let html = render_plan_picker(&[], &skipped);
+            assert!(html.contains("Broken manifests"));
+            assert!(html.contains("vc-server-mcp-slack-gateway"));
+            assert!(html.contains("unknown variant `mission`"));
+            assert!(html.contains("plan-card-invalid"));
         }
 
         #[test]

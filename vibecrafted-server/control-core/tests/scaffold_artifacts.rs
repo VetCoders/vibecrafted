@@ -574,3 +574,81 @@ fn legacy_operator_workspace_is_read_only() {
 
     fs::remove_dir_all(home).ok();
 }
+
+#[test]
+fn typed_status_update_and_control_event_bridge_holds() {
+    use control_core::ScaffoldStatusPatch;
+
+    let home = temp_home("status-bridge");
+    let plan_id = "plan-status-test";
+    let root = write_plan(
+        &home,
+        plan_id,
+        json!([
+            {"id":"tracker","role":"tracker","path":"tracker.md","editable":true,"required":true}
+        ]),
+    );
+    fs::write(
+        root.join("tracker.md"),
+        "# Tracker\n\n- [ ] W1-01 first task\n- [x] W1-02 second task\n",
+    )
+    .expect("tracker");
+
+    let store = ScaffoldArtifactStore::new(&home);
+
+    // 1. Update W1-01 to done ([x])
+    let updated = store
+        .write_status(
+            "vetcoders",
+            "vibecrafted",
+            "2026_0720",
+            plan_id,
+            ScaffoldStatusPatch {
+                artifact_id: "tracker".into(),
+                item_id: Some("W1-01".into()),
+                item_index: None,
+                status: "done".into(),
+                note: Some("verified in test".into()),
+            },
+        )
+        .expect("write status");
+
+    assert!(updated.content.contains("- [x] W1-01 first task"));
+
+    // Check .scaffold-changes.jsonl
+    let changes = store
+        .changes("vetcoders", "vibecrafted", "2026_0720", plan_id)
+        .expect("changes");
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].action, "status");
+    assert!(changes[0].note.contains("W1-01"));
+
+    // Check control_plane/events.jsonl
+    let events_path = home.join("control_plane/events.jsonl");
+    assert!(events_path.is_file());
+    let events_text = fs::read_to_string(&events_path).expect("events read");
+    assert!(events_text.contains("scaffold.status.updated"));
+    assert!(events_text.contains(plan_id));
+
+    // 2. Update W1-01 to running ([~])
+    let running = store
+        .write_status(
+            "vetcoders",
+            "vibecrafted",
+            "2026_0720",
+            plan_id,
+            ScaffoldStatusPatch {
+                artifact_id: "tracker".into(),
+                item_id: Some("W1-01".into()),
+                item_index: None,
+                status: "running".into(),
+                note: None,
+            },
+        )
+        .expect("write running status");
+
+    assert!(running.content.contains("- [~] W1-01 first task"));
+
+    fs::remove_dir_all(home).ok();
+}
+
