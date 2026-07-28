@@ -651,4 +651,3 @@ fn typed_status_update_and_control_event_bridge_holds() {
 
     fs::remove_dir_all(home).ok();
 }
-
