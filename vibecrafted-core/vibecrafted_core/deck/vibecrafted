@@ -4378,6 +4378,11 @@ cmd_core_workflow_skill() {
 }
 
 cmd_init() {
+  # Leading --help must never be parsed as an agent name (vc-init --help audit).
+  if _is_help_flag "${1:-}"; then
+    cmd_init_help
+    return 0
+  fi
   local agent="${1:-claude}"
   _prepend_repo_bin_path
   if [[ "$agent" == "gemini" ]]; then
