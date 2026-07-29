@@ -1,0 +1,63 @@
+{
+  "schema_version": "vibecrafted.ownership.v1",
+  "adr": "docs/adr/0002-unified-operator-ownership.md",
+  "note": "Intentionally invalid walk-around fixture: run-lifecycle appears twice with two different owners. The gate must reject this.",
+  "domains": [
+    {
+      "id": "run-lifecycle",
+      "truth": "process, run, lifecycle and control state",
+      "owner": "control-plane",
+      "write_surface": "vibecrafted_core dispatcher",
+      "read_projections": ["vibecrafted-server NOW/FLEET/METRICS"]
+    },
+    {
+      "id": "run-lifecycle",
+      "truth": "the same domain smuggled in with a second owner",
+      "owner": "vibecrafted-server",
+      "write_surface": "server-local state model",
+      "read_projections": ["dashboard"]
+    }
+  ],
+  "components": [
+    {
+      "id": "control-plane",
+      "owns": ["run-lifecycle"],
+      "must_not": []
+    },
+    {
+      "id": "vibecrafted-server",
+      "owns": ["run-lifecycle"],
+      "must_not": []
+    }
+  ],
+  "rules": [
+    {
+      "id": "one-owner-per-domain",
+      "statement": "Every truth domain has exactly one owner.",
+      "enforced_by": "tests/test_ownership_contract.py"
+    },
+    {
+      "id": "checkout-free-install",
+      "statement": "Installed artifacts never resolve to a repository checkout.",
+      "forbidden_path_patterns": ["/Volumes/vc-workspace"],
+      "enforced_by": "tests/test_ownership_contract.py"
+    },
+    {
+      "id": "resume-lineage",
+      "statement": "A resume attempt preserves identity and lineage.",
+      "semantics": "lineage-preserving-attempt",
+      "persona_replacement": "forbidden",
+      "enforced_by": "tests/test_ownership_contract.py"
+    },
+    {
+      "id": "real-controls",
+      "statement": "Every visible control performs a real, authorized action or is absent.",
+      "enforced_by": "integration tests"
+    },
+    {
+      "id": "artifact-gates",
+      "statement": "Runtime gates are verified through the artifact the user actually runs.",
+      "enforced_by": "clean-machine walk-around"
+    }
+  ]
+}
