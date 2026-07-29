@@ -45,6 +45,17 @@ through named projections.
 | `session-composition`    | `vc-frame`                     | vc-frame layout/session commands                           | vc-terminal windows, operator-shell FLEET links                                                  |
 | `a2a-envelopes`          | `vibecrafted-slack-bus`        | persisted outbox/inbox with cursors, ACK, dedup            | `#agents-room` threads, FLEET handoff evidence, control-plane run annotations                    |
 | `commercial-entitlement` | `polar-tenant-service`         | Polar webhooks + tenant service (loctree-com tier ladder)  | onboarding, feature gates, team views                                                            |
+| `plan-artifacts`         | `plan-filesystem`              | direct file writes in the artifact tree                    | scaffold API/editor views, changes/checkpoints ledger (derived), operator-shell plan views       |
+
+### Plan artifacts — files are the owner (operator decision 2026-07-29)
+
+Every write path for plan artifacts (mission, atlas, briefs, tracker, reports) terminates in the
+files under `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<day>/plans/`. The scaffold API/editor is a
+convenience **client** of that write surface — and the only path for remote integrations without
+filesystem access — never a required mediator. The scaffold store's changes/checkpoints ledger is a
+derived, best-effort observation of the files; it is never authoritative over them. Rationale: all
+agents already write files; forcing API mediation would add a failure plane (server must be up for
+a write to count) and would require retraining the entire fleet for zero truth gain.
 
 ### Component boundaries (explicit)
 
@@ -103,6 +114,12 @@ tools home), not only through source-tree tests.
   makes A2A ACK/lineage unverifiable.
 - **Averaging: "each UI keeps some local state for convenience"** — rejected: convenience caches
   that answer user-visible questions are parallel truths by definition.
+- **Scaffold API as required write mediator for plan artifacts** — rejected (operator, 2026-07-29):
+  every agent already writes files; API mediation adds a failure plane (server up = precondition
+  for a write to count) and would require retraining the whole fleet. The API stays a convenience
+  client and the remote-integration path; its ledger observes, it never gates. Accepted costs,
+  named: the observation path (statuses/ledger) can lag or gap when the watcher is down, and
+  concurrent file writers remain last-writer-wins (standard Living Tree risk).
 
 ## Enforcement
 

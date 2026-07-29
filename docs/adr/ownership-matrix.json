@@ -90,6 +90,17 @@
         "feature gates",
         "team views"
       ]
+    },
+    {
+      "id": "plan-artifacts",
+      "truth": "plan artifacts (mission, atlas, briefs, tracker, reports) under $VIBECRAFTED_HOME/artifacts/<org>/<repo>/<day>/plans/",
+      "owner": "plan-filesystem",
+      "write_surface": "direct file writes in the artifact tree (workers, operators and the scaffold editor all write the same files; the scaffold API is a convenience client of this surface and the only path for remote integrations without filesystem access)",
+      "read_projections": [
+        "scaffold API and editor views",
+        "scaffold changes/checkpoints ledger (derived, best-effort)",
+        "operator shell plan views"
+      ]
     }
   ],
   "components": [
@@ -172,6 +183,21 @@
       "must_not": [
         "coexist with a second billing system",
         "gate runtime truth"
+      ]
+    },
+    {
+      "id": "plan-filesystem",
+      "owns": ["plan-artifacts"],
+      "must_not": [
+        "depend on any service being up for a write to count"
+      ]
+    },
+    {
+      "id": "scaffold-store",
+      "owns": [],
+      "must_not": [
+        "become a required mediator for plan-artifact writes (files are the only write surface)",
+        "treat its changes/checkpoints ledger as authoritative over the plan files on disk"
       ]
     }
   ],
