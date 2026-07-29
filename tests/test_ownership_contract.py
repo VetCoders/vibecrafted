@@ -27,6 +27,7 @@ REQUIRED_RULE_IDS = {
     "resume-lineage",
     "real-controls",
     "artifact-gates",
+    "in-file-provenance",
 }
 
 
