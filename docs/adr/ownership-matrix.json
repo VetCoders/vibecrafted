@@ -233,6 +233,12 @@
       "id": "artifact-gates",
       "statement": "Runtime gates are verified through the artifact the user actually runs.",
       "enforced_by": "clean-machine artifact walk-around (FALSIFICATION: product is shippable)"
+    },
+    {
+      "id": "in-file-provenance",
+      "statement": "Append-entries in plan-artifact files (tracker rows, decision addenda, journal lines) carry an inline HTML-comment provenance stamp with the same key set as commit-msg trailers. Server changes/checkpoints ledgers and AICX intents are projections of these stamps, never their source.",
+      "stamp_format": "<!-- provenance: source=<kind> agent=<agent> model=<model> session_id=<uuid> time=<iso8601> runtime=<runtime> -->",
+      "enforced_by": "tests/test_ownership_contract.py (rule presence) + planned decision-entry lint"
     }
   ]
 }
