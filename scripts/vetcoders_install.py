@@ -1688,6 +1688,16 @@ def _doctor_fix_rc_files() -> list[DoctorFinding]:
                 DoctorFinding("warn", f"rc-fix:{rcname}", f"could not read: {exc}")
             )
             continue
+        if _rc_has_unclosed_vibecrafted_block(content):
+            findings.append(
+                DoctorFinding(
+                    "warn",
+                    f"rc-fix:{rcname}",
+                    "unclosed Vibecrafted block; left the entire file unchanged "
+                    "for manual repair",
+                )
+            )
+            continue
         if not _is_writable(rcfile):
             findings.append(
                 DoctorFinding(
@@ -1964,8 +1974,39 @@ def _run_smoke_command(
     return True, detail
 
 
+def _rc_has_unclosed_vibecrafted_block(content: str) -> bool:
+    """Refuse automatic repair when a managed rc block has no closing marker."""
+    expected_end: re.Pattern[str] | None = None
+    for line in content.splitlines():
+        stripped = line.strip()
+        if expected_end is not None:
+            if expected_end.match(stripped):
+                expected_end = None
+            continue
+        if re.match(
+            r"^#\s*>>>\s*vibecrafted(?:\.\s*framework)?\s*>>>$",
+            stripped,
+            re.IGNORECASE,
+        ):
+            expected_end = re.compile(
+                r"^#\s*<<<\s*vibecrafted(?:\.\s*framework)?\s*<<<$",
+                re.IGNORECASE,
+            )
+        elif stripped.startswith(("# >>> VibeCraft", "# >>> 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝")):
+            end_marker = (
+                r"^#\s*<<<.*VibeCraft.*<<<$"
+                if "VibeCraft" in stripped
+                else r"^#\s*<<<.*𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝.*<<<$"
+            )
+            expected_end = re.compile(end_marker)
+    return expected_end is not None
+
+
 def _clean_legacy_rc_entries(content: str) -> tuple[str, int]:
     import re
+
+    if _rc_has_unclosed_vibecrafted_block(content):
+        return content, 0
 
     lines = content.splitlines()
     kept = []
