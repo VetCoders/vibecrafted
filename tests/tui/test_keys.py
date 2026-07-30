@@ -7,6 +7,25 @@ from scripts import installer_gui, vetcoders_install
 from scripts.runtime_paths import read_version_file, vibecrafted_home
 
 
+def _write_installed_runtime_deck(home: Path) -> Path:
+    deck = (
+        home
+        / ".local"
+        / "share"
+        / "vibecrafted"
+        / "tools"
+        / "vibecrafted-current"
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "deck"
+        / "vibecrafted"
+    )
+    deck.parent.mkdir(parents=True, exist_ok=True)
+    deck.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    deck.chmod(0o755)
+    return deck
+
+
 def test_read_framework_version_reads_version_file(tmp_path: Path) -> None:
     (tmp_path / "VERSION").write_text("9.9.9\n", encoding="utf-8")
 
@@ -170,23 +189,20 @@ def test_install_launcher_leaves_shell_rc_untouched_without_consent(
     zshrc.write_text(original, encoding="utf-8")
 
     monkeypatch.setenv("HOME", str(home))
-    shim = vetcoders_install._uv_tool_shim()
-    shim.parent.mkdir(parents=True, exist_ok=True)
-    shim.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    deck = _write_installed_runtime_deck(home)
 
     vetcoders_install._install_launcher(repo_root, dry_run=False)
 
     assert zshrc.read_text(encoding="utf-8") == original
     canonical = home / ".local" / "bin" / "vibecrafted"
     assert canonical.is_symlink()
-    assert canonical.readlink() == vetcoders_install._uv_tool_shim()
+    assert canonical.resolve() == deck.resolve()
 
 
-def test_install_launcher_falls_back_to_deck_when_shim_missing(
+def test_install_launcher_refuses_source_checkout_without_installed_generation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A python-only install has no uv-tool shim yet: the launcher must still
-    execute, so it points at the source deck instead of a dangling shim."""
+    """A partial install must not turn the development checkout into runtime."""
     home = tmp_path / "home"
     repo_root = tmp_path / "repo"
     launcher_src = repo_root / "scripts" / "vibecrafted"
@@ -197,12 +213,11 @@ def test_install_launcher_falls_back_to_deck_when_shim_missing(
 
     monkeypatch.setenv("HOME", str(home))
 
-    vetcoders_install._install_launcher(repo_root, dry_run=False)
+    with pytest.raises(OSError, match="installed runtime deck is missing"):
+        vetcoders_install._install_launcher(repo_root, dry_run=False)
 
     canonical = home / ".local" / "bin" / "vibecrafted"
-    assert canonical.is_symlink()
-    assert canonical.readlink() == launcher_src
-    assert canonical.resolve().exists()
+    assert not canonical.exists()
 
 
 def test_install_launcher_dedupes_zshrc_path_entries_with_consent(
@@ -226,9 +241,7 @@ def test_install_launcher_dedupes_zshrc_path_entries_with_consent(
     bashrc.write_text("", encoding="utf-8")
 
     monkeypatch.setenv("HOME", str(home))
-    shim = vetcoders_install._uv_tool_shim()
-    shim.parent.mkdir(parents=True, exist_ok=True)
-    shim.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    deck = _write_installed_runtime_deck(home)
 
     vetcoders_install._install_launcher(repo_root, dry_run=False, update_rc=True)
 
@@ -240,7 +253,7 @@ def test_install_launcher_dedupes_zshrc_path_entries_with_consent(
     launcher_bin = home / ".local" / "bin"
     canonical = launcher_bin / "vibecrafted"
     assert canonical.is_symlink()
-    assert canonical.readlink() == vetcoders_install._uv_tool_shim()
+    assert canonical.resolve() == deck.resolve()
     assert not (home / ".vibecrafted" / "bin" / "vibecrafted").exists()
     for wrapper_name in (
         "vc-help",
@@ -293,6 +306,7 @@ def test_install_launcher_replaces_old_blind_local_bin_path(
     )
 
     monkeypatch.setenv("HOME", str(home))
+    _write_installed_runtime_deck(home)
 
     vetcoders_install._install_launcher(repo_root, dry_run=False, update_rc=True)
 

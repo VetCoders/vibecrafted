@@ -745,6 +745,20 @@ def test_install_launcher_does_not_overwrite_unmanaged_dev_wrapper(
     )
 
     _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+    installed_deck = (
+        runtime_home
+        / "tools"
+        / "vibecrafted-current"
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "deck"
+        / "vibecrafted"
+    )
+    installed_deck.parent.mkdir(parents=True, exist_ok=True)
+    _write_executable(
+        installed_deck,
+        (REPO_ROOT / "scripts" / "vibecrafted").read_text(encoding="utf-8"),
+    )
 
     installer._install_launcher(source_root, dry_run=False, update_rc=False)
 

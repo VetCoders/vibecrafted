@@ -85,7 +85,11 @@ Do **not** merge packages unless a single MCP-HTTP binary is explicitly required
 - vc-server: first-class `vibecrafted server start|status|stop`
 - Slack bridge: `npm start` in `vibecrafted-slack-agent` or LaunchAgent example  
   `deploy/com.vetcoders.vibecrafted-slack-bridge.plist.example` in that repo
-- Certainty script: `vibecrafted-slack-agent/scripts/e2e-certainty.sh`
+- Certainty script: `vibecrafted-slack-agent/scripts/e2e-certainty.sh` (full `npm test` + live board)
+- **Restart the Socket Mode bridge after every pull** — Node does not hot-reload
+  `dispatch.js`; a stale process can green unit tests while Slack still lacks
+  intermediate `*progress*` / rate-limit behavior. Operator smoke:
+  set `SLACK_ALLOW_USERS` → restart bridge → `@Vibecrafted justdo …` → `curl /api/control/runs/{id}`
 
 ## Invariants
 
