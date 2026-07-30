@@ -261,3 +261,14 @@ def test_cost_estimates_lock_user_reported_grok_and_codex_regressions() -> None:
         tokens_cached_input=20536960,
         tokens_output=48906,
     ) == (116.24325, "estimated:openai-api-2026-07")
+
+
+def test_grok_event_with_keyless_dict_message_does_not_recurse() -> None:
+    parser = AgentStreamParser("grok")
+
+    rendered = parser.feed_line(
+        b'{"type":"error","error":{"code":429,"retriable":true}}\n'
+    )
+
+    assert rendered is not None
+    assert "429" in rendered

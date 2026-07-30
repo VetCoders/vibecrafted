@@ -55,9 +55,10 @@ def _stringish(value: Any) -> str:
     if isinstance(value, (int, float, bool)):
         return str(value)
     if isinstance(value, dict):
-        return _stringish(
-            value.get("message") or value.get("error") or value.get("detail") or value
-        )
+        inner = value.get("message") or value.get("error") or value.get("detail")
+        if inner is None or inner is value:
+            return json.dumps(value, ensure_ascii=False)
+        return _stringish(inner)
     if isinstance(value, list):
         return ", ".join(_stringish(item) for item in value)
     return json.dumps(value, ensure_ascii=False)
