@@ -8,8 +8,14 @@ workers are hands.** Unit green never equals Slack product green —
 live `@mention → run_id` requires operator buttons (allowlist + fresh
 Socket Mode bridge), not a second status store.
 
+Parent ownership doctrine (same axis, wider domains):
+[`docs/adr/0002-unified-operator-ownership.md`](../adr/0002-unified-operator-ownership.md)
+— domain `run-lifecycle` owned by `control-plane`; Slack owns `a2a-envelopes`
+only, never run status. This file is the gateway-specific contract; the ADR
+is not a second truth.
+
 Plan: `vc-server-mcp-slack-gateway` (2026-07-28 scaffold · implement →
-marbles fortify → polarize 2026-07-30).
+marbles fortify → polarize L1–L2 2026-07-30).
 
 ### Three surface classes (do not average)
 
@@ -81,12 +87,17 @@ Home override: `$VIBECRAFTED_HOME` (default `~/.vibecrafted`).
 
 ## Bot surfaces (vibecrafted-slack-agent)
 
-| Surface                               | Backend                                                                                         |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `/vc status` · `vc-slack status`      | `GET /api/health` + `GET /api/control/state`                                                    |
-| `/vc run <id>` · `vc-slack run <id>`  | `GET /api/control/runs/{id}`                                                                    |
+| Surface                              | Backend                                      |
+| ------------------------------------ | -------------------------------------------- |
+| `/vc status` · `vc-slack status`     | `GET /api/health` + `GET /api/control/state` |
+| `/vc run <id>` · `vc-slack run <id>` | `GET /api/control/runs/{id}`                 |
+
+PATH install: `ln -sfn <repo>/bin/vc-slack ~/.local/bin/vc-slack` is supported.
+`bin/vc-slack` **resolves symlinks** before setting `ROOT` so `status`/`run`
+load package `src/cli-*.js` (not `~/.local/src/…`). Always-on proof uses the
+package path or a correctly linked PATH entry — not a broken install tree.
 | `@Vibecrafted justdo <root> <prompt>` | allowlist → `vibecrafted justdo <agent> --json …` → thread `run_id` → progress posts → terminal |
-| `vc-slack signal` / lifecycle hook    | Slack post only (does not invent control_plane state)                                           |
+| `vc-slack signal` / lifecycle hook | Slack post only (does not invent control_plane state) |
 
 Allowlist: `SLACK_ALLOW_USERS`. Default agent: `VC_DEFAULT_AGENT=grok`.
 
