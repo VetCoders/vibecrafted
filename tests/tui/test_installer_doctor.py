@@ -1183,6 +1183,46 @@ def test_frontier_contract_accepts_installed_generation_link(
     assert finding.component == "frontier-links"
 
 
+def test_public_launcher_contract_rejects_checkout_link(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    launcher_bin = home / ".local" / "bin"
+    checkout_bin = tmp_path / "checkout" / "bin"
+    launcher_bin.mkdir(parents=True)
+    checkout_bin.mkdir(parents=True)
+    (checkout_bin.parent / ".git").mkdir()
+    _write_executable(checkout_bin / "vc-slack", "#!/bin/sh\nexit 0\n")
+    (launcher_bin / "vc-slack").symlink_to(checkout_bin / "vc-slack")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LAUNCHER_BIN", str(launcher_bin))
+
+    [finding] = installer._public_launcher_contract_findings()
+
+    assert finding.level == "fail"
+    assert finding.component == "public-launchers"
+    assert "vc-slack" in finding.message
+
+
+def test_public_launcher_contract_accepts_packaged_provider(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    launcher_bin = home / ".local" / "bin"
+    provider_bin = home / ".local" / "share" / "uv" / "tools" / "provider" / "bin"
+    launcher_bin.mkdir(parents=True)
+    provider_bin.mkdir(parents=True)
+    _write_executable(provider_bin / "vc-slack", "#!/bin/sh\nexit 0\n")
+    (launcher_bin / "vc-slack").symlink_to(provider_bin / "vc-slack")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LAUNCHER_BIN", str(launcher_bin))
+
+    [finding] = installer._public_launcher_contract_findings()
+
+    assert finding.level == "ok"
+    assert finding.component == "public-launchers"
+
+
 def test_run_doctor_fail_fast_on_runtime_root_drift(
     tmp_path: Path, monkeypatch
 ) -> None:
