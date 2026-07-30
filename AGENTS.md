@@ -838,3 +838,7 @@ This operating guide is influenced by:
 - practical product shipping
 
 SHACE, Marbles, Loctree Mapping, PSCD, and the Vibecrafted operating language are first-party concepts from Vibecrafted / Vetcoders practice.
+
+## Omni-observer + Slack gateway
+
+See `docs/runtime/OMNI_OBSERVER_SLACK_GATEWAY.md` — control_plane truth; server=eye; bot=mouth/ear; workers=hands.
