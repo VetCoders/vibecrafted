@@ -1034,6 +1034,48 @@ def test_cmd_doctor_fix_rc_repairs_compat_shell_lines(
     assert repaired.count(installer._launcher_path_line()) == 1
     assert "# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers" not in repaired
     assert "# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher" in repaired
+    assert (home / ".zshrc.vibecrafted-rc-bak").read_text(encoding="utf-8") == (
+        f"# existing user config\n{installer._old_zshrc_source_line()}\n"
+        "# >>> vibecrafted >>>\n"
+        'export VETCODERS_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders"\n'
+        'if [ -f "$VETCODERS_CONFIG_DIR/vc-skills.sh" ]; then\n'
+        f"  {installer._shell_source_line()}\n"
+        "fi\n"
+        "# <<< vibecrafted <<<\n"
+        'export VIBECRAFTED_HOME="$HOME/.vibecrafted"\n'
+        f"{installer._launcher_path_line()}\n\n"
+    )
+
+
+def test_cmd_doctor_fix_rc_repairs_login_startup_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    launcher_bin = home / ".local" / "bin"
+    zprofile = home / ".zprofile"
+    launcher_bin.mkdir(parents=True)
+    _write_executable(launcher_bin / "vibecrafted", "#!/bin/sh\nexit 0\n")
+    original = (
+        f"# user login config\n{installer._shell_source_line()}\nexport KEEP_ME=1\n"
+    )
+    zprofile.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+
+    findings = installer._doctor_fix_rc_files()
+
+    repaired = zprofile.read_text(encoding="utf-8")
+    assert installer._shell_source_line() not in repaired
+    assert "export KEEP_ME=1" in repaired
+    assert repaired.count(installer._launcher_path_line()) == 1
+    assert (home / ".zprofile.vibecrafted-rc-bak").read_text(
+        encoding="utf-8"
+    ) == original
+    assert any(
+        finding.component == "rc-fix:.zprofile"
+        and finding.level == "ok"
+        and ".zprofile.vibecrafted-rc-bak" in finding.message
+        for finding in findings
+    )
 
 
 def test_cmd_doctor_fix_rc_preserves_unclosed_managed_block(
@@ -1081,6 +1123,24 @@ def test_host_shell_contract_rejects_active_helper_sourcing(
     assert finding.level == "fail"
     assert finding.component == "host-shell"
     assert "--fix-rc" in finding.message
+
+
+def test_host_shell_contract_checks_every_login_and_interactive_startup_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    for rcname in installer._SHELL_STARTUP_FILES:
+        rcfile = home / rcname
+        rcfile.write_text(f"{installer._shell_source_line()}\n", encoding="utf-8")
+
+        [finding] = installer._host_shell_contract_findings()
+
+        assert finding.level == "fail"
+        assert rcname in finding.message
+        rcfile.unlink()
 
 
 def test_frontier_contract_rejects_checkout_link(tmp_path: Path, monkeypatch) -> None:
