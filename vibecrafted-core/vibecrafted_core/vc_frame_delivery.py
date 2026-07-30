@@ -388,34 +388,23 @@ def wire_vc_frame_config(
 
 
 # ---------------------------------------------------------------------------
-# Host zshrc onboarding (W1-B)
+# Host zshrc PATH onboarding (W1-B)
 # ---------------------------------------------------------------------------
 
 _ZSHRC_TEMPLATE = """\
-# vibecrafted host zshrc template — minimal, guarded optionals
-# Installed by vibecrafted ensure_zshrc / make install
-
-export PATH="$HOME/.local/bin:$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$PATH"
-export VETCODERS_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders"
-if [ -f "$VETCODERS_CONFIG_DIR/vc-skills.sh" ]; then
-  # shellcheck source=/dev/null
-  source "$VETCODERS_CONFIG_DIR/vc-skills.sh"
-fi
-
-# Optional tooling (no hard failure if absent)
-command -v starship >/dev/null 2>&1 && eval "$(starship init zsh)"
-command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init zsh)"
-command -v mise >/dev/null 2>&1 && eval "$(mise activate zsh)"
+# Vibecrafted launcher path. Product helpers are loaded only by vc-start.
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
 """
 
 _FENCED_BLOCK = f"""\
 {_FENCE_BEGIN}
-export PATH="$HOME/.local/bin:$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$PATH"
-export VETCODERS_CONFIG_DIR="${{XDG_CONFIG_HOME:-$HOME/.config}}/vetcoders"
-if [ -f "$VETCODERS_CONFIG_DIR/vc-skills.sh" ]; then
-  # shellcheck source=/dev/null
-  source "$VETCODERS_CONFIG_DIR/vc-skills.sh"
-fi
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
 {_FENCE_END}
 """
 
@@ -439,7 +428,7 @@ def zshrc_template_text() -> str:
 
 
 def ensure_zshrc(home: Path | None = None, *, dry_run: bool = False) -> dict[str, str]:
-    """Idempotent host zshrc ensure. Never overwrites operator content outside fence."""
+    """Idempotently add only the launcher PATH to zshrc after explicit invocation."""
     root = home if home is not None else Path.home()
     zshrc = root / ".zshrc"
     result = {"path": str(zshrc), "action": "noop"}
