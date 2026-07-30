@@ -8513,6 +8513,56 @@ def _managed_frontier_contract_findings() -> list[DoctorFinding]:
     ]
 
 
+def _public_launcher_contract_findings() -> list[DoctorFinding]:
+    """Reject operator-visible launchers that resolve into a Git checkout.
+
+    Packaged providers may legitimately live outside the immutable runtime
+    generation (for example uv or Cargo tools). A repository checkout is the
+    forbidden boundary: exposing one through ``~/.local/bin`` creates a second
+    runtime identity with no installed provenance.
+    """
+    unsafe: list[str] = []
+    for launcher_bin_dir in _launcher_bin_dirs():
+        if not launcher_bin_dir.is_dir():
+            continue
+        for entry in sorted(launcher_bin_dir.iterdir()):
+            if not entry.is_symlink():
+                continue
+            name = entry.name.lower()
+            if not (
+                name.startswith(("vc-", "vibecraft"))
+                or name in {"marble-pack", "aicx-pack"}
+            ):
+                continue
+            try:
+                resolved = entry.resolve(strict=True)
+            except (OSError, RuntimeError):
+                unsafe.append(f"{entry.name} (broken)")
+                continue
+            for parent in (resolved.parent, *resolved.parents):
+                if (parent / ".git").exists():
+                    unsafe.append(f"{entry.name} -> {resolved}")
+                    break
+
+    if unsafe:
+        return [
+            DoctorFinding(
+                "fail",
+                "public-launchers",
+                "operator launcher(s) resolve into a source checkout: "
+                + ", ".join(unsafe[:5])
+                + (" ..." if len(unsafe) > 5 else ""),
+            )
+        ]
+    return [
+        DoctorFinding(
+            "ok",
+            "public-launchers",
+            "operator launchers are checkout-free",
+        )
+    ]
+
+
 def _foundation_provenance_findings(
     foundation_name: str, executable_path: Path
 ) -> list[DoctorFinding]:
@@ -8640,6 +8690,7 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
     findings.extend(_runtime_generation_contract_findings())
     findings.extend(_host_shell_contract_findings())
     findings.extend(_managed_frontier_contract_findings())
+    findings.extend(_public_launcher_contract_findings())
 
     # 3. Expected skills present
     for skill_name in state.skills:
