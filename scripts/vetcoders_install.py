@@ -1881,6 +1881,14 @@ def _doctor_fix_launchers(store_path: Path, state: InstallState) -> list[DoctorF
         ]
 
     try:
+        current_link = vibecrafted_tools_home() / "vibecrafted-current"
+        if not (current_link / _RUNTIME_GENERATION_ENTRYPOINT).is_file():
+            source_root = sync_control_plane_tree(
+                source_root,
+                current_link,
+                mirror=True,
+                install_version=read_version_file(source_root).strip(),
+            )
         _install_launcher(source_root, dry_run=False, update_rc=False)
         state.launcher_entries = _snapshot_launcher_entries()
         state.save(store_path)
@@ -2626,6 +2634,17 @@ def _remove_path(path: Path) -> None:
 _TOOLS_HANDOFF_SCHEMA = "vibecrafted.tools-handoff.v1"
 _RUNTIME_GENERATION_MANIFEST = "runtime-manifest.json"
 _RUNTIME_GENERATION_MANIFEST_SCHEMA = "vibecrafted.runtime-generation.v1"
+_RUNTIME_GENERATION_ENTRYPOINT = Path(
+    "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
+)
+_RUNTIME_GENERATION_REQUIRED_HASHES = frozenset(
+    {
+        Path("VERSION"),
+        Path("scripts/vibecrafted"),
+        Path("runtime/generated/vc-frame/config.kdl"),
+        _RUNTIME_GENERATION_ENTRYPOINT,
+    }
+)
 _RUNTIME_ACTIVE_TEXT_ROOTS = (
     Path("config/vc-frame"),
     Path("runtime/generated"),
@@ -6903,13 +6922,8 @@ def _write_runtime_generation_manifest(
     source_root: Path,
     install_version: str | None,
 ) -> None:
-    critical_paths = (
-        Path("VERSION"),
-        Path("scripts/vibecrafted"),
-        Path("runtime/generated/vc-frame/config.kdl"),
-    )
     hashes: dict[str, str] = {}
-    for relative in critical_paths:
+    for relative in sorted(_RUNTIME_GENERATION_REQUIRED_HASHES):
         path = runtime_root / relative
         if not path.is_file():
             raise OSError(f"candidate runtime is missing manifest input: {relative}")
@@ -6918,7 +6932,7 @@ def _write_runtime_generation_manifest(
         "schema": _RUNTIME_GENERATION_MANIFEST_SCHEMA,
         "version": (install_version or read_version_file(runtime_root)).strip(),
         "source_fingerprint": _path_fingerprint(source_root),
-        "entrypoint": "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
+        "entrypoint": _RUNTIME_GENERATION_ENTRYPOINT.as_posix(),
         "hashes": hashes,
     }
     _atomic_json_file(runtime_root / _RUNTIME_GENERATION_MANIFEST, payload)
@@ -8236,10 +8250,10 @@ def _runtime_generation_contract_findings() -> list[DoctorFinding]:
         or not isinstance(source_fingerprint, str)
         or len(source_fingerprint) != 64
         or not re.fullmatch(r"[0-9a-f]{64}", source_fingerprint)
-        or manifest.get("entrypoint")
-        != "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
+        or manifest.get("entrypoint") != _RUNTIME_GENERATION_ENTRYPOINT.as_posix()
         or not isinstance(hashes, dict)
-        or not hashes
+        or set(hashes)
+        != {path.as_posix() for path in _RUNTIME_GENERATION_REQUIRED_HASHES}
     ):
         return [
             DoctorFinding(
@@ -8279,12 +8293,19 @@ def _runtime_generation_contract_findings() -> list[DoctorFinding]:
     launcher = _canonical_launcher_root() / "vibecrafted"
     try:
         launcher_target = launcher.resolve(strict=True)
+        expected_launcher = (generation / _RUNTIME_GENERATION_ENTRYPOINT).resolve(
+            strict=True
+        )
     except (OSError, RuntimeError):
-        errors.append("canonical vibecrafted launcher is missing or broken")
+        errors.append(
+            "canonical vibecrafted launcher or current generation entrypoint "
+            "is missing or broken"
+        )
     else:
-        if not _is_subpath(launcher_target, canonical_runtime):
+        if launcher_target != expected_launcher:
             errors.append(
-                "canonical vibecrafted launcher resolves outside runtime capsule"
+                "canonical vibecrafted launcher does not resolve to the current "
+                "generation entrypoint"
             )
     if errors:
         return [

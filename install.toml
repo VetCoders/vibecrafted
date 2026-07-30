@@ -75,11 +75,12 @@ cmd = [
     "-c",
     '''
 bash scripts/install-foundations.sh
-bash "$PWD/vibecrafted-core/vibecrafted_core/runtime/scripts/install-frontier-config.sh" --source "$PWD" || printf '[warn] Frontier config skipped (non-fatal)\n'
 bash scripts/install-runtime.sh --runtime "${VIBECRAFTED_RUNTIME:-none}" --yes
 make --no-print-directory install-vendored-binaries
 make --no-print-directory install-app-binaries
 make --no-print-directory install-bundle-tools
+stable_root="${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools/vibecrafted-current"
+bash "$stable_root/vibecrafted-core/vibecrafted_core/runtime/scripts/install-frontier-config.sh" --source "$stable_root" || printf '[warn] Frontier config skipped (non-fatal)\n'
 ''',
 ]
 

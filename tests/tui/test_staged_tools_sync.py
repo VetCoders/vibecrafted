@@ -4739,6 +4739,7 @@ def test_runtime_generation_pointer_swap_never_removes_current(
         "VERSION",
         "runtime/generated/vc-frame/config.kdl",
         "scripts/vibecrafted",
+        "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
     }
 
 
@@ -4811,6 +4812,87 @@ def test_runtime_generation_doctor_verifies_manifest_and_launcher(
     [drift] = installer._runtime_generation_contract_findings()
     assert drift.level == "fail"
     assert "manifest-bound file drifted: scripts/vibecrafted" in drift.message
+
+
+def test_runtime_generation_doctor_rejects_deck_drift_and_incomplete_hashes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    source = tmp_path / "source"
+    current = tools / "vibecrafted-current"
+    _write_complete_source(
+        source,
+        helper='printf "helper\\n"\n',
+        launcher='#!/usr/bin/env bash\nprintf "launcher\\n"\n',
+    )
+    monkeypatch.setenv("HOME", str(home))
+    generation = installer.sync_control_plane_tree(
+        source,
+        current,
+        mirror=True,
+        install_version="9.9.9+gdeck",
+    )
+    launcher = home / ".local" / "bin" / "vibecrafted"
+    launcher.parent.mkdir(parents=True)
+    launcher.symlink_to(
+        current / "vibecrafted-core" / "vibecrafted_core" / "deck" / "vibecrafted"
+    )
+    deck = generation / installer._RUNTIME_GENERATION_ENTRYPOINT
+    original = deck.read_bytes()
+    deck.write_bytes(original + b"\nexit 99\n")
+    [drift] = installer._runtime_generation_contract_findings()
+    assert drift.level == "fail"
+    assert (
+        f"manifest-bound file drifted: {installer._RUNTIME_GENERATION_ENTRYPOINT}"
+        in drift.message
+    )
+
+    deck.write_bytes(original)
+    manifest_path = generation / installer._RUNTIME_GENERATION_MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["hashes"].pop(installer._RUNTIME_GENERATION_ENTRYPOINT.as_posix())
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    [invalid] = installer._runtime_generation_contract_findings()
+    assert invalid.level == "fail"
+    assert "does not satisfy the runtime schema" in invalid.message
+
+
+def test_runtime_generation_doctor_rejects_launcher_from_old_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    source = tmp_path / "source"
+    current = tools / "vibecrafted-current"
+    _write_complete_source(
+        source,
+        helper='printf "helper\\n"\n',
+        launcher='#!/usr/bin/env bash\nprintf "launcher\\n"\n',
+    )
+    monkeypatch.setenv("HOME", str(home))
+    generation = installer.sync_control_plane_tree(
+        source,
+        current,
+        mirror=True,
+        install_version="9.9.9+gcurrent",
+    )
+    shadow = tools / "vibecrafted-generation-shadow"
+    shadow_entrypoint = shadow / installer._RUNTIME_GENERATION_ENTRYPOINT
+    shadow_entrypoint.parent.mkdir(parents=True)
+    shadow_entrypoint.write_bytes(
+        (generation / installer._RUNTIME_GENERATION_ENTRYPOINT).read_bytes()
+    )
+    shadow_entrypoint.chmod(0o755)
+    launcher = home / ".local" / "bin" / "vibecrafted"
+    launcher.parent.mkdir(parents=True)
+    launcher.symlink_to(shadow_entrypoint)
+
+    [finding] = installer._runtime_generation_contract_findings()
+    assert finding.level == "fail"
+    assert "does not resolve to the current generation entrypoint" in finding.message
 
 
 def test_chained_prepared_publish_keeps_last_verified_rollback_target(
