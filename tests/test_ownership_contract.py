@@ -20,6 +20,10 @@ MATRIX_PATH = REPO_ROOT / "docs" / "adr" / "ownership-matrix.json"
 INVALID_FIXTURE = (
     Path(__file__).parent / "fixtures" / "ownership" / "second_owner_invalid.json"
 )
+OPERATOR_RUNTIME_DOCS = (
+    REPO_ROOT / "docs" / "runtime" / "OMNI_OBSERVER_SLACK_GATEWAY.md",
+    REPO_ROOT / "docs" / "public" / "server" / "slack-gateway.md",
+)
 
 REQUIRED_RULE_IDS = {
     "one-owner-per-domain",
@@ -165,3 +169,17 @@ def test_gate_rejects_missing_resume_rule() -> None:
     ]
     with pytest.raises(OwnershipViolation, match="missing required rules"):
         validate_ownership_matrix(matrix)
+
+
+def test_operator_docs_do_not_advise_checkout_linked_install() -> None:
+    forbidden_recipes = (
+        "ln -sfn <repo>",
+        "ln -sfn /Volumes/vc-workspace",
+    )
+    for path in OPERATOR_RUNTIME_DOCS:
+        body = path.read_text(encoding="utf-8")
+        for recipe in forbidden_recipes:
+            assert recipe not in body, (
+                f"{path.relative_to(REPO_ROOT)} recommends checkout-linked "
+                f"installation: {recipe}"
+            )

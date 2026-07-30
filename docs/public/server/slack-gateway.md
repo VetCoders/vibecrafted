@@ -99,6 +99,11 @@ progress-interval variables, plus `VC_SERVER_URL` for the observer address
 the remaining operator setup — allowlist present, bridge fresh, observer
 reachable — before trusting a live channel.
 
+The repository CLI is a development surface, not an installed launcher. Run
+`./bin/vc-slack` from the gateway checkout while developing; do not symlink the
+checkout into `~/.local/bin`. The public command must remain absent until the
+installer can publish and bind an immutable `vc-slack` artifact.
+
 ## Workers do not need Slack
 
 A worker finishes and settles whether or not the bridge is up. Slack is a

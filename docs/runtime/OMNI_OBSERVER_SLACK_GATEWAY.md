@@ -96,16 +96,21 @@ Home override: `$VIBECRAFTED_HOME` (default `~/.vibecrafted`).
 | `@Vibecrafted justdo <root> <prompt>` | allowlist → `vibecrafted justdo <agent> --json …` → thread `run_id` → progress posts → terminal |
 | `vc-slack signal` / lifecycle hook    | Slack post only (does not invent control_plane state)                                           |
 
-### PATH install (mouth CLI, not a second board)
+### CLI boundary (development-only until W1-A)
+
+The repository command may be invoked in place for development:
 
 ```bash
-ln -sfn <repo>/bin/vc-slack ~/.local/bin/vc-slack
+cd /path/to/vibecrafted-slack-agent
+./bin/vc-slack status
 ```
 
-`bin/vc-slack` **resolves symlinks** before setting `ROOT` so `status`/`run`
-load package `src/cli-*.js` (not `~/.local/src/…`). Always-on proof uses the
-package path or a correctly linked PATH entry — not a broken install tree.
-Install path never becomes a status store; it only routes to the HTTP eye.
+Do **not** symlink a repository checkout into `~/.local/bin`. Until W1-A
+publishes `vc-slack` as an immutable installed artifact, absence from PATH is
+the honest installed-runtime state. W1-A owns both publication under the
+installed Vibecrafted generation and the eventual public launcher binding.
+The gateway remains mouth/ear only regardless of packaging; installation never
+creates a second board truth.
 
 Allowlist: `SLACK_ALLOW_USERS`. Default agent: `VC_DEFAULT_AGENT=grok`.
 
