@@ -48,14 +48,22 @@ Home override: `$VIBECRAFTED_HOME` (default `~/.vibecrafted`).
 
 ## Bot surfaces (vibecrafted-slack-agent)
 
-| Surface                               | Backend                                                                                       |
-| ------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `/vc status` · `vc-slack status`      | `GET /api/health` + `GET /api/control/state`                                                  |
-| `/vc run <id>` · `vc-slack run <id>`  | `GET /api/control/runs/{id}`                                                                  |
-| `@Vibecrafted justdo <root> <prompt>` | allowlist → `vibecrafted justdo <agent> --json …` → thread `run_id` → poll run until terminal |
-| `vc-slack signal` / lifecycle hook    | Slack post only (does not invent control_plane state)                                         |
+| Surface                               | Backend                                                                                         |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `/vc status` · `vc-slack status`      | `GET /api/health` + `GET /api/control/state`                                                    |
+| `/vc run <id>` · `vc-slack run <id>`  | `GET /api/control/runs/{id}`                                                                    |
+| `@Vibecrafted justdo <root> <prompt>` | allowlist → `vibecrafted justdo <agent> --json …` → thread `run_id` → progress posts → terminal |
+| `vc-slack signal` / lifecycle hook    | Slack post only (does not invent control_plane state)                                           |
 
 Allowlist: `SLACK_ALLOW_USERS`. Default agent: `VC_DEFAULT_AGENT=grok`.
+
+Dispatch policy (gateway, not control_plane):
+
+- empty allowlist ⇒ fail-closed (read-only)
+- per-user cooldown (`VC_DISPATCH_COOLDOWN_MS`, default 30s)
+- max concurrent jobs per user (`VC_DISPATCH_MAX_CONCURRENT`, default 3)
+- intermediate `*progress*` posts on state/health/liveness/report key change (first always; then `VC_PROGRESS_MIN_MS`)
+- ≤5s product SLA = receipt-in-thread (`run_id`), not worker terminal
 
 Workers do **not** need Slack. Example visibility path:
 
@@ -86,4 +94,4 @@ Do **not** merge packages unless a single MCP-HTTP binary is explicitly required
 3. Offline observer → `ObserverOffline` within a few seconds; slash still acks.
 4. Empty `SLACK_ALLOW_USERS` ⇒ fail-closed dispatch (read-only gateway).
 
-_Vibecrafted. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_
