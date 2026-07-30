@@ -99,6 +99,7 @@ ALLOWED_TOP_LEVEL = frozenset(
         "install.sh",
         "install.ps1",
         "install.toml",
+        "runtime-manifest.json",
         "pyproject.toml",
         "plugin.json",
         "vibecrafted-framework.plugin",

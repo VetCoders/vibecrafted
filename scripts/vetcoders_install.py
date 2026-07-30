@@ -2624,6 +2624,17 @@ def _remove_path(path: Path) -> None:
 
 
 _TOOLS_HANDOFF_SCHEMA = "vibecrafted.tools-handoff.v1"
+_RUNTIME_GENERATION_MANIFEST = "runtime-manifest.json"
+_RUNTIME_GENERATION_MANIFEST_SCHEMA = "vibecrafted.runtime-generation.v1"
+_RUNTIME_ACTIVE_TEXT_ROOTS = (
+    Path("config/vc-frame"),
+    Path("runtime/generated"),
+    Path("vibecrafted-core/vibecrafted_core/runtime"),
+)
+_RUNTIME_ACTIVE_TEXT_SUFFIXES = frozenset(
+    {".bash", ".json", ".kdl", ".py", ".sh", ".toml", ".zsh"}
+)
+_ABSOLUTE_PATH_TOKEN = re.compile(r"/[^\s\"'`;,)>\]}]+")
 _TOOLS_INSTALL_LEASE_ENV = "VIBECRAFTED_INSTALL_LEASE_FD"
 _TOOLS_INSTALL_LEASE_TIMEOUT_ENV = "VIBECRAFTED_INSTALL_LOCK_TIMEOUT"
 _TOOLS_INSTALL_LEASE_DEFAULT_SECONDS = 180.0
@@ -5326,7 +5337,10 @@ def _atomic_symlink(target: Path, link: Path) -> None:
             f"cannot atomically publish over non-symlink runtime root: {link}"
         )
     temporary = link.parent / (f".{link.name}.tmp-{os.getpid()}-{os.urandom(6).hex()}")
-    relative_target = os.path.relpath(canonical_target, link.parent)
+    relative_target = os.path.relpath(
+        canonical_target,
+        link.parent.resolve(strict=True),
+    )
     try:
         temporary.symlink_to(relative_target, target_is_directory=True)
         os.replace(temporary, link)
@@ -6812,6 +6826,104 @@ def _materialize_vc_frame_generation(runtime_root: Path) -> None:
         )
 
 
+def _runtime_active_text_files(runtime_root: Path) -> Iterator[Path]:
+    for relative_root in _RUNTIME_ACTIVE_TEXT_ROOTS:
+        root = runtime_root / relative_root
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if (
+                path.is_file()
+                and not path.is_symlink()
+                and path.suffix in _RUNTIME_ACTIVE_TEXT_SUFFIXES
+            ):
+                yield path
+    for relative in (
+        Path("scripts/vibecrafted"),
+        Path("vibecrafted-core/vibecrafted_core/deck/vibecrafted"),
+    ):
+        path = runtime_root / relative
+        if path.is_file() and not path.is_symlink():
+            yield path
+
+
+def _path_fingerprint(path: Path) -> str:
+    return hashlib.sha256(str(path.resolve(strict=False)).encode("utf-8")).hexdigest()
+
+
+def _text_references_path_fingerprint(text: str, fingerprint: str) -> bool:
+    for raw_token in _ABSOLUTE_PATH_TOKEN.findall(text):
+        candidate = Path(raw_token)
+        for ancestor in (candidate, *candidate.parents):
+            if _path_fingerprint(ancestor) == fingerprint:
+                return True
+    return False
+
+
+def _runtime_generation_audit_errors(
+    runtime_root: Path,
+    *,
+    source_root: Path | None = None,
+    source_fingerprint: str | None = None,
+) -> list[str]:
+    root = runtime_root.resolve(strict=False)
+    errors: list[str] = []
+    for path in sorted(runtime_root.rglob("*")):
+        if not path.is_symlink():
+            continue
+        relative = path.relative_to(runtime_root)
+        try:
+            resolved = path.resolve(strict=True)
+        except (OSError, RuntimeError):
+            errors.append(f"broken installed symlink: {relative}")
+            continue
+        if not _is_subpath(resolved, root):
+            errors.append(f"installed symlink escapes generation: {relative}")
+
+    source_text = str(source_root.resolve(strict=False)) if source_root else None
+    for path in _runtime_active_text_files(runtime_root):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        relative = path.relative_to(runtime_root)
+        if (
+            source_text
+            and source_text in text
+            or source_fingerprint
+            and _text_references_path_fingerprint(text, source_fingerprint)
+        ):
+            errors.append(f"active runtime file references source checkout: {relative}")
+    return sorted(set(errors))
+
+
+def _write_runtime_generation_manifest(
+    runtime_root: Path,
+    *,
+    source_root: Path,
+    install_version: str | None,
+) -> None:
+    critical_paths = (
+        Path("VERSION"),
+        Path("scripts/vibecrafted"),
+        Path("runtime/generated/vc-frame/config.kdl"),
+    )
+    hashes: dict[str, str] = {}
+    for relative in critical_paths:
+        path = runtime_root / relative
+        if not path.is_file():
+            raise OSError(f"candidate runtime is missing manifest input: {relative}")
+        hashes[relative.as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    payload = {
+        "schema": _RUNTIME_GENERATION_MANIFEST_SCHEMA,
+        "version": (install_version or read_version_file(runtime_root)).strip(),
+        "source_fingerprint": _path_fingerprint(source_root),
+        "entrypoint": "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
+        "hashes": hashes,
+    }
+    _atomic_json_file(runtime_root / _RUNTIME_GENERATION_MANIFEST, payload)
+
+
 def _sync_control_plane_tree_locked(
     src: Path,
     dst: Path,
@@ -6862,6 +6974,14 @@ def _sync_control_plane_tree_locked(
         if install_version:
             stamp_install_version(staging, install_version)
         _materialize_vc_frame_generation(staging)
+        audit_errors = _runtime_generation_audit_errors(staging, source_root=src)
+        if audit_errors:
+            raise OSError("\n".join(audit_errors))
+        _write_runtime_generation_manifest(
+            staging,
+            source_root=src,
+            install_version=install_version,
+        )
         staging.rename(generation)
         handoff = {
             "schema": _TOOLS_HANDOFF_SCHEMA,
@@ -8068,6 +8188,121 @@ def _runtime_root_contract_findings() -> list[DoctorFinding]:
     return findings
 
 
+def _runtime_generation_contract_findings() -> list[DoctorFinding]:
+    current = vibecrafted_tools_home() / "vibecrafted-current"
+    if not current.is_symlink():
+        return [
+            DoctorFinding(
+                "fail",
+                "runtime-generation",
+                f"{_path_with_tilde(current)} is not an atomic generation pointer",
+            )
+        ]
+    try:
+        generation = current.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        return [
+            DoctorFinding(
+                "fail",
+                "runtime-generation",
+                f"cannot resolve current runtime generation: {exc}",
+            )
+        ]
+    canonical_runtime = _canonical_runtime_root().resolve(strict=False)
+    if not _is_subpath(generation, canonical_runtime):
+        return [
+            DoctorFinding(
+                "fail",
+                "runtime-generation",
+                f"current runtime resolves outside {_path_with_tilde(canonical_runtime)}",
+            )
+        ]
+
+    manifest_path = generation / _RUNTIME_GENERATION_MANIFEST
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [
+            DoctorFinding(
+                "fail",
+                "runtime-generation",
+                f"installed generation manifest is missing or invalid: {exc}",
+            )
+        ]
+    source_fingerprint = manifest.get("source_fingerprint")
+    hashes = manifest.get("hashes")
+    if (
+        manifest.get("schema") != _RUNTIME_GENERATION_MANIFEST_SCHEMA
+        or not isinstance(source_fingerprint, str)
+        or len(source_fingerprint) != 64
+        or not re.fullmatch(r"[0-9a-f]{64}", source_fingerprint)
+        or manifest.get("entrypoint")
+        != "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
+        or not isinstance(hashes, dict)
+        or not hashes
+    ):
+        return [
+            DoctorFinding(
+                "fail",
+                "runtime-generation",
+                "installed generation manifest does not satisfy the runtime schema",
+            )
+        ]
+
+    errors: list[str] = []
+    for relative_text, expected_digest in hashes.items():
+        if (
+            not isinstance(relative_text, str)
+            or not isinstance(expected_digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_digest)
+        ):
+            errors.append("installed generation manifest has an invalid hash entry")
+            continue
+        relative = Path(relative_text)
+        if relative.is_absolute() or ".." in relative.parts:
+            errors.append("installed generation manifest has an unsafe hash path")
+            continue
+        installed_file = generation / relative
+        if not installed_file.is_file():
+            errors.append(f"manifest-bound file is missing: {relative_text}")
+            continue
+        actual_digest = hashlib.sha256(installed_file.read_bytes()).hexdigest()
+        if actual_digest != expected_digest:
+            errors.append(f"manifest-bound file drifted: {relative_text}")
+
+    errors.extend(
+        _runtime_generation_audit_errors(
+            generation,
+            source_fingerprint=source_fingerprint,
+        )
+    )
+    launcher = _canonical_launcher_root() / "vibecrafted"
+    try:
+        launcher_target = launcher.resolve(strict=True)
+    except (OSError, RuntimeError):
+        errors.append("canonical vibecrafted launcher is missing or broken")
+    else:
+        if not _is_subpath(launcher_target, canonical_runtime):
+            errors.append(
+                "canonical vibecrafted launcher resolves outside runtime capsule"
+            )
+    if errors:
+        return [
+            DoctorFinding(
+                "fail",
+                "runtime-generation",
+                "; ".join(sorted(set(errors))),
+            )
+        ]
+    return [
+        DoctorFinding(
+            "ok",
+            "runtime-generation",
+            f"{generation.name} is manifest-bound and checkout-free",
+        )
+    ]
+
+
 def _foundation_provenance_findings(
     foundation_name: str, executable_path: Path
 ) -> list[DoctorFinding]:
@@ -8192,6 +8427,7 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
         )
 
     findings.extend(_runtime_root_contract_findings())
+    findings.extend(_runtime_generation_contract_findings())
 
     # 3. Expected skills present
     for skill_name in state.skills:
@@ -9523,24 +9759,15 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     return 0
 
 
-def _uv_tool_shim() -> Path:
-    data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    return Path(data_home) / "uv" / "tools" / "vibecrafted" / "bin" / "vibecrafted"
-
-
 def _launcher_symlink_target(repo_root: Path) -> Path:
     """Resolve what ~/.local/bin/vibecrafted should point at.
 
-    The uv-tool shim wins when it exists (full `make install` lane). A
-    python-only install (CI skill-loader, bare `vetcoders_install.py install`)
-    has no shim yet — pointing at it would leave a dangling launcher that
-    doctor rightly fails. Fall back to the staged deck, then the source deck,
-    so the installed launcher always executes.
+    The host launcher always enters the immutable installed generation. Python
+    tooling may still live in its uv environment, but it is an implementation
+    dependency of the deck, never the user-facing runtime owner.
     """
-    shim = _uv_tool_shim()
-    if shim.exists():
-        return shim
-    staged_deck = (
+    _ = repo_root
+    return (
         vibecrafted_tools_home()
         / "vibecrafted-current"
         / "vibecrafted-core"
@@ -9548,9 +9775,6 @@ def _launcher_symlink_target(repo_root: Path) -> Path:
         / "deck"
         / "vibecrafted"
     )
-    if staged_deck.exists():
-        return staged_deck
-    return repo_root / "scripts" / "vibecrafted"
 
 
 def _install_launcher(repo_root: Path, dry_run: bool, update_rc: bool = False) -> None:
@@ -9563,10 +9787,14 @@ def _install_launcher(repo_root: Path, dry_run: bool, update_rc: bool = False) -
             canonical_bin_dir.mkdir(parents=True, exist_ok=True)
             canonical_launcher = canonical_bin_dir / "vibecrafted"
 
-            # Target 1: the uv-tool shim wins ~/.local/bin/vibecrafted when it
-            # exists; otherwise the staged/source deck keeps the launcher live
-            # (see _launcher_symlink_target). Never copy the deck over the name.
+            # Target 1: the immutable installed generation owns the launcher.
+            # Never point the public command at uv state or a source checkout.
             shim = _launcher_symlink_target(repo_root)
+            if not shim.is_file():
+                raise OSError(
+                    "installed runtime deck is missing; publish the runtime "
+                    "generation before installing launchers"
+                )
             if canonical_launcher.exists() or canonical_launcher.is_symlink():
                 if canonical_launcher.is_symlink():
                     try:

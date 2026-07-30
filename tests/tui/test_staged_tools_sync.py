@@ -302,6 +302,21 @@ def _runtime_pointer_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     return source, old_target, current
 
 
+def test_atomic_runtime_pointer_survives_symlinked_parent_path(tmp_path: Path) -> None:
+    real_root = tmp_path / "real"
+    tools = real_root / "tools"
+    generation = tools / "vibecrafted-generation-test"
+    generation.mkdir(parents=True)
+    alias = tmp_path / "alias"
+    alias.symlink_to(real_root, target_is_directory=True)
+    current = alias / "tools" / "vibecrafted-current"
+
+    installer._atomic_symlink(alias / "tools" / generation.name, current)
+
+    assert current.is_symlink()
+    assert current.resolve(strict=True) == generation.resolve(strict=True)
+
+
 def test_live_legacy_service_cutover_publishes_native_identity_without_orphans(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -4710,6 +4725,92 @@ def test_runtime_generation_pointer_swap_never_removes_current(
     assert current.resolve() == generation.resolve()
     assert current.resolve() != old_target.resolve()
     assert (current / "scripts" / "vibecrafted").is_file()
+    manifest = json.loads(
+        (generation / installer._RUNTIME_GENERATION_MANIFEST).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["schema"] == installer._RUNTIME_GENERATION_MANIFEST_SCHEMA
+    assert manifest["version"] == "9.9.9+gtest"
+    assert manifest["entrypoint"] == (
+        "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
+    )
+    assert set(manifest["hashes"]) == {
+        "VERSION",
+        "runtime/generated/vc-frame/config.kdl",
+        "scripts/vibecrafted",
+    }
+
+
+def test_runtime_generation_rejects_active_source_checkout_reference(
+    tmp_path: Path,
+) -> None:
+    source, old_target, current = _runtime_pointer_fixture(tmp_path)
+    launcher = source / "scripts" / "vibecrafted"
+    launcher.write_text(
+        launcher.read_text(encoding="utf-8")
+        + f"\nreadonly LEAKED_CHECKOUT={source!s}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OSError, match="references source checkout"):
+        installer.sync_control_plane_tree(
+            source,
+            current,
+            mirror=True,
+            install_version="9.9.9+gleak",
+        )
+
+    assert current.resolve() == old_target.resolve()
+    assert not list(current.parent.glob("vibecrafted-generation-9.9.9+gleak-*"))
+
+
+def test_runtime_generation_doctor_verifies_manifest_and_launcher(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    source = tmp_path / "source"
+    old_target = tools / "vibecrafted-generation-old"
+    current = tools / "vibecrafted-current"
+    _write_complete_source(
+        source,
+        helper='printf "new helper\\n"\n',
+        launcher='#!/usr/bin/env bash\nprintf "new launcher\\n"\n',
+    )
+    _write_valid_runtime_generation(old_target)
+    current.symlink_to(old_target.name)
+    monkeypatch.setenv("HOME", str(home))
+
+    generation = installer.sync_control_plane_tree(
+        source,
+        current,
+        mirror=True,
+        install_version="9.9.9+gdoctor",
+    )
+    launcher = home / ".local" / "bin" / "vibecrafted"
+    launcher.parent.mkdir(parents=True)
+    launcher.symlink_to(
+        current / "vibecrafted-core" / "vibecrafted_core" / "deck" / "vibecrafted"
+    )
+
+    findings = installer._runtime_generation_contract_findings()
+    assert findings == [
+        installer.DoctorFinding(
+            "ok",
+            "runtime-generation",
+            f"{generation.name} is manifest-bound and checkout-free",
+        )
+    ]
+
+    (generation / "scripts" / "vibecrafted").write_text(
+        "#!/usr/bin/env bash\nexit 42\n",
+        encoding="utf-8",
+    )
+    [drift] = installer._runtime_generation_contract_findings()
+    assert drift.level == "fail"
+    assert "manifest-bound file drifted: scripts/vibecrafted" in drift.message
 
 
 def test_chained_prepared_publish_keeps_last_verified_rollback_target(
