@@ -1303,6 +1303,16 @@ def ask_multi(prompt: str, options: list[str], defaults: list[bool]) -> list[boo
 # ---------------------------------------------------------------------------
 
 BACKUP_DIR = "backups/installer"
+_SHELL_STARTUP_FILES = (
+    ".zshenv",
+    ".zprofile",
+    ".zshrc",
+    ".zlogin",
+    ".bash_profile",
+    ".bash_login",
+    ".profile",
+    ".bashrc",
+)
 
 
 def _backup_root(store_path: Path) -> Path:
@@ -1589,7 +1599,7 @@ def create_backup(
         anything_backed = True
 
     # Back up RC files
-    for rcname in (".zshrc", ".bashrc"):
+    for rcname in _SHELL_STARTUP_FILES:
         rcfile = Path.home() / rcname
         if rcfile.exists():
             dst = backup_dir / "helpers" / rcname
@@ -1677,7 +1687,7 @@ def _doctor_fix_rc_files() -> list[DoctorFinding]:
     findings: list[DoctorFinding] = []
     ensure_path = _find_launcher_wrapper("vibecrafted") is not None
 
-    for rcname in (".zshrc", ".bashrc"):
+    for rcname in _SHELL_STARTUP_FILES:
         rcfile = Path.home() / rcname
         if not rcfile.exists():
             continue
@@ -1715,12 +1725,27 @@ def _doctor_fix_rc_files() -> list[DoctorFinding]:
             findings.append(DoctorFinding("ok", f"rc-fix:{rcname}", "already default"))
             continue
 
-        rcfile.write_text(repaired, encoding="utf-8")
+        backup = rcfile.with_name(rcfile.name + ".vibecrafted-rc-bak")
+        try:
+            if not backup.exists():
+                shutil.copy2(rcfile, backup)
+            mode = stat.S_IMODE(rcfile.stat().st_mode)
+            _atomic_bytes_file(rcfile, repaired.encode("utf-8"), mode=mode)
+        except OSError as exc:
+            findings.append(
+                DoctorFinding(
+                    "warn",
+                    f"rc-fix:{rcname}",
+                    f"could not repair safely: {exc}",
+                )
+            )
+            continue
         findings.append(
             DoctorFinding(
                 "ok",
                 f"rc-fix:{rcname}",
-                "removed product helper sourcing and restored the PATH-only launcher hint",
+                "removed product helper sourcing and restored the PATH-only "
+                f"launcher hint (backup: {backup.name})",
             )
         )
 
@@ -8416,7 +8441,7 @@ def _runtime_generation_contract_findings() -> list[DoctorFinding]:
 
 def _host_shell_contract_findings() -> list[DoctorFinding]:
     offenders: list[str] = []
-    for rcname in (".zshrc", ".bashrc"):
+    for rcname in _SHELL_STARTUP_FILES:
         rcfile = Path.home() / rcname
         if not rcfile.is_file():
             continue
