@@ -5,9 +5,10 @@ usage() {
   cat <<'EOF_USAGE'
 Usage: install-shell.sh [--source <repo-root>] [--dry-run] [--write-rc] [--no-zshrc] [--no-bashrc]
 
-Install the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helper layer. The helpers work in both bash and zsh.
-By default, installs the helper shim and prints the rc source line without changing
-shell startup files. Pass --write-rc after explicit user consent to update rc files.
+Install the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. process-local shell helper layer.
+The helper is loaded by vc-start, never by the ordinary host shell. By default,
+installs the helper shim and prints the PATH line without changing shell startup
+files. Pass --write-rc after explicit user consent to update PATH in rc files.
 Use --no-zshrc or --no-bashrc with --write-rc to skip a shell.
 EOF_USAGE
 }
@@ -69,9 +70,9 @@ target_file="$target_dir/vc-skills.sh"
 legacy_dir="$config_base/zsh"
 legacy_file="$legacy_dir/vc-skills.zsh"
 
-# Source line — same syntax works in both bash and zsh
+# Minimal host-shell line — same syntax works in both bash and zsh.
 # shellcheck disable=SC2016
-source_line='[[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" ]] && source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"'
+path_line='case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
 
 printf 'Installing 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers\n'
 printf '  source: %s\n' "$source_file"
@@ -139,31 +140,48 @@ fi
 _update_rcfile() {
   local rcfile="$1"
   # $2 = shell_name (for logging, currently unused)
-
-  # Already present (ACTIVE line only) — nothing to do. A commented-out or
-  # disabled hook must NOT count as present, else a cleaned/reinstalled machine
-  # never gets re-wired (the source line stays inert). Match only an uncommented
-  # occurrence so install-all re-activates a disabled hook on every machine.
-  if [[ -f "$rcfile" ]] && grep -Eq '^[[:space:]]*[^#[:space:]].*vetcoders/vc-skills\.sh' "$rcfile"; then
-    printf '  %s: already sourced\n' "$rcfile"
-    return 0
-  fi
+  local cleaned_file
 
   # Respect locked/immutable files
   if [[ -f "$rcfile" ]] && ! touch -c "$rcfile" 2>/dev/null; then
-    printf '\033[33m[warn]\033[0m %s is locked — add manually:\n' "$rcfile"
-    printf '       %s\n' "$source_line"
+    printf '\033[33m[warn]\033[0m %s is locked — remove vc-skills sourcing and add PATH manually:\n' "$rcfile"
+    printf '       %s\n' "$path_line"
     return 0
   fi
 
   if (( dry_run )); then
-    printf '  %s: would add source line\n' "$rcfile"
+    printf '  %s: would remove helper sourcing and ensure PATH-only entry\n' "$rcfile"
+    return 0
+  fi
+
+  touch "$rcfile"
+  cleaned_file="${rcfile}.vibecrafted-path-only.$$"
+  awk '
+    BEGIN { in_vibecrafted_block = 0 }
+    /^[[:space:]]*#[[:space:]]*>>>[[:space:]]*[Vv][Ii][Bb][Ee][Cc][Rr][Aa][Ff][Tt][Ee][Dd]([.][[:space:]]*[Ff][Rr][Aa][Mm][Ee][Ww][Oo][Rr][Kk])?[[:space:]]*>>>[[:space:]]*$/ {
+      in_vibecrafted_block = 1
+      next
+    }
+    in_vibecrafted_block && /^[[:space:]]*#[[:space:]]*<<<[[:space:]]*[Vv][Ii][Bb][Ee][Cc][Rr][Aa][Ff][Tt][Ee][Dd]([.][[:space:]]*[Ff][Rr][Aa][Mm][Ee][Ww][Oo][Rr][Kk])?[[:space:]]*<<<[[:space:]]*$/ {
+      in_vibecrafted_block = 0
+      next
+    }
+    in_vibecrafted_block { next }
+    /vetcoders\/vc-skills\.sh/ { next }
+    /zsh\/vc-skills\.zsh/ { next }
+    /^#[[:space:]]*(𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍\.|Vetcoders)[[:space:]]+shell helpers[[:space:]]*$/ { next }
+    { print }
+  ' "$rcfile" > "$cleaned_file"
+  mv "$cleaned_file" "$rcfile"
+
+  if grep -Fq "\$HOME/.local/bin" "$rcfile"; then
+    printf '  %s: helper sourcing removed; PATH already present\n' "$rcfile"
     return 0
   fi
 
   {
-    printf '\n# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers\n'
-    printf '%s\n' "$source_line"
+    printf '\n# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher\n'
+    printf '%s\n' "$path_line"
   } >> "$rcfile"
 
   printf '  %s: updated\n' "$rcfile"
@@ -188,9 +206,9 @@ fi
 if (( ! write_rc )); then
   printf '\033[33m[warn]\033[0m Shell rc files were not changed automatically.\n'
   printf '       To opt in, add this line to the rc file you actually use:\n'
-  printf '       %s\n' "$source_line"
+  printf '       %s\n' "$path_line"
 elif (( ! rcfile_touched )); then
   printf '\033[33m[warn]\033[0m No shell rc file was updated.\n'
   printf '       Add this line manually to the rc file you actually use:\n'
-  printf '       %s\n' "$source_line"
+  printf '       %s\n' "$path_line"
 fi

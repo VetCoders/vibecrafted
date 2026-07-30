@@ -944,6 +944,42 @@ def _link_or_unknown(value: Any, reason_if_none: str) -> Any:
     return value
 
 
+def _installed_runtime_manifest(installed_path: str | None) -> dict[str, Any] | None:
+    if not installed_path:
+        return None
+    try:
+        resolved = Path(installed_path).resolve(strict=True)
+    except OSError:
+        return None
+    for directory in (resolved.parent, *resolved.parents):
+        manifest_path = directory / "runtime-manifest.json"
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        owner_repo = payload.get("owner_repo")
+        revision = payload.get("source_revision")
+        entrypoint = payload.get("entrypoint")
+        if (
+            payload.get("schema") == "vibecrafted.runtime-generation.v1"
+            and isinstance(owner_repo, str)
+            and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", owner_repo)
+            and isinstance(revision, str)
+            and re.fullmatch(r"[0-9a-fA-F]{40}", revision)
+            and isinstance(entrypoint, str)
+            and (directory / entrypoint).resolve(strict=False) == resolved
+        ):
+            return {
+                "path": str(directory),
+                "owner_repo": owner_repo,
+                "branch": _unknown("checkout-free installed generation has no branch"),
+                "checkout_sha": revision.lower(),
+                "resolution": "installed_runtime_manifest",
+                "dirty": False,
+            }
+    return None
+
+
 def inspect_tool(spec: ToolSpec) -> dict[str, Any]:
     # PATH
     primary_bin = spec.binaries[0]
@@ -985,9 +1021,33 @@ def inspect_tool(spec: ToolSpec) -> dict[str, Any]:
                 break
 
     # Source
-    source_root, source_method = resolve_source_root(spec)
+    installed_manifest = (
+        _installed_runtime_manifest(installed_path)
+        if spec.name == "vibecrafted"
+        else None
+    )
+    source_root, source_method = (
+        (None, "installed_runtime_manifest")
+        if installed_manifest is not None
+        else resolve_source_root(spec)
+    )
     source_block: dict[str, Any]
-    if source_root is None:
+    if installed_manifest is not None:
+        source_block = installed_manifest
+        ab = {
+            "upstream": _unknown("checkout-free installed generation"),
+            "ahead": _unknown("checkout-free installed generation"),
+            "behind": _unknown("checkout-free installed generation"),
+        }
+        dirty = {
+            "dirty": False,
+            "source_dirty_count": 0,
+            "generated_dirty_count": 0,
+            "source_paths": [],
+            "generated_paths": [],
+        }
+        checkout_sha = source_block["checkout_sha"]
+    elif source_root is None:
         source_block = {
             "path": _unknown(source_method),
             "owner_repo": _unknown(source_method),
@@ -1068,7 +1128,7 @@ def inspect_tool(spec: ToolSpec) -> dict[str, Any]:
         installed_dirty=installed_dirty if isinstance(installed_dirty, bool) else None,
         ahead=ab.get("ahead") if isinstance(ab.get("ahead"), int) else None,
         index_stale=index_stale,
-        source_known=source_root is not None and isinstance(checkout_sha, str),
+        source_known=isinstance(checkout_sha, str),
     )
     # For related binaries (scaffold-doctor under vibecrafted), not primary
     if not path_hits.get(primary_bin) and DRIFT_NOT_ON_PATH not in classes:
