@@ -224,6 +224,7 @@ install-tools-held:
 	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-core"; \
 	uv tool install --force --reinstall --editable "$$stable_root/plugins/iterm2"; \
 	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-mcp" --with-editable "$$stable_root/vibecrafted-core"; \
+	$(PYTHON) -c 'import sys; from pathlib import Path; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; v._install_launcher(Path(sys.argv[1]), dry_run=False, update_rc=False)' "$$stable_root"; \
 	tool_root="$$(uv tool dir --color never)/vibecrafted"; \
 	tool_python="$$tool_root/bin/python"; \
 	if [ ! -x "$$tool_python" ]; then \
@@ -237,9 +238,14 @@ install-tools-held:
 			exit 1; \
 		fi; \
 		resolved_real="$$($(PYTHON) -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$$resolved")"; \
-		expected_real="$$($(PYTHON) -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$$tool_root/bin/$$entrypoint")"; \
+		if [ "$$entrypoint" = "vibecrafted" ]; then \
+			expected_path="$$stable_root/vibecrafted-core/vibecrafted_core/deck/vibecrafted"; \
+		else \
+			expected_path="$$tool_root/bin/$$entrypoint"; \
+		fi; \
+		expected_real="$$($(PYTHON) -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$$expected_path")"; \
 		if [ "$$resolved_real" != "$$expected_real" ]; then \
-			echo "[install-tools] FATAL: $$entrypoint resolves to $$resolved_real, expected uv tool target $$expected_real" >&2; \
+			echo "[install-tools] FATAL: $$entrypoint resolves to $$resolved_real, expected installed target $$expected_real" >&2; \
 			exit 1; \
 		fi; \
 		if ! "$$resolved" --help >/dev/null 2>&1; then \
