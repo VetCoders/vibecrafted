@@ -705,10 +705,11 @@ def test_installer_paths_do_not_write_shell_rc_without_consent_flag() -> None:
     assert "update_rc=write_shell_rc" in installer
     assert "if write_shell_rc:\n        for rcname in" in installer
 
-    # The "already sourced" skip must be ACTIVE-only: a commented/disabled hook
-    # cannot count as present, or a cleaned machine never re-wires on reinstall.
+    # The host shell is PATH-only. Even explicitly consented rc mutation removes
+    # legacy helper sourcing instead of re-wiring product functions globally.
     assert 'grep -Fq "vetcoders/vc-skills.sh"' not in install_shell
-    assert "[^#[:space:]].*vetcoders/vc-skills" in install_shell
+    assert "/vetcoders\\/vc-skills\\.sh/ { next }" in install_shell
+    assert "path_line=" in install_shell
 
 
 def test_product_mcp_paths_do_not_hardcode_cargo_bin() -> None:

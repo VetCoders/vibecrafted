@@ -1004,8 +1004,15 @@ def test_cmd_doctor_fix_rc_repairs_compat_shell_lines(
         "#!/usr/bin/env bash\nprintf '𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. help ok\\n'\n",
     )
     zshrc.write_text(
-        f'# existing user config\n{installer._old_zshrc_source_line()}\n{installer._shell_source_line()}\nexport VIBECRAFTED_HOME="$HOME/.vibecrafted"\n{installer._launcher_path_line()}'
-        + "\n",
+        f"# existing user config\n{installer._old_zshrc_source_line()}\n"
+        "# >>> vibecrafted >>>\n"
+        'export VETCODERS_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders"\n'
+        'if [ -f "$VETCODERS_CONFIG_DIR/vc-skills.sh" ]; then\n'
+        f"  {installer._shell_source_line()}\n"
+        "fi\n"
+        "# <<< vibecrafted <<<\n"
+        'export VIBECRAFTED_HOME="$HOME/.vibecrafted"\n'
+        f"{installer._launcher_path_line()}\n" + "\n",
         encoding="utf-8",
     )
 
@@ -1020,10 +1027,70 @@ def test_cmd_doctor_fix_rc_repairs_compat_shell_lines(
     repaired = zshrc.read_text(encoding="utf-8")
     assert installer._old_zshrc_source_line() not in repaired
     assert 'export VIBECRAFTED_HOME="$HOME/.vibecrafted"' not in repaired
-    assert repaired.count(installer._shell_source_line()) == 1
+    assert installer._shell_source_line() not in repaired
+    assert "VETCODERS_CONFIG_DIR" not in repaired
+    assert "# >>> vibecrafted >>>" not in repaired
+    assert "# <<< vibecrafted <<<" not in repaired
     assert repaired.count(installer._launcher_path_line()) == 1
-    assert "# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers" in repaired
+    assert "# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers" not in repaired
     assert "# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher" in repaired
+
+
+def test_host_shell_contract_rejects_active_helper_sourcing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    (home / ".zshrc").write_text(
+        f"{installer._shell_source_line()}\n", encoding="utf-8"
+    )
+
+    [finding] = installer._host_shell_contract_findings()
+
+    assert finding.level == "fail"
+    assert finding.component == "host-shell"
+    assert "--fix-rc" in finding.message
+
+
+def test_frontier_contract_rejects_checkout_link(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    config_home = home / ".config"
+    frontier = config_home / "vetcoders" / "frontier"
+    checkout = tmp_path / "checkout"
+    frontier.mkdir(parents=True)
+    checkout.mkdir()
+    (frontier / "legacy.bak.1").symlink_to(checkout)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+
+    [finding] = installer._managed_frontier_contract_findings()
+
+    assert finding.level == "fail"
+    assert finding.component == "frontier-links"
+    assert "legacy.bak.1" in finding.message
+
+
+def test_frontier_contract_accepts_installed_generation_link(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    config_home = home / ".config"
+    runtime_home = home / ".local" / "share" / "vibecrafted"
+    frontier = config_home / "vetcoders" / "frontier"
+    installed = runtime_home / "tools" / "vibecrafted-current" / "config"
+    frontier.mkdir(parents=True)
+    installed.mkdir(parents=True)
+    (installed / "starship.toml").write_text("format = ''\n", encoding="utf-8")
+    (frontier / "starship.toml").symlink_to(installed / "starship.toml")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
+
+    [finding] = installer._managed_frontier_contract_findings()
+
+    assert finding.level == "ok"
+    assert finding.component == "frontier-links"
 
 
 def test_run_doctor_fail_fast_on_runtime_root_drift(

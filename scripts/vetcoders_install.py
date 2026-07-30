@@ -862,6 +862,21 @@ def get_repo_commit(repo_root: Path) -> str:
         return "unknown"
 
 
+def get_repo_full_commit(repo_root: Path) -> str:
+    configured = os.environ.get("VIBECRAFTED_SOURCE_REVISION", "").strip()
+    if re.fullmatch(r"[0-9a-fA-F]{40}", configured):
+        return configured.lower()
+    try:
+        revision = subprocess.check_output(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
+    return revision.lower() if re.fullmatch(r"[0-9a-fA-F]{40}", revision) else "unknown"
+
+
 def get_install_version(repo_root: Path) -> str:
     """Version shown and stamped by ``make install``: ``X.Y.Z+gSHORTSHA``.
 
@@ -943,6 +958,20 @@ def get_repo_url(repo_root: Path) -> str:
         ).strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         return ""
+
+
+def get_repo_owner(repo_root: Path) -> str:
+    configured = os.environ.get("VIBECRAFTED_SOURCE_OWNER_REPO", "").strip()
+    if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", configured):
+        return configured
+    url = get_repo_url(repo_root).rstrip("/").removesuffix(".git")
+    if not url:
+        return "unknown"
+    path = url.split(":", 1)[-1] if ":" in url and not url.startswith("http") else url
+    parts = [part for part in path.replace("\\", "/").split("/") if part]
+    if len(parts) < 2:
+        return "unknown"
+    return f"{parts[-2]}/{parts[-1]}"
 
 
 # ---------------------------------------------------------------------------
@@ -1624,12 +1653,11 @@ def _legacy_launcher_path_lines() -> list[str]:
 def _doctor_repair_rc_content(
     content: str, *, ensure_helper: bool, ensure_path: bool
 ) -> str:
+    _ = ensure_helper  # legacy API: host-shell helper sourcing is intentionally retired
     repaired, _removed = _clean_legacy_rc_entries(content)
     for line, comment in _uninstall_rc_entries():
         repaired, _ = _strip_rc_entry(repaired, line, comment)
     blocks: list[tuple[str, str]] = []
-    if ensure_helper:
-        blocks.append(("𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers", _shell_source_line()))
     if ensure_path:
         blocks.append(("𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher", _launcher_path_line()))
 
@@ -1647,7 +1675,6 @@ def _doctor_repair_rc_content(
 
 def _doctor_fix_rc_files() -> list[DoctorFinding]:
     findings: list[DoctorFinding] = []
-    ensure_helper = _helper_target_path().exists() or _helper_legacy_path().exists()
     ensure_path = _find_launcher_wrapper("vibecrafted") is not None
 
     for rcname in (".zshrc", ".bashrc"):
@@ -1672,7 +1699,7 @@ def _doctor_fix_rc_files() -> list[DoctorFinding]:
             continue
 
         repaired = _doctor_repair_rc_content(
-            content, ensure_helper=ensure_helper, ensure_path=ensure_path
+            content, ensure_helper=False, ensure_path=ensure_path
         )
         if repaired == content:
             findings.append(DoctorFinding("ok", f"rc-fix:{rcname}", "already default"))
@@ -1683,7 +1710,7 @@ def _doctor_fix_rc_files() -> list[DoctorFinding]:
             DoctorFinding(
                 "ok",
                 f"rc-fix:{rcname}",
-                "repaired compat rc entries and restored default launcher/helper hints",
+                "removed product helper sourcing and restored the PATH-only launcher hint",
             )
         )
 
@@ -1942,7 +1969,7 @@ def _clean_legacy_rc_entries(content: str) -> tuple[str, int]:
 
     lines = content.splitlines()
     kept = []
-    skip_until = None
+    skip_until: re.Pattern[str] | None = None
     removed = 0
 
     for cl in lines:
@@ -1951,15 +1978,29 @@ def _clean_legacy_rc_entries(content: str) -> tuple[str, int]:
         # 1. Block cleanup
         if skip_until:
             removed += 1
-            if skip_until in stripped:
+            if skip_until.match(stripped):
                 skip_until = None
+            continue
+
+        if re.match(
+            r"^#\s*>>>\s*vibecrafted(?:\.\s*framework)?\s*>>>$", stripped, re.IGNORECASE
+        ):
+            removed += 1
+            skip_until = re.compile(
+                r"^#\s*<<<\s*vibecrafted(?:\.\s*framework)?\s*<<<$", re.IGNORECASE
+            )
             continue
 
         if stripped.startswith(
             ("# >>> VibeCraft", "# <<< VibeCraft", "# >>> 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝", "# <<< 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝")
         ):
             removed += 1
-            skip_until = "VibeCraft" if "VibeCraft" in stripped else "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝"
+            end_marker = (
+                r"^#\s*<<<.*VibeCraft.*<<<$"
+                if "VibeCraft" in stripped
+                else r"^#\s*<<<.*𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝.*<<<$"
+            )
+            skip_until = re.compile(end_marker)
             continue
 
         # 2. Known source lines
@@ -6932,6 +6973,8 @@ def _write_runtime_generation_manifest(
         "schema": _RUNTIME_GENERATION_MANIFEST_SCHEMA,
         "version": (install_version or read_version_file(runtime_root)).strip(),
         "source_fingerprint": _path_fingerprint(source_root),
+        "owner_repo": get_repo_owner(source_root),
+        "source_revision": get_repo_full_commit(source_root),
         "entrypoint": _RUNTIME_GENERATION_ENTRYPOINT.as_posix(),
         "hashes": hashes,
     }
@@ -8244,12 +8287,18 @@ def _runtime_generation_contract_findings() -> list[DoctorFinding]:
             )
         ]
     source_fingerprint = manifest.get("source_fingerprint")
+    owner_repo = manifest.get("owner_repo")
+    source_revision = manifest.get("source_revision")
     hashes = manifest.get("hashes")
     if (
         manifest.get("schema") != _RUNTIME_GENERATION_MANIFEST_SCHEMA
         or not isinstance(source_fingerprint, str)
         or len(source_fingerprint) != 64
         or not re.fullmatch(r"[0-9a-f]{64}", source_fingerprint)
+        or not isinstance(owner_repo, str)
+        or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", owner_repo)
+        or not isinstance(source_revision, str)
+        or not re.fullmatch(r"[0-9a-f]{40}", source_revision)
         or manifest.get("entrypoint") != _RUNTIME_GENERATION_ENTRYPOINT.as_posix()
         or not isinstance(hashes, dict)
         or set(hashes)
@@ -8320,6 +8369,80 @@ def _runtime_generation_contract_findings() -> list[DoctorFinding]:
             "ok",
             "runtime-generation",
             f"{generation.name} is manifest-bound and checkout-free",
+        )
+    ]
+
+
+def _host_shell_contract_findings() -> list[DoctorFinding]:
+    offenders: list[str] = []
+    for rcname in (".zshrc", ".bashrc"):
+        rcfile = Path.home() / rcname
+        if not rcfile.is_file():
+            continue
+        try:
+            lines = rcfile.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if (
+                "vc-skills.sh" in stripped
+                or "vc-skills.zsh" in stripped
+                or (stripped.startswith(("source ", ". ")) and "vetcoders" in stripped)
+            ):
+                offenders.append(rcname)
+                break
+    if offenders:
+        return [
+            DoctorFinding(
+                "fail",
+                "host-shell",
+                "product helper sourcing remains active in "
+                + ", ".join(offenders)
+                + "; run `vibecrafted doctor --fix-rc` to keep only the PATH helper",
+            )
+        ]
+    return [
+        DoctorFinding(
+            "ok",
+            "host-shell",
+            "ordinary shell startup is PATH-only; vc-start owns product helpers",
+        )
+    ]
+
+
+def _managed_frontier_contract_findings() -> list[DoctorFinding]:
+    frontier = xdg_config_home() / "vetcoders" / "frontier"
+    installed_root = vibecrafted_runtime_home().resolve(strict=False)
+    unsafe: list[str] = []
+    if frontier.is_dir():
+        for path in sorted(frontier.rglob("*")):
+            if not path.is_symlink():
+                continue
+            try:
+                target = path.resolve(strict=True)
+            except (OSError, RuntimeError):
+                unsafe.append(str(path.relative_to(frontier)))
+                continue
+            if not _is_subpath(target, installed_root):
+                unsafe.append(str(path.relative_to(frontier)))
+    if unsafe:
+        return [
+            DoctorFinding(
+                "fail",
+                "frontier-links",
+                f"{len(unsafe)} frontier link(s) escape the installed runtime: "
+                + ", ".join(unsafe[:5])
+                + (" ..." if len(unsafe) > 5 else ""),
+            )
+        ]
+    return [
+        DoctorFinding(
+            "ok",
+            "frontier-links",
+            "all managed frontier links resolve inside the installed runtime",
         )
     ]
 
@@ -8449,6 +8572,8 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
 
     findings.extend(_runtime_root_contract_findings())
     findings.extend(_runtime_generation_contract_findings())
+    findings.extend(_host_shell_contract_findings())
+    findings.extend(_managed_frontier_contract_findings())
 
     # 3. Expected skills present
     for skill_name in state.skills:
@@ -8734,6 +8859,14 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
         if "uv" in resolved.parts and "tools" in resolved.parts:
             python_entrypoint_owners.add("uv tool")
             continue
+        if name == "vibecrafted":
+            try:
+                expected = _launcher_symlink_target(Path()).resolve(strict=True)
+            except (OSError, RuntimeError):
+                expected = None
+            if expected is not None and resolved == expected:
+                python_entrypoint_owners.add("runtime generation")
+                continue
         python_entrypoint_issues.append(f"{name}:not-uv-tool")
     if python_entrypoint_issues:
         findings.append(

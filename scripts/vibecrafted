@@ -4601,11 +4601,13 @@ cmd_doctor() {
     printf '%b✗%b Doctor installer not found. Is 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. installed?\n' "$_red" "$_reset" >&2
     return 1
   }
-  python3 "$installer" doctor
+  local doctor_rc=0
+  python3 "$installer" doctor "$@" || doctor_rc=$?
   # Delivery/runtime receipt rides doctor so operators see source↔installed
   # drift without a separate habit. Failure to import is non-fatal here —
   # the dedicated `vibecrafted receipt` command remains the sharp surface.
   cmd_receipt 2>/dev/null || true
+  return "$doctor_rc"
 }
 
 cmd_receipt() {
@@ -5320,7 +5322,7 @@ main() {
     gui) cmd_gui "$@" ;;
     server) cmd_server "$@" ;;
     tui) cmd_tui "$@" ;;
-    doctor|check) cmd_doctor ;;
+    doctor|check) cmd_doctor "$@" ;;
     receipt) cmd_receipt "$@" ;;
     scaffold-doctor) cmd_scaffold_doctor "$@" ;;
     dashboard|mc|mission-control|sessions) cmd_dashboard "$@" ;;

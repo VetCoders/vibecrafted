@@ -4683,6 +4683,11 @@ def test_runtime_generation_failure_keeps_old_pointer_live(
 def test_runtime_generation_pointer_swap_never_removes_current(
     tmp_path: Path, monkeypatch
 ) -> None:
+    monkeypatch.setenv(
+        "VIBECRAFTED_SOURCE_REVISION",
+        "0123456789abcdef0123456789abcdef01234567",
+    )
+    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "Vetcoders/vibecrafted")
     source, old_target, current = _runtime_pointer_fixture(tmp_path)
     original_replace = installer.os.replace
     observations: list[tuple[bool, bool, bool]] = []
@@ -4735,6 +4740,8 @@ def test_runtime_generation_pointer_swap_never_removes_current(
     assert manifest["entrypoint"] == (
         "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
     )
+    assert manifest["owner_repo"] == "Vetcoders/vibecrafted"
+    assert manifest["source_revision"] == ("0123456789abcdef0123456789abcdef01234567")
     assert set(manifest["hashes"]) == {
         "VERSION",
         "runtime/generated/vc-frame/config.kdl",
@@ -4783,6 +4790,11 @@ def test_runtime_generation_doctor_verifies_manifest_and_launcher(
     _write_valid_runtime_generation(old_target)
     current.symlink_to(old_target.name)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv(
+        "VIBECRAFTED_SOURCE_REVISION",
+        "0123456789abcdef0123456789abcdef01234567",
+    )
+    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "Vetcoders/vibecrafted")
 
     generation = installer.sync_control_plane_tree(
         source,
@@ -4828,6 +4840,11 @@ def test_runtime_generation_doctor_rejects_deck_drift_and_incomplete_hashes(
         launcher='#!/usr/bin/env bash\nprintf "launcher\\n"\n',
     )
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv(
+        "VIBECRAFTED_SOURCE_REVISION",
+        "0123456789abcdef0123456789abcdef01234567",
+    )
+    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "Vetcoders/vibecrafted")
     generation = installer.sync_control_plane_tree(
         source,
         current,
@@ -4873,6 +4890,11 @@ def test_runtime_generation_doctor_rejects_launcher_from_old_generation(
         launcher='#!/usr/bin/env bash\nprintf "launcher\\n"\n',
     )
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv(
+        "VIBECRAFTED_SOURCE_REVISION",
+        "0123456789abcdef0123456789abcdef01234567",
+    )
+    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "Vetcoders/vibecrafted")
     generation = installer.sync_control_plane_tree(
         source,
         current,

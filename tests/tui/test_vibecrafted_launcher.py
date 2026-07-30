@@ -1227,6 +1227,56 @@ def test_installed_launcher_gui_uses_python_control_plane_surface(
     assert "Press Ctrl-C to stop." in result.stdout
 
 
+def test_installed_launcher_doctor_forwards_fix_flags(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    launcher = home / ".local" / "bin" / "vibecrafted"
+    current_root = (
+        home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
+    )
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "python3-calls.txt"
+
+    home.mkdir(parents=True)
+    fake_bin.mkdir()
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text(LAUNCHER.read_text(encoding="utf-8"), encoding="utf-8")
+    launcher.chmod(0o755)
+    (current_root / "scripts").mkdir(parents=True, exist_ok=True)
+    (current_root / "vibecrafted-core").mkdir(parents=True, exist_ok=True)
+    (current_root / "VERSION").write_text("0.0.0-test\n", encoding="utf-8")
+    (current_root / "scripts" / "vetcoders_install.py").write_text(
+        "#!/usr/bin/env python3\n", encoding="utf-8"
+    )
+    _write_fake_python3(fake_bin, capture_file)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:/bin:/usr/bin"
+    env["CAPTURE_FILE"] = str(capture_file)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(launcher),
+            "doctor",
+            "--fix-rc",
+            "--fix-launchers",
+        ],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    calls = capture_file.read_text(encoding="utf-8").splitlines()
+    assert (
+        f"{current_root / 'scripts' / 'vetcoders_install.py'} "
+        "doctor --fix-rc --fix-launchers"
+    ) in calls
+
+
 def test_installed_launcher_tui_uses_shared_state_and_voc_binary(
     tmp_path: Path,
 ) -> None:
