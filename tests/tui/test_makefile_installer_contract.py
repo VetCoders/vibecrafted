@@ -192,6 +192,11 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
         "_materialize_vc_frame_generation",
         lambda runtime_root: seen.update(materialized=runtime_root),
     )
+    monkeypatch.setattr(
+        installer,
+        "_write_runtime_generation_manifest",
+        lambda runtime_root, **_kwargs: seen.update(manifested=runtime_root),
+    )
 
     installer.sync_control_plane_tree(source, destination, mirror=True)
 
@@ -200,6 +205,7 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
     assert Path(seen["destination"]).parent == destination.parent
     assert seen["mirror"] is True
     assert seen["materialized"] == seen["destination"]
+    assert seen["manifested"] == seen["destination"]
     assert (destination / "payload.txt").read_text(encoding="utf-8") == "validated\n"
     source_text = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
         encoding="utf-8"
@@ -425,6 +431,15 @@ def test_install_all_installs_python_tools_with_uv_tool_install() -> None:
         not in python_tools_block
     )
     assert "vibecrafted-current" in python_tools_block
+    assert (
+        "v._install_launcher(Path(sys.argv[1]), dry_run=False, update_rc=False)"
+        in python_tools_block
+    )
+    assert (
+        '$$stable_root/vibecrafted-core/vibecrafted_core/deck/vibecrafted'
+        in python_tools_block
+    )
+    assert 'if [ "$$entrypoint" = "vibecrafted" ]' in python_tools_block
     assert "vibecrafted-mcp" in (
         REPO_ROOT / "vibecrafted-mcp" / "pyproject.toml"
     ).read_text(encoding="utf-8")
@@ -752,7 +767,7 @@ def test_make_install_verifies_server_supervisor_entrypoint() -> None:
         'tool_root="$$(uv tool dir --color never)/vibecrafted"' in install_tools_block
     )
     assert "uv tool dir)" not in install_tools_block
-    assert "expected uv tool target" in install_tools_block
+    assert "expected installed target" in install_tools_block
     assert "uv tool imports vibecrafted_core" in install_tools_block
     assert "$$stable_root/vibecrafted-core" in install_tools_block
     assert (
