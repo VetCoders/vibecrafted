@@ -157,6 +157,26 @@ Do **not** merge packages unless a single MCP-HTTP binary is explicitly required
     `modules=fresh` + non-zero allowlist → `@Vibecrafted justdo …` →
     `curl /api/control/runs/{id}`
 
+### Hydrate packaging (residual-honest operator path)
+
+DoU residual after polarize-L3 is **operator runtime only** (allowlist + fresh
+Socket Mode + optional LaunchAgent + one live `@mention` SLA). Packaging lives
+in `vibecrafted-slack-agent` so strangers/operators have a single residual card
+without inventing Marketplace or a second board:
+
+| Artifact            | Location / command                                                         |
+| ------------------- | -------------------------------------------------------------------------- |
+| Operator smoke card | `vibecrafted-slack-agent/deploy/OPERATOR_SMOKE_CARD.md`                    |
+| Residual doctor     | `cd vibecrafted-slack-agent && npm run doctor`                             |
+| LaunchAgent prepare | `npm run install:launchagent` (render; load = operator button)             |
+| LaunchAgent load    | printed one-liners or `npm run install:launchagent -- --apply --bootstrap` |
+
+Doctor exit codes (honest residual, not architecture debt): **0** residual closed
+for host probe · **2** empty allowlist · **3** modules=STALE · **4** no live
+bridge · **1** eye down. Agents package and measure; they do **not** write
+`.env`, kill the mouth, or bootstrap LaunchAgents unless the operator presses
+the button.
+
 ## Invariants
 
 1. No secrets in git; tokens only `~/.keys` / `.env`.

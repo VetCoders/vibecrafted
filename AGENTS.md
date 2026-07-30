@@ -845,5 +845,7 @@ See `docs/runtime/OMNI_OBSERVER_SLACK_GATEWAY.md` — **polarized (L3 sealed)**:
 control_plane sole durable truth; server+MCP = eyes (projections);
 bot = mouth/ear; workers = hands. Unit green ≠ Slack green (STALE
 bridge / empty allowlist = operator residual, not architecture debt).
+Hydrate residual pack (slack-agent): `deploy/OPERATOR_SMOKE_CARD.md`,
+`npm run doctor`, `npm run install:launchagent`.
 Parent: `docs/adr/0002-unified-operator-ownership.md` (`run-lifecycle` →
 `control-plane`; Slack owns `a2a-envelopes` only).
