@@ -137,6 +137,24 @@ else
   ln -sfn "$target_file" "$legacy_file"
 fi
 
+_rc_has_unclosed_vibecrafted_block() {
+  awk '
+    BEGIN { in_vibecrafted_block = 0 }
+    {
+      lower = tolower($0)
+      is_product_marker = (lower ~ /vibecraft/ || $0 ~ /𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝/)
+      if (!in_vibecrafted_block && is_product_marker && $0 ~ />>>/) {
+        in_vibecrafted_block = 1
+        next
+      }
+      if (in_vibecrafted_block && is_product_marker && $0 ~ /<<</) {
+        in_vibecrafted_block = 0
+      }
+    }
+    END { exit(in_vibecrafted_block ? 0 : 1) }
+  ' "$1"
+}
+
 _update_rcfile() {
   local rcfile="$1"
   # $2 = shell_name (for logging, currently unused)
@@ -145,6 +163,12 @@ _update_rcfile() {
   # Respect locked/immutable files
   if [[ -f "$rcfile" ]] && ! touch -c "$rcfile" 2>/dev/null; then
     printf '\033[33m[warn]\033[0m %s is locked — remove vc-skills sourcing and add PATH manually:\n' "$rcfile"
+    printf '       %s\n' "$path_line"
+    return 0
+  fi
+  if [[ -f "$rcfile" ]] && _rc_has_unclosed_vibecrafted_block "$rcfile"; then
+    printf '\033[33m[warn]\033[0m %s has an unclosed Vibecrafted block; left unchanged for manual repair.\n' "$rcfile"
+    printf '       After closing or removing the block, ensure this PATH line is present:\n'
     printf '       %s\n' "$path_line"
     return 0
   fi

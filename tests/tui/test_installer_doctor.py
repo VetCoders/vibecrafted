@@ -1036,6 +1036,36 @@ def test_cmd_doctor_fix_rc_repairs_compat_shell_lines(
     assert "# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher" in repaired
 
 
+def test_cmd_doctor_fix_rc_preserves_unclosed_managed_block(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    launcher_bin = home / ".local" / "bin"
+    zshrc = home / ".zshrc"
+    launcher_bin.mkdir(parents=True)
+    _write_executable(launcher_bin / "vibecrafted", "#!/bin/sh\nexit 0\n")
+    original = (
+        "# user config\n"
+        "# >>> vibecrafted >>>\n"
+        f"{installer._shell_source_line()}\n"
+        "export KEEP_ME=1\n"
+        "alias keep-me=true\n"
+    )
+    zshrc.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+
+    findings = installer._doctor_fix_rc_files()
+
+    assert zshrc.read_text(encoding="utf-8") == original
+    assert any(
+        finding.component == "rc-fix:.zshrc"
+        and finding.level == "warn"
+        and "unclosed" in finding.message
+        for finding in findings
+    )
+    assert installer._clean_legacy_rc_entries(original) == (original, 0)
+
+
 def test_host_shell_contract_rejects_active_helper_sourcing(
     tmp_path: Path, monkeypatch
 ) -> None:
