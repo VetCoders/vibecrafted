@@ -1,12 +1,45 @@
 # Omni-observer + Slack gateway
 
-**control_plane** is the only durable status truth.  
-**vc-server** is the eye (HTTP read model).  
-**vibecrafted-mcp** is the same board for IDE agents (stdio).  
-**Slack bot** is mouth/ear.  
-**Workers** are hands — they announce by running (dispatcher writes control_plane).
+## Polarized thesis (single axis — 2026-07-30)
 
-Plan: `vc-server-mcp-slack-gateway` (2026-07-28 scaffold · implement 2026-07-30).
+**control_plane is the only durable status truth; vc-server and MCP are
+projections of that truth (eyes); the Slack gateway is mouth/ear only;
+workers are hands.** Unit green never equals Slack product green —
+live `@mention → run_id` requires operator buttons (allowlist + fresh
+Socket Mode bridge), not a second status store.
+
+Plan: `vc-server-mcp-slack-gateway` (2026-07-28 scaffold · implement →
+marbles fortify → polarize 2026-07-30).
+
+### Three surface classes (do not average)
+
+| Class               | What it is                                                            | Authority                                     | Not                                   |
+| ------------------- | --------------------------------------------------------------------- | --------------------------------------------- | ------------------------------------- |
+| **Board truth**     | runs / events / warnings / settlement on disk under control_plane     | `~/.vibecrafted/control_plane` via dispatcher | Slack messages, unit logs, agent chat |
+| **Eye projections** | HTTP `GET /api/control/*` and MCP `vc_board_status` / `vc_run_status` | read models of the same plane                 | independent DBs                       |
+| **Gateway policy**  | allowlist, cooldown, STALE/fresh modules, progress rate-limit         | bot process config + measured process age     | board truth                           |
+
+### Rejected alternatives (explicit)
+
+1. **Parallel status DB inside the bot** (`slack_jobs` as board) — job index is thread↔run_id only.
+2. **Byte-identical JSON across MCP and HTTP** — envelopes may differ; mission bar is **logical** parity on `active_runs` / `recent_runs` / `warnings` counts and run identity fields.
+3. **Merge MCP + HTTP into one package** — W6 dual-process stands; Node bot uses HTTP; IDE keeps stdio MCP.
+4. **Unit / e2e green ⇒ product complete** — `e2e-certainty.sh` exits **3** on STALE live bridge by design; empty `SLACK_ALLOW_USERS` is fail-closed.
+5. **Agent-owned bridge restart or allowlist write** — operator buttons only.
+
+### Board parity bar (measured)
+
+Shared keys (logical board): `active_runs`, `recent_runs`, `warnings`,
+`events`, `generated_at`, `settlement_counts`.
+
+Envelope deltas (not a dual truth):
+
+- HTTP adds `control_plane` path; MCP may expose `orphan_artifacts` /
+  `stalled_runs` from direct `sync_state()`.
+- `settlement_counts` field bags can differ by projection; do **not**
+  invent a third store to reconcile them — re-read control_plane.
+
+Slack `/vc status` and `vc-slack status` read the **HTTP eye** only.
 
 ## Architecture
 
@@ -17,10 +50,10 @@ Workers / ship / justdo
 ~/.vibecrafted/control_plane/     ← single source of truth
     │
     ├─► vc-server (HTTP read + SSE)     omni-observer UI + API  :3024
-    ├─► vibecrafted-mcp (stdio MCP)     same board for agents
+    ├─► vibecrafted-mcp (stdio MCP)     same logical board for agents
     │
     └─► Slack gateway (Socket Mode)     human ↔ fleet connector
-            │  read: GET /api/control/*
+            │  read: GET /api/control/*   (HTTP eye — not local status)
             │  write (dispatch only): vibecrafted justdo …
             ▼
         #agents-room threads (run_id, status, report path)

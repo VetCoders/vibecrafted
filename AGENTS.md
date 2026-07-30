@@ -841,4 +841,7 @@ SHACE, Marbles, Loctree Mapping, PSCD, and the Vibecrafted operating language ar
 
 ## Omni-observer + Slack gateway
 
-See `docs/runtime/OMNI_OBSERVER_SLACK_GATEWAY.md` — control_plane truth; server=eye; bot=mouth/ear; workers=hands.
+See `docs/runtime/OMNI_OBSERVER_SLACK_GATEWAY.md` — **polarized**:
+control_plane sole durable truth; server+MCP = eyes (projections);
+bot = mouth/ear; workers = hands. Unit green ≠ Slack green (STALE
+bridge / empty allowlist = operator residual, not architecture debt).
