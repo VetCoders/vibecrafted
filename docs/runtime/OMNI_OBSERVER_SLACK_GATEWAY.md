@@ -64,9 +64,14 @@ Dispatch policy (gateway, not control_plane):
 - max concurrent jobs per user (`VC_DISPATCH_MAX_CONCURRENT`, default 3)
 - intermediate `*progress*` posts on state/health/liveness/report key change (first always; then `VC_PROGRESS_MIN_MS`)
 - ≤5s product SLA = receipt-in-thread (`run_id`), not worker terminal
-- `/vc status` prints **measured** bridge freshness: `code_mtime` vs process
-  start → `modules=STALE|fresh` (prose-only "restart after pull" is not enough)
+- `/vc status` (in-process) prints **measured** bridge freshness: `code_mtime`
+  vs process start → `modules=STALE|fresh`
+- `vc-slack status` (CLI) discovers the live `node src/index.js` for the package
+  via pgrep/lsof/ps → `live_bridge_pid` + `modules=STALE|fresh` _(out-of-process)_
+  so a multi-day-old bridge cannot hide behind `bridge_modules=n/a`
+- `e2e-certainty.sh` **exits 3** when a live bridge is STALE (unit green ≠ Slack green)
 - empty allowlist deny ≠ "user not listed" (distinct messages)
+- dispatch cooldown starts only after a real `run_id` receipt (failed spawn does not burn cooldown)
 - board `warnings` from control state appear on status (eye, not a second store)
 
 Workers do **not** need Slack. Example visibility path:
@@ -92,11 +97,13 @@ Do **not** merge packages unless a single MCP-HTTP binary is explicitly required
 - Certainty script: `vibecrafted-slack-agent/scripts/e2e-certainty.sh` (full `npm test` + live board)
 - **Restart the Socket Mode bridge after every pull** — Node does not hot-reload
   `dispatch.js`; a stale process can green unit tests while Slack still lacks
-  intermediate `*progress*` / rate-limit behavior. After restart, `/vc status`
-  must show `modules=fresh` (not `STALE`). Operator smoke:
-  set `SLACK_ALLOW_USERS` → restart bridge → `/vc status` shows
-  `modules=fresh` + non-zero allowlist → `@Vibecrafted justdo …` →
-  `curl /api/control/runs/{id}`
+  intermediate `*progress*` / rate-limit behavior. Proof surfaces:
+  - `/vc status` → `modules=fresh` (in-process)
+  - `vc-slack status` → `live_bridge_pid=… modules=fresh` (out-of-process)
+  - `./scripts/e2e-certainty.sh` fails with exit 3 while STALE
+    Operator smoke: set `SLACK_ALLOW_USERS` → restart bridge → status shows
+    `modules=fresh` + non-zero allowlist → `@Vibecrafted justdo …` →
+    `curl /api/control/runs/{id}`
 
 ## Invariants
 
