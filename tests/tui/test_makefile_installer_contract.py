@@ -228,9 +228,12 @@ def test_install_manifest_post_install_uses_mirror_sync() -> None:
     assert "$(MAKE) --no-print-directory install-server-payload" in makefile
     assert "make --no-print-directory install-server-service" not in text
     assert (
-        'bash "$PWD/vibecrafted-core/vibecrafted_core/runtime/scripts/'
-        'install-frontier-config.sh" --source "$PWD"'
+        'bash "$stable_root/vibecrafted-core/vibecrafted_core/runtime/scripts/'
+        'install-frontier-config.sh" --source "$stable_root"'
     ) in text
+    assert text.index("make --no-print-directory install-bundle-tools") < text.index(
+        'install-frontier-config.sh" --source "$stable_root"'
+    )
     assert "bash runtime/scripts/install-frontier-config.sh" not in text
 
 
@@ -247,6 +250,13 @@ def test_make_install_stages_vc_frame_from_published_runtime() -> None:
         install_block.index("uv tool dir")
     )
     assert 'PYTHONPATH="$(SOURCE)/vibecrafted-core"' not in install_block
+    assert install_block.index("install-bundle-tools") < install_block.index(
+        'install-frontier-config.sh" --source "$$stable_root"'
+    )
+    assert (
+        'stable_root="$${XDG_DATA_HOME:-$$HOME/.local/share}/vibecrafted/tools/'
+        'vibecrafted-current"'
+    ) in install_block
     assert (
         "from vibecrafted_core.vc_frame_delivery import "
         "wire_vc_frame_config, ensure_zshrc"
@@ -436,7 +446,7 @@ def test_install_all_installs_python_tools_with_uv_tool_install() -> None:
         in python_tools_block
     )
     assert (
-        '$$stable_root/vibecrafted-core/vibecrafted_core/deck/vibecrafted'
+        "$$stable_root/vibecrafted-core/vibecrafted_core/deck/vibecrafted"
         in python_tools_block
     )
     assert 'if [ "$$entrypoint" = "vibecrafted" ]' in python_tools_block
