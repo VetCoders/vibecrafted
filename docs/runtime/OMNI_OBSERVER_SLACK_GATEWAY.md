@@ -15,7 +15,9 @@ only, never run status. This file is the gateway-specific contract; the ADR
 is not a second truth.
 
 Plan: `vc-server-mcp-slack-gateway` (2026-07-28 scaffold · implement →
-marbles fortify → polarize L1–L2 2026-07-30).
+marbles fortify → polarize L1–L3 2026-07-30). **Polarize depth complete** —
+architecture closed on this axis; remaining residual is operator runtime
+only (allowlist + fresh Socket Mode), not competing board truth.
 
 ### Three surface classes (do not average)
 
@@ -87,17 +89,23 @@ Home override: `$VIBECRAFTED_HOME` (default `~/.vibecrafted`).
 
 ## Bot surfaces (vibecrafted-slack-agent)
 
-| Surface                              | Backend                                      |
-| ------------------------------------ | -------------------------------------------- |
-| `/vc status` · `vc-slack status`     | `GET /api/health` + `GET /api/control/state` |
-| `/vc run <id>` · `vc-slack run <id>` | `GET /api/control/runs/{id}`                 |
+| Surface                               | Backend                                                                                         |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `/vc status` · `vc-slack status`      | `GET /api/health` + `GET /api/control/state`                                                    |
+| `/vc run <id>` · `vc-slack run <id>`  | `GET /api/control/runs/{id}`                                                                    |
+| `@Vibecrafted justdo <root> <prompt>` | allowlist → `vibecrafted justdo <agent> --json …` → thread `run_id` → progress posts → terminal |
+| `vc-slack signal` / lifecycle hook    | Slack post only (does not invent control_plane state)                                           |
 
-PATH install: `ln -sfn <repo>/bin/vc-slack ~/.local/bin/vc-slack` is supported.
+### PATH install (mouth CLI, not a second board)
+
+```bash
+ln -sfn <repo>/bin/vc-slack ~/.local/bin/vc-slack
+```
+
 `bin/vc-slack` **resolves symlinks** before setting `ROOT` so `status`/`run`
 load package `src/cli-*.js` (not `~/.local/src/…`). Always-on proof uses the
 package path or a correctly linked PATH entry — not a broken install tree.
-| `@Vibecrafted justdo <root> <prompt>` | allowlist → `vibecrafted justdo <agent> --json …` → thread `run_id` → progress posts → terminal |
-| `vc-slack signal` / lifecycle hook | Slack post only (does not invent control_plane state) |
+Install path never becomes a status store; it only routes to the HTTP eye.
 
 Allowlist: `SLACK_ALLOW_USERS`. Default agent: `VC_DEFAULT_AGENT=grok`.
 
