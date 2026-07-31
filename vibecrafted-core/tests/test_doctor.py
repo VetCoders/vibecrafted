@@ -182,8 +182,96 @@ def test_doctor_run_includes_server_supervision_finding(monkeypatch) -> None:
     monkeypatch.setattr(doctor, "_launcher_shim_findings", list)
     monkeypatch.setattr(doctor, "_server_supervision_findings", lambda: [expected])
     monkeypatch.setattr(doctor, "_vc_frame_delivery_findings", list)
+    monkeypatch.setattr(doctor, "_vc_frame_truth_drift_findings", list)
 
     assert doctor.doctor_run() == [expected]
+
+
+def _seed_truth(root: Path, content: str = "layout ok\n") -> None:
+    (root / "layouts").mkdir(parents=True)
+    (root / "config.kdl").write_text(content, encoding="utf-8")
+    (root / "layouts" / "operator.kdl").write_text(content, encoding="utf-8")
+
+
+def _truth_sandbox(tmp_path: Path, monkeypatch) -> tuple[Path, Path, Path]:
+    """Tools home with one published generation behind vibecrafted-current."""
+    from vibecrafted_core import frontier_assets
+
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    def no_checkout() -> Path:
+        raise FileNotFoundError
+
+    monkeypatch.setattr(frontier_assets, "vc_frame_config_source", no_checkout)
+    tools = tmp_path / "tools"
+    generation = tools / "vibecrafted-generation-test"
+    _seed_truth(generation / "config" / "vc-frame")
+    _seed_truth(generation / "runtime" / "generated" / "vc-frame")
+    tools.mkdir(parents=True, exist_ok=True)
+    (tools / "vibecrafted-current").symlink_to(generation)
+    home = tmp_path / "home"
+    home.mkdir()
+    return tools, generation, home
+
+
+def test_truth_drift_ok_when_generation_agrees(tmp_path: Path, monkeypatch) -> None:
+    tools, _, home = _truth_sandbox(tmp_path, monkeypatch)
+
+    findings = doctor._vc_frame_truth_drift_findings(home=home, tools_home=tools)
+
+    assert [finding.level for finding in findings] == ["ok", "ok"]
+    assert all(finding.component == "vc-frame:truth" for finding in findings)
+
+
+def test_truth_drift_fails_when_generation_disagrees_with_itself(
+    tmp_path: Path, monkeypatch
+) -> None:
+    tools, generation, home = _truth_sandbox(tmp_path, monkeypatch)
+    drifted = generation / "runtime" / "generated" / "vc-frame" / "config.kdl"
+    drifted.write_text("layout drifted\n", encoding="utf-8")
+
+    findings = doctor._vc_frame_truth_drift_findings(home=home, tools_home=tools)
+
+    split = [finding for finding in findings if finding.level == "fail"]
+    assert len(split) == 1
+    assert "disagrees with itself" in split[0].message
+    assert "config.kdl" in split[0].message
+
+
+def test_truth_drift_warns_when_dev_checkout_runs_ahead(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from vibecrafted_core import frontier_assets
+
+    tools, _, home = _truth_sandbox(tmp_path, monkeypatch)
+    checkout = tmp_path / "repo" / "config" / "vc-frame"
+    _seed_truth(checkout, content="layout ahead\n")
+    monkeypatch.setattr(frontier_assets, "vc_frame_config_source", lambda: checkout)
+
+    findings = doctor._vc_frame_truth_drift_findings(home=home, tools_home=tools)
+
+    ahead = [finding for finding in findings if finding.level == "warn"]
+    assert len(ahead) == 1
+    assert "dev checkout differs from published store" in ahead[0].message
+
+
+def test_truth_drift_fails_on_projection_into_parked_generation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    tools, _, home = _truth_sandbox(tmp_path, monkeypatch)
+    parked = tools / "vibecrafted-generation-parked"
+    _seed_truth(parked / "runtime" / "generated" / "vc-frame")
+    view = home / ".config" / "vc-frame"
+    view.mkdir(parents=True)
+    (view / "config.kdl").symlink_to(
+        parked / "runtime" / "generated" / "vc-frame" / "config.kdl"
+    )
+
+    findings = doctor._vc_frame_truth_drift_findings(home=home, tools_home=tools)
+
+    stale = [finding for finding in findings if finding.level == "fail"]
+    assert len(stale) == 1
+    assert "parked generation" in stale[0].message
 
 
 def test_doctor_summary_counts_findings() -> None:

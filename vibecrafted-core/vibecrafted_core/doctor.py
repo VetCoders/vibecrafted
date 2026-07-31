@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import os
 import shutil
@@ -550,6 +551,145 @@ def _vc_frame_delivery_findings(
     return findings
 
 
+_TRUTH_PATTERNS = ("config.kdl", "auto-theme.sh", "layouts/*.kdl", "themes/*.kdl")
+
+
+def _hash_config_tree(root: Path) -> dict[str, str]:
+    """sha256 map of the canonical vc-frame config files under one truth root."""
+    hashes: dict[str, str] = {}
+    if not root.is_dir():
+        return hashes
+    for pattern in _TRUTH_PATTERNS:
+        for path in sorted(root.glob(pattern)):
+            if not path.is_file():
+                continue
+            try:
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                continue
+            hashes[str(path.relative_to(root))] = digest
+    return hashes
+
+
+def _diverged_files(left: dict[str, str], right: dict[str, str]) -> list[str]:
+    return sorted(
+        name for name in left.keys() | right.keys() if left.get(name) != right.get(name)
+    )
+
+
+def _vc_frame_truth_drift_findings(
+    *,
+    home: Path | None = None,
+    tools_home: Path | None = None,
+) -> list[_Finding]:
+    """Content drift across the vc-frame config truths.
+
+    The delivery checks prove the FORM of the view (symlink channels, dangling
+    links). This proves the CONTENT: the published generation must agree with
+    itself (config/ vs runtime/generated/), the dev checkout may run ahead of
+    the store but never silently, and no projection link may resolve into a
+    parked generation instead of vibecrafted-current.
+    """
+    findings: list[_Finding] = []
+    current = tools_current_path(tools_home)
+    store_cfg = current / "config" / "vc-frame"
+    generated = current / "runtime" / "generated" / "vc-frame"
+
+    store_map = _hash_config_tree(store_cfg)
+    generated_map = _hash_config_tree(generated)
+    if store_map and generated_map:
+        split = _diverged_files(store_map, generated_map)
+        if split:
+            findings.append(
+                _Finding(
+                    "fail",
+                    "vc-frame:truth",
+                    "published generation disagrees with itself "
+                    f"(config/ vs runtime/generated/): {', '.join(split[:6])}"
+                    f"{' …' if len(split) > 6 else ''} — run `vibecrafted update`",
+                )
+            )
+        else:
+            findings.append(
+                _Finding(
+                    "ok",
+                    "vc-frame:truth",
+                    f"store truths agree ({len(store_map)} file(s) hashed)",
+                )
+            )
+
+    checkout: Path | None = None
+    try:
+        from .frontier_assets import vc_frame_config_source
+
+        checkout = vc_frame_config_source()
+    except FileNotFoundError:
+        checkout = None
+    if checkout is not None and store_map:
+        drift = _diverged_files(_hash_config_tree(checkout), store_map)
+        if drift:
+            findings.append(
+                _Finding(
+                    "warn",
+                    "vc-frame:truth",
+                    f"dev checkout differs from published store on {len(drift)} "
+                    f"file(s): {', '.join(drift[:6])}"
+                    f"{' …' if len(drift) > 6 else ''} — legal mid-development; "
+                    "republish via `vibecrafted update` before trusting "
+                    "env-less sessions",
+                )
+            )
+        else:
+            findings.append(
+                _Finding("ok", "vc-frame:truth", "dev checkout matches published store")
+            )
+
+    tools_root = current.parent
+    try:
+        current_real = current.resolve(strict=True)
+    except OSError:
+        return findings
+    projection_roots = (
+        vc_frame_user_config_dir(home),
+        frontier_root(home) / "vc-frame",
+    )
+    stale: list[Path] = []
+    for root in projection_roots:
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if not path.is_symlink():
+                continue
+            try:
+                target = path.resolve(strict=True)
+            except OSError:
+                continue  # dangling links are the delivery check's finding
+            if target.is_relative_to(tools_root) and not target.is_relative_to(
+                current_real
+            ):
+                stale.append(path)
+    if stale:
+        listed = ", ".join(str(path) for path in stale[:4])
+        findings.append(
+            _Finding(
+                "fail",
+                "vc-frame:truth",
+                f"{len(stale)} projection link(s) resolve into a parked "
+                f"generation instead of vibecrafted-current: {listed}"
+                f"{' …' if len(stale) > 4 else ''} — re-run `vibecrafted update`",
+            )
+        )
+    else:
+        findings.append(
+            _Finding(
+                "ok",
+                "vc-frame:truth",
+                "all projection links resolve inside vibecrafted-current",
+            )
+        )
+    return findings
+
+
 def doctor_run(
     store_path: str | Path | None = None,
     state: Any | None = None,
@@ -573,6 +713,7 @@ def doctor_run(
     findings.extend(_launcher_shim_findings())
     findings.extend(_server_supervision_findings())
     findings.extend(_vc_frame_delivery_findings())
+    findings.extend(_vc_frame_truth_drift_findings())
     return findings
 
 
