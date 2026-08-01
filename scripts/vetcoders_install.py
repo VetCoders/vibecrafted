@@ -852,6 +852,9 @@ def get_framework_version(repo_root: Path) -> str:
 
 
 def get_repo_commit(repo_root: Path) -> str:
+    configured = os.environ.get("VIBECRAFTED_SOURCE_REVISION", "").strip()
+    if re.fullmatch(r"[0-9a-fA-F]{40}", configured):
+        return configured[:8].lower()
     try:
         return subprocess.check_output(
             ["git", "-C", str(repo_root), "rev-parse", "--short", "HEAD"],
