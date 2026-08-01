@@ -4751,6 +4751,21 @@ def test_runtime_generation_failure_keeps_old_pointer_live(
     assert not list(current.parent.glob("vibecrafted-generation-9.9.9+gtest-*"))
 
 
+def test_tarball_install_version_uses_explicit_source_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "vibecrafted-tarball"
+    source.mkdir()
+    (source / "VERSION").write_text("3.7.0\n", encoding="utf-8")
+    revision = "0123456789abcdef0123456789abcdef01234567"
+    monkeypatch.setenv("VIBECRAFTED_SOURCE_REVISION", revision)
+
+    assert installer.get_repo_commit(source) == "01234567"
+    assert installer.get_repo_full_commit(source) == revision
+    assert installer.get_install_version(source) == "3.7.0+g01234567"
+
+
 def test_runtime_generation_pointer_swap_never_removes_current(
     tmp_path: Path, monkeypatch
 ) -> None:
