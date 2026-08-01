@@ -122,6 +122,7 @@ install-all: init-hooks
 # VERBOSE=1 shows the full bazaar.
 VERBOSE ?= 0
 INSTALL_LOG := $(HOME)/.vibecrafted/install.log
+SLACK_AGENT_SOURCE ?= $(abspath $(SOURCE)/../vc-slack-agent)
 # Invoke via bash, never via the execute bit: sshfs-backed mounts (colima
 # containers viewing a macOS checkout) strip +x from files.
 INSTALL_STEP := bash scripts/install-step.sh
@@ -263,6 +264,7 @@ install-tools-held:
 	if [ "$(INSTALL_SERVER_PAYLOAD)" = "1" ]; then \
 		$(MAKE) --no-print-directory install-server-payload; \
 	fi; \
+	$(PYTHON) scripts/slack_provider.py install --framework-source "$(SOURCE)" --source "$(SLACK_AGENT_SOURCE)"; \
 	echo "[install-tools] staged runtime and uv tools; outer lease owner will reconcile service ownership"
 
 # install-all owns every binary the product ships into BIN (~/.local/bin).

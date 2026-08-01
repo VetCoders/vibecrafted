@@ -2831,6 +2831,62 @@ class _RuntimeLaunchAgentBackup:
     service_arguments: tuple[str, ...]
 
 
+_SERVER_CONFIG_MODULE: Any | None = None
+
+
+def _server_config_module() -> Any:
+    global _SERVER_CONFIG_MODULE
+    if _SERVER_CONFIG_MODULE is not None:
+        return _SERVER_CONFIG_MODULE
+    module_path = (
+        Path(__file__).resolve().parent.parent
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "server_config.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "vibecrafted_installer_server_config", module_path
+    )
+    if spec is None or spec.loader is None:
+        raise OSError(f"cannot load server config owner from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(spec.name, None)
+        raise
+    _SERVER_CONFIG_MODULE = module
+    return module
+
+
+def _runtime_service_arguments_from_config(
+    backup: _RuntimeLaunchAgentBackup,
+) -> tuple[str, ...]:
+    """Seed config from a verified legacy plist, then let config own activation."""
+    module = _server_config_module()
+    captured = dict(zip(backup.service_arguments[::2], backup.service_arguments[1::2]))
+    host = captured.get("--host", module.DEFAULT_BIND_HOST)
+    try:
+        port = int(captured.get("--port", str(module.DEFAULT_PORT)))
+    except ValueError as exc:
+        raise OSError("verified runtime LaunchAgent has a non-integer port") from exc
+    seed = module.ServerConfig(
+        bind_host=host,
+        port=port,
+        public_url=module.origin_for(host, port),
+    )
+    settings, _created = module.seed_server_config(
+        seed,
+        operator_home=_canonical_operator_home(),
+    )
+    arguments = list(settings.service_arguments)
+    interval = captured.get("--interval")
+    if interval:
+        arguments.extend(("--interval", interval))
+    return tuple(arguments)
+
+
 @dataclass(frozen=True)
 class _RuntimePayloadEntryBackup:
     path: Path
@@ -4981,6 +5037,7 @@ def run_with_tools_install_lease(
                 fence_required = False
                 lifecycle_deck: Path | None = None
                 launch_agent_backup: _RuntimeLaunchAgentBackup | None = None
+                service_activation_arguments: tuple[str, ...] = ()
                 payload_backup = _capture_runtime_payload_backup(
                     shared_home,
                     runtime_payload_paths,
@@ -5033,6 +5090,9 @@ def run_with_tools_install_lease(
                         # is fenced, even when no launcher currently answers.
                         launch_agent_backup = _capture_runtime_launch_agent_backup(
                             shared_home
+                        )
+                        service_activation_arguments = (
+                            _runtime_service_arguments_from_config(launch_agent_backup)
                         )
                         snapshot = _runtime_service_snapshot(shared_home)
                         if not gate.required and (
@@ -5306,11 +5366,7 @@ def run_with_tools_install_lease(
                                     ):
                                         activate_runtime_service_after_install(
                                             shared_home,
-                                            service_arguments=(
-                                                launch_agent_backup.service_arguments
-                                                if launch_agent_backup is not None
-                                                else ()
-                                            ),
+                                            service_arguments=service_activation_arguments,
                                         )
                                     if not _assert_runtime_launchd_job_owned(
                                         shared_home
@@ -8563,6 +8619,33 @@ def _public_launcher_contract_findings() -> list[DoctorFinding]:
     ]
 
 
+def _slack_provider_contract_findings() -> list[DoctorFinding]:
+    """Require vc-slack to come from the immutable provider publication."""
+    try:
+        provider = importlib.import_module("slack_provider")
+    except ModuleNotFoundError:  # package import path in tests/installed runtime
+        try:
+            provider = importlib.import_module("scripts.slack_provider")
+        except ModuleNotFoundError as exc:
+            return [
+                DoctorFinding(
+                    "fail",
+                    "slack-provider",
+                    f"Slack provider installer is missing: {exc}",
+                )
+            ]
+    healthy, detail = provider.doctor()
+    return [
+        DoctorFinding(
+            "ok" if healthy else "fail",
+            "slack-provider",
+            detail
+            if healthy
+            else f"{detail}. Run `make install` from the Vibecrafted suite",
+        )
+    ]
+
+
 def _foundation_provenance_findings(
     foundation_name: str, executable_path: Path
 ) -> list[DoctorFinding]:
@@ -8691,6 +8774,7 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
     findings.extend(_host_shell_contract_findings())
     findings.extend(_managed_frontier_contract_findings())
     findings.extend(_public_launcher_contract_findings())
+    findings.extend(_slack_provider_contract_findings())
 
     # 3. Expected skills present
     for skill_name in state.skills:

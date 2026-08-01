@@ -147,6 +147,7 @@ def test_run_doctor_smokes_helper_and_launcher_runtime(
     _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
     monkeypatch.setattr(installer, "FOUNDATIONS", [])
+    monkeypatch.setattr(installer, "_slack_provider_contract_findings", list)
     _real_which = shutil.which
     monkeypatch.setattr(
         installer.shutil,
@@ -491,6 +492,7 @@ def test_cmd_doctor_fix_launchers_repairs_missing_wrappers(
     _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
     monkeypatch.setattr(installer, "FOUNDATIONS", [])
+    monkeypatch.setattr(installer, "_slack_provider_contract_findings", list)
 
     exit_code = installer.cmd_doctor(Namespace(fix_rc=False, fix_launchers=True))
 
@@ -1221,6 +1223,21 @@ def test_public_launcher_contract_accepts_packaged_provider(
 
     assert finding.level == "ok"
     assert finding.component == "public-launchers"
+
+
+def test_slack_provider_contract_fails_when_provider_is_not_published(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
+    monkeypatch.setenv("VIBECRAFTED_LAUNCHER_BIN", str(home / ".local" / "bin"))
+
+    [finding] = installer._slack_provider_contract_findings()
+
+    assert finding.level == "fail"
+    assert finding.component == "slack-provider"
+    assert "not published" in finding.message
 
 
 def test_run_doctor_fail_fast_on_runtime_root_drift(

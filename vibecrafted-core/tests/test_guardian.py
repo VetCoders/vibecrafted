@@ -3190,6 +3190,35 @@ def test_numeric_legacy_stream_is_notification_only_after_caught_up(
     assert state.highwater["legacy-live"].reason == "legacy_notification_only"
 
 
+def test_parser_resolves_server_url_from_typed_config_and_explicit_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "vibecrafted" / "config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "[server]\n"
+        'bind_host = "100.82.232.70"\n'
+        "port = 3025\n"
+        'public_url = "http://100.82.232.70:3025"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("VC_SERVER_URL", raising=False)
+    monkeypatch.delenv("VIBECRAFTED_SERVER_URL", raising=False)
+
+    assert (
+        guardian_module.build_parser().parse_args([]).server_url
+        == "http://100.82.232.70:3025"
+    )
+
+    monkeypatch.setenv("VC_SERVER_URL", "http://override.example:9")
+    assert (
+        guardian_module.build_parser().parse_args([]).server_url
+        == "http://override.example:9"
+    )
+
+
 def test_main_recovers_trust_outbox_under_lock_before_sse_attach(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -25,7 +25,7 @@ Workers / ship / justdo
     v
 ~/.vibecrafted/control_plane/        <- single source of truth
     |
-    +--> vibecrafted server (HTTP + SSE)   dashboard + API on :3024
+    +--> vibecrafted server (HTTP + SSE)   dashboard + API at configured public_url
     +--> vibecrafted-mcp (stdio)           same logical board for agents
     +--> Slack gateway                     human <-> fleet connector
 ```
@@ -44,7 +44,7 @@ Three rules follow from this shape:
 ## Start and stop
 
 ```bash
-vibecrafted server start          # bind the observer (default port 3024)
+vibecrafted server start          # bind the configured observer
 vibecrafted server status         # is it up, where, and since when
 vibecrafted server open           # open the dashboard in a browser
 vibecrafted server stop           # shut it down
@@ -54,21 +54,23 @@ vibecrafted server doctor         # diagnose the server install
 To keep the observer always on, install it as a supervised service:
 
 ```bash
-vibecrafted server service install --port 3024
+vibecrafted server service install
 vibecrafted server service start
 vibecrafted server service status
 ```
 
-The default bind is local-only:
+Inspect the effective per-user endpoint, then probe that exact public URL:
 
 ```bash
-curl -s http://127.0.0.1:3024/api/health
+vc-server-supervisor config --json
+VC_SERVER_URL="$(vc-server-supervisor config --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["public_url"])')"
+curl -s "$VC_SERVER_URL/api/health"
 # {"schema":"vibecrafted.health.v1","status":"ok"}
 ```
 
 Consumers that need to reach the server (the Slack gateway, custom scripts)
-read the base URL from `VC_SERVER_URL`, defaulting to
-`http://127.0.0.1:3024`.
+read `server.public_url` through the installed runtime. `VC_SERVER_URL` is an
+explicit one-process override, not a second durable configuration source.
 
 ## The installer GUI
 

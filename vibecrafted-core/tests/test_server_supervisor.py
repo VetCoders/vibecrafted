@@ -244,6 +244,8 @@ def test_plistlib_renderer_preserves_metacharacters_without_xml_injection(
         "PATH",
         "VIBECRAFTED_HOME",
         "VIBECRAFTED_RUNTIME_HOME",
+        "VC_SERVER_PUBLIC_URL",
+        "VIBECRAFTED_SERVER_CONFIG",
         "VIBECRAFTED_SERVER_SERVICE",
         "VIBECRAFTED_SERVER_SUPERVISOR_PATH",
         "VIBECRAFTED_SERVER_SUPERVISOR_SHA256",
@@ -1180,6 +1182,15 @@ def test_default_config_uses_runtime_environment_without_argparse(
     monkeypatch.setenv("HOME", str(operator_home))
     monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("VIBECRAFTED_RUNTIME_HOME", str(tmp_path / "runtime"))
+    config_file = operator_home / ".config" / "vibecrafted" / "config.toml"
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text(
+        "[server]\n"
+        'bind_host = "100.82.232.70"\n'
+        "port = 3025\n"
+        'public_url = "http://100.82.232.70:3025"\n',
+        encoding="utf-8",
+    )
 
     config = supervisor.default_config(launcher=launcher)
 
@@ -1187,6 +1198,79 @@ def test_default_config_uses_runtime_environment_without_argparse(
     assert config.paths.operator_home == operator_home.resolve()
     assert config.paths.home == (tmp_path / "state").resolve()
     assert config.paths.runtime_home == (tmp_path / "runtime").resolve()
+    assert config.host == "100.82.232.70"
+    assert config.port == 3025
+    assert config.public_url == "http://100.82.232.70:3025"
+    assert config.config_file == config_file
+
+
+def test_config_command_reports_operator_owned_file_without_launcher(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    operator_home = tmp_path / "operator"
+    config_file = operator_home / ".config" / "vibecrafted" / "config.toml"
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text(
+        "[server]\n"
+        'bind_host = "100.82.232.70"\n'
+        "port = 3025\n"
+        'public_url = "http://100.82.232.70:3025"\n',
+        encoding="utf-8",
+    )
+
+    result = supervisor.main(
+        ["config", "--operator-home", str(operator_home), "--json"]
+    )
+
+    assert result == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "bind_host": "100.82.232.70",
+        "config_path": str(config_file),
+        "port": 3025,
+        "public_url": "http://100.82.232.70:3025",
+        "source": "file",
+    }
+
+
+def test_config_command_reports_explicit_default_source(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    operator_home = tmp_path / "operator"
+
+    result = supervisor.main(
+        ["config", "--operator-home", str(operator_home), "--json"]
+    )
+
+    assert result == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "bind_host": "127.0.0.1",
+        "config_path": str(operator_home / ".config" / "vibecrafted" / "config.toml"),
+        "port": 3024,
+        "public_url": "http://127.0.0.1:3024",
+        "source": "default",
+    }
+
+
+def test_config_command_does_not_treat_unrelated_toml_as_server_authority(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    operator_home = tmp_path / "operator"
+    config_file = operator_home / ".config" / "vibecrafted" / "config.toml"
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text(
+        '[runtime.picking.research]\ndefault_agents = ["claude", "codex", "agy"]\n',
+        encoding="utf-8",
+    )
+
+    result = supervisor.main(
+        ["config", "--operator-home", str(operator_home), "--json"]
+    )
+
+    assert result == 0
+    assert json.loads(capsys.readouterr().out)["source"] == "default"
 
 
 def test_linux_service_command_fails_closed_without_mutation(

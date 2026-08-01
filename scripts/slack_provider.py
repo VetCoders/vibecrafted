@@ -1,0 +1,318 @@
+#!/usr/bin/env python3
+"""Install the Slack gateway as an immutable Vibecrafted provider.
+
+The source repository is a development surface. This installer copies only the
+runtime package, installs production Node dependencies in a content-addressed
+generation, and publishes it through a stable ``current`` pointer. Secrets live
+in the per-user config directory and are never copied into the generation.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import stat
+import subprocess
+import tempfile
+from pathlib import Path
+
+PROVIDER_NAME = "vc-slack-agent"
+REQUIRED_FILES = (
+    "package.json",
+    "package-lock.json",
+    "bin/vc-slack",
+    "src/index.js",
+    "src/observer.js",
+    "src/runtime-env.js",
+    "scripts/doctor-bridge.sh",
+    "scripts/install-launchagent.sh",
+    "scripts/resolve-server-url.mjs",
+    "deploy/com.vetcoders.vibecrafted-slack-bridge.plist.example",
+)
+COPY_PATHS = (
+    "package.json",
+    "package-lock.json",
+    "README.md",
+    "bin",
+    "src",
+    "scripts",
+    "deploy",
+)
+
+
+class ProviderError(RuntimeError):
+    """The Slack provider cannot be installed without breaking provenance."""
+
+
+def runtime_home() -> Path:
+    configured = os.environ.get("VIBECRAFTED_RUNTIME_HOME", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    data_home = Path(
+        os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")
+    ).expanduser()
+    return data_home / "vibecrafted"
+
+
+def config_home() -> Path:
+    configured = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    root = Path(configured).expanduser() if configured else Path.home() / ".config"
+    return root / "vibecrafted"
+
+
+def launcher_bin() -> Path:
+    configured = os.environ.get("VIBECRAFTED_LAUNCHER_BIN", "").strip()
+    return (
+        Path(configured).expanduser() if configured else Path.home() / ".local" / "bin"
+    )
+
+
+def discover_source(
+    framework_source: Path, explicit: Path | None = None
+) -> Path | None:
+    candidates = []
+    env_source = os.environ.get("VIBECRAFTED_SLACK_AGENT_SOURCE", "").strip()
+    if explicit is not None:
+        candidates.append(explicit)
+    if env_source:
+        candidates.append(Path(env_source).expanduser())
+    candidates.extend(
+        (
+            framework_source.parent / "vc-slack-agent",
+            framework_source.parent / "vibecrafted-slack-agent",
+        )
+    )
+    for candidate in candidates:
+        resolved = candidate.resolve(strict=False)
+        if all((resolved / relative).is_file() for relative in REQUIRED_FILES):
+            return resolved
+    return None
+
+
+def _source_digest(source: Path) -> str:
+    digest = hashlib.sha256()
+    for relative_root in COPY_PATHS:
+        root = source / relative_root
+        paths = [root] if root.is_file() else sorted(root.rglob("*"))
+        for path in paths:
+            if not path.is_file() or path.is_symlink():
+                continue
+            relative = path.relative_to(source)
+            if relative.name == "com.vetcoders.vibecrafted-slack-bridge.plist":
+                continue
+            digest.update(relative.as_posix().encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _copy_runtime(source: Path, destination: Path) -> None:
+    for relative in COPY_PATHS:
+        src = source / relative
+        if not src.exists():
+            continue
+        dst = destination / relative
+        if src.is_dir():
+            shutil.copytree(
+                src,
+                dst,
+                symlinks=False,
+                ignore=shutil.ignore_patterns(
+                    "node_modules",
+                    ".env",
+                    ".env.*",
+                    "*.log",
+                    "com.vetcoders.vibecrafted-slack-bridge.plist",
+                ),
+            )
+        else:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+    for relative in REQUIRED_FILES:
+        path = destination / relative
+        if not path.is_file() or path.is_symlink():
+            raise ProviderError(f"provider payload is missing {relative}")
+
+
+def _atomic_symlink(target: Path, link: Path) -> None:
+    link.parent.mkdir(parents=True, exist_ok=True)
+    temporary = link.parent / f".{link.name}.tmp-{os.getpid()}"
+    try:
+        temporary.unlink(missing_ok=True)
+        temporary.symlink_to(target)
+        os.replace(temporary, link)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _migrate_env(source: Path, destination: Path) -> bool:
+    source_env = source / ".env"
+    target_env = destination / "slack.env"
+    if target_env.exists():
+        if target_env.is_symlink() or not target_env.is_file():
+            raise ProviderError(f"Slack config is not a regular file: {target_env}")
+        return False
+    if not source_env.is_file() or source_env.is_symlink():
+        return False
+    info = source_env.stat(follow_symlinks=False)
+    if info.st_uid != os.geteuid() or not stat.S_ISREG(info.st_mode):
+        raise ProviderError("refusing to migrate a foreign Slack .env")
+    payload = source_env.read_bytes()
+    if len(payload) > 256 * 1024:
+        raise ProviderError("Slack .env exceeds the bounded migration size")
+    destination.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".slack.env.", dir=destination)
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target_env)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return True
+
+
+def install(
+    source: Path,
+    *,
+    provider_root: Path | None = None,
+    bin_dir: Path | None = None,
+    user_config_home: Path | None = None,
+    npm: str | None = None,
+) -> Path:
+    source = source.resolve(strict=True)
+    for relative in REQUIRED_FILES:
+        if not (source / relative).is_file():
+            raise ProviderError(f"Slack provider source is missing {relative}")
+    digest = _source_digest(source)
+    root = provider_root or runtime_home() / "providers" / PROVIDER_NAME
+    generation = root / f"generation-{digest[:16]}"
+    current = root / "current"
+    if not generation.is_dir():
+        root.mkdir(parents=True, exist_ok=True)
+        staging = root / f".staging-{os.getpid()}-{digest[:8]}"
+        if staging.exists() or staging.is_symlink():
+            shutil.rmtree(staging)
+        staging.mkdir(mode=0o755)
+        try:
+            _copy_runtime(source, staging)
+            npm_bin = npm or shutil.which("npm")
+            if not npm_bin:
+                raise ProviderError("npm is required to install the Slack provider")
+            subprocess.run(
+                [
+                    npm_bin,
+                    "ci",
+                    "--omit=dev",
+                    "--ignore-scripts",
+                    "--no-audit",
+                    "--no-fund",
+                ],
+                cwd=staging,
+                check=True,
+            )
+            manifest = {
+                "schema": "vibecrafted.slack-provider.v1",
+                "content_sha256": digest,
+                "entrypoint": "bin/vc-slack",
+            }
+            (staging / "provider-manifest.json").write_text(
+                json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            if generation.exists():
+                shutil.rmtree(staging)
+            else:
+                staging.rename(generation)
+        except BaseException:
+            if staging.exists():
+                shutil.rmtree(staging)
+            raise
+    _atomic_symlink(generation, current)
+    target = current / "bin" / "vc-slack"
+    if not target.is_file():
+        raise ProviderError("published Slack provider has no launcher")
+    target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    public = (bin_dir or launcher_bin()) / "vc-slack"
+    _atomic_symlink(target, public)
+    _migrate_env(source, user_config_home or config_home())
+    return generation
+
+
+def doctor(
+    *, provider_root: Path | None = None, bin_dir: Path | None = None
+) -> tuple[bool, str]:
+    root = provider_root or runtime_home() / "providers" / PROVIDER_NAME
+    current = root / "current"
+    public = (bin_dir or launcher_bin()) / "vc-slack"
+    try:
+        generation = current.resolve(strict=True)
+        launcher = public.resolve(strict=True)
+    except OSError as exc:
+        return False, f"Slack provider is not published: {exc}"
+    if generation.parent != root.resolve(
+        strict=False
+    ) or not generation.name.startswith("generation-"):
+        return False, "Slack provider current pointer escapes its generation root"
+    expected_launcher = generation / "bin" / "vc-slack"
+    if not expected_launcher.is_file():
+        return False, "Slack provider generation has no vc-slack launcher"
+    if launcher != expected_launcher.resolve(strict=True):
+        return False, "vc-slack does not resolve to the current immutable provider"
+    manifest = generation / "provider-manifest.json"
+    if not manifest.is_file() or not (generation / "node_modules").is_dir():
+        return False, "Slack provider generation is incomplete"
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False, "Slack provider manifest is unreadable"
+    expected_digest = payload.get("content_sha256")
+    if (
+        not isinstance(expected_digest, str)
+        or _source_digest(generation) != expected_digest
+    ):
+        return False, "Slack provider runtime files drifted after publication"
+    return True, f"vc-slack -> {generation.name}"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="vibecrafted-slack-provider")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    install_parser = subparsers.add_parser("install")
+    install_parser.add_argument("--framework-source", type=Path, required=True)
+    install_parser.add_argument("--source", type=Path)
+    install_parser.add_argument("--required", action="store_true")
+    subparsers.add_parser("doctor")
+    args = parser.parse_args(argv)
+    if args.command == "doctor":
+        healthy, detail = doctor()
+        print(detail)
+        return 0 if healthy else 1
+    source = discover_source(args.framework_source, args.source)
+    if source is None:
+        if args.required:
+            raise ProviderError("vc-slack-agent source was not found")
+        healthy, detail = doctor()
+        print(
+            detail
+            if healthy
+            else "Slack provider source absent; provider not installed"
+        )
+        return 0
+    generation = install(source)
+    print(f"[slack-provider] installed immutable generation {generation}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (OSError, ProviderError, subprocess.SubprocessError) as exc:
+        print(f"[slack-provider] FATAL: {exc}", file=os.sys.stderr)
+        raise SystemExit(1) from exc
