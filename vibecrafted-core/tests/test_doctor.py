@@ -65,6 +65,26 @@ def test_launcher_shim_finding_ok_for_uv_shim(tmp_path: Path) -> None:
     assert finding.component == "launcher"
 
 
+def test_launcher_shim_finding_ok_for_immutable_runtime_deck(tmp_path: Path) -> None:
+    deck = (
+        tmp_path
+        / "tools"
+        / "vibecrafted-generation-3.7.0+gabc"
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "deck"
+        / "vibecrafted"
+    )
+    deck.parent.mkdir(parents=True)
+    deck.write_text("#!/usr/bin/env bash\nset -euo pipefail\n", encoding="utf-8")
+
+    finding = doctor._launcher_shim_findings(which=lambda _name: str(deck))[0]
+
+    assert finding.level == "ok"
+    assert finding.component == "launcher"
+    assert "immutable runtime command deck" in finding.message
+
+
 def test_launcher_shim_finding_warns_when_absent() -> None:
     findings = doctor._launcher_shim_findings(which=lambda _name: None)
 

@@ -44,14 +44,7 @@ def _uv_tool_shim() -> Path:
 def _launcher_shim_findings(
     which: Callable[[str], str | None] = shutil.which,
 ) -> list[_Finding]:
-    """Verify that `vibecrafted` on PATH is the uv-tool shim, not the legacy deck.
-
-    The bash command-deck shadows the uv-tool entry point when installed into
-    ~/.local/bin; it calls bare `python3`, which breaks under a non-uv
-    interpreter. The uv-tool shim carries the uv python in its shebang and
-    imports `vibecrafted_core.cli`. Report the truth so the operator can see
-    which one wins PATH.
-    """
+    """Verify that `vibecrafted` enters an installed owner, never a checkout."""
     resolved = which("vibecrafted")
     if not resolved:
         return [
@@ -74,18 +67,36 @@ def _launcher_shim_findings(
             _Finding("ok", "launcher", f"Python package entrypoint on PATH -> {path}")
         )
     elif head.lstrip().startswith("#!") and "bash" in head.splitlines()[0]:
-        shim = _uv_tool_shim()
-        shim_hint = f" (uv-tool shim lives at {shim})" if shim.exists() else ""
-        return [
-            _Finding(
-                "fail",
-                "launcher",
-                f"vibecrafted on PATH ({path}) is the legacy bash command-deck, "
-                f"not the uv-tool shim — it calls bare python3 and shadows the "
-                f"uv-tool entry point{shim_hint}. Reinstall so the uv-tool shim "
-                f"wins PATH.",
+        try:
+            deck = path.resolve(strict=True)
+        except OSError:
+            deck = path
+        installed_deck = (
+            deck.name == "vibecrafted"
+            and deck.parent.name == "deck"
+            and deck.parent.parent.name == "vibecrafted_core"
+            and any(part.startswith("vibecrafted-generation-") for part in deck.parts)
+        )
+        if installed_deck:
+            findings.append(
+                _Finding(
+                    "ok",
+                    "launcher",
+                    f"immutable runtime command deck on PATH -> {deck}",
+                )
             )
-        ]
+        else:
+            shim = _uv_tool_shim()
+            shim_hint = f" (uv-tool shim lives at {shim})" if shim.exists() else ""
+            return [
+                _Finding(
+                    "fail",
+                    "launcher",
+                    f"vibecrafted on PATH ({path}) is a checkout/legacy bash deck, "
+                    f"not the immutable runtime deck or uv-tool shim{shim_hint}. "
+                    "Reinstall so an installed owner wins PATH.",
+                )
+            ]
     else:
         findings.append(
             _Finding(

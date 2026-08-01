@@ -392,20 +392,24 @@ _vibecrafted_python() {
     printf '%s\n' "$VIBECRAFTED_PYTHON"
     return 0
   fi
-  resolved="$(command -v vibecrafted 2>/dev/null || true)"
-  if [[ -n "$resolved" && -f "$resolved" ]]; then
+  for resolved in \
+    "$(command -v vc-server-supervisor 2>/dev/null || true)" \
+    "$(command -v vibecrafted 2>/dev/null || true)"; do
+    [[ -n "$resolved" && -f "$resolved" ]] || continue
     shebang="$(head -n 1 "$resolved" 2>/dev/null || true)"
     if [[ "$shebang" =~ ^#\! ]]; then
       py="${shebang#\#!}"
       # Strip leading/trailing whitespace
       py="${py#"${py%%[![:space:]]*}"}"
       py="${py%"${py##*[![:space:]]}"}"
-      if [[ -x "$py" ]]; then
+      # A direct absolute interpreter path is safe. `/usr/bin/env bash` and
+      # other argument-bearing shebangs are launch recipes, not Python paths.
+      if [[ "$py" == /* && "$py" != *[[:space:]]* && -x "$py" ]]; then
         printf '%s\n' "$py"
         return 0
       fi
     fi
-  fi
+  done
   command -v python3 2>/dev/null || command -v python 2>/dev/null || printf 'python3\n'
 }
 
@@ -1282,6 +1286,12 @@ _server_supervisor_cli() {
       command_args+=(--launcher "$launcher")
       ;;
   esac
+  supervisor_bin="$(_server_supervisor_binary 2>/dev/null || true)"
+  if [[ -n "$supervisor_bin" ]]; then
+    env -u PYTHONHOME -u PYTHONPATH \
+      "$supervisor_bin" "${command_args[@]}" "${common_args[@]}"
+    return
+  fi
   core_dir="$(_core_module_dir 2>/dev/null || true)"
   [[ -n "$core_dir" ]] || {
     printf '%b✗%b server_supervisor runtime module not found; reinstall Vibecrafted.\n' \
@@ -4585,11 +4595,22 @@ cmd_scaffold_doctor() {
 
 
 cmd_doctor() {
-  # Resolve the installer source tree without going through make.
-  # The Python installer owns the doctor logic; calling it directly
-  # avoids leaking `make: Entering directory` and `make: *** Error 1`
-  # noise into the user-facing output.
-  local source_root="" installer=""
+  # The package doctor composes installer, provenance, server supervision,
+  # vc-frame delivery, and receipt truth. Calling the installer alone produced
+  # a false green while the live server path was broken.
+  local source_root="" installer="" core_dir="" python_bin="" doctor_rc=0
+  case "${1:-}" in
+    ""|--json)
+      core_dir="$(_core_module_dir 2>/dev/null || true)"
+      if [[ -n "$core_dir" ]]; then
+        python_bin="$(_vibecrafted_python)"
+        PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" \
+          "$python_bin" -m vibecrafted_core.cli doctor "$@"
+        return $?
+      fi
+      ;;
+  esac
+  # Repair flags remain owned by the installer CLI.
   source_root="$(_repo_source_root 2>/dev/null || true)"
   for candidate in \
     "${source_root:+$source_root/scripts/vetcoders_install.py}" \
@@ -4601,7 +4622,6 @@ cmd_doctor() {
     printf '%b✗%b Doctor installer not found. Is 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. installed?\n' "$_red" "$_reset" >&2
     return 1
   }
-  local doctor_rc=0
   python3 "$installer" doctor "$@" || doctor_rc=$?
   # Delivery/runtime receipt rides doctor so operators see source↔installed
   # drift without a separate habit. Failure to import is non-fatal here —

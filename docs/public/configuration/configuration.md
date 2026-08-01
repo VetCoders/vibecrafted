@@ -50,6 +50,20 @@ What actually runs. `${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools/` ho
 | `~/.config/vetcoders/frontier/`     | Optional terminal-frontier assets: starship, atuin, vc-frame presets                          |
 | `~/.config/vibecrafted/config.toml` | Per-user runtime picks (for example research agent defaults) — overrides without reinstalling |
 
+The same file owns the server endpoint. The installer seeds this table once
+from a verified existing service, then preserves it across upgrades:
+
+```toml
+[server]
+bind_host = "127.0.0.1"
+port = 3024
+public_url = "http://127.0.0.1:3024"
+```
+
+Use a tailnet/LAN address when remote consumers must reach the observer. The
+LaunchAgent, status receipts, guardian URL, and Slack plist are generated views
+of this table; do not edit them as configuration.
+
 The default installer does not source helpers into your host shell. It may add only a guarded `~/.local/bin` `PATH` entry after explicit consent; the full helper profile belongs to the explicit `vc-start` environment.
 
 ## Installed-over-checkout doctrine

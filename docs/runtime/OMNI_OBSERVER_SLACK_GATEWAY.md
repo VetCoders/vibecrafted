@@ -57,7 +57,7 @@ Workers / ship / justdo
     ▼
 ~/.vibecrafted/control_plane/     ← single source of truth
     │
-    ├─► vc-server (HTTP read + SSE)     omni-observer UI + API  :3024
+    ├─► vc-server (HTTP read + SSE)     omni-observer UI + configured public_url
     ├─► vibecrafted-mcp (stdio MCP)     same logical board for agents
     │
     └─► Slack gateway (Socket Mode)     human ↔ fleet connector
@@ -70,21 +70,24 @@ Workers / ship / justdo
 ## Measured curls (operator host)
 
 ```bash
+VC_SERVER_URL="$(vc-server-supervisor config --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["public_url"])')"
+
 # health (constant-time readiness)
-curl -s http://127.0.0.1:3024/api/health
+curl -s "$VC_SERVER_URL/api/health"
 # → {"schema":"vibecrafted.health.v1","status":"ok"}
 
 # board slice used by /vc status and MCP vc_board_status
-curl -s http://127.0.0.1:3024/api/control/state | python3 -m json.tool | head
+curl -s "$VC_SERVER_URL/api/control/state" | python3 -m json.tool | head
 
 # one run
-curl -s http://127.0.0.1:3024/api/control/runs/<run_id> | python3 -m json.tool | head
+curl -s "$VC_SERVER_URL/api/control/runs/<run_id>" | python3 -m json.tool | head
 
 # lifecycle list
-curl -s http://127.0.0.1:3024/api/control/lifecycle | python3 -c 'import sys,json;print(json.load(sys.stdin).get("count"),"lifecycle runs")'
+curl -s "$VC_SERVER_URL/api/control/lifecycle" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("count"),"lifecycle runs")'
 ```
 
-Env override: `VC_SERVER_URL` (default `http://127.0.0.1:3024`).  
+Durable endpoint: `[server]` in `~/.config/vibecrafted/config.toml`.
+One-process override: `VC_SERVER_URL`.
 Home override: `$VIBECRAFTED_HOME` (default `~/.vibecrafted`).
 
 ## Bot surfaces (vibecrafted-slack-agent)
@@ -96,7 +99,7 @@ Home override: `$VIBECRAFTED_HOME` (default `~/.vibecrafted`).
 | `@Vibecrafted justdo <root> <prompt>` | allowlist → `vibecrafted justdo <agent> --json …` → thread `run_id` → progress posts → terminal |
 | `vc-slack signal` / lifecycle hook    | Slack post only (does not invent control_plane state)                                           |
 
-### CLI boundary (development-only until W1-A)
+### CLI boundary
 
 The repository command may be invoked in place for development:
 
@@ -105,10 +108,10 @@ cd /path/to/vibecrafted-slack-agent
 ./bin/vc-slack status
 ```
 
-Do **not** symlink a repository checkout into `~/.local/bin`. Until W1-A
-publishes `vc-slack` as an immutable installed artifact, absence from PATH is
-the honest installed-runtime state. W1-A owns both publication under the
-installed Vibecrafted generation and the eventual public launcher binding.
+Do **not** symlink a repository checkout into `~/.local/bin`. `make install`
+publishes `vc-slack-agent` as a content-addressed provider with production Node
+dependencies and binds `vc-slack` to its stable `current` pointer. Provider
+doctor fails when runtime files drift or the launcher escapes that generation.
 The gateway remains mouth/ear only regardless of packaging; installation never
 creates a second board truth.
 
@@ -141,7 +144,7 @@ Workers do **not** need Slack. Example visibility path:
 
 HTTP is sufficient for the Node gateway. Prefer:
 
-- always-on: `vibecrafted server start` (or equivalent) on `:3024`
+- always-on: `vibecrafted server service install` using the configured endpoint
 - IDE: stdio `vibecrafted-mcp` with existing tools (`vc_board_status`, `vc_launch`, …)
 
 Do **not** merge packages unless a single MCP-HTTP binary is explicitly required. Mutating MCP tools stay permissioned; Slack gateway uses shell launch for allowlisted humans.

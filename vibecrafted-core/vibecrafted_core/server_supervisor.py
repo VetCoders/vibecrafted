@@ -22,6 +22,13 @@ from typing import Any, Self
 from xml.parsers.expat import ExpatError
 
 from . import __version__ as PACKAGE_VERSION
+from .server_config import (
+    ServerConfigError,
+    config_path,
+    has_server_config,
+    load_server_config,
+    origin_for,
+)
 
 SUPERVISOR_SCHEMA = "vibecrafted.server-supervisor.v1"
 SUPERVISOR_LOCK_SCHEMA = "vibecrafted.server-supervisor-lock.v1"
@@ -100,6 +107,8 @@ class SupervisorConfig:
     launcher: Path
     host: str
     port: int
+    public_url: str = ""
+    config_file: Path | None = None
     interval: float = 1.0
     maximum_backoff: float = 30.0
     command_timeout: float = 60.0
@@ -925,6 +934,8 @@ def _receipt(
             "host": config.host,
             "port": config.port,
             "url": config.endpoint,
+            "public_url": config.public_url or config.endpoint,
+            "config_path": str(config.config_file) if config.config_file else None,
         },
         "managed_pair": managed_pair,
         "started_at": started_at,
@@ -1279,6 +1290,8 @@ def render_launch_agent_plist(
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
             "VIBECRAFTED_HOME": str(config.paths.home),
             "VIBECRAFTED_RUNTIME_HOME": str(config.paths.runtime_home),
+            "VC_SERVER_PUBLIC_URL": config.public_url or config.endpoint,
+            "VIBECRAFTED_SERVER_CONFIG": str(config.config_file or ""),
             "VIBECRAFTED_SERVER_SERVICE": "launchd",
             "VIBECRAFTED_SERVER_SUPERVISOR_PATH": str(supervisor),
             "VIBECRAFTED_SERVER_SUPERVISOR_SHA256": supervisor_sha256,
@@ -2064,8 +2077,8 @@ def default_config(
     home: Path | None = None,
     runtime_home: Path | None = None,
     operator_home: Path | None = None,
-    host: str = "127.0.0.1",
-    port: int = 3024,
+    host: str | None = None,
+    port: int | None = None,
 ) -> SupervisorConfig:
     resolved_operator_home = _absolute_path(
         operator_home or Path(os.environ.get("HOME", str(Path.home())))
@@ -2088,7 +2101,17 @@ def default_config(
             )
         )
     )
-    validated_host, validated_port = _validated_endpoint(host, port)
+    settings_path = config_path(operator_home=resolved_operator_home)
+    settings = load_server_config(settings_path)
+    validated_host, validated_port = _validated_endpoint(
+        host if host is not None else settings.bind_host,
+        port if port is not None else settings.port,
+    )
+    public_url = (
+        settings.public_url
+        if host is None and port is None
+        else origin_for(validated_host, validated_port)
+    )
     return SupervisorConfig(
         paths=SupervisorPaths.create(
             home=resolved_home,
@@ -2098,6 +2121,8 @@ def default_config(
         launcher=_validate_owned_regular_file(launcher, executable=True),
         host=validated_host,
         port=validated_port,
+        public_url=public_url,
+        config_file=settings_path,
     )
 
 
@@ -2110,13 +2135,25 @@ def _paths_from_args(args: argparse.Namespace) -> SupervisorPaths:
 
 
 def _config_from_args(args: argparse.Namespace) -> SupervisorConfig:
-    host, port = _validated_endpoint(args.host, args.port)
+    paths = _paths_from_args(args)
+    settings_path = config_path(operator_home=paths.operator_home)
+    settings = load_server_config(settings_path)
+    host, port = _validated_endpoint(
+        args.host if args.host is not None else settings.bind_host,
+        args.port if args.port is not None else settings.port,
+    )
     launcher = _validate_owned_regular_file(Path(args.launcher), executable=True)
     return SupervisorConfig(
-        paths=_paths_from_args(args),
+        paths=paths,
         launcher=launcher,
         host=host,
         port=port,
+        public_url=(
+            settings.public_url
+            if args.host is None and args.port is None
+            else origin_for(host, port)
+        ),
+        config_file=settings_path,
         interval=args.interval,
         maximum_backoff=args.maximum_backoff,
         command_timeout=args.command_timeout,
@@ -2144,8 +2181,8 @@ def _add_common_paths(parser: argparse.ArgumentParser) -> None:
 def _add_config_arguments(parser: argparse.ArgumentParser) -> None:
     _add_common_paths(parser)
     parser.add_argument("--launcher", required=True)
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=3024)
+    parser.add_argument("--host")
+    parser.add_argument("--port", type=int)
     parser.add_argument("--interval", type=float, default=1.0)
     parser.add_argument("--maximum-backoff", type=float, default=30.0)
     parser.add_argument("--command-timeout", type=float, default=60.0)
@@ -2188,6 +2225,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="report supervised versus unsupervised runtime truth",
     )
     _add_common_paths(runtime_status)
+
+    config = subparsers.add_parser(
+        "config",
+        help="report the effective operator-owned server configuration",
+    )
+    _add_common_paths(config)
+    config.add_argument("--json", action="store_true")
 
     guard = subparsers.add_parser(
         "manual-stop-guard",
@@ -2239,6 +2283,27 @@ def _print_service_status(status: ServiceStatus, *, as_json: bool) -> None:
         f"service-managed={'yes' if status.supervisor_service_managed else 'no'} "
         f"build-current={'yes' if status.build_current else 'no'} "
         f"pair-healthy={'yes' if status.pair_healthy else 'no'}"
+    )
+
+
+def _print_server_config(args: argparse.Namespace) -> None:
+    operator_home = _absolute_path(Path(args.operator_home))
+    path = config_path(operator_home=operator_home)
+    configured = has_server_config(path)
+    config = load_server_config(path)
+    payload = {
+        "bind_host": config.bind_host,
+        "port": config.port,
+        "public_url": config.public_url,
+        "config_path": str(path),
+        "source": "file" if configured else "default",
+    }
+    if args.json:
+        print(json.dumps(payload, sort_keys=True))
+        return
+    print(
+        f"bind={config.bind_addr} public_url={config.public_url} "
+        f"source={payload['source']} config={path}"
     )
 
 
@@ -2381,6 +2446,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 signal.signal(signal.SIGINT, previous_int)
         if args.command == "service":
             return _service_command(args)
+        if args.command == "config":
+            _print_server_config(args)
+            return 0
         paths = _paths_from_args(args)
         if args.command == "runtime-status":
             return _runtime_status(paths)
@@ -2417,6 +2485,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SupervisorError as exc:
         print(f"vc-server-supervisor: {exc}", file=sys.stderr)
         return exc.exit_code
+    except ServerConfigError as exc:
+        print(f"vc-server-supervisor: {exc}", file=sys.stderr)
+        return EX_CONFIG
 
 
 if __name__ == "__main__":

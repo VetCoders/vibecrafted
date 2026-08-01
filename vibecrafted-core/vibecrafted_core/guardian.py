@@ -55,6 +55,7 @@ from typing import Any
 
 from .delivery.store import atomic_write_json
 from .runtime_paths import vibecrafted_home
+from .server_config import load_server_config
 from .settlement import (
     SETTLEMENT_EVENT_KIND,
     SETTLEMENT_EVENT_SCHEMA,
@@ -74,7 +75,6 @@ GUARDIAN_STATE_SCHEMA_V1 = "vibecrafted.guardian-state.v1"
 GUARDIAN_DEAD_LETTER_SCHEMA = "vibecrafted.guardian-dead-letters.v2"
 GUARDIAN_READY_SCHEMA = "vibecrafted.guardian-ready.v1"
 TERMINAL_TRIAGE_OUTBOX_SCHEMA = "vibecrafted.terminal-triage-outbox.v1"
-DEFAULT_SERVER_URL = "http://127.0.0.1:3024"
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
 DEFAULT_RECOVERY_TIMEOUT_SECONDS = 5.0
 DEFAULT_BACKOFF_INITIAL_SECONDS = 1.0
@@ -3189,6 +3189,15 @@ def default_lock_path() -> Path:
     return vibecrafted_home() / "control_plane" / "guardian" / "guardian.lock"
 
 
+def default_server_url() -> str:
+    """Resolve the observer from an explicit process override or typed config."""
+    return (
+        os.environ.get("VC_SERVER_URL")
+        or os.environ.get("VIBECRAFTED_SERVER_URL")
+        or load_server_config().public_url
+    )
+
+
 def write_ready_receipt(
     path: Path,
     *,
@@ -3241,7 +3250,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--server-url",
-        default=os.environ.get("VIBECRAFTED_SERVER_URL", DEFAULT_SERVER_URL),
+        default=default_server_url(),
         help="vibecrafted-server origin (default: %(default)s)",
     )
     parser.add_argument("--state", type=Path, default=default_state_path())

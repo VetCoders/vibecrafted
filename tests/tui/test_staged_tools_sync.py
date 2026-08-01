@@ -1251,6 +1251,73 @@ def test_runtime_launch_agent_backup_restores_exact_bytes_and_absence(
     assert not path.exists()
 
 
+def test_installer_seeds_server_config_from_verified_custom_plist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operator_home = tmp_path / "operator"
+    monkeypatch.setattr(installer, "_canonical_operator_home", lambda: operator_home)
+    backup = installer._RuntimeLaunchAgentBackup(
+        operator_home / "Library/LaunchAgents/io.vetcoders.vibecrafted.server.plist",
+        b"verified",
+        0o600,
+        (
+            "--host",
+            "100.82.232.70",
+            "--port",
+            "3025",
+            "--interval",
+            "2.75",
+        ),
+    )
+
+    arguments = installer._runtime_service_arguments_from_config(backup)
+    config_path = operator_home / ".config/vibecrafted/config.toml"
+
+    assert arguments == (
+        "--host",
+        "100.82.232.70",
+        "--port",
+        "3025",
+        "--interval",
+        "2.75",
+    )
+    assert 'bind_host = "100.82.232.70"' in config_path.read_text(encoding="utf-8")
+    assert "port = 3025" in config_path.read_text(encoding="utf-8")
+
+
+def test_installer_existing_server_config_overrides_legacy_plist_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operator_home = tmp_path / "operator"
+    config_path = operator_home / ".config/vibecrafted/config.toml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        "[server]\n"
+        'bind_host = "100.82.232.70"\n'
+        "port = 3025\n"
+        'public_url = "http://100.82.232.70:3025"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(installer, "_canonical_operator_home", lambda: operator_home)
+    backup = installer._RuntimeLaunchAgentBackup(
+        operator_home / "Library/LaunchAgents/io.vetcoders.vibecrafted.server.plist",
+        b"verified",
+        0o600,
+        ("--host", "127.0.0.1", "--port", "3024"),
+    )
+
+    arguments = installer._runtime_service_arguments_from_config(backup)
+
+    assert arguments == (
+        "--host",
+        "100.82.232.70",
+        "--port",
+        "3025",
+    )
+
+
 def test_runtime_cutover_failed_legacy_stop_recovers_previous_service(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1605,6 +1672,10 @@ def test_service_install_executes_exact_staged_supervisor_from_repo_cwd(
     shutil.copy2(
         REPO_ROOT / "vibecrafted-core" / "vibecrafted_core" / "server_supervisor.py",
         staged_package / "server_supervisor.py",
+    )
+    shutil.copy2(
+        REPO_ROOT / "vibecrafted-core" / "vibecrafted_core" / "server_config.py",
+        staged_package / "server_config.py",
     )
     _write_executable(
         launcher,

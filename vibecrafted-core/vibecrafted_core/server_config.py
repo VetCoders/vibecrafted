@@ -1,0 +1,220 @@
+from __future__ import annotations
+
+import json
+import os
+import stat
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import urlsplit
+
+import tomllib
+
+DEFAULT_BIND_HOST = "127.0.0.1"
+DEFAULT_PORT = 3024
+
+
+class ServerConfigError(ValueError):
+    """Raised when the operator-owned server configuration is invalid."""
+
+
+@dataclass(frozen=True)
+class ServerConfig:
+    bind_host: str = DEFAULT_BIND_HOST
+    port: int = DEFAULT_PORT
+    public_url: str = ""
+
+    def __post_init__(self) -> None:
+        host = _validate_bind_host(self.bind_host)
+        port = _validate_port(self.port)
+        public_url = _validate_public_url(self.public_url or origin_for(host, port))
+        object.__setattr__(self, "bind_host", host)
+        object.__setattr__(self, "port", port)
+        object.__setattr__(self, "public_url", public_url)
+
+    @property
+    def bind_addr(self) -> str:
+        return f"{self.bind_host}:{self.port}"
+
+    @property
+    def service_arguments(self) -> tuple[str, ...]:
+        return ("--host", self.bind_host, "--port", str(self.port))
+
+
+def config_path(*, operator_home: Path | None = None) -> Path:
+    if operator_home is None:
+        configured = os.environ.get("XDG_CONFIG_HOME")
+        if configured:
+            return Path(configured).expanduser() / "vibecrafted" / "config.toml"
+        operator_home = Path(os.environ.get("HOME", str(Path.home())))
+    return operator_home.expanduser() / ".config" / "vibecrafted" / "config.toml"
+
+
+def load_server_config(
+    path: Path | None = None,
+    *,
+    operator_home: Path | None = None,
+) -> ServerConfig:
+    resolved = path or config_path(operator_home=operator_home)
+    try:
+        raw = resolved.read_bytes()
+    except FileNotFoundError:
+        return ServerConfig()
+    except OSError as exc:
+        raise ServerConfigError(
+            f"cannot read server config at {resolved}: {exc}"
+        ) from exc
+    try:
+        payload = tomllib.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise ServerConfigError(
+            f"invalid TOML in server config at {resolved}: {exc}"
+        ) from exc
+    section = payload.get("server")
+    if section is None:
+        return ServerConfig()
+    if not isinstance(section, dict):
+        raise ServerConfigError("[server] must be a TOML table")
+    unknown = sorted(set(section) - {"bind_host", "port", "public_url"})
+    if unknown:
+        raise ServerConfigError("unsupported [server] key(s): " + ", ".join(unknown))
+    return ServerConfig(
+        bind_host=section.get("bind_host", DEFAULT_BIND_HOST),
+        port=section.get("port", DEFAULT_PORT),
+        public_url=section.get("public_url", ""),
+    )
+
+
+def has_server_config(
+    path: Path | None = None, *, operator_home: Path | None = None
+) -> bool:
+    """Return whether the config contains an explicit [server] owner table."""
+    resolved = path or config_path(operator_home=operator_home)
+    try:
+        payload = tomllib.loads(resolved.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return False
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise ServerConfigError(
+            f"cannot inspect server config at {resolved}: {exc}"
+        ) from exc
+    return isinstance(payload.get("server"), dict)
+
+
+def seed_server_config(
+    seed: ServerConfig,
+    path: Path | None = None,
+    *,
+    operator_home: Path | None = None,
+) -> tuple[ServerConfig, bool]:
+    """Create [server] once; an existing table remains authoritative."""
+    resolved = path or config_path(operator_home=operator_home)
+    try:
+        visible = resolved.lstat()
+    except FileNotFoundError:
+        existing = b""
+        mode = 0o600
+    except OSError as exc:
+        raise ServerConfigError(
+            f"cannot inspect server config at {resolved}: {exc}"
+        ) from exc
+    else:
+        if resolved.is_symlink() or not stat.S_ISREG(visible.st_mode):
+            raise ServerConfigError(
+                f"server config is not a stable regular file: {resolved}"
+            )
+        try:
+            existing = resolved.read_bytes()
+        except OSError as exc:
+            raise ServerConfigError(
+                f"cannot read server config at {resolved}: {exc}"
+            ) from exc
+        mode = stat.S_IMODE(visible.st_mode)
+        try:
+            payload = tomllib.loads(existing.decode("utf-8"))
+        except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+            raise ServerConfigError(
+                f"invalid TOML in server config at {resolved}: {exc}"
+            ) from exc
+        if "server" in payload:
+            return load_server_config(resolved), False
+
+    separator = b"" if not existing or existing.endswith(b"\n\n") else b"\n"
+    rendered = (
+        b"[server]\n"
+        + f"bind_host = {json.dumps(seed.bind_host)}\n".encode()
+        + f"port = {seed.port}\n".encode()
+        + f"public_url = {json.dumps(seed.public_url)}\n".encode()
+    )
+    _atomic_write(resolved, existing + separator + rendered, mode=mode)
+    return load_server_config(resolved), True
+
+
+def _atomic_write(path: Path, contents: bytes, *, mode: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, mode)
+        with os.fdopen(descriptor, "wb", closefd=True) as handle:
+            handle.write(contents)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+    except BaseException:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _validate_bind_host(value: object) -> str:
+    if not isinstance(value, str):
+        raise ServerConfigError("server.bind_host must be a string")
+    host = value.strip()
+    if not host or host != value or any(char.isspace() for char in host):
+        raise ServerConfigError("server.bind_host must be a non-empty host")
+    if any(char in host for char in "/?#@"):
+        raise ServerConfigError("server.bind_host must not contain URL syntax")
+    return host
+
+
+def _validate_port(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ServerConfigError("server.port must be an integer")
+    if not 1 <= value <= 65535:
+        raise ServerConfigError("server.port must be between 1 and 65535")
+    return value
+
+
+def _validate_public_url(value: object) -> str:
+    if not isinstance(value, str):
+        raise ServerConfigError("server.public_url must be a string")
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ServerConfigError(
+            "server.public_url must be an HTTP(S) origin without credentials, path, query, or fragment"
+        )
+    try:
+        _ = parsed.port
+    except ValueError as exc:
+        raise ServerConfigError(
+            f"server.public_url has an invalid port: {exc}"
+        ) from exc
+    return value.rstrip("/")
+
+
+def origin_for(host: str, port: int) -> str:
+    rendered_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    return f"http://{rendered_host}:{port}"

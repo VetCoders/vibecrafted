@@ -810,6 +810,12 @@ def test_make_install_verifies_server_supervisor_entrypoint() -> None:
         '$(PYTHON) $(INSTALLER) install --source "$(SOURCE)"'
     ) < install_tools_block.index("uv tool install --force --reinstall")
     assert "outer lease owner will reconcile service ownership" in install_tools_block
+    assert "scripts/slack_provider.py install" in install_tools_block
+    assert '--framework-source "$(SOURCE)"' in install_tools_block
+    assert '--source "$(SLACK_AGENT_SOURCE)"' in install_tools_block
+    assert install_tools_block.index("scripts/slack_provider.py install") < (
+        install_tools_block.index("outer lease owner will reconcile service ownership")
+    )
     assert "prepare_runtime_service_for_install" in handoff_block
     assert "_runtime_lifecycle_handoff_fence" in handoff_block
     assert "_runtime_supervisor_handoff_fence" in handoff_block
