@@ -122,6 +122,42 @@ def test_server_supervision_finding_proves_current_managed_pair() -> None:
     ]
 
 
+def test_server_supervision_uses_service_launcher_not_public_deck(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    service_launcher = tmp_path / "uv-tool" / "vibecrafted"
+    service_launcher.parent.mkdir(parents=True)
+    service_launcher.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    captured: dict[str, Path] = {}
+    status = SimpleNamespace(
+        installed=True,
+        loaded=True,
+        supervisor_live=True,
+        supervisor_verified=True,
+        supervisor_service_managed=True,
+        build_current=True,
+        pair_healthy=True,
+        supervisor_pid=4242,
+    )
+
+    def config_factory(**kwargs):
+        captured.update(kwargs)
+        return kwargs
+
+    monkeypatch.setattr(doctor, "_uv_tool_shim", lambda: service_launcher)
+
+    findings = doctor._server_supervision_findings(
+        platform="darwin",
+        which=lambda _name: "/runtime/generation/deck/vibecrafted",
+        config_factory=config_factory,
+        status_reader=lambda _config: status,
+    )
+
+    assert findings[0].level == "ok"
+    assert captured["launcher"] == service_launcher
+
+
 def test_server_supervision_finding_fails_closed_for_stale_pair() -> None:
     status = SimpleNamespace(
         installed=True,

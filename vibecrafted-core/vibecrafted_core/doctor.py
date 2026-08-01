@@ -215,7 +215,10 @@ def _server_supervision_findings(
         status_reader = status_reader or service_status
 
     try:
-        config = config_factory(launcher=Path(resolved_launcher))
+        service_launcher = _uv_tool_shim()
+        if not service_launcher.is_file():
+            service_launcher = Path(resolved_launcher)
+        config = config_factory(launcher=service_launcher)
         status = status_reader(config)
     except (
         OSError,
