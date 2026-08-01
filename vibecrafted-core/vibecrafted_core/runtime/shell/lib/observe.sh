@@ -56,6 +56,11 @@ _vetcoders_print_launch_receipt() {
   printf 'control:    %s\n' "$control_json"
   [[ -z "$report" ]] || printf 'report:     %s\n' "$report"
   [[ -z "$transcript" ]] || printf 'transcript: %s\n' "$transcript"
+  # Human rendering appears once the worker starts streaming; the raw .log
+  # stays the machine contract (await / session-id extraction).
+  if [[ -n "$transcript" && -s "${transcript%.log}.human.log" ]]; then
+    printf 'human:      %s\n' "${transcript%.log}.human.log"
+  fi
   [[ -z "$launcher" ]] || printf 'launcher:   %s\n' "$launcher"
   printf 'observe:    vibecrafted %s observe --run-id %s\n' "$tool" "$run_id"
   printf 'await (ARM NOW, supervisor-side): vibecrafted %s await --run-id %s\n' "$tool" "$run_id"

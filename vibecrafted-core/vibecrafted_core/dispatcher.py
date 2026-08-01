@@ -8,7 +8,7 @@ import sys
 from collections.abc import Sequence
 from typing import Any
 
-from .supervisor_async import AsyncSupervisor
+from .supervisor_async import AsyncSupervisor, transcript_human_path
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -130,6 +130,9 @@ async def _run(args: argparse.Namespace) -> int:
         "artifact_ok": bool(validation.ok if validation is not None else False),
         "artifact_errors": artifact_errors,
     }
+    human_transcript = transcript_human_path(handle.transcript_path)
+    if human_transcript is not None and human_transcript.exists():
+        summary["transcript_human"] = str(human_transcript)
 
     lifecycle_state = str(getattr(args, "lifecycle_state", "") or "")
     if lifecycle_state:

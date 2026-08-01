@@ -272,3 +272,22 @@ def test_grok_event_with_keyless_dict_message_does_not_recurse() -> None:
 
     assert rendered is not None
     assert "429" in rendered
+
+
+def test_grok_tool_call_update_renders_nested_content_text() -> None:
+    """grok 0.2.x tool_call_update: content is a list of {"type":"content",
+    "content":{"type":"text","text":...}} blocks; render the text, not the
+    JSON envelope, and never surface the rawOutput byte array."""
+    parser = AgentStreamParser("grok")
+
+    rendered = parser.feed_line(
+        b'{"type":"tool_call_update","toolCallId":"call-1","status":"completed",'
+        b'"content":[{"type":"content","content":{"type":"text",'
+        b'"text":"Exit code 0"}}],'
+        b'"rawOutput":{"type":"Bash","output":[84,114,97]}}\n'
+    )
+
+    assert "Exit code 0" in rendered
+    assert '{"type"' not in rendered
+    assert "rawOutput" not in rendered
+    assert "84" not in rendered

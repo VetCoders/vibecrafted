@@ -783,6 +783,55 @@ def test_async_supervisor_salvages_grok_report_from_streaming_json(
     assert meta_payload["status"] == "completed"
 
 
+def test_async_supervisor_writes_human_transcript_for_headless_streaming_json(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Regression: resume-new-session (headless, no tee) must not leave raw
+    streaming-json as the only readable trace. The AgentStreamParser rendering
+    the watcher already computes is persisted to the .human.log sibling."""
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("VIBECRAFTED_AGENT", raising=False)
+    report = tmp_path / "dispatch-report.md"
+    transcript = tmp_path / "transcript.log"
+    meta = _runtime_meta(tmp_path, "asup-grok-headless-human")
+    grok = tmp_path / "grok"
+    grok.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "print(json.dumps({'type': 'thought', 'data': 'planning'}))\n"
+        "print(json.dumps({'type': 'text', 'data': 'Przegląd PR gotowy.'}))\n"
+        "print(json.dumps({'type': 'tool_call_update', 'toolCallId': 'call-1',"
+        " 'status': 'completed', 'rawOutput': {'type': 'Bash',"
+        " 'output': [84, 114, 97]}}))\n"
+        "print(json.dumps({'type': 'end', 'sessionId': 'grok-headless-session'}))\n",
+        encoding="utf-8",
+    )
+    grok.chmod(0o755)
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id="asup-grok-headless-human",
+            command=[str(grok), "--output-format", "streaming-json", "--single"],
+            root=tmp_path,
+            meta_path=meta,
+            report_path=report,
+            transcript_path=transcript,
+            tee_output=False,
+        )
+    )
+
+    assert handle.exit_code == 0
+    raw_text = transcript.read_text(encoding="utf-8")
+    assert '{"type": "text"' in raw_text  # machine contract untouched
+    human = supervisor_async_module.transcript_human_path(transcript)
+    assert human is not None
+    assert human.name == "transcript.human.log"
+    human_text = human.read_text(encoding="utf-8")
+    assert "Przegląd PR gotowy." in human_text
+    assert '{"type"' not in human_text
+    assert "rawOutput" not in human_text
+
+
 def test_async_supervisor_survives_large_single_json_line_from_mcp(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

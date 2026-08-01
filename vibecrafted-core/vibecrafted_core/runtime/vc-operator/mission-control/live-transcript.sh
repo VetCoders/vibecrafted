@@ -16,6 +16,12 @@ while :; do
     continue
   fi
 
+  # Prefer the AgentStreamParser rendering over raw streaming-json when present.
+  human_transcript="${latest_transcript%.log}.human.log"
+  if [[ -s "$human_transcript" ]]; then
+    latest_transcript="$human_transcript"
+  fi
+
   printf '%sfile:%s %s\n\n' "$MC_STEEL" "$MC_RESET" "$latest_transcript"
   tail -n 80 "$latest_transcript" 2>/dev/null || mc_note "Transcript exists but is not readable yet."
 
