@@ -41,6 +41,22 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def transcript_human_path(transcript_path: Path | None) -> Path | None:
+    """Sibling human-readable rendering of the raw transcript.
+
+    The raw file is a machine contract (await, session-id extraction, salvage)
+    and must stay byte-exact provider output. Streaming-json providers such as
+    grok are unreadable there, so the AgentStreamParser rendering that
+    ``_watch_process`` already produces is persisted next to it instead of
+    being discarded when no terminal tee is attached.
+    """
+    if transcript_path is None:
+        return None
+    return transcript_path.with_name(
+        transcript_path.stem + ".human" + transcript_path.suffix
+    )
+
+
 def _infer_agent(command: Sequence[str]) -> str:
     if not command:
         return "agent"
@@ -716,6 +732,7 @@ class AsyncSupervisor:
     ) -> None:
         assert handle.process.stdout is not None
         parser = AgentStreamParser(handle.agent, default_model=handle.agent_model)
+        human_path = transcript_human_path(handle.transcript_path)
         read_task = asyncio.create_task(handle.process.stdout.readline())
         try:
             while True:
@@ -747,6 +764,9 @@ class AsyncSupervisor:
                     with handle.transcript_path.open("ab") as transcript:
                         transcript.write(chunk)
                 display_text = parser.feed_line(chunk)
+                if human_path is not None and display_text:
+                    with human_path.open("ab") as human:
+                        human.write(display_text.encode("utf-8"))
                 previous_agent_session_id = handle.agent_session_id
                 self._sync_stream_summary(handle, parser)
                 if (

@@ -240,6 +240,12 @@ if [[ -n "$report" && -s "$report" ]]; then
 fi
 
 if [[ -n "$transcript" && -f "$transcript" ]]; then
+  # Streaming-json providers keep the raw machine transcript in *.log and the
+  # AgentStreamParser rendering in *.human.log — show the human one when present.
+  human_transcript="${transcript%.log}.human.log"
+  if [[ -s "$human_transcript" ]]; then
+    transcript="$human_transcript"
+  fi
   echo '--- transcript tail ---'
   tail -n 80 "$transcript" | filter_observe_tail
   exit 0

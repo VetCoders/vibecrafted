@@ -55,10 +55,18 @@ def _stringish(value: Any) -> str:
     if isinstance(value, (int, float, bool)):
         return str(value)
     if isinstance(value, dict):
-        inner = value.get("message") or value.get("error") or value.get("detail")
-        if inner is None or inner is value:
-            return json.dumps(value, ensure_ascii=False)
-        return _stringish(inner)
+        # message/error/detail are the classic envelopes; text/content cover
+        # grok tool_call blocks ({"type":"content","content":{"type":"text",
+        # "text":...}}) which otherwise degrade to json.dumps noise.
+        keys = ("message", "error", "detail", "text", "content")
+        inner = next((value[k] for k in keys if value.get(k)), None)
+        if inner is not None and inner is not value:
+            return _stringish(inner)
+        if any(k in value for k in keys):
+            # A recognized envelope whose payload is empty is noise, not data
+            # (grok emits {"type":"text","text":""} heartbeats mid-stream).
+            return ""
+        return json.dumps(value, ensure_ascii=False)
     if isinstance(value, list):
         return ", ".join(_stringish(item) for item in value)
     return json.dumps(value, ensure_ascii=False)
@@ -575,6 +583,9 @@ class AgentStreamParser:
         if event_type in {"tool", "tool_use", "tool_call"}:
             name = event.get("name") or event.get("tool") or event.get("toolName")
             return "\n" + tool_tag(_stringish(name) or "?")
+        if event_type == "diff":
+            path = _stringish(event.get("path"))
+            return "\n" + tool_tag("diff") + (f" {path}\n" if path else "\n")
         if event_type == "error":
             message = event.get("message") or event.get("error") or event.get("data")
             text = _stringish(message)
