@@ -32,43 +32,44 @@ else
     pbcopy < "$tmp"
 fi
 
-# Append to Paste Stack history (FIFO max 50 entries)
+# Append to Paste Stack history (FIFO max 50) — shared with Composer seed/push.
 if [[ -s "$tmp" ]]; then
-    cache_dir="${HOME}/.cache/vc-frame"
-    mkdir -p "$cache_dir"
-    stack_file="${cache_dir}/paste-stack.json"
-
-    python3 -c '
+    paste_stack=""
+    for candidate in \
+        "${HOME}/.config/vetcoders/frontier/vc-frame/paste-stack.sh" \
+        "${HOME}/.config/vc-frame/paste-stack.sh" \
+        "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/paste-stack.sh"
+    do
+        if [[ -x "$candidate" ]]; then
+            paste_stack="$candidate"
+            break
+        fi
+    done
+    if [[ -n "$paste_stack" ]]; then
+        "$paste_stack" push "$tmp" || true
+    else
+        cache_dir="${HOME}/.cache/vc-frame"
+        mkdir -p "$cache_dir"
+        stack_file="${cache_dir}/paste-stack.json"
+        python3 -c '
 import json, os, sys
-
-tmp_file = sys.argv[1]
-stack_file = sys.argv[2]
-
+tmp_file, stack_file = sys.argv[1], sys.argv[2]
 try:
-    with open(tmp_file, "r", encoding="utf-8", errors="ignore") as f:
-        content = f.read()
-
+    content = open(tmp_file, "r", encoding="utf-8", errors="ignore").read()
     if not content.strip():
-        sys.exit(0)
-
+        raise SystemExit(0)
     stack = []
     if os.path.exists(stack_file):
         try:
-            with open(stack_file, "r", encoding="utf-8") as f:
-                stack = json.load(f)
+            stack = json.load(open(stack_file, "r", encoding="utf-8"))
         except Exception:
             stack = []
-
-    # Filter out duplicate of most recent item
     if not stack or stack[0] != content:
         stack.insert(0, content)
-
-    # Cap to max 50 items
     stack = stack[:50]
-
-    with open(stack_file, "w", encoding="utf-8") as f:
-        json.dump(stack, f, ensure_ascii=False, indent=2)
-except Exception as e:
+    json.dump(stack, open(stack_file, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+except Exception:
     pass
 ' "$tmp" "$stack_file" || true
+    fi
 fi
