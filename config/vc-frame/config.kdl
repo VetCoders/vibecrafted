@@ -161,7 +161,7 @@ keybinds {
     // Was Ctrl+Shift+c (dead without CSI-u); relocated to pane mode as 'y' (yank).
     pane {
         bind "y" {
-            Run "bash" "-lc" "tmp=$(mktemp -t vc-pane-dump.XXXXXX); pane_id=$(vc-frame action list-panes --json --all --state | python3 -c 'import json, os, sys; current=os.environ.get(\"VC_FRAME_PANE_ID\"); panes=json.load(sys.stdin); match=next((p for p in panes if p.get(\"is_focused\") and str(p.get(\"id\")) != current), None); print(((\"plugin_\" if match.get(\"is_plugin\") else \"\") + str(match.get(\"id\"))) if match else \"\")'); if [ -n \"$pane_id\" ]; then vc-frame action dump-screen --full --pane-id \"$pane_id\" --path \"$tmp\" && pbcopy < \"$tmp\"; fi; rm -f \"$tmp\"" {
+            Run "bash" "-lc" "$HOME/.config/vetcoders/frontier/vc-frame/copy-scrollback.sh" {
                 close_on_exit true
                 floating true
                 name "copy-pane-scrollback"
@@ -183,15 +183,6 @@ keybinds {
         bind "L" { Resize "Increase Right"; }
     }
 
-    // Locked mode also closes the current focus instead of the session.
-    // Without this override, the default vc-frame
-    // `shared { bind "Ctrl q" { Quit; } }` leaked into locked mode
-    // and killed the full vc-frame instance instead of a single pane.
-    // shared_except excludes locked, so bind CloseFocus there explicitly too.
-    locked {
-        bind "Ctrl q" { CloseFocus; SwitchToMode "Normal"; }
-    }
-
     // Explicit quit lives on Ctrl+o (SESSION) then 'q', since Ctrl+q now only
     // ever closes a pane. (Normal full-quit path = close the last pane.)
     session {
@@ -199,23 +190,19 @@ keybinds {
     }
 
     // ─── Tab mode (Ctrl+t): spatial navigation ──────────────────────────────
-    // ←/→ walk the TOP tab bar; ↑/↓ walk the LEFT Sessions rail. The pipe
-    // target is the plugin URL "vc-frame:session-manager" — a "session-rail"
-    // alias named in older docs was never defined anywhere, so alias-form
-    // binds piped into the void. Every rail instance resolves the same
-    // relative target (wrap-around, idempotent) — see
-    // relative_session_target() in default-plugins/session-manager.
+    // ←/→ walk the TOP tab bar; ↑/↓ walk the LEFT Sessions rail. Target
+    // plugin alias is "session-rail" as expected by the vc-frame contract.
     tab {
         bind "h" "Left" { GoToPreviousTab; }
         bind "l" "Right" { GoToNextTab; }
         bind "k" "Up" {
-            MessagePlugin "vc-frame:session-manager" {
+            MessagePlugin "session-rail" {
                 name "vc_rail_nav"
                 payload "up"
             };
         }
         bind "j" "Down" {
-            MessagePlugin "vc-frame:session-manager" {
+            MessagePlugin "session-rail" {
                 name "vc_rail_nav"
                 payload "down"
             };
@@ -232,7 +219,7 @@ keybinds {
     // block merges into the built-in scroll mode).
     scroll {
         bind "y" {
-            Run "bash" "-lc" "tmp=$(mktemp -t vc-pane-dump.XXXXXX); pane_id=$(vc-frame action list-panes --json --all --state | python3 -c 'import json, os, sys; current=os.environ.get(\"VC_FRAME_PANE_ID\"); panes=json.load(sys.stdin); match=next((p for p in panes if p.get(\"is_focused\") and str(p.get(\"id\")) != current), None); print(((\"plugin_\" if match.get(\"is_plugin\") else \"\") + str(match.get(\"id\"))) if match else \"\")'); if [ -n \"$pane_id\" ]; then vc-frame action dump-screen --full --pane-id \"$pane_id\" --path \"$tmp\" && pbcopy < \"$tmp\"; fi; rm -f \"$tmp\"" {
+            Run "bash" "-lc" "$HOME/.config/vetcoders/frontier/vc-frame/copy-scrollback.sh" {
                 close_on_exit true
                 floating true
                 name "copy-scrollback"
