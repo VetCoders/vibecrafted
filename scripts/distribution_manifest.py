@@ -130,6 +130,7 @@ FORBIDDEN_COMPONENTS = frozenset(
         ".coverage",
         ".devcontainer",
         ".dockerignore",
+        ".env",
         ".git",
         ".github",
         ".gitignore",
@@ -197,15 +198,24 @@ def _relative_path(value: str | Path) -> Path:
     return relative
 
 
+def _component_is_secret_env(name: str) -> bool:
+    # `.env` and every `.env.*` variant carry live credentials; only the
+    # committed `*.example` templates are distributable.
+    if name == ".env":
+        return True
+    return name.startswith(".env.") and not name.endswith(".example")
+
+
 def path_is_forbidden(relative: str | Path) -> bool:
     relative_path = _relative_path(relative)
     if not relative_path.parts:
         return True
     if relative_path.as_posix() in REQUIRED_LOCKFILES:
         return False
-    return any(part in FORBIDDEN_COMPONENTS for part in relative_path.parts) or (
-        relative_path.name.endswith(FORBIDDEN_SUFFIXES)
-    )
+    return any(
+        part in FORBIDDEN_COMPONENTS or _component_is_secret_env(part)
+        for part in relative_path.parts
+    ) or relative_path.name.endswith(FORBIDDEN_SUFFIXES)
 
 
 def path_is_included(relative: str | Path) -> bool:
