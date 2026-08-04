@@ -552,6 +552,12 @@ _SESSION_NOT_FOUND_RE = re.compile(
     r"Session ['\"][^'\"]+['\"] not found|There is no active session!",
     re.IGNORECASE,
 )
+# G3b: ambiguous critical-action ACK (NewTab under load). Parity with
+# vc-frame triage `is_ambiguous_new_tab_failure` + bash spawn path.
+_AMBIGUOUS_ACTION_ACK_RE = re.compile(
+    r"did not acknowledge completion|completion channel closed before acknowledgement|timed out after",
+    re.IGNORECASE,
+)
 
 
 def _vc_frame_stderr_is_session_not_found(text: str) -> bool:
@@ -561,6 +567,61 @@ def _vc_frame_stderr_is_session_not_found(text: str) -> bool:
     not sufficient (G3 recon, 2026-07-21).
     """
     return bool(_SESSION_NOT_FOUND_RE.search(text or ""))
+
+
+def _vc_frame_stderr_is_ambiguous_action_ack(text: str) -> bool:
+    """True when stderr looks like a timed-out action ACK that may still have applied."""
+    return bool(_AMBIGUOUS_ACTION_ACK_RE.search(text or ""))
+
+
+def _vc_frame_action_name_arg(command: list[str]) -> str:
+    """Extract ``--name VALUE`` from a vc-frame action argv, if present."""
+    for index, token in enumerate(command):
+        if token == "--name" and index + 1 < len(command):
+            return str(command[index + 1] or "")
+    return ""
+
+
+def _vc_frame_tab_present(vc_frame: str, session: str, tab_name: str) -> bool:
+    """True when ``tab_name`` is enumerable via ``action list-tabs --json``."""
+    if not vc_frame or not tab_name:
+        return False
+    cmd = [vc_frame]
+    if session:
+        cmd.extend(["--session", session])
+    cmd.extend(["action", "list-tabs", "--json"])
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    raw = (result.stdout or "").strip()
+    if not raw:
+        return False
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        # Best-effort substring fallback for stub/fake binaries in tests.
+        return f'"{tab_name}"' in raw or tab_name in raw
+
+    def visit(node: Any) -> bool:
+        if isinstance(node, dict):
+            name = node.get("name")
+            if name in (None, ""):
+                name = node.get("tab_name")
+            if str(name or "") == tab_name:
+                return True
+            return any(visit(value) for value in node.values())
+        if isinstance(node, list):
+            return any(visit(item) for item in node)
+        return False
+
+    return visit(payload)
 
 
 def _vc_frame_session_active(vc_frame: str, session: str) -> bool:
@@ -637,21 +698,40 @@ def _vc_frame_run_host_action(
     command: list[str],
     *,
     operator_session: str,
-    timeout: float = 30.0,
+    timeout: float = 45.0,
 ) -> _HostActionResult:
-    """Run a vc-frame host action with one create-background retry on not-found.
+    """Run a vc-frame host action with host-resurrect + ambiguous-ACK recovery.
 
-    Treats "Session 'X' not found" as failure even when the binary exits 0.
+    G3: treats "Session 'X' not found" as failure even when the binary exits 0,
+    then one ``attach --create-background`` + retry.
+
+    G3b: on ambiguous NewTab ACK timeouts, probe for ``--name`` presence before
+    retrying so a late-ACK success does not open a duplicate worker tab.
+    Default timeout is 45s (above the 25s critical ACK budget) so one full
+    ACK wait still fits a single ``_run_once``.
     """
     if not command:
         return _HostActionResult(False, None, "empty vc-frame command", "", False)
 
     resurrected = False
+    tab_name = _vc_frame_action_name_arg(command)
+    vc_frame_bin = command[0]
 
     def _run_once() -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             command, capture_output=True, text=True, timeout=timeout, check=False
         )
+
+    def _combined(result: subprocess.CompletedProcess[str]) -> str:
+        return "\n".join(
+            part for part in (result.stderr or "", result.stdout or "") if part
+        ).strip()
+
+    def _presence_ok() -> bool:
+        if not tab_name:
+            return False
+        time.sleep(1)
+        return _vc_frame_tab_present(vc_frame_bin, operator_session, tab_name)
 
     # CompletedProcess has no .pid; host actions are short-lived, so pid is
     # informational only. Use os.getpid() of the parent as a stable handle for
@@ -663,15 +743,13 @@ def _vc_frame_run_host_action(
     except (OSError, subprocess.SubprocessError) as exc:
         return _HostActionResult(False, None, f"{type(exc).__name__}: {exc}", "", False)
 
-    combined = "\n".join(
-        part for part in (result.stderr or "", result.stdout or "") if part
-    ).strip()
+    combined = _combined(result)
 
     if _vc_frame_stderr_is_session_not_found(combined):
         if not operator_session:
             return _HostActionResult(False, action_pid, combined, combined, False)
         ok_create, create_err = _vc_frame_create_background(
-            command[0], operator_session
+            vc_frame_bin, operator_session
         )
         resurrected = True
         if not ok_create:
@@ -687,9 +765,7 @@ def _vc_frame_run_host_action(
             return _HostActionResult(
                 False, None, f"{type(exc).__name__}: {exc}", "", True
             )
-        combined = "\n".join(
-            part for part in (result.stderr or "", result.stdout or "") if part
-        ).strip()
+        combined = _combined(result)
         if _vc_frame_stderr_is_session_not_found(combined) or result.returncode != 0:
             err = (
                 combined
@@ -698,8 +774,23 @@ def _vc_frame_run_host_action(
             return _HostActionResult(False, action_pid, err, err, True)
 
     elif result.returncode != 0:
+        if _vc_frame_stderr_is_ambiguous_action_ack(combined):
+            if _presence_ok():
+                return _HostActionResult(True, action_pid, "", combined, resurrected)
+            time.sleep(2)
+            try:
+                result = _run_once()
+            except (OSError, subprocess.SubprocessError) as exc:
+                return _HostActionResult(
+                    False, None, f"{type(exc).__name__}: {exc}", "", resurrected
+                )
+            combined = _combined(result)
+            if result.returncode == 0:
+                return _HostActionResult(True, action_pid, "", combined, resurrected)
+            if _vc_frame_stderr_is_ambiguous_action_ack(combined) and _presence_ok():
+                return _HostActionResult(True, action_pid, "", combined, resurrected)
         err = combined or f"vc-frame action exit {result.returncode}"
-        return _HostActionResult(False, action_pid, err, err, False)
+        return _HostActionResult(False, action_pid, err, err, resurrected)
 
     return _HostActionResult(True, action_pid, "", combined, resurrected)
 

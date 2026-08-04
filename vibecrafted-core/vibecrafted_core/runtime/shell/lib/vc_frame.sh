@@ -528,14 +528,51 @@ _vetcoders_prepare_operator_runtime() {
   return 1
 }
 
-# G3 twin of spawn_vc_frame_session_action (scripts/lib/vc_frame.sh).
+# G3 + G3b twin of spawn_vc_frame_session_action (scripts/lib/vc_frame.sh).
 # Same contract: session-not-found → one attach --create-background + retry;
-# unrecoverable host failure returns 2. Idiomatic to this file (no shared source).
+# ambiguous ACK → presence probe then one retry; unrecoverable host failure
+# returns 2. Idiomatic to this file (no shared source).
 _vetcoders_vc_frame_stderr_is_session_not_found() {
   local text="${1:-}"
   [[ -n "$text" ]] || return 1
   printf '%s' "$text" | command grep -qiE \
     "Session ['\"][^'\"]+['\"] not found|There is no active session!"
+}
+
+_vetcoders_vc_frame_stderr_is_ambiguous_action_ack() {
+  local text="${1:-}"
+  [[ -n "$text" ]] || return 1
+  printf '%s' "$text" | command grep -qiE \
+    "did not acknowledge completion|completion channel closed before acknowledgement|timed out after"
+}
+
+_vetcoders_vc_frame_action_name_arg() {
+  local prev=""
+  local arg=""
+  for arg in "$@"; do
+    if [[ "$prev" == "--name" ]]; then
+      printf '%s\n' "$arg"
+      return 0
+    fi
+    prev="$arg"
+  done
+  return 1
+}
+
+# Lightweight name presence via list-sessions/list-tabs JSON when available.
+_vetcoders_vc_frame_tab_present() {
+  local vc_frame_bin="${1:-}"
+  local session_name="${2:-}"
+  local tab_name="${3:-}"
+  local raw=""
+  [[ -n "$vc_frame_bin" && -n "$tab_name" ]] || return 1
+  if [[ -n "$session_name" ]]; then
+    raw="$("$vc_frame_bin" --session "$session_name" action list-tabs --json 2>/dev/null || true)"
+  else
+    raw="$("$vc_frame_bin" action list-tabs --json 2>/dev/null || true)"
+  fi
+  [[ -n "$raw" ]] || return 1
+  printf '%s' "$raw" | command grep -Fq "\"$tab_name\"" 2>/dev/null
 }
 
 _vetcoders_vc_frame_create_host_session() {
@@ -563,6 +600,8 @@ _vetcoders_vc_frame_session_action() {
   [[ "$#" -ge 1 ]] || return 1
 
   local err_file out_file action_status=0 err=""
+  local tab_name=""
+  tab_name="$(_vetcoders_vc_frame_action_name_arg "$@" 2>/dev/null || true)"
   err_file="$(mktemp "${TMPDIR:-/tmp}/vc-frame-action.XXXXXX.err")"
   out_file="$(mktemp "${TMPDIR:-/tmp}/vc-frame-action.XXXXXX.out")"
 
@@ -572,6 +611,18 @@ _vetcoders_vc_frame_session_action() {
     else
       "$vc_frame_bin" "$@" >"$out_file" 2>"$err_file"
     fi
+  }
+
+  _vetcoders_vc_frame_ack_presence_ok() {
+    local label="${1:-presence}"
+    [[ -n "$tab_name" ]] || return 1
+    sleep 1
+    if _vetcoders_vc_frame_tab_present "$vc_frame_bin" "$session_name" "$tab_name"; then
+      printf 'vc-frame action ACK ambiguous (%s) but tab %s is present; treating as success\n' \
+        "$label" "$tab_name" >&2
+      return 0
+    fi
+    return 1
   }
 
   action_status=0
@@ -606,6 +657,29 @@ _vetcoders_vc_frame_session_action() {
       return 2
     fi
   elif [[ "$action_status" -ne 0 ]]; then
+    if _vetcoders_vc_frame_stderr_is_ambiguous_action_ack "$err"; then
+      if _vetcoders_vc_frame_ack_presence_ok "first-ack"; then
+        rm -f "$err_file" "$out_file"
+        return 0
+      fi
+      printf 'vc-frame action ACK timeout; one retry after brief backoff\n' >&2
+      sleep 2
+      action_status=0
+      _vetcoders_vc_frame_action_invoke "$@" || action_status=$?
+      err="$(cat "$err_file" 2>/dev/null || true)"
+      if [[ -n "$err" ]]; then
+        printf '%s\n' "$err" >&2
+      fi
+      if [[ "$action_status" -eq 0 ]]; then
+        rm -f "$err_file" "$out_file"
+        return 0
+      fi
+      if _vetcoders_vc_frame_stderr_is_ambiguous_action_ack "$err" \
+        && _vetcoders_vc_frame_ack_presence_ok "retry-ack"; then
+        rm -f "$err_file" "$out_file"
+        return 0
+      fi
+    fi
     VETCODERS_VC_FRAME_LAST_ERROR="${err:-vc-frame action exit ${action_status}}"
     rm -f "$err_file" "$out_file"
     return "$action_status"
