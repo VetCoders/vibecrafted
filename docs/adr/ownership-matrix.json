@@ -55,19 +55,14 @@
       "truth": "branded terminal emulator surface: rendering, fonts, window, branding",
       "owner": "vc-terminal-alacritty",
       "write_surface": "installed vc-terminal profile from the runtime manifest",
-      "read_projections": [
-        "wezterm compatibility adapter"
-      ]
+      "read_projections": ["wezterm compatibility adapter"]
     },
     {
       "id": "session-composition",
       "truth": "tabs, layouts, panes, multiplexing and session composition",
       "owner": "vc-frame",
       "write_surface": "vc-frame layout and session commands",
-      "read_projections": [
-        "vc-terminal windows",
-        "operator shell FLEET links"
-      ]
+      "read_projections": ["vc-terminal windows", "operator shell FLEET links"]
     },
     {
       "id": "a2a-envelopes",
@@ -115,9 +110,7 @@
     {
       "id": "control-plane",
       "owns": ["run-lifecycle"],
-      "must_not": [
-        "delegate run truth to any UI or transport"
-      ]
+      "must_not": ["delegate run truth to any UI or transport"]
     },
     {
       "id": "aicx",
@@ -130,9 +123,7 @@
     {
       "id": "loctree",
       "owns": ["repository-structure"],
-      "must_not": [
-        "act as a session-memory store"
-      ]
+      "must_not": ["act as a session-memory store"]
     },
     {
       "id": "vc-terminal-alacritty",
@@ -153,10 +144,7 @@
     {
       "id": "wezterm-adapter",
       "owns": [],
-      "must_not": [
-        "carry the product terminal identity",
-        "own any lifecycle"
-      ]
+      "must_not": ["carry the product terminal identity", "own any lifecycle"]
     },
     {
       "id": "vibecrafted-server",
@@ -180,17 +168,12 @@
     {
       "id": "polar-tenant-service",
       "owns": ["commercial-entitlement"],
-      "must_not": [
-        "coexist with a second billing system",
-        "gate runtime truth"
-      ]
+      "must_not": ["coexist with a second billing system", "gate runtime truth"]
     },
     {
       "id": "plan-filesystem",
       "owns": ["plan-artifacts"],
-      "must_not": [
-        "depend on any service being up for a write to count"
-      ]
+      "must_not": ["depend on any service being up for a write to count"]
     },
     {
       "id": "scaffold-store",
