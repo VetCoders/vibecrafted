@@ -1,0 +1,37 @@
+# vibecrafted-server — llms.txt
+# Repo path: vibecrafted-server/ | Binary: vc-server | Port default: 127.0.0.1:3024
+# Role: read-only control-plane HTTP + SSR. Writer = Python control_plane.
+
+## curl
+# curl -fsSL https://raw.githubusercontent.com/vetcoders/vibecrafted/main/vibecrafted-server/llms.txt
+
+## install / run
+# make install-server   # monorepo
+# vc-server --help
+# make server           # dev SSR
+
+## API (read)
+# GET /api/health
+# GET /api/control/state     # active_runs, stalled_runs, recent_runs, warnings, events, settlement_counts
+# GET /api/control/runs
+# GET /api/control/runs/{id}
+# GET /api/control/lifecycle
+# GET /api/control/lifecycle/{id}
+# GET /api/control/events    # SSE
+
+## status threads (orthogonal)
+# process state/health | settlement f/x/n (Python only) | delivery axes | lifecycle container
+# lifecycle: do NOT terminalize from stage exit_code while status still running
+# never invent delivery sealed from completed
+
+## verify
+# cargo test -p control-core
+# cargo check -p vibecrafted-server-web --features ssr
+# curl -s localhost:3024/api/control/state | jq .settlement_counts
+
+## style
+# dark editorial; board f/x/n; badges settle:f|x|n
+# brand: Vibecrafted. Vetcoders / LibraxisAI
+
+## don't
+# write snapshots; collapse threads; assume VC_SERVER_TOKEN exists yet
