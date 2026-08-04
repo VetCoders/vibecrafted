@@ -1686,6 +1686,7 @@ impl MarblesState {
 
 #[cfg(test)]
 mod tests {
+    use chrono::DateTime;
     use super::ControlPlane;
     use crate::events::STREAM_SEGMENT_SCHEMA;
     use chrono::{Duration, Utc};
@@ -1958,6 +1959,75 @@ mod tests {
         );
         assert_eq!(view.settlement_counts.active, 1);
         assert_eq!(view.settlement_counts.total_settled, 0);
+
+        fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn settlement_needs_attention_counts_and_stalled_bucket_is_orthogonal() {
+        let unique = format!(
+            "control-core-settle-stall-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let home = std::env::temp_dir().join(unique);
+        let runs_dir = home.join("control_plane/runs");
+        fs::create_dir_all(&runs_dir).expect("runs");
+        let stamp = "2026-07-22T12:00:00+00:00";
+        let write = |run_id: &str, state: &str, verdict: Option<&str>, tui: Option<&str>| {
+            let mut payload = json!({
+                "run_id": run_id,
+                "state": state,
+                "agent": "claude",
+                "skill": "implement",
+                "mode": "implement",
+                "root": "/tmp/repo",
+                "operator_session": format!("repo-{run_id}"),
+                "latest_report": "",
+                "latest_transcript": "",
+                "last_error": "",
+                "updated_at": stamp,
+                "started_at": stamp,
+                "health": "final",
+                "source": "agent-meta",
+                "lock_present": false,
+                "exit_code": null,
+                "liveness": "terminal",
+                "completed_at": stamp,
+                "session_id": "",
+            });
+            if let Some(v) = verdict {
+                payload["settlement_verdict"] = json!(v);
+            }
+            if let Some(c) = tui {
+                payload["settlement_tui"] = json!(c);
+            }
+            fs::write(
+                runs_dir.join(format!("{run_id}.json")),
+                serde_json::to_vec_pretty(&payload).unwrap(),
+            )
+            .unwrap();
+        };
+        write("snap-n", "failed", None, None);
+        write("snap-attn", "completed", Some("needs_attention"), Some("n"));
+        write("snap-f", "completed", Some("finalized"), Some("f"));
+        write("snap-x", "failed", Some("failed"), Some("x"));
+
+        let now = DateTime::parse_from_rfc3339("2026-07-22T12:30:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let view = ControlPlane::new(&home).compute_view(now);
+        assert_eq!(view.settlement_counts.f, 1, "{:?}", view.settlement_counts);
+        assert_eq!(view.settlement_counts.x, 1, "{:?}", view.settlement_counts);
+        // needs_attention + unsettled terminal(failed without verdict) → n >= 2
+        assert!(
+            view.settlement_counts.n >= 2,
+            "expected n>=2 got {:?}",
+            view.settlement_counts
+        );
+        // first-class stalled list always present (empty when nothing stalled)
+        assert!(view.stalled_runs.is_empty() || view.stalled_runs.iter().all(|r| r.health == "stalled"));
+        assert!(view.recent_runs.iter().any(|r| r.run_id == "snap-f"));
 
         fs::remove_dir_all(home).ok();
     }
