@@ -166,11 +166,33 @@ pub fn delivery_axes_for_receipt(
     proof_state: Option<ProofState>,
     delivery_state: Option<DeliveryState>,
 ) -> DeliveryAxes {
+    // Unknown / mid-flight statuses must not collapse to Failed — that lied about
+    // lifecycle stages still in progress (promise, confirmed, initialized, …).
     let execution_default = match status {
-        "launching" => ExecutionState::Launched,
-        "running" => ExecutionState::Running,
-        "completed" => ExecutionState::Exited,
-        _ => ExecutionState::Failed,
+        "created" | "initialized" => ExecutionState::Created,
+        "launching" | "process_spawned" | "first_output_seen" => ExecutionState::Launched,
+        "running"
+        | "active"
+        | "artifact_seen"
+        | "report_started"
+        | "promise"
+        | "confirmed"
+        | "paused"
+        | "stalled" => ExecutionState::Running,
+        "completed" | "closed" | "converged" | "report_validated" => ExecutionState::Exited,
+        "interrupted" | "stopped" | "killed_by_operator" => ExecutionState::Interrupted,
+        "timed_out" => ExecutionState::TimedOut,
+        "failed"
+        | "blocked"
+        | "contract_failed"
+        | "report_missing"
+        | "report_invalid"
+        | "recovery_required"
+        | "gc"
+        | "ghost"
+        | "process_dead" => ExecutionState::Failed,
+        // Prefer Running over Failed for forward-compatible free-form states.
+        _ => ExecutionState::Running,
     };
     DeliveryAxes {
         execution_state: execution_state.unwrap_or(execution_default),
@@ -974,10 +996,21 @@ impl LifecycleRun {
         let summary = self.summary(updated_at.clone(), report_dou_index);
         let state = summary.status.clone();
         let health = state_health(&state, &updated_at, Utc::now());
-        let final_health = if is_final_state(&state) || summary.exit_code.is_some() {
+        // Lifecycle container terminal follows overall workflow status only.
+        // A prior stage's exit_code (even 0) must not finalize a still-running
+        // multi-stage workflow — workers remain separate run_ids.
+        let final_health = if is_final_state(&state) {
             Health::Final
         } else {
             health
+        };
+        // Only surface stage exit_code on the flat projection when the workflow
+        // itself is terminal; otherwise leave None so is_terminal() does not
+        // fire from a completed stage.
+        let exit_code = if is_final_state(&state) {
+            summary.exit_code
+        } else {
+            None
         };
         let axes = delivery_axes_for_receipt(
             &state,
@@ -1004,7 +1037,7 @@ impl LifecycleRun {
             health: final_health.as_str().to_string(),
             source: summary.source,
             lock_present: false,
-            exit_code: summary.exit_code,
+            exit_code,
             liveness: if final_health == Health::Final {
                 "terminal".to_string()
             } else {
@@ -1536,4 +1569,83 @@ pub fn merge_status(existing: Option<RunStatus>, incoming: RunStatus) -> RunStat
             .unwrap_or(merged.worker_alive == Some(true));
     merged.set_controls(await_run, stop, retry);
     merged
+}
+
+
+#[cfg(test)]
+mod status_thread_tests {
+    use super::*;
+
+    #[test]
+    fn delivery_axes_mid_flight_are_not_failed() {
+        let axes = delivery_axes_for_receipt("promise", None, None, None);
+        assert_eq!(axes.execution_state, ExecutionState::Running);
+        let axes = delivery_axes_for_receipt("timed_out", None, None, None);
+        assert_eq!(axes.execution_state, ExecutionState::TimedOut);
+        let axes = delivery_axes_for_receipt("interrupted", None, None, None);
+        assert_eq!(axes.execution_state, ExecutionState::Interrupted);
+        let axes = delivery_axes_for_receipt("failed", None, None, None);
+        assert_eq!(axes.execution_state, ExecutionState::Failed);
+        let axes = delivery_axes_for_receipt("completed", None, None, None);
+        assert_eq!(axes.execution_state, ExecutionState::Exited);
+        assert_eq!(axes.proof_state, ProofState::Undeclared);
+        assert_eq!(axes.delivery_state, DeliveryState::Unverified);
+    }
+
+    #[test]
+    fn lifecycle_stage_exit_does_not_finalize_running_workflow() {
+        let mut stage = LifecycleStage::default();
+        stage.id = "stage-a".into();
+        stage.status = "completed".into();
+        stage.await_result = serde_json::json!({ "exit_code": 0 });
+
+        let mut run = LifecycleRun {
+            schema: None,
+            run_id: "lc-1".into(),
+            workflow: "ship".into(),
+            agent: "claude".into(),
+            root: "/tmp/x".into(),
+            status: "running".into(),
+            await_stages: true,
+            parent_run_id: None,
+            operator_actions: vec![],
+            spec: serde_json::Value::Null,
+            supervisor: String::new(),
+            human_controls: vec![],
+            state_path: String::new(),
+            report_path: String::new(),
+            transcript_path: String::new(),
+            context_atlas: serde_json::Value::Null,
+            manifest: serde_json::Value::Null,
+            baton: LifecycleBaton {
+                next_stage: "stage-b".into(),
+                ..Default::default()
+            },
+            stages: vec![stage],
+            next_stage: "stage-b".into(),
+            error: String::new(),
+            dou_index: None,
+            accepted_dou: None,
+            accepted_dou_findings: vec![],
+            execution_state: None,
+            proof_state: None,
+            delivery_state: None,
+        };
+        // summary still exposes stage exit for observers of nested state
+        let summary = run.summary("2026-08-03T12:00:00Z".into(), None);
+        assert_eq!(summary.exit_code, Some(0));
+
+        let flat = run.to_run_status("2026-08-03T12:00:00Z".into(), None);
+        assert!(!flat.is_terminal(), "running lifecycle must not be terminal");
+        assert_ne!(flat.health, "final");
+        assert!(flat.exit_code.is_none());
+        assert_ne!(flat.liveness, "terminal");
+        assert_eq!(flat.execution_state, Some(ExecutionState::Running));
+
+        run.status = "completed".into();
+        let flat_done = run.to_run_status("2026-08-03T12:00:00Z".into(), None);
+        assert!(flat_done.is_terminal());
+        assert_eq!(flat_done.health, "final");
+        assert_eq!(flat_done.exit_code, Some(0));
+    }
 }
