@@ -73,11 +73,15 @@ styled_underlines false
 auto_layout true
 show_startup_tips false
 show_release_notes false
-// Plain-Ctrl keybind scheme below needs no enhanced-keyboard negotiation, so
-// this stays off. (Ctrl+Shift+<letter> would have required it: a legacy
-// terminal can't encode the Shift bit on a Ctrl chord — Ctrl+x and Ctrl+Shift+x
-// arrive as the same byte. We sidestep that entirely by staying on plain Ctrl.)
-support_kitty_keyboard_protocol false
+// Key-contract v3 (kronika 2026-07-30, 8a0f14e65): the global Super/Cmd
+// switcher (bind "Super Left/Right/Up/Down", "Super e") is wired as kitty
+// CSI-u sequences — the Alacritty preset encodes Cmd+arrows/Cmd+E that way,
+// and zellij-client's KittyKeyboardParser only runs when this is on. Plain
+// Ctrl chords below stay unaffected either way (Ctrl+Shift+<letter> is not
+// used — Ctrl+x / Ctrl+Shift+x would collide without this protocol, but we
+// never bind that combo). Leaving this false silently strands the Super
+// switcher: it degrades to raw escape-sequence passthrough in every pane.
+support_kitty_keyboard_protocol true
 
 // ─── Session Resilience ─────────────────────────────────────────────────────────
 // The session survives terminal closure by detaching instead of killing.
