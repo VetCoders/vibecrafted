@@ -463,8 +463,10 @@ _vetcoders_maybe_spawn_await_pane() {
     local cwd="${root:-$PWD}"
     local tab_args=()
     [[ -z "$operator_tab_id" ]] || tab_args=(--tab-id "$operator_tab_id")
+    # ${arr[@]+...} guard: macOS bash 3.2 treats an empty array expansion as
+    # an unbound variable under `set -u` and kills the await-pane subshell.
     "$vc_frame_bin" action new-pane \
-      "${tab_args[@]}" \
+      ${tab_args[@]+"${tab_args[@]}"} \
       --floating \
       --width 24% \
       --height 35% \
