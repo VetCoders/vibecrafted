@@ -183,7 +183,7 @@ fn load_dashboard_data() -> DashboardData {
     DashboardData::default()
 }
 
-fn settlement_badge(tui: String) -> String {
+fn settlement_badge(tui: &str) -> String {
     if tui.is_empty() {
         "settle:—".to_string()
     } else {

@@ -1,6 +1,6 @@
 # Control status threads (vc-server)
 
-Investigation + partial fix branch: `fix/control-status-threads`.
+Investigation notes captured during the control-plane status-thread fixes.
 
 ## Orthogonal threads (by design)
 
