@@ -190,7 +190,7 @@ fn load_dashboard_data() -> DashboardData {
     DashboardData::default()
 }
 
-fn settlement_badge(tui: String) -> String {
+fn settlement_badge(tui: &str) -> String {
     if tui.is_empty() {
         "settle:—".to_string()
     } else {
@@ -216,7 +216,7 @@ fn run_cards(runs: Vec<DashboardRun>) -> impl IntoView {
                     <div class="control-run-tags">
                         <span class="control-badge">{run.state}</span>
                         <span class="control-badge">{run.health}</span>
-                        <span class="control-badge">{settlement_badge(run.settlement_tui.clone())}</span>
+                        <span class="control-badge">{settlement_badge(&run.settlement_tui)}</span>
                         <span class="control-badge">{run.agent}</span>
                         <span class="control-badge">{run.skill}</span>
                         <span class="control-badge">{run.mode}</span>
