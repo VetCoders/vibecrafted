@@ -443,21 +443,50 @@ pub fn ConsolePage() -> impl IntoView {
 
 fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
     let theme = use_theme();
-    let active_count = dashboard.active_runs.len();
-    let recent_count = dashboard.recent_runs.len();
-    let all_count = dashboard.all_runs.len();
-    let lifecycle_count = dashboard.lifecycle_runs.len();
-    let warning_count = dashboard.warnings.len();
-    let event_count = dashboard.events.len();
+    let control_plane = dashboard.control_plane.clone();
+    let generated_at = dashboard.generated_at.clone();
+    let active_runs = dashboard.active_runs.clone();
+    let stalled_runs = dashboard.stalled_runs.clone();
+    let recent_runs = dashboard.recent_runs.clone();
+    let lifecycle_runs = dashboard.lifecycle_runs.clone();
+    let warnings = dashboard.warnings.clone();
+    let events = dashboard.events.clone();
+    let loctree_report = dashboard.loctree_report.clone();
+
+    let active_count = active_runs.len();
+    let stalled_count = stalled_runs.len();
+    let recent_count = recent_runs.len();
+    let _lifecycle_count = lifecycle_runs.len();
+    let warning_count = warnings.len();
+    let event_count = events.len();
+    let all_count = active_count + stalled_count + recent_count;
+    let action_count = lifecycle_runs
+        .iter()
+        .map(|r| r.operator_actions_count)
+        .sum::<usize>();
+
+    let action_runs: Vec<DashboardLifecycleRun> = lifecycle_runs
+        .iter()
+        .filter(|r| r.operator_actions_count > 0)
+        .cloned()
+        .collect();
+
     let settlement = dashboard.settlement.clone();
-    let no_active_runs = dashboard.active_runs.is_empty();
-    let no_all_runs = dashboard.all_runs.is_empty();
-    let no_lifecycle_runs = dashboard.lifecycle_runs.is_empty();
-    let no_warnings = dashboard.warnings.is_empty();
-    let no_events = dashboard.events.is_empty();
-    let theme_state = move || match theme.get() {
+    let no_active_runs = active_runs.is_empty();
+    let no_stalled_runs = stalled_runs.is_empty();
+    let _no_all_runs = all_count == 0;
+    let _no_lifecycle_runs = lifecycle_runs.is_empty();
+    let no_action_runs = action_runs.is_empty();
+    let no_warnings = warnings.is_empty();
+    let no_events = events.is_empty();
+    let _theme_state = move || match theme.get() {
         Theme::Dark => "dark",
         Theme::Light => "light",
+    };
+    let loctree_link = if loctree_report.is_empty() {
+        None
+    } else {
+        Some(loctree_report.clone())
     };
     let has_loctree_link = loctree_link.is_some();
 
@@ -542,8 +571,8 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
                             <a class="operator-summary-cell" href="#context">
                                 <dt>"stalled"</dt>
                                 <dd>{stalled_count}</dd>
-                            </div>
-                            <div>
+                            </a>
+                            <a class="operator-summary-cell" href="#context">
                                 <dt>"recent"</dt>
                                 <dd>{recent_count}</dd>
                             </a>
