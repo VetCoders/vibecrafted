@@ -1,0 +1,47 @@
+name: vibecrafted-server
+
+on:
+  push:
+    paths:
+      - "vibecrafted-server/**"
+      - ".github/workflows/vibecrafted-server.yml"
+    branches: [main, "feat/**", "fix/**", "docs/**"]
+  pull_request:
+    paths:
+      - "vibecrafted-server/**"
+      - ".github/workflows/vibecrafted-server.yml"
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vc-server-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  control-core:
+    name: control-core tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: vibecrafted-server
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # Pin action to full SHA (supply-chain). Install Rust *stable* channel via inputs.
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch tip
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: vibecrafted-server
+      - name: Agent docs present
+        run: |
+          test -s AGENTS.md
+          test -s llms.txt
+      - name: Test control-core
+        run: cargo test -p control-core
+      - name: Check web (ssr)
+        run: cargo check -p vibecrafted-server-web --features ssr

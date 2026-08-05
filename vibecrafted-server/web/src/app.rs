@@ -14,6 +14,7 @@ struct DashboardData {
     generated_at: String,
     settlement: DashboardSettlement,
     active_runs: Vec<DashboardRun>,
+    stalled_runs: Vec<DashboardRun>,
     recent_runs: Vec<DashboardRun>,
     all_runs: Vec<DashboardRun>,
     lifecycle_runs: Vec<DashboardLifecycleRun>,
@@ -44,6 +45,9 @@ struct DashboardRun {
     root: String,
     latest_report: String,
     updated_at: String,
+    /// Settlement tui cell when Python wrote one (`f`/`x`/`n`), else empty.
+    settlement_tui: String,
+    last_error: String,
 }
 
 #[derive(Clone, Default)]
@@ -87,6 +91,15 @@ fn load_dashboard_data_from(
     use control_core::{Event, LifecycleRunSummary, RunStatus};
 
     fn run_summary(run: RunStatus) -> DashboardRun {
+        let settlement_tui = run
+            .settlement_tui
+            .map(|cell| match cell {
+                control_core::SettlementTui::F => "f",
+                control_core::SettlementTui::X => "x",
+                control_core::SettlementTui::N => "n",
+            })
+            .unwrap_or("")
+            .to_string();
         DashboardRun {
             run_id: run.run_id,
             state: run.state,
@@ -97,6 +110,8 @@ fn load_dashboard_data_from(
             root: run.root,
             latest_report: run.latest_report,
             updated_at: run.updated_at,
+            settlement_tui,
+            last_error: run.last_error,
         }
     }
 
@@ -154,6 +169,7 @@ fn load_dashboard_data_from(
             total_settled: settlement.total_settled,
         },
         active_runs: state.active_runs.into_iter().map(run_summary).collect(),
+        stalled_runs: state.stalled_runs.into_iter().map(run_summary).collect(),
         recent_runs: state.recent_runs.into_iter().map(run_summary).collect(),
         all_runs: all_runs.into_iter().map(run_summary).collect(),
         lifecycle_runs: lifecycle_runs.into_iter().map(lifecycle_summary).collect(),
@@ -165,6 +181,14 @@ fn load_dashboard_data_from(
 #[cfg(not(feature = "ssr"))]
 fn load_dashboard_data() -> DashboardData {
     DashboardData::default()
+}
+
+fn settlement_badge(tui: &str) -> String {
+    if tui.is_empty() {
+        "settle:—".to_string()
+    } else {
+        format!("settle:{tui}")
+    }
 }
 
 fn run_cards(runs: Vec<DashboardRun>) -> impl IntoView {
@@ -185,6 +209,7 @@ fn run_cards(runs: Vec<DashboardRun>) -> impl IntoView {
                     <div class="control-run-tags">
                         <span class="control-badge">{run.state}</span>
                         <span class="control-badge">{run.health}</span>
+                        <span class="control-badge">{settlement_badge(run.settlement_tui.clone())}</span>
                         <span class="control-badge">{run.agent}</span>
                         <span class="control-badge">{run.skill}</span>
                         <span class="control-badge">{run.mode}</span>
@@ -192,6 +217,7 @@ fn run_cards(runs: Vec<DashboardRun>) -> impl IntoView {
                     <div class="control-run-meta">
                         <span>{run.updated_at}</span>
                         <span>{report_label}</span>
+                        <span class="control-run-error">{run.last_error}</span>
                     </div>
                 </article>
             }
@@ -382,6 +408,7 @@ pub fn ConsolePage() -> impl IntoView {
 fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
     let theme = use_theme();
     let active_count = dashboard.active_runs.len();
+    let stalled_count = dashboard.stalled_runs.len();
     let recent_count = dashboard.recent_runs.len();
     let all_count = dashboard.all_runs.len();
     let lifecycle_count = dashboard.lifecycle_runs.len();
@@ -389,6 +416,7 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
     let event_count = dashboard.events.len();
     let settlement = dashboard.settlement.clone();
     let no_active_runs = dashboard.active_runs.is_empty();
+    let no_stalled_runs = dashboard.stalled_runs.is_empty();
     let no_all_runs = dashboard.all_runs.is_empty();
     let no_lifecycle_runs = dashboard.lifecycle_runs.is_empty();
     let no_warnings = dashboard.warnings.is_empty();
@@ -415,7 +443,7 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
                         <p class="section-eyebrow">"control plane"</p>
                         <h1>"vc-server"</h1>
                         <p>
-                            "One typed read-model over the Vibecrafted runtime: active runs, recent state, events, warnings, and every stored run snapshot."
+                            "Live merge (active / stalled / recent) sits beside snapshot All Runs and lifecycle containers — settlement f/x/n is Python-owned."
                         </p>
                         <p>
                             <a class="server-console-link" href="/scaffold">
@@ -433,6 +461,10 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
                             <div>
                                 <dt>"active"</dt>
                                 <dd>{active_count}</dd>
+                            </div>
+                            <div>
+                                <dt>"stalled"</dt>
+                                <dd>{stalled_count}</dd>
                             </div>
                             <div>
                                 <dt>"recent"</dt>
@@ -467,6 +499,15 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
                         {run_cards(dashboard.active_runs)}
                     </section>
 
+                    <section class="control-panel" aria-label="Stalled runs">
+                        <div class="control-panel-head">
+                            <h2>"Stalled"</h2>
+                            <span>{stalled_count}</span>
+                        </div>
+                        <p class="control-empty" hidden={!no_stalled_runs}>"No stalled runs."</p>
+                        {run_cards(dashboard.stalled_runs)}
+                    </section>
+
                     <section class="control-panel" aria-label="Warnings">
                         <div class="control-panel-head">
                             <h2>"Warnings"</h2>
@@ -492,7 +533,7 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
 
                 <section class="control-panel control-panel-wide" aria-label="All runs">
                     <div class="control-panel-head">
-                        <h2>"All Runs"</h2>
+                        <h2>"All Runs (snapshots)"</h2>
                         <span>{all_count}</span>
                     </div>
                     <p class="control-empty" hidden={!no_all_runs}>"No run snapshots found under the control plane."</p>
