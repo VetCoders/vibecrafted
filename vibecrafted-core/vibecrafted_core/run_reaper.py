@@ -341,7 +341,12 @@ def build_process_table(
     """Snapshot the process table. Empty on any failure — never raises."""
     runner = _default_runner if runner is None else runner
     try:
-        proc = runner(["ps", "-A", "-o", "pid=,ppid=,pgid=,command="])
+        # ww: never truncate the command column. Without it ps honors COLUMNS
+        # (pytest and CI runners export one), so the same process hashes to two
+        # different command_sha256 values depending on the observer — identity
+        # validation then refuses a legitimate stop with
+        # process_identity_mismatch.
+        proc = runner(["ps", "-A", "-ww", "-o", "pid=,ppid=,pgid=,command="])
     except Exception:  # noqa: BLE001
         return ()
     if getattr(proc, "returncode", 1) != 0:
