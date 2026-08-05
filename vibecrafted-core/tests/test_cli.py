@@ -989,3 +989,171 @@ def test_apply_live_liveness_prefers_live_worker_over_dead_launcher() -> None:
     )
 
     assert run["liveness"] == "heartbeat"
+
+
+# --- _tail_lines: coalescence + window-after-render (W1-A) ---------------
+
+
+def _ansi_free(line: str) -> str:
+    return cli.ANSI_PATTERN.sub("", line)
+
+
+def _grok_token_transcript() -> tuple[list[str], list[str]]:
+    """Per-token grok stream: one {"type":"thought","data":<token>} JSON event
+    per word, newline tokens between sentences. >=120 events tokenizing
+    >=3 full sentences — mirrors real grok streaming granularity. Sentences
+    are kept short so each rendered line (with per-token ANSI dim wrappers)
+    stays under the 500-raw-char _clip_line budget."""
+    ordinals = ["one", "two", "three", "four", "five", "six", "seven", "eight"]
+    sentences = [
+        f"Sentence {ordinal} of the grok stream keeps flowing token by token "
+        "toward the final stop."
+        for ordinal in ordinals
+    ]
+    events: list[str] = []
+    for index, sentence in enumerate(sentences):
+        if index:
+            events.append(json.dumps({"type": "thought", "data": "\n"}))
+        words = sentence.split(" ")
+        events.append(json.dumps({"type": "thought", "data": words[0]}))
+        for word in words[1:]:
+            events.append(json.dumps({"type": "thought", "data": " " + word}))
+    assert len(events) >= 120
+    return sentences, events
+
+
+def test_tail_lines_coalesces_grok_per_token_thoughts_into_sentences(
+    tmp_path: Path,
+) -> None:
+    sentences, events = _grok_token_transcript()
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text("\n".join(events) + "\n", encoding="utf-8")
+
+    lines, error = cli._tail_lines(str(transcript), agent="grok")
+
+    assert error == ""
+    stripped = [_ansi_free(line) for line in lines]
+    # A1: every sentence's tokens land in ONE rendered line, not token-per-line.
+    for sentence in sentences:
+        matches = [line for line in stripped if sentence in line]
+        assert matches, f"sentence not coalesced into one line: {sentence!r}"
+    # Not token-per-line: 8 sentences -> 8 rendered lines, not 120 token lines.
+    assert len(lines) == len(sentences)
+
+
+def test_tail_lines_window_is_rendered_lines_not_raw_events(
+    tmp_path: Path,
+) -> None:
+    sentences, events = _grok_token_transcript()
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text("\n".join(events) + "\n", encoding="utf-8")
+
+    lines, error = cli._tail_lines(str(transcript), agent="grok")
+
+    assert error == ""
+    stripped = "\n".join(_ansi_free(line) for line in lines)
+    # A2: content from beyond the last 40 raw JSON lines must be visible.
+    # Sentence one lives >120 raw events before EOF; the old raw-first cut
+    # (lines[-40:]) could never show it.
+    assert sentences[0] in stripped
+    last_40_raw_payload = "".join(
+        json.loads(event).get("data", "") for event in events[-40:]
+    )
+    assert "Sentence one" not in last_40_raw_payload
+
+
+def test_tail_lines_codex_shaped_fat_events_render_unchanged(
+    tmp_path: Path,
+) -> None:
+    """Regression contract (A3): captured from _tail_lines BEFORE the
+    coalescence change — fat multi-line codex events must render identically:
+    one session header, each embedded text line on its own line, one tokens
+    line. 7 lines total."""
+    events = [
+        {"type": "thread.started", "thread_id": "codex-thread"},
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "agent_message",
+                "text": "first paragraph line one\nfirst paragraph line two",
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "agent_message",
+                "text": "second message\nwith three\nrendered lines",
+            },
+        },
+        {
+            "type": "turn.completed",
+            "usage": {"input_tokens": 11, "cached_input_tokens": 4, "output_tokens": 6},
+        },
+    ]
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8"
+    )
+
+    lines, error = cli._tail_lines(str(transcript), agent="codex")
+
+    assert error == ""
+    stripped = [_ansi_free(line) for line in lines]
+    assert len(stripped) == 7
+    assert "session: codex-thread" in stripped[0]
+    assert stripped[1:6] == [
+        "first paragraph line one",
+        "first paragraph line two",
+        "second message",
+        "with three",
+        "rendered lines",
+    ]
+    assert "tokens: 11 in (4 cached) / 6 out" in stripped[6]
+
+
+@pytest.mark.parametrize("agent", ["", "grok", "codex"])
+def test_tail_lines_missing_path_and_file_edges(agent: str, tmp_path: Path) -> None:
+    assert cli._tail_lines("", agent=agent) == ([], "missing_path")
+    assert cli._tail_lines(str(tmp_path / "absent.log"), agent=agent) == (
+        [],
+        "missing_file",
+    )
+
+
+@pytest.mark.parametrize("agent", ["", "grok", "codex"])
+def test_tail_lines_empty_file_edge(agent: str, tmp_path: Path) -> None:
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text("", encoding="utf-8")
+    assert cli._tail_lines(str(transcript), agent=agent) == ([], "empty")
+
+
+def test_tail_lines_json_without_renderable_events(tmp_path: Path) -> None:
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text('{"type":"end","sessionId":"grok-sess"}\n', encoding="utf-8")
+    assert cli._tail_lines(str(transcript), agent="grok") == (
+        [],
+        "no_renderable_events",
+    )
+
+
+def test_tail_lines_no_agent_returns_last_max_lines_raw(tmp_path: Path) -> None:
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text(
+        "\n".join(f"line {idx}" for idx in range(1, 66)) + "\n", encoding="utf-8"
+    )
+    lines, error = cli._tail_lines(str(transcript))
+    assert error == ""
+    assert lines == [f"line {idx}" for idx in range(26, 66)]
+
+
+def test_tail_lines_agent_with_plain_text_passes_through_raw_tail(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text(
+        "\n".join(f"line {idx}" for idx in range(1, 66)) + "\n", encoding="utf-8"
+    )
+    lines, error = cli._tail_lines(str(transcript), agent="codex")
+    assert error == ""
+    assert lines[-1] == "line 65"
+    assert len(lines) == 40

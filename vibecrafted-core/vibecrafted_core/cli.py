@@ -407,6 +407,17 @@ def _clip_line(line: str, *, max_chars: int = 500) -> str:
     return line[: max_chars - 1] + "…"
 
 
+# Per-token streamers (grok emits one JSON event per token, e.g.
+# {"type":"thought","data":"Good"}) render to far fewer lines than raw events:
+# whole sentences coalesce into a single rendered line. Cutting the raw tail to
+# `max_lines` BEFORE rendering would leave ~40 tokens (~1.5 sentences) of
+# visibility, so we feed the parser a much wider raw tail and window to
+# `max_lines` only AFTER rendering. 2000 raw lines comfortably covers 40
+# rendered lines even at one-token-per-event rates while capping the
+# render-feed cost on huge transcripts.
+RAW_TAIL_LINES = 2000
+
+
 def _tail_lines(
     path: str, *, agent: str = "", max_lines: int = 40
 ) -> tuple[list[str], str]:
@@ -421,25 +432,28 @@ def _tail_lines(
         return [], f"read_error:{type(exc).__name__}"
     if not lines:
         return [], "empty"
-    tail = lines[-max_lines:]
     if not agent:
-        return [_clip_line(line) for line in tail], ""
+        return [_clip_line(line) for line in lines[-max_lines:]], ""
+    tail = lines[-RAW_TAIL_LINES:]
     parser = AgentStreamParser(agent, default_model=resolve_default_model(agent))
-    rendered: list[str] = []
+    chunks: list[str] = []
     saw_json = False
     for line in tail:
         if line.lstrip().startswith("{"):
             saw_json = True
-        text = parser.feed_line((line + "\n").encode("utf-8"))
-        for rendered_line in text.splitlines():
-            clean = rendered_line.strip()
-            if clean and ANSI_PATTERN.sub("", clean).strip():
-                rendered.append(_clip_line(clean))
+        chunks.append(parser.feed_line((line + "\n").encode("utf-8")))
+    # Coalesce first: parser fragments without trailing newlines (grok thought
+    # tokens) must merge into full lines before any windowing happens.
+    rendered: list[str] = []
+    for rendered_line in "".join(chunks).splitlines():
+        clean = rendered_line.strip()
+        if clean and ANSI_PATTERN.sub("", clean).strip():
+            rendered.append(_clip_line(clean))
     if rendered:
         return rendered[-max_lines:], ""
     if saw_json:
         return [], "no_renderable_events"
-    return [_clip_line(line) for line in tail], ""
+    return [_clip_line(line) for line in lines[-max_lines:]], ""
 
 
 def _run_succeeded(run: dict[str, Any]) -> bool:
