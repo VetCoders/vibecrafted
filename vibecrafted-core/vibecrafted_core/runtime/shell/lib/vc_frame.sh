@@ -195,32 +195,6 @@ _vetcoders_strip_ansi() {
   python3 -c 'import re, sys; print(re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", sys.stdin.read()), end="")'
 }
 
-_vetcoders_osascript_bin() {
-  local override="${VIBECRAFTED_OSASCRIPT_BIN:-}"
-  if [[ -n "$override" && -x "$override" ]]; then
-    printf '%s\n' "$override"
-    return 0
-  fi
-
-  command -v osascript 2>/dev/null || return 1
-}
-
-_vetcoders_preferred_terminal() {
-  local pref="${VIBECRAFTED_TERMINAL:-}"
-  if [[ -n "$pref" ]]; then
-    printf '%s\n' "$pref"
-    return 0
-  fi
-  if [[ -d "/Applications/iTerm.app" ]]; then
-    printf 'iterm\n'
-    return 0
-  fi
-  case "${TERM_PROGRAM:-}" in
-    iTerm.app) printf 'iterm\n' ;;
-    *) printf 'terminal\n' ;;
-  esac
-}
-
 _vetcoders_vc_frame_session_state() {
   local PATH="${PATH:-}"
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
@@ -250,53 +224,6 @@ _vetcoders_vc_frame_session_state() {
   done <<< "$listing"
 
   printf 'missing\n'
-}
-
-_vetcoders_open_iterm_command() {
-  local command_text="$1"
-  local osascript_bin
-  osascript_bin="$(_vetcoders_osascript_bin)" || return 1
-  [[ "$(_vetcoders_preferred_terminal)" == "iterm" ]] || return 1
-  local command_json
-  command_json="$(python3 - "$command_text" <<'PY'
-import json
-import sys
-
-print(json.dumps(sys.argv[1]))
-PY
-)"
-
-  "$osascript_bin" <<EOF_APPLE
-tell application "iTerm2"
-  tell current window
-    create tab with default profile
-    tell current session of current tab
-      write text $command_json
-    end tell
-  end tell
-end tell
-EOF_APPLE
-}
-
-_vetcoders_open_terminal_command() {
-  local command_text="$1"
-  local osascript_bin
-  osascript_bin="$(_vetcoders_osascript_bin)" || return 1
-  local command_json
-  command_json="$(python3 - "$command_text" <<'PY'
-import json
-import sys
-
-print(json.dumps(sys.argv[1]))
-PY
-)"
-
-  "$osascript_bin" <<EOF_APPLE
- tell application "Terminal"
-   activate
-   do script $command_json
- end tell
-EOF_APPLE
 }
 
 _vetcoders_operator_layout_file() {
@@ -371,9 +298,12 @@ _vetcoders_ensure_vc_frame_session() {
   vc_frame_bin="$(_vetcoders_vc_frame_bin)" || return 1
 
   local inside_vc_frame=0
-  # Align with spawn_in_vc_frame_context: VC_FRAME*/ZELLIJ* pane env being set
-  # (even VC_FRAME=0 / ZELLIJ=0 are valid pane indexes inside vc-frame).
-  [[ -n "${VC_FRAME_PANE_ID:-${ZELLIJ_PANE_ID:-}}" || -n "${VC_FRAME+set}" || -n "${ZELLIJ+set}" ]] && inside_vc_frame=1
+  # Trusted attached-context signal only (_vetcoders_in_vc_frame): stale
+  # VC_FRAME/ZELLIJ leaks in a parent shell must not reroute the launch into
+  # background-create + switch-session aimed at a session with no live client.
+  # The spawn-side twin (spawn_in_vc_frame_context, scripts/lib/vc_frame.sh)
+  # is a separate dispatch surface with its own contract; not changed here.
+  _vetcoders_in_vc_frame && inside_vc_frame=1
 
   local current_session="${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
 
