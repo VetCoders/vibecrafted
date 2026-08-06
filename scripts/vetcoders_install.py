@@ -2825,6 +2825,32 @@ class _RuntimeServiceStatus:
             and self.supervisor_pid is None
         )
 
+    @property
+    def reclaimable(self) -> bool:
+        """Owned launchd supervisor is proven, but the managed pair is not.
+
+        This is the stable degraded shape install must drain (supervisor live
+        in backoff, pair_healthy false, often with an orphaned listener). It is
+        not a pure mid-start race: identity is known enough to call service stop.
+        """
+        if self.healthy or self.quiescent:
+            return False
+        return (
+            self.installed
+            and self.loaded
+            and self.supervisor_live
+            and self.supervisor_verified
+            and self.supervisor_service_managed
+            and self.supervisor_pid is not None
+            and self.supervisor_pid > 0
+            and not self.pair_healthy
+        )
+
+    @property
+    def needs_drain(self) -> bool:
+        """Install must stop this service before publication fences close."""
+        return self.healthy or self.reclaimable
+
 
 @dataclass(frozen=True)
 class _RuntimeLaunchAgentBackup:
@@ -3780,8 +3806,17 @@ def _decode_runtime_service_status(
         pair_healthy=payload["pair_healthy"],
         supervisor_pid=supervisor_pid,
     )
-    expected_returncode = 0 if status.healthy else 1 if status.quiescent else None
-    if expected_returncode is None:
+    # Known terminal shapes for handoff:
+    # - healthy: exit 0
+    # - quiescent: exit 1
+    # - reclaimable (owned supervisor, pair down): exit 1 — stable degrade,
+    #   not a mid-start race. Install drains it via service stop.
+    # Anything else is a transition (or corruption) and stays fail-closed.
+    if status.healthy:
+        expected_returncode = 0
+    elif status.quiescent or status.reclaimable:
+        expected_returncode = 1
+    else:
         detail = result.stderr.strip() or f"exit={result.returncode}"
         raise _RuntimeServiceTransition(
             "runtime service identity is uncertain while transition is in progress "
@@ -3847,6 +3882,13 @@ def _runtime_service_snapshot(
         return launcher, status, "running"
     pair_state = _runtime_service_pair_state(launcher, shared_home)
     if pair_state != "stopped":
+        # Reclaimable supervisors still report Server/Guardian STOPPED while
+        # an orphan may hold the port; only true RUNNING disagreement is fatal.
+        if status.reclaimable and pair_state == "running":
+            raise OSError(
+                "runtime service reports a non-healthy running pair; "
+                "refusing install handoff until the pair is stopped or healthy"
+            )
         raise OSError(
             "runtime service and server/guardian observations disagree; "
             "refusing install handoff"
@@ -3862,7 +3904,7 @@ def runtime_service_active_for_install(shared_home: Path) -> bool:
     snapshot = _runtime_service_snapshot(shared_home)
     if snapshot is None:
         return False
-    return snapshot[1].healthy
+    return snapshot[1].needs_drain
 
 
 def prepare_runtime_service_for_install(
@@ -3870,7 +3912,7 @@ def prepare_runtime_service_for_install(
     *,
     launch_agent_backup: _RuntimeLaunchAgentBackup | None = None,
 ) -> bool:
-    """Drain a verified legacy service before the runtime pointer can move."""
+    """Drain a verified legacy or reclaimable degraded service before publish."""
     if sys.platform != "darwin":
         return False
     _require_inherited_tools_install_lease(shared_home)
@@ -3880,13 +3922,16 @@ def prepare_runtime_service_for_install(
     launcher, status, _ = snapshot
     if status.quiescent:
         return False
+    if not status.needs_drain:
+        raise OSError(
+            "runtime service is neither quiescent nor reclaimable; refusing drain"
+        )
     backup = launch_agent_backup or _capture_runtime_launch_agent_backup(shared_home)
     if backup.contents is None:
-        raise OSError("healthy runtime service has no LaunchAgent snapshot")
+        raise OSError("runtime service marked for drain has no LaunchAgent snapshot")
     if not _assert_runtime_launchd_job_owned(shared_home):
         raise OSError(
-            "healthy runtime service disappeared before its owned launchd paths "
-            "could be proved"
+            "runtime service disappeared before its owned launchd paths could be proved"
         )
     try:
         result = _run_runtime_service_command(
@@ -5112,14 +5157,23 @@ def run_with_tools_install_lease(
                                     "runtime service exists without an exact current "
                                     "lifecycle generation"
                                 )
-                            service_was_active = snapshot[1].healthy
+                            # Healthy managed pairs and reclaimable degraded
+                            # supervisors (live/owned, pair down) both must drain
+                            # before publication. Pure mid-start races still raise
+                            # _RuntimeServiceTransition at decode time.
+                            service_was_active = snapshot[1].needs_drain
                         # A quiescent old launcher can still receive a
                         # concurrent `service install`; fence every validated
                         # launcher, not only one with current service evidence.
                         fence_required = lifecycle_deck is not None
                         if service_was_active:
+                            reason = (
+                                "reclaimable degraded runtime"
+                                if snapshot is not None and snapshot[1].reclaimable
+                                else "verified legacy runtime"
+                            )
                             print(
-                                "[install-tools] draining verified legacy runtime "
+                                f"[install-tools] draining {reason} "
                                 "before publication..."
                             )
                             try:

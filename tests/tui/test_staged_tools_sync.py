@@ -2435,6 +2435,209 @@ def test_successful_explicit_service_install_repairs_retained_disabled_gate(
     assert gate_state["disabled"] is False
 
 
+def test_reclaimable_degraded_service_status_is_known_not_transition() -> None:
+    """Supervisor live + pair down is drainable, not an in-progress race."""
+    degraded = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=True,
+        supervisor_live=True,
+        supervisor_verified=True,
+        supervisor_service_managed=True,
+        build_current=True,
+        pair_healthy=False,
+        supervisor_pid=4326,
+    )
+    mid_start = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=True,
+        supervisor_live=False,
+        supervisor_verified=False,
+        supervisor_service_managed=False,
+        build_current=False,
+        pair_healthy=False,
+        supervisor_pid=None,
+    )
+
+    assert not degraded.healthy
+    assert not degraded.quiescent
+    assert degraded.reclaimable
+    assert degraded.needs_drain
+
+    payload = {
+        "installed": True,
+        "loaded": True,
+        "supervisor_live": True,
+        "supervisor_verified": True,
+        "supervisor_service_managed": True,
+        "build_current": True,
+        "pair_healthy": False,
+        "supervisor_pid": 4326,
+    }
+    decoded = installer._decode_runtime_service_status(
+        subprocess.CompletedProcess(
+            ["service", "status", "--json"],
+            1,
+            json.dumps(payload) + "\n",
+            "",
+        )
+    )
+    assert decoded.reclaimable
+    assert decoded.needs_drain
+
+    with pytest.raises(installer._RuntimeServiceTransition):
+        installer._decode_runtime_service_status(
+            subprocess.CompletedProcess(
+                ["service", "status", "--json"],
+                1,
+                json.dumps(
+                    {
+                        "installed": True,
+                        "loaded": True,
+                        "supervisor_live": False,
+                        "supervisor_verified": False,
+                        "supervisor_service_managed": False,
+                        "build_current": False,
+                        "pair_healthy": False,
+                        "supervisor_pid": None,
+                    }
+                )
+                + "\n",
+                "",
+            )
+        )
+    assert not mid_start.reclaimable
+    assert not mid_start.needs_drain
+
+
+def test_install_drains_reclaimable_degraded_supervisor_before_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Next install heals supervisor-live/pair-down without manual isolated ops."""
+    home = tmp_path / "home"
+    shared_home = home / ".vibecrafted"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    source = tmp_path / "source"
+    old_target = tools / "vibecrafted-generation-old"
+    current = tools / "vibecrafted-current"
+    launcher = home / ".local" / "bin" / "vibecrafted"
+    _write_complete_source(
+        source,
+        helper='printf "new helper\\n"\n',
+        launcher='#!/usr/bin/env bash\nprintf "new launcher\\n"\n',
+        service_lock_contract=True,
+    )
+    _write_valid_runtime_generation(old_target)
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.symlink_to(old_target.name)
+    _write_executable(launcher, "#!/usr/bin/env bash\nexit 0\n")
+    _write_runtime_launch_agent(home, shared_home, launcher)
+
+    degraded = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=True,
+        supervisor_live=True,
+        supervisor_verified=True,
+        supervisor_service_managed=True,
+        build_current=True,
+        pair_healthy=False,
+        supervisor_pid=4326,
+    )
+    quiescent = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=False,
+        supervisor_live=False,
+        supervisor_verified=False,
+        supervisor_service_managed=False,
+        build_current=False,
+        pair_healthy=False,
+        supervisor_pid=None,
+    )
+    healthy = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=True,
+        supervisor_live=True,
+        supervisor_verified=True,
+        supervisor_service_managed=True,
+        build_current=True,
+        pair_healthy=True,
+        supervisor_pid=9191,
+    )
+    mode = "degraded"
+    events: list[str] = []
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(shared_home))
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
+    monkeypatch.setenv("VIBECRAFTED_LAUNCHER_BIN", str(launcher.parent))
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    gate_state = _mock_runtime_launchd_gate(monkeypatch)
+    monkeypatch.setattr(
+        installer,
+        "_bootout_owned_runtime_launchd_job",
+        lambda _shared_home: events.append("bootout") or True,
+    )
+    monkeypatch.setattr(
+        installer,
+        "_assert_runtime_launchd_job_owned",
+        lambda _shared_home: True,
+    )
+
+    def snapshot(_shared_home: Path):
+        if mode == "degraded":
+            return launcher, degraded, "stopped"
+        if mode == "stopped":
+            return launcher, quiescent, "stopped"
+        return launcher, healthy, "running"
+
+    monkeypatch.setattr(installer, "_runtime_service_snapshot", snapshot)
+
+    def service_command(
+        _launcher: Path,
+        _shared_home: Path,
+        *arguments: str,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal mode
+        if arguments == ("service", "stop"):
+            events.append("service stop")
+            mode = "stopped"
+            return subprocess.CompletedProcess(list(arguments), 0, "", "")
+        if arguments[:2] == ("service", "install"):
+            events.append("service install")
+            mode = "healthy"
+            return subprocess.CompletedProcess(list(arguments), 0, "", "")
+        raise AssertionError(arguments)
+
+    monkeypatch.setattr(installer, "_run_runtime_service_command", service_command)
+    child = (
+        "from pathlib import Path; import sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import vetcoders_install as v\n"
+        "v.refresh_current_tools(Path(sys.argv[2]), Path(sys.argv[3]), mirror=True)\n"
+    )
+
+    result = installer.run_with_tools_install_lease(
+        shared_home,
+        [
+            sys.executable,
+            "-c",
+            child,
+            str(REPO_ROOT / "scripts"),
+            str(source),
+            str(shared_home),
+        ],
+        service_policy="ensure",
+    )
+
+    assert result == 0
+    assert "service stop" in events
+    assert "service install" in events
+    assert current.resolve() != old_target.resolve()
+    handoff = installer._read_tools_handoff(shared_home)
+    assert handoff is not None and handoff["state"] == "complete"
+    assert gate_state["disabled"] is False
+
+
 def test_service_activation_waits_for_exact_managed_pair_health(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
