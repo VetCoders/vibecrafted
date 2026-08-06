@@ -56,7 +56,7 @@ _vetcoders_launch_dashboard() {
       vc_frame_bin="$(_vetcoders_vc_frame_bin)" || {
         echo "vc-frame is required." >&2; return 1
       }
-      if [[ -n "${VC_FRAME+set}" ]]; then
+      if _vetcoders_in_vc_frame; then
         "$vc_frame_bin" action switch-session "${1:?session name required}"
       else
         "$vc_frame_bin" attach "${1:?session name required}"
@@ -69,7 +69,7 @@ _vetcoders_launch_dashboard() {
       vc_frame_bin="$(_vetcoders_vc_frame_bin)" || {
         echo "vc-frame is required." >&2; return 1
       }
-      if [[ -n "${VC_FRAME+set}" ]]; then
+      if _vetcoders_in_vc_frame; then
         "$vc_frame_bin" action switch-session "${1:?session name required}"
       else
         "$vc_frame_bin" attach "${1:?session name required}"
@@ -131,7 +131,10 @@ _vetcoders_launch_dashboard() {
 
   session_name="$(_vetcoders_dashboard_session_name "$layout_name")"
   state="$(_vetcoders_vc_frame_session_state "$session_name")"
-  [[ -n "${VC_FRAME_PANE_ID:-${ZELLIJ_PANE_ID:-}}" || -n "${VC_FRAME+set}" || -n "${ZELLIJ+set}" ]] && inside_vc_frame=1 || inside_vc_frame=0
+  # Trusted attached-context signal only: stale VC_FRAME/ZELLIJ leaks in a
+  # parent shell must not route new-tab/switch-session at a session this
+  # terminal is not actually attached to.
+  _vetcoders_in_vc_frame && inside_vc_frame=1 || inside_vc_frame=0
   current_session="${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
 
   if [[ "$layout_name" != "operator" && "$layout_name" != "dashboard" && "$state" == "live" ]]; then

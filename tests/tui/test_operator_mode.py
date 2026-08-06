@@ -188,6 +188,57 @@ def test_vc_start_launches_operator_entrypoint_layout(tmp_path: Path) -> None:
     )
 
 
+def test_vc_start_with_stale_frame_env_creates_session_foreground(
+    tmp_path: Path,
+) -> None:
+    """Stale frame env without pane ids must not fake 'inside vc-frame'.
+
+    A bare shell that once ran vc-start (or inherited leaked VC_FRAME/ZELLIJ)
+    carries the session-name exports but no pane id. The launcher must take
+    the outside path: create the session in the FOREGROUND. The old loose
+    check silently no-opped when the stale name equalled the target session
+    and otherwise raced a background create + switch-session at a session
+    with no live client.
+    """
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "vc_frame-args.txt"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_capture_command(fake_bin, "vc-frame", capture_file)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["CAPTURE_FILE"] = str(capture_file)
+    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_VC_FRAME"] = "1"
+    env.pop("VC_FRAME_CONFIG_DIR", None)
+    # Stale leak: session-name exports and pane markers WITHOUT pane ids,
+    # with the stale name equal to the target operator session.
+    env["VC_FRAME"] = "0"
+    env["ZELLIJ"] = "0"
+    env["VC_FRAME_SESSION_NAME"] = _expected_operator_session()
+    env["ZELLIJ_SESSION_NAME"] = _expected_operator_session()
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("ZELLIJ_PANE_ID", None)
+
+    subprocess.run(
+        ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-start'],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+    )
+
+    payload = capture_file.read_text(encoding="utf-8").splitlines()
+    assert "--session" in payload
+    assert _expected_operator_session() in payload
+    assert "--new-session-with-layout" in payload
+    assert "switch-session" not in payload
+
+
 def test_operator_console_first_screen_is_actionable() -> None:
     payload = (
         REPO_ROOT

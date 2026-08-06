@@ -2468,6 +2468,46 @@ def test_dashboard_switch_outside_vc_frame_uses_attach(tmp_path: Path) -> None:
     assert "target-session" in payload
 
 
+def test_dashboard_switch_with_stale_frame_env_uses_attach(tmp_path: Path) -> None:
+    """Stale VC_FRAME/session-name leaks (no pane id) must not fake 'inside'.
+
+    A shell that once ran vc-start carries exported VC_FRAME_SESSION_NAME (and
+    a leaked VC_FRAME/ZELLIJ) without any pane id. From such a shell 'switch'
+    must attach — an 'action switch-session' has no live client to act on.
+    """
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "vc_frame-args.txt"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_fake_command(fake_bin, "vc-frame", capture_file)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["CAPTURE_FILE"] = str(capture_file)
+    env["VC_FRAME"] = "0"
+    env["ZELLIJ"] = "0"
+    env["VC_FRAME_SESSION_NAME"] = "stale-session"
+    env["ZELLIJ_SESSION_NAME"] = "stale-session"
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("ZELLIJ_PANE_ID", None)
+
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "dashboard", "switch", "target-session"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = capture_file.read_text(encoding="utf-8").splitlines()
+    assert "attach" in payload
+    assert "target-session" in payload
+    assert "switch-session" not in payload
+
+
 def test_dashboard_gc_ignores_untyped_listing_in_dry_run(tmp_path: Path) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
