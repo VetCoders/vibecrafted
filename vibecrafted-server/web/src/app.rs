@@ -216,12 +216,7 @@ fn run_cards(runs: Vec<DashboardRun>) -> impl IntoView {
                     <div class="control-run-tags">
                         <span class="control-badge">{run.state}</span>
                         <span class="control-badge">{run.health}</span>
-<<<<<<< HEAD
                         <span class="control-badge">{settlement_badge(&run.settlement_tui)}</span>
-||||||| e5d2be6f
-=======
-                        <span class="control-badge">{settlement_badge(run.settlement_tui.clone())}</span>
->>>>>>> fix/control-status-threads
                         <span class="control-badge">{run.agent}</span>
                         <span class="control-badge">{run.skill}</span>
                         <span class="control-badge">{run.mode}</span>
