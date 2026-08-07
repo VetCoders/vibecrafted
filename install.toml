@@ -59,15 +59,21 @@ optional = true
 key = "installation"
 label = "Installation"
 reason = """
-We will install:
-  - validate product foundations: loctree and aicx stay product-managed
-  - install or validate framework-owned support tools when needed
-  - frontier agent configuration
+We will install the backyard product spine (one path, no install loops):
+
+  - product foundations: loctree / aicx (canonical product installers)
+  - vc-frame BINARY for real (sibling checkout make install, or release
+    tools/install.sh — never re-enter vibecrafted.io/install.sh here)
+  - framework-owned support tools when needed
+  - frontier config + operator scripts (Composer / Super binds projection)
   - shared skills, launchers, and mirrored agent views
   - the selected runtime horse when RUNTIME=... is provided
   - the Python CLI and MCP packages through uv tool install
-  - the vendored foundation binaries from bin/vendor/<platform> when the bundle carries them
-  - the Rust app/server binaries (voc, vc-admin, vc-server) as real files in ~/.local/bin
+  - vendored foundation binaries from bin/vendor/<platform> when present
+  - Rust app/server binaries (voc, vc-admin, vc-server) in ~/.local/bin
+
+Host app (Vibecrafted.app / vc-terminal) is still a separate release artifact
+when not on disk; the operator path that always works is: vc-frame + vc-start.
 """
 cmd = [
     "bash",
@@ -81,6 +87,13 @@ make --no-print-directory install-app-binaries
 make --no-print-directory install-bundle-tools
 stable_root="${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools/vibecrafted-current"
 bash "$stable_root/vibecrafted-core/vibecrafted_core/runtime/scripts/install-frontier-config.sh" --source "$stable_root" || printf '[warn] Frontier config skipped (non-fatal)\n'
+# Project Super binds + operator scripts onto frontier (living install path).
+if command -v vibecrafted >/dev/null 2>&1; then
+  vibecrafted config install || printf '[warn] vibecrafted config install skipped (non-fatal)\n'
+elif [[ -x scripts/vetcoders_install.py ]]; then
+  python3 -c "from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config; print(stage_vc_frame_config().render())" 2>/dev/null \
+    || printf '[warn] config projection skipped (non-fatal)\n'
+fi
 ''',
 ]
 
@@ -89,13 +102,25 @@ bash "$stable_root/vibecrafted-core/vibecrafted_core/runtime/scripts/install-fro
 key = "onboarding"
 label = "Onboarding"
 reason = """
-We will run a final health check and leave the next useful commands visible:
-doctor, update, uninstall, and the first project-level Vibecrafted entrypoint.
+Health check, then the product question:
+
+  Launch Vibecrafted now? [Y/n]
+
+On Y we open the operator session (vc-start) with the Start here tab —
+the map of the workspace (rail, chrome, keys). That is onboarding content
+already in the frame layout; the installer only wires the door.
+
+Restore honesty: layout/session resurrection is frame-level. Full agent
+process freeze is NOT claimed here (docs/installer/RESTORE_CONTRACT.md).
 """
 cmd = [
-    "python3",
-    "scripts/vetcoders_install.py",
-    "doctor",
+    "bash",
+    "-e",
+    "-c",
+    '''
+python3 scripts/vetcoders_install.py doctor || true
+bash scripts/post-install-launch.sh
+''',
 ]
 optional = true
 

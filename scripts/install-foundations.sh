@@ -6,24 +6,32 @@ set -euo pipefail
 # Handles:
 #   loctree / loctree-mcp  — required Loctree product binaries via Loctree installer
 #   aicx / aicx-mcp       — required AICX product binaries via Loctree installer
-#   vc-frame               — required Vibecrafted frame binary via canonical installer
+#   vc-frame               — required frame BINARY (sibling make install | tools/install.sh | GH)
 #   prview                 — cargo install OR binary from GH releases
 #
 # Usage:
-#   bash scripts/install-foundations.sh                   # validate required foundations
-#   bash scripts/install-foundations.sh --all             # validate/install all framework-owned foundations
-#   bash scripts/install-foundations.sh loctree           # validate Loctree product binaries
-#   bash scripts/install-foundations.sh aicx              # validate AICX product binaries
-#   bash scripts/install-foundations.sh vc-frame          # validate Vibecrafted frame binary
+#   bash scripts/install-foundations.sh                   # install/validate foundations
+#   bash scripts/install-foundations.sh --all             # + framework-owned extras
+#   bash scripts/install-foundations.sh loctree           # Loctree product binaries
+#   bash scripts/install-foundations.sh aicx              # AICX product binaries
+#   bash scripts/install-foundations.sh vc-frame          # hard-install / validate vc-frame
 #   bash scripts/install-foundations.sh --check           # dry-run: show what would install
 #   bash scripts/install-foundations.sh --prefix /usr/local  # custom install prefix
+#
+# Product spine (audit SF-2): vc-frame is no longer validate-only. Missing binary
+# fails the foundations run so the installer cannot "succeed" without a cockpit.
 # ---------------------------------------------------------------------------
 
 PRVIEW_CRATE="prview"
 PRVIEW_REPO="vetcoders/prview"
 
 LOCTREE_INSTALL_URL="${LOCTREE_INSTALL_URL:-https://loct.io/install.sh}"
-VCFRAME_INSTALL_URL="${VCFRAME_INSTALL_URL:-https://vibecrafted.io/install.sh}"
+# Frame binary installer — NOT vibecrafted.io/install.sh (that is the framework
+# orchestrator; pointing foundations there created a validate-only loop).
+VCFRAME_INSTALL_URL="${VCFRAME_INSTALL_URL:-https://github.com/vetcoders/vc-frame/releases/latest/download/install.sh}"
+# When empty fingerprint, tools/install.sh is typically run with REQUIRE_GPG=0
+# on backyard / pre-release trees. Override for strict release validation.
+VCFRAME_REQUIRE_GPG="${VCFRAME_REQUIRE_GPG:-0}"
 
 # Agent CLIs — npm packages when the vendor publishes an official package.
 AGENT_PACKAGES=(
@@ -467,28 +475,113 @@ install_aicx() {
 }
 
 # ---------------------------------------------------------------------------
-# vc-frame installer boundary — vc-frame validation only
+# vc-frame — product frame binary (hard install on product path)
+#
+# Order (backyard first, then public):
+#   1. already on PATH and runs
+#   2. sibling Living Tree: $SOURCE_DIR/../vc-frame → make install
+#   3. local tools/install.sh from sibling checkout (GPG policy via env)
+#   4. remote VCFRAME_INSTALL_URL (GH release install.sh)
+# Never re-enter vibecrafted.io/install.sh here (orchestrator loop).
 # ---------------------------------------------------------------------------
+
+_vcframe_sibling_root() {
+  local candidate
+  for candidate in \
+    "${VIBECRAFTED_VC_FRAME_SOURCE:-}" \
+    "$SOURCE_DIR/../vc-frame" \
+    "$SOURCE_DIR/../vetcoders/vc-frame"
+  do
+    [[ -n "$candidate" ]] || continue
+    if [[ -f "$candidate/Makefile" && -d "$candidate/zellij-utils" ]]; then
+      printf '%s\n' "$(cd "$candidate" && pwd)"
+      return 0
+    fi
+  done
+  return 1
+}
+
+_vcframe_run_remote_or_local_installer() {
+  local install_sh="$1"
+  local mode="$2" # file | url
+  local -a env_prefix
+
+  env_prefix=(
+    "INSTALL_DIR=$LAUNCHER_PREFIX"
+    "VCFRAME_REQUIRE_GPG=$VCFRAME_REQUIRE_GPG"
+  )
+  if (( CHECK_ONLY )); then
+    info "Would install vc-frame via $mode: $install_sh"
+    info "  INSTALL_DIR=$LAUNCHER_PREFIX VCFRAME_REQUIRE_GPG=$VCFRAME_REQUIRE_GPG"
+    return 0
+  fi
+
+  info "Installing vc-frame ($mode) → $LAUNCHER_PREFIX"
+  # shellcheck disable=SC2086 # env_prefix is intentional KEY=val list
+  if [[ "$mode" == "file" ]]; then
+    env "${env_prefix[@]}" sh "$install_sh"
+  else
+    env "${env_prefix[@]}" sh -c "$(curl -fsSL "$install_sh")"
+  fi
+}
 
 install_vcframe() {
   if binary_runs vc-frame; then
     ok "vc-frame already installed: $(command -v vc-frame)"
-    if (( CHECK_ONLY )); then
-      info "Canonical vc-frame installer:"
-      info "  curl -fsSL $VCFRAME_INSTALL_URL | sh"
-    fi
     return 0
+  fi
+
+  local sibling local_install_sh
+
+  sibling="$(_vcframe_sibling_root 2>/dev/null || true)"
+  if [[ -n "$sibling" ]]; then
+    if (( CHECK_ONLY )); then
+      info "Would install vc-frame from sibling checkout:"
+      info "  make -C $sibling install"
+      return 0
+    fi
+    info "Installing vc-frame from sibling Living Tree: $sibling"
+    if make -C "$sibling" --no-print-directory install; then
+      # make install links into ~/.cargo/bin + ~/.local/bin; ensure launcher PATH
+      if binary_runs vc-frame; then
+        ok "vc-frame installed from checkout: $(command -v vc-frame)"
+        return 0
+      fi
+      warn "make install finished but vc-frame still not runnable on PATH"
+    else
+      warn "sibling make install failed; trying tools/install.sh / release"
+    fi
+
+    local_install_sh="$sibling/tools/install.sh"
+    if [[ -f "$local_install_sh" ]]; then
+      if _vcframe_run_remote_or_local_installer "$local_install_sh" "file" \
+        && binary_runs vc-frame; then
+        ok "vc-frame installed via tools/install.sh: $(command -v vc-frame)"
+        return 0
+      fi
+    fi
   fi
 
   if (( CHECK_ONLY )); then
-    info "Would install vc-frame from canonical Vibecrafted installer:"
-    info "  curl -fsSL $VCFRAME_INSTALL_URL | sh"
+    info "Would install vc-frame from release installer:"
+    info "  curl -fsSL $VCFRAME_INSTALL_URL | INSTALL_DIR=$LAUNCHER_PREFIX VCFRAME_REQUIRE_GPG=$VCFRAME_REQUIRE_GPG sh"
     return 0
   fi
 
-  warn "vc-frame is required; stock vc_frame is not accepted as the Vibecrafted frame."
-  warn "Use the canonical installer, then rerun this check:"
-  warn "  curl -fsSL $VCFRAME_INSTALL_URL | sh"
+  info "Fetching vc-frame via $VCFRAME_INSTALL_URL"
+  if _vcframe_run_remote_or_local_installer "$VCFRAME_INSTALL_URL" "url" \
+    && binary_runs vc-frame; then
+    ok "vc-frame installed from release: $(command -v vc-frame)"
+    return 0
+  fi
+
+  warn "vc-frame is required for the operator cockpit (Start here / sessions rail)."
+  warn "Could not install automatically. Manual paths:"
+  if [[ -n "$sibling" ]]; then
+    warn "  make -C $sibling install"
+  fi
+  warn "  curl -fsSL $VCFRAME_INSTALL_URL | INSTALL_DIR=$LAUNCHER_PREFIX VCFRAME_REQUIRE_GPG=$VCFRAME_REQUIRE_GPG sh"
+  warn "  (or set VIBECRAFTED_VC_FRAME_SOURCE to a checkout and rerun)"
   return 1
 }
 
@@ -779,7 +872,9 @@ for target in "${TARGETS[@]}"; do
   case "$target" in
     loctree)  install_loctree  || foundation_optional_fail loctree ;;
     aicx)     install_aicx     || foundation_optional_fail aicx ;;
-    vc-frame) install_vcframe  || foundation_optional_fail vc-frame ;;
+    # vc-frame is the operator cockpit substrate — hard fail on product path
+    # (no more validate-only loop that re-points at vibecrafted install.sh).
+    vc-frame) install_vcframe  || exit_code=1 ;;
     agents)
       if ! install_agents; then
         if (( AGENTS_REQUIRED )); then
