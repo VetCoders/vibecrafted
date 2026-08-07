@@ -108,8 +108,24 @@ def syntax_check_command(path: Path) -> list[str]:
 
 
 def run_shellcheck(files: list[Path]) -> int:
-    print(f"Running shellcheck on {len(files)} shell files...")
-    return subprocess.run(build_shellcheck_command(files), check=False).returncode
+    # ShellCheck only parses sh/bash/dash/ksh. Zsh sources get syntax-only
+    # (`zsh -n`) so operator fragments like config/shell/atuin-up.zsh stay
+    # gateable without false SC1071 failures.
+    zsh_files = [path for path in files if shell_for_path(path) == "zsh"]
+    other_files = [path for path in files if path not in zsh_files]
+    rc = 0
+    if other_files:
+        print(f"Running shellcheck on {len(other_files)} shell files...")
+        rc = max(
+            rc,
+            subprocess.run(
+                build_shellcheck_command(other_files), check=False
+            ).returncode,
+        )
+    if zsh_files:
+        print(f"Running zsh -n on {len(zsh_files)} zsh files...")
+        rc = max(rc, run_syntax_fallback(zsh_files))
+    return rc
 
 
 def run_syntax_fallback(files: list[Path]) -> int:

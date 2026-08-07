@@ -68,6 +68,11 @@ The repo keeps an Atuin config at `config/atuin/config.toml` for:
 - preview-enabled recall
 - noise filtering for trivial commands
 
+Keyboard Up is wired by `config/shell/atuin-up.zsh` (also in
+`vibecrafted-vm/zshrc.template`). Mouse wheel is **not** an Atuin concern —
+the Alacritty host preset splits primary-buffer scrollback from alternate-buffer
+arrows (`config/alacritty/`, canonical source `vc-frame/tools/alacritty/`).
+
 Install or refresh the sidecars with:
 
 ```bash

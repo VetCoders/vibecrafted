@@ -147,6 +147,17 @@ fi
 
 install_one "$repo_root/config/starship.toml" "$frontier_root/starship.toml"
 install_one "$repo_root/config/atuin/config.toml" "$frontier_root/atuin/config.toml"
+# Host-terminal sidecars (optional — only when present in this generation).
+# Never overwrite ~/.config/alacritty; operators import/copy deliberately.
+if [[ -f "$repo_root/config/alacritty/vc-frame.toml" ]]; then
+  install_one "$repo_root/config/alacritty/vc-frame.toml" "$frontier_root/alacritty/vc-frame.toml"
+fi
+if [[ -f "$repo_root/config/alacritty/launch-primary-shell.zsh" ]]; then
+  install_one "$repo_root/config/alacritty/launch-primary-shell.zsh" "$frontier_root/alacritty/launch-primary-shell.zsh"
+fi
+if [[ -f "$repo_root/config/shell/atuin-up.zsh" ]]; then
+  install_one "$repo_root/config/shell/atuin-up.zsh" "$frontier_root/shell/atuin-up.zsh"
+fi
 install_one "$vc_frame_src/config.kdl" "$frontier_root/vc-frame/config.kdl"
 install_one "$vc_frame_src/layouts/research.kdl" "$frontier_root/vc-frame/layouts/research.kdl"
 install_one "$vc_frame_src/layouts/workflow.kdl" "$frontier_root/vc-frame/layouts/workflow.kdl"

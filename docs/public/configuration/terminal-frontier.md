@@ -15,6 +15,8 @@ Frontier config is the lightweight, optional terminal layer that ships with the 
 | --------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | starship  | Prompt showing directory, git branch and dirty state, Python/Node/Rust context, and the active agent and runtime while a spawn is running |
 | atuin     | Fuzzy history with workspace-first filtering, home-scope fallback, preview-enabled recall, noise filtering for trivial commands           |
+| shell     | `atuin-up.zsh` — keyboard Up opens Atuin; mouse wheel stays host scrollback via the Alacritty preset                                      |
+| alacritty | Optional host sidecars (wheel `~Alt`/`Alt` split + primary-shell launcher); never overwrites `~/.config/alacritty`                        |
 | vc-frame  | Repo-owned `config.kdl` and dashboard layouts that stay dormant until you launch them                                                     |
 
 ## Opt in
