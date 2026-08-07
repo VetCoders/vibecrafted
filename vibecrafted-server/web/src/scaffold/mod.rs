@@ -44,6 +44,7 @@ pub mod api {
         repo: Option<String>,
         day: Option<String>,
         plan_id: Option<String>,
+        repo_root: Option<String>,
     }
 
     #[derive(Debug, Clone, Deserialize)]
@@ -97,6 +98,7 @@ pub mod api {
             .route("/scaffold/editor", get(editor))
             .route("/api/scaffold/plans", get(plans))
             .route("/api/scaffold/artifacts", get(artifacts))
+            .route("/api/scaffold/export", get(export))
             .route("/api/scaffold/changes", get(changes))
             .route("/api/scaffold/artifact", post(save_artifact))
             .route("/api/scaffold/checkpoint", post(save_checkpoint))
@@ -162,6 +164,32 @@ pub mod api {
     async fn artifacts(Query(query): Query<ScaffoldQuery>) -> impl IntoResponse {
         match load_workspace(query) {
             Ok(workspace) => Json(workspace).into_response(),
+            Err(error) => scaffold_error_response(error),
+        }
+    }
+
+    async fn export(Query(query): Query<ScaffoldQuery>) -> impl IntoResponse {
+        let Some((org, repo, day)) = explicit_day(&query) else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "org, repo, day, and plan_id are required for portable export"
+                })),
+            )
+                .into_response();
+        };
+        let Some(plan_id) = query.plan_id.as_deref() else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "plan_id is required for portable export"
+                })),
+            )
+                .into_response();
+        };
+        let store = ScaffoldArtifactStore::new(vibecrafted_home());
+        match store.export_bundle(org, repo, day, plan_id, query.repo_root.as_deref()) {
+            Ok(bundle) => Json(bundle).into_response(),
             Err(error) => scaffold_error_response(error),
         }
     }
@@ -923,7 +951,11 @@ pub mod api {
         )
     }
 
-    fn render_panel(workspace: &ScaffoldWorkspace, artifact: &ScaffoldArtifact, active: bool) -> String {
+    fn render_panel(
+        workspace: &ScaffoldWorkspace,
+        artifact: &ScaffoldArtifact,
+        active: bool,
+    ) -> String {
         let checked = if artifact.checkpoint.approved {
             " checked"
         } else {
@@ -2178,8 +2210,7 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
                 "missing panel navigation script that activates one document"
             );
             assert!(
-                html.contains("artifact-panel.is-active")
-                    || html.contains(r#".is-active"#),
+                html.contains("artifact-panel.is-active") || html.contains(r#".is-active"#),
                 "CSS must gate visibility on .is-active (one document)"
             );
             assert!(

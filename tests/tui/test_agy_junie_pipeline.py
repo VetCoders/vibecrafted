@@ -108,6 +108,18 @@ def test_junie_spawn_dry_run_pipes_json_stream_to_transcript(tmp_path: Path) -> 
     assert "tee -a" in text
 
 
+def test_junie_retries_the_known_transient_issue_template_failure_once(
+    tmp_path: Path,
+) -> None:
+    launcher = _dry_run_launcher(tmp_path, "junie")
+    text = launcher.read_text(encoding="utf-8")
+
+    assert "for junie_attempt in 1 2" in text
+    assert "issue.md.junie_standalone" in text
+    assert "transient Junie issue-template failure; retrying once" in text
+    assert "JUNIE_ISSUE_RETRY_DELAY_SECONDS" in text
+
+
 def test_grok_spawn_dry_run_uses_prompt_file_contract(tmp_path: Path) -> None:
     launcher = _dry_run_launcher(tmp_path, "grok")
     text = launcher.read_text(encoding="utf-8")

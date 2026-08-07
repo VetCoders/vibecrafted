@@ -665,6 +665,24 @@ def finish_meta(
         payload["session_id"] = session_id
 
     _write_meta(meta, payload)
+    run_id = str(payload.get("run_id") or "").strip()
+    if run_id:
+        append_event(
+            f"lifecycle:{status}",
+            run_id,
+            f"legacy shell launcher finished with status {status}",
+            {
+                "state": status,
+                "exit_code": int(exit_code),
+                "completed_at": completed_at.isoformat(),
+                "liveness": "terminal",
+                "root": str(payload.get("root") or ""),
+                "agent": str(payload.get("agent") or ""),
+                "skill": str(payload.get("skill_code") or payload.get("skill") or ""),
+                "identity_required": True,
+                "runtime": "shell",
+            },
+        )
     return meta
 
 

@@ -29,7 +29,7 @@ per Vector, and the recovery-vectors for STOP states.
 prompt_id: <slug>
 agent: <claude|codex|gemini>
 skill: <vc-implement|...>
-wave: <Wn>            target_repo: <repo>      baseline_branch: <branch>
+wave: <Wn>            target_repo: <repo>      baseline_branch: <living-tree>
 authored_by: <agent> <agents@vetcoders.io>     report_path: <path>
 vector: <stabilize|implement|recon|e2e>
 ---

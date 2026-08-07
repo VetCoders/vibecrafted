@@ -209,7 +209,7 @@ def test_workflow_cell_launcher_carries_cut_model_pin_into_spec(
 id = "c1"
 agent = "codex"
 workflow = "implement"
-model = "gpt-5-codex"
+model = "test-codex-model"
 prompt = "pinned cut"
   [[cuts.verify]]
   run = "echo ok"
@@ -239,7 +239,7 @@ prompt = "unpinned cut"
 
     # The pinned cut forwards its model into the launch spec; the unpinned
     # cut forwards an empty pin (account default is a deliberate non-decision).
-    assert captured["codex"] == "gpt-5-codex"
+    assert captured["codex"] == "test-codex-model"
     assert captured["claude"] == ""
 
 
@@ -912,8 +912,9 @@ prompt = "repair and commit"
 
 
 @pytest.mark.parametrize("commit_key", ["commit", "commit_sha", "sha", "head_sha"])
+@pytest.mark.parametrize("wrapper", ["", "'", '"', "`"])
 def test_idempotent_existing_commit_proof_allows_noop_resume(
-    tmp_path: Path, commit_key: str
+    tmp_path: Path, commit_key: str, wrapper: str
 ) -> None:
     repo_dir = tmp_path / "repo"
     init_git_repo(repo_dir)
@@ -954,7 +955,9 @@ prompt = "verify existing delivery"
     )
     launcher = FakeCells(reports_dir=reports_dir)
     launcher.cells[("c1", "initial")] = FakeCell(
-        report=f"---\n{commit_key}: {delivered}\n---\nalready delivered"
+        report=(
+            f"---\n{commit_key}: {wrapper}{delivered}{wrapper}\n---\nalready delivered"
+        )
     )
 
     result = run_dispatch(dispatch, launcher=launcher, artifacts_dir=artifacts_dir)
