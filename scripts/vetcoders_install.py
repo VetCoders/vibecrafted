@@ -9192,6 +9192,21 @@ def _slack_provider_contract_findings() -> list[DoctorFinding]:
                 )
             ]
     healthy, detail = provider.doctor()
+    if not healthy:
+        # Never-published is the deferred external case (vc-slack-agent is a
+        # sibling repo; hosts without it — CI runners, fresh installs — are
+        # legal). Only a BROKEN publication is a failure.
+        provider_root = provider.runtime_home() / "providers" / provider.PROVIDER_NAME
+        if not provider_root.exists():
+            return [
+                DoctorFinding(
+                    "warn",
+                    "slack-provider",
+                    f"{detail}. External provider (vc-slack-agent) is not "
+                    "installed on this host — optional; publish via "
+                    "`make install` with the sibling checkout present",
+                )
+            ]
     return [
         DoctorFinding(
             "ok" if healthy else "fail",

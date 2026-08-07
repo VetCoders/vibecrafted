@@ -1228,9 +1228,12 @@ def test_public_launcher_contract_accepts_packaged_provider(
     assert finding.component == "public-launchers"
 
 
-def test_slack_provider_contract_fails_when_provider_is_not_published(
+def test_slack_provider_contract_defers_when_provider_was_never_published(
     tmp_path: Path, monkeypatch
 ) -> None:
+    # vc-slack-agent is an external sibling repo: a host that never published
+    # the provider (CI runners, fresh installs) is legal and must DEFER with
+    # a warn. Only a broken existing publication is a failure.
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
@@ -1238,9 +1241,10 @@ def test_slack_provider_contract_fails_when_provider_is_not_published(
 
     [finding] = installer._slack_provider_contract_findings()
 
-    assert finding.level == "fail"
+    assert finding.level == "warn"
     assert finding.component == "slack-provider"
     assert "not published" in finding.message
+    assert "optional" in finding.message
 
 
 def test_run_doctor_fail_fast_on_runtime_root_drift(
