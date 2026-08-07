@@ -757,10 +757,27 @@ repo-full() {
 # Deck cmd_start/cmd_dashboard call these helpers after sourcing this file;
 # a thin alias re-enters Python → deck → helper forever (fork bomb, 2026-07-28).
 # --help only may touch the deck (help exits before _run_helper).
+#
+# Product entry choke (goal: vc-start owns lifecycle): shell vc-start is the
+# live operator path — it never enters deck cmd_start. Prepare lives here so
+# helpers/config projection/server eye run on the real backyard ride.
 vc-start() {
   if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     command vibecrafted start --help
     return $?
+  fi
+  # Product lifecycle: pin config, project Super/scripts, poke CP eye.
+  if declare -F _vetcoders_product_entry_prepare >/dev/null 2>&1; then
+    _vetcoders_product_entry_prepare
+  fi
+  # Tests/doctor: print env effects without attach (no TUI, no session create).
+  if [[ "${VIBECRAFTED_PRODUCT_ENTRY_PROBE:-0}" == "1" ]]; then
+    if declare -F _vetcoders_product_entry_probe_print >/dev/null 2>&1; then
+      _vetcoders_product_entry_probe_print
+    else
+      printf 'VC_FRAME_CONFIG_DIR=%s\n' "${VC_FRAME_CONFIG_DIR:-}"
+    fi
+    return 0
   fi
   if [[ "${1:-}" == "resume" ]]; then
     shift || true

@@ -93,12 +93,13 @@ if [[ $# -eq 0 ]] && command -v vc-start >/dev/null 2>&1; then
 fi
 
 # attach/create of product session names → require product config or refuse.
+# Flags: attach|a, -s|--session (new session name), --new-session-with-layout.
 args=("$@")
 i=0
 while [[ $i -lt ${#args[@]} ]]; do
   a="${args[$i]}"
   case "$a" in
-    attach|--session)
+    attach|a|-s|--session)
       next="${args[$((i + 1))]:-}"
       if is_product_session_name "$next"; then
         if ! pin_product_config; then
@@ -108,7 +109,17 @@ while [[ $i -lt ${#args[@]} ]]; do
         fi
       fi
       ;;
-    --new-session-with-layout)
+    --session=*|-s=*)
+      next="${a#*=}"
+      if is_product_session_name "$next"; then
+        if ! pin_product_config; then
+          printf 'Refusing bare attach to product session %q without product config.\n' "$next" >&2
+          printf 'Run: vc-start   # projects config + Start here layout\n' >&2
+          exit 2
+        fi
+      fi
+      ;;
+    -n|--new-session-with-layout)
       if ! pin_product_config; then
         printf 'Refusing bare new-session-with-layout without product config.\n' >&2
         printf 'Run: vc-start\n' >&2

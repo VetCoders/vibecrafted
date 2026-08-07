@@ -825,6 +825,83 @@ install_vc_frame_product_wrapper() {
 }
 
 
+# Sync product entry choke into the active vibecrafted-current generation so
+# shell vc-start (not only the git checkout) carries prepare + deck cmd_start.
+install_product_entry_into_current() {
+  local tools_home current gen deck_src shell_src
+  tools_home="${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}"
+  current="$tools_home/vibecrafted-current"
+  if [[ ! -d "$current" ]]; then
+    warn "vibecrafted-current missing — skip product-entry generation sync"
+    return 0
+  fi
+  # Resolve generation root (current may be a symlink).
+  gen="$(cd "$current" && pwd -P)"
+
+  deck_src=""
+  for candidate in \
+    "$SOURCE_DIR/vibecrafted-core/vibecrafted_core/deck/vibecrafted" \
+    "$SOURCE_DIR/scripts/vibecrafted"
+  do
+    if [[ -f "$candidate" ]] && grep -q '_vetcoders_product_entry_prepare\|Product entrypoint choke' "$candidate" 2>/dev/null; then
+      deck_src="$candidate"
+      break
+    fi
+  done
+  # Fallback: any deck with cmd_start
+  if [[ -z "$deck_src" ]]; then
+    for candidate in \
+      "$SOURCE_DIR/vibecrafted-core/vibecrafted_core/deck/vibecrafted" \
+      "$SOURCE_DIR/scripts/vibecrafted"
+    do
+      [[ -f "$candidate" ]] && deck_src="$candidate" && break
+    done
+  fi
+
+  shell_src=""
+  for candidate in \
+    "$SOURCE_DIR/runtime/shell/lib" \
+    "$SOURCE_DIR/vibecrafted-core/vibecrafted_core/runtime/shell/lib"
+  do
+    if [[ -f "$candidate/dashboard.sh" ]] && grep -q '_vetcoders_product_entry_prepare' "$candidate/dashboard.sh" 2>/dev/null; then
+      shell_src="$candidate"
+      break
+    fi
+  done
+
+  if (( CHECK_ONLY )); then
+    info "Would sync product entry into $gen (shell=${shell_src:-missing} deck=${deck_src:-missing})"
+    return 0
+  fi
+
+  if [[ -n "$shell_src" ]]; then
+    local dest_lib
+    for dest_lib in \
+      "$gen/runtime/shell/lib" \
+      "$gen/vibecrafted-core/vibecrafted_core/runtime/shell/lib"
+    do
+      if [[ -d "$dest_lib" ]]; then
+        install -m 0644 "$shell_src/dashboard.sh" "$dest_lib/dashboard.sh"
+        install -m 0644 "$shell_src/dispatch.sh" "$dest_lib/dispatch.sh"
+        ok "product entry shell synced: $dest_lib/{dashboard,dispatch}.sh"
+      fi
+    done
+  else
+    warn "product entry shell source missing (dashboard.sh prepare not found)"
+  fi
+
+  if [[ -n "$deck_src" ]]; then
+    local dest_deck="$gen/vibecrafted-core/vibecrafted_core/deck/vibecrafted"
+    if [[ -d "$(dirname "$dest_deck")" ]]; then
+      install -m 0755 "$deck_src" "$dest_deck"
+      ok "product entry deck synced: $dest_deck"
+    fi
+  else
+    warn "product entry deck source missing"
+  fi
+}
+
+
 # ---------------------------------------------------------------------------
 # Agent CLI installer
 # ---------------------------------------------------------------------------
@@ -1117,6 +1194,7 @@ for target in "${TARGETS[@]}"; do
     vc-frame)
       install_vcframe  || exit_code=1
       install_vc_frame_product_wrapper || true
+      install_product_entry_into_current || true
       ;;
     agents)
       if ! install_agents; then

@@ -4298,34 +4298,23 @@ cmd_start() {
   local status
   # Product entrypoint choke: load full lifecycle helpers (shell modules,
   # frontier pin, frame launcher). Ordinary shells stay PATH-only.
+  # Note: live operator path is shell `vc-start` → same prepare function;
+  # deck start is secondary (vibecrafted start) and must share that choke.
   _ensure_helpers_loaded || return 1
   export VIBECRAFTED_PREFER_REPO_VC_FRAME=1
-  # Project Super binds + operator scripts when the deck supports it.
-  if command -v vibecrafted >/dev/null 2>&1; then
-    # Avoid re-entry: only call config install via Python when available.
-    if type stage_vc_frame_config >/dev/null 2>&1; then
-      :
-    elif python3 -c "from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config" 2>/dev/null; then
-      python3 -c "from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config; stage_vc_frame_config()" >/dev/null 2>&1 || true
+  if declare -F _vetcoders_product_entry_prepare >/dev/null 2>&1; then
+    _vetcoders_product_entry_prepare
+  fi
+  if [[ "${VIBECRAFTED_PRODUCT_ENTRY_PROBE:-0}" == "1" ]]; then
+    if declare -F _vetcoders_product_entry_probe_print >/dev/null 2>&1; then
+      _vetcoders_product_entry_probe_print
+    else
+      printf 'VC_FRAME_CONFIG_DIR=%s\n' "${VC_FRAME_CONFIG_DIR:-}"
     fi
-  fi
-  # Pin product config for the child frame process.
-  if [[ -z "${VC_FRAME_CONFIG_DIR:-}" || ! -f "${VC_FRAME_CONFIG_DIR}/config.kdl" ]]; then
-    local frontier="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier/vc-frame"
-    local view="${XDG_CONFIG_HOME:-$HOME/.config}/vc-frame"
-    if [[ -f "$frontier/config.kdl" ]]; then
-      export VC_FRAME_CONFIG_DIR="$frontier"
-    elif [[ -f "$view/config.kdl" ]]; then
-      export VC_FRAME_CONFIG_DIR="$view"
-    fi
-  fi
-  # Control-plane eye: best-effort; do not block cockpit if server is down.
-  if command -v vibecrafted >/dev/null 2>&1; then
-    vibecrafted server status >/dev/null 2>&1 || true
-  fi
-  # Call frame launcher directly — never re-enter via public vc-start alias
-  # (thin passthrough to `vibecrafted start` fork-bombs: Python→deck→helper).
-  if [[ "${1:-}" == "resume" ]]; then
+    status=0
+  elif [[ "${1:-}" == "resume" ]]; then
+    # Call frame launcher directly — never re-enter via public vc-start alias
+    # (thin passthrough to `vibecrafted start` fork-bombs: Python→deck→helper).
     shift || true
     _vetcoders_resume_operator_session "$@"
     status=$?
