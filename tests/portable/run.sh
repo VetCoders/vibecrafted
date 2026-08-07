@@ -222,12 +222,20 @@ require_file "$config_dir/zsh/vc-skills.zsh"
 assert_contains "$config_dir/vetcoders/vc-skills.sh" '𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. helper shim'
 bad_helper_candidate="\${VIBECRAFTED_ROOT:-}/runtime/shell/vetcoders.sh"
 assert_not_contains "$config_dir/vetcoders/vc-skills.sh" "$bad_helper_candidate"
-# At least one rcfile must have the source line (depends on SHELL/platform)
+# Host-shell helper sourcing is intentionally retired (install-shell.sh:
+# the helper is loaded by vc-start, never by the ordinary host shell).
+# --write-shell-rc now means: PATH-only launcher guard in an rcfile, and any
+# legacy vc-skills sourcing REMOVED. Assert the new contract both ways.
 rc_found=0
 for rcfile in "$home_dir/.zshrc" "$home_dir/.bashrc"; do
-  [[ -f "$rcfile" ]] && grep -Fq 'vc-skills.sh' "$rcfile" && rc_found=1
+  [[ -f "$rcfile" ]] || continue
+  if grep -Fq 'vc-skills' "$rcfile"; then
+    die "rcfile $rcfile still sources vc-skills (retired host-shell contract)"
+  fi
+  # shellcheck disable=SC2016  # literal $HOME is the rc line's actual text
+  grep -Fq '$HOME/.local/bin' "$rcfile" && rc_found=1
 done
-(( rc_found )) || die "No rcfile sources vc-skills.sh"
+(( rc_found )) || die "No rcfile carries the PATH-only launcher guard"
 
 log "prepare fake repo and fake agent CLIs"
 git -C "$work_repo" init -q
