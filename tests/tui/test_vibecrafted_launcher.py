@@ -1079,9 +1079,13 @@ def test_installed_deck_version_is_owned_by_deck_not_checkout_cwd(
     (checkout / "skills").mkdir()
     (checkout / "runtime").mkdir()
     (checkout / "VERSION").write_text("3.7.0\n", encoding="utf-8")
+    public_bin = tmp_path / "bin"
+    public_bin.mkdir()
+    public_launcher = public_bin / "vibecrafted"
+    public_launcher.symlink_to(deck)
 
     result = subprocess.run(
-        [str(deck), "--version"],
+        [str(public_launcher), "--version"],
         check=True,
         cwd=checkout,
         capture_output=True,

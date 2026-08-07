@@ -146,6 +146,10 @@ EVENTS_ARCHIVE_MAX_BYTES = 512 * 1024 * 1024
 EVENTS_ARCHIVE_MAX_BYTES_ENV = "VIBECRAFTED_EVENTS_ARCHIVE_MAX_BYTES"
 RUNTIME_TRANSCRIPT_MAX_BYTES = 16 * 1024 * 1024
 RUNTIME_TRANSCRIPT_MAX_BYTES_ENV = "VIBECRAFTED_RUNTIME_TRANSCRIPT_MAX_BYTES"
+RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES = 64 * 1024
+RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES_ENV = (
+    "VIBECRAFTED_RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES"
+)
 RUNTIME_TMP_MAX_AGE_SECONDS = 60 * 60
 CONTROL_PLANE_WRITE_RESERVE_BYTES = 1024 * 1024
 EVENT_SEGMENT_SCHEMA = "vibecrafted.event-stream-segment.v1"
@@ -670,6 +674,13 @@ def _configured_runtime_transcript_max_bytes() -> int:
     )
 
 
+def _configured_runtime_transcript_cold_tail_bytes() -> int:
+    return _configured_nonnegative_int(
+        RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES_ENV,
+        RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES,
+    )
+
+
 def _runtime_runs_dir() -> Path:
     return control_plane_home() / "runtime_runs"
 
@@ -684,8 +695,10 @@ def _maintain_runtime_run_storage() -> dict[str, int]:
     """Bound terminal transcripts and remove stale interrupted-write debris.
 
     Live transcripts are never replaced under an open writer. Once a run is
-    terminal, its old prefix is gzip-archived and the readable transcript keeps
-    the configured tail. Archives age out with the snapshot retention window.
+    terminal, oversized transcripts keep the configured tail. Terminal logs
+    older than the snapshot retention window keep only a small readable cold
+    tail even when each file is individually below the size cap. Removed
+    prefixes are gzip-archived; archives age out after another retention window.
     """
 
     root = _runtime_runs_dir()
@@ -720,6 +733,7 @@ def _maintain_runtime_run_storage() -> dict[str, int]:
             continue
 
     max_bytes = _configured_runtime_transcript_max_bytes()
+    cold_tail_bytes = _configured_runtime_transcript_cold_tail_bytes()
     retention = _configured_snapshot_retention_seconds()
     for run_dir in root.iterdir():
         if not run_dir.is_dir() or run_dir.name == "archive":
@@ -733,15 +747,16 @@ def _maintain_runtime_run_storage() -> dict[str, int]:
             pass
         transcript = run_dir / "transcript.log"
         try:
-            if (
-                max_bytes <= 0
-                or not transcript.is_file()
-                or transcript.stat().st_size <= max_bytes
-                or not _runtime_run_is_terminal(run_dir)
-            ):
+            if not transcript.is_file() or not _runtime_run_is_terminal(run_dir):
                 continue
-            size = transcript.stat().st_size
-            prefix_bytes = size - max_bytes
+            transcript_stat = transcript.stat()
+            size = transcript_stat.st_size
+            target_bytes = max_bytes
+            if retention <= 0 or now - transcript_stat.st_mtime >= retention:
+                target_bytes = min(target_bytes, cold_tail_bytes)
+            if target_bytes <= 0 or size <= target_bytes:
+                continue
+            prefix_bytes = size - target_bytes
             with transcript.open("rb") as source:
                 prefix = source.read(prefix_bytes)
                 tail = source.read()

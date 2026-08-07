@@ -148,6 +148,60 @@ def test_full_sync_rotates_terminal_transcript_and_sweeps_old_temps(
     }
 
 
+def test_full_sync_compacts_cold_terminal_transcripts_below_size_cap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_TRANSCRIPT_MAX_BYTES", "512")
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES", "64")
+    monkeypatch.setenv("VIBECRAFTED_RUN_SNAPSHOT_RETENTION_SECONDS", "60")
+    run_dir = home / "control_plane" / "runtime_runs" / "cold-terminal"
+    run_dir.mkdir(parents=True)
+    (run_dir / "meta.json").write_text(
+        json.dumps({"run_id": "cold-terminal", "state": "completed", "exit_code": 0}),
+        encoding="utf-8",
+    )
+    original = bytes(range(200))
+    transcript = run_dir / "transcript.log"
+    transcript.write_bytes(original)
+    old = time.time() - 61
+    os.utime(transcript, (old, old))
+
+    result = control_plane.sync_state()
+
+    assert transcript.read_bytes() == original[-64:]
+    with gzip.open(run_dir / "transcript.log.archive.gz", "rb") as archive:
+        assert archive.read() == original[:-64]
+    assert result["storage_maintenance"]["transcripts_rotated"] == 1
+
+
+def test_full_sync_never_compacts_old_active_transcript(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_TRANSCRIPT_MAX_BYTES", "512")
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES", "64")
+    monkeypatch.setenv("VIBECRAFTED_RUN_SNAPSHOT_RETENTION_SECONDS", "60")
+    run_dir = home / "control_plane" / "runtime_runs" / "active-run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "meta.json").write_text(
+        json.dumps({"run_id": "active-run", "state": "active"}), encoding="utf-8"
+    )
+    original = bytes(range(200))
+    transcript = run_dir / "transcript.log"
+    transcript.write_bytes(original)
+    old = time.time() - 61
+    os.utime(transcript, (old, old))
+
+    result = control_plane.sync_state()
+
+    assert transcript.read_bytes() == original
+    assert not (run_dir / "transcript.log.archive.gz").exists()
+    assert result["storage_maintenance"]["transcripts_rotated"] == 0
+
+
 def test_atomic_write_reports_actionable_degraded_mode_before_enospc(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
