@@ -755,7 +755,35 @@ def _vc_frame_truth_drift_findings(
     store_map = _hash_config_tree(store_cfg)
     generated_map = _hash_config_tree(generated)
     if store_map and generated_map:
-        split = _diverged_files(store_map, generated_map)
+        # generated/ is HOST-ADAPTED from config/ (pane-shell + clipboard
+        # substitution in every kdl), so the raw trees legitimately differ on
+        # any host whose adaptation differs from the shipped defaults (a
+        # Linux box without pbcopy diverges on every layout). Compare against
+        # a fresh materialization built by the same production code instead
+        # of raw hashes — self-agreement modulo intended adaptation.
+        expected_map = store_map
+        try:
+            import tempfile
+
+            from .vc_frame_staging import (
+                materialize_vc_frame_config,
+                resolve_clipboard_command,
+                resolve_pane_shell,
+            )
+
+            with tempfile.TemporaryDirectory(prefix="vc-doctor-truth-") as tmp:
+                expected_root = Path(tmp) / "vc-frame"
+                materialize_vc_frame_config(
+                    store_cfg,
+                    expected_root,
+                    pane_shell=resolve_pane_shell(),
+                    clipboard_command=resolve_clipboard_command(),
+                )
+                expected_map = _hash_config_tree(expected_root)
+        except OSError:
+            # Incomplete store tree — raw comparison still beats no signal.
+            expected_map = store_map
+        split = _diverged_files(expected_map, generated_map)
         if split:
             findings.append(
                 _Finding(
