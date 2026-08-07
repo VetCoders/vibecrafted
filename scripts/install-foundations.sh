@@ -1171,10 +1171,15 @@ for target in "${TARGETS[@]}"; do
   case "$target" in
     loctree)  install_loctree  || foundation_optional_fail loctree ;;
     aicx)     install_aicx     || foundation_optional_fail aicx ;;
-    # vc-frame is the operator cockpit substrate — hard fail on product path
-    # (no more validate-only loop that re-points at vibecrafted install.sh).
+    # vc-frame is the operator cockpit substrate. The hard product gate is
+    # armed via REQUIRE_FOUNDATIONS=1 — unconditionally hard-failing here
+    # breaks the whole root bootstrap on hosts that cannot fetch vc-frame,
+    # and today github.com/vetcoders/vc-frame has NO release at all, so
+    # `releases/latest/download/install.sh` 404s for every fresh install.
+    # Loud defer (same contract as loctree/aicx above) until that release
+    # exists; re-harden once the asset is real.
     vc-frame)
-      install_vcframe  || exit_code=1
+      install_vcframe  || foundation_optional_fail vc-frame
       install_vc_frame_product_wrapper || true
       install_product_entry_into_current || true
       ;;

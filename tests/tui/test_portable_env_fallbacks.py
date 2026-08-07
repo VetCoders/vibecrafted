@@ -94,11 +94,12 @@ def test_install_foundations_default_treats_agent_cli_bootstrap_as_best_effort(
     )
 
     combined = result.stdout + result.stderr
-    # 5d39e4da + 9b01b58e: the default spine hard-gates the vc-frame cockpit
-    # (product path), so a bare HOME exits nonzero — from the cockpit gate,
-    # never from the agents leg. Agents stay best-effort: their failure is
-    # the warn line below, and it must not be what flips the exit code.
-    assert result.returncode == 1, combined
+    # vc-frame is externally released — and today its repo has no release,
+    # so the default spine must DEFER a failed cockpit install with a loud
+    # warn instead of killing the whole bootstrap (REQUIRE_FOUNDATIONS=1
+    # re-arms the hard gate). The agents leg stays best-effort: its failure
+    # is the warn line below, never the exit code.
+    assert result.returncode == 0, combined
     assert "cockpit" in combined
     assert (
         "agent CLIs incomplete — optional, install later: vibecrafted doctor"
