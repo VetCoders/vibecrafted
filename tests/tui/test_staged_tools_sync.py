@@ -2873,6 +2873,10 @@ def test_runtime_service_probe_honors_transaction_deadline(
             "Server: RUNNING (PID 92141, listening on http://100.82.232.70:3025)\n"
             "Guardian: STOPPED\n"
         ),
+        (
+            "Server: RUNNING (PID 45721, listening on http://100.82.232.70:3025)\n"
+            "Guardian: PID-MISMATCH (46050 is live but identity is unverified)\n"
+        ),
     ),
 )
 def test_partial_runtime_pair_retries_only_during_bounded_activation(

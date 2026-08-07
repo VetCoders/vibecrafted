@@ -4115,14 +4115,16 @@ def _runtime_service_pair_state(
     if (
         _RUNTIME_SERVICE_COMMAND_DEADLINE.get() is not None
         and "Supervision: LAUNCHD" in result.stdout
-        and (
-            (
-                "Server: PID-MISMATCH" in result.stdout
-                and "Guardian: STOPPED" in result.stdout
-            )
-            or (
-                "Server: RUNNING" in result.stdout
-                and "Guardian: STOPPED" in result.stdout
+        and any(
+            marker in result.stdout
+            for marker in ("Server: RUNNING", "Server: STOPPED", "Server: PID-MISMATCH")
+        )
+        and any(
+            marker in result.stdout
+            for marker in (
+                "Guardian: RUNNING",
+                "Guardian: STOPPED",
+                "Guardian: PID-MISMATCH",
             )
         )
     ):
