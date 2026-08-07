@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""CLI: bump VERSION and mirror the new semver into every packaged declaration
+(vibecrafted-core/vibecrafted-mcp pyproject.toml + packaged VERSION files)."""
+
 from __future__ import annotations
 
 import argparse
@@ -23,6 +26,7 @@ PACKAGED_VERSION_RELATIVES = (
 
 
 def _parse_version(value: str) -> tuple[int, int, int]:
+    """Parse a plain ``X.Y.Z`` semver string; raise ValueError on any other shape."""
     match = SEMVER_RE.fullmatch(value.strip())
     if not match:
         raise ValueError(f"VERSION must be plain semver X.Y.Z, got {value!r}")
@@ -34,6 +38,8 @@ def _parse_version(value: str) -> tuple[int, int, int]:
 
 
 def resolve_next_version(current: str, requested: str) -> str:
+    """Bump patch/minor/major from ``current``, or validate and pass through an
+    explicit ``X.Y.Z`` in ``requested``."""
     major, minor, patch = _parse_version(current)
     if requested == "patch":
         patch += 1
@@ -51,6 +57,8 @@ def resolve_next_version(current: str, requested: str) -> str:
 
 
 def _project_version(text: str) -> str:
+    """Extract the ``version = "..."`` value from a pyproject.toml ``[project]``
+    table; raise ValueError if that table or its version key is absent."""
     in_project = False
     for line in text.splitlines():
         stripped = line.strip()
@@ -63,6 +71,9 @@ def _project_version(text: str) -> str:
 
 
 def _replace_project_version(text: str, version: str) -> str:
+    """Return ``text`` with the first ``[project]`` ``version = "..."`` line
+    rewritten to ``version``, preserving line endings; raise ValueError if no
+    such declaration is found."""
     in_project = False
     output: list[str] = []
     replaced = False
@@ -87,6 +98,11 @@ def _replace_project_version(text: str, version: str) -> str:
 def _version_projections(
     version_file: Path,
 ) -> tuple[tuple[Path, ...], tuple[Path, ...]] | None:
+    """Locate the sibling pyproject.toml/VERSION files this VERSION mirrors into.
+
+    Returns None when none of the projection paths exist (VERSION stands alone).
+    Raises ValueError if only some of them exist (partial/inconsistent layout).
+    """
     project_root = version_file.parent
     pyprojects = tuple(project_root / path for path in PYPROJECT_RELATIVES)
     packaged = tuple(project_root / path for path in PACKAGED_VERSION_RELATIVES)
@@ -103,6 +119,12 @@ def _version_projections(
 
 
 def update_version_declarations(version_file: Path, requested: str) -> tuple[str, str]:
+    """Bump ``version_file`` and every mirrored pyproject/VERSION declaration.
+
+    Verifies all declarations agree with the current VERSION first (raises
+    ValueError on drift), writes the new version to each, and returns
+    ``(current, next_version)``.
+    """
     current = version_file.read_text(encoding="utf-8").strip()
     next_version = resolve_next_version(current, requested)
     projections = _version_projections(version_file)
@@ -143,6 +165,7 @@ def update_version_declarations(version_file: Path, requested: str) -> tuple[str
 
 
 def main() -> int:
+    """CLI entrypoint: bump VERSION (and mirrors) per argv, print the result."""
     parser = argparse.ArgumentParser(
         description="Bump VERSION and every packaged version declaration.",
     )

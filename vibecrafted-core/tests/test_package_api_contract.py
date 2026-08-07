@@ -63,14 +63,45 @@ def test_version_matches_distribution_metadata() -> None:
         installed_version = None
     if installed_version is not None:
         assert installed_version == expected
-    assert vibecrafted_core.__version__ == expected
+    # Runtime resolve may lift a bare tree VERSION to staged/git +gSHA —
+    # that is the product fix for Homebrew editable PATH shadows. Never
+    # allow a silent bare X.Y.Z when a stamp exists.
+    resolved = vibecrafted_core.__version__
+    bare = expected.split("+", 1)[0]
+    assert resolved == expected or (
+        resolved.startswith(bare)
+        and ("+g" in resolved or resolved.endswith("+UNSTAMPED"))
+    )
 
 
 def test_version_falls_back_to_installed_metadata(monkeypatch) -> None:
     monkeypatch.setattr(vibecrafted_core, "read_version_file", lambda _root: "unknown")
+    monkeypatch.setattr(
+        vibecrafted_core, "read_staged_tools_version", lambda: "unknown"
+    )
+    monkeypatch.setattr(vibecrafted_core, "_version_from_git", lambda *_a, **_k: None)
     monkeypatch.setattr(importlib.metadata, "version", lambda _name: "8.7.6")
 
-    assert vibecrafted_core._resolve_installed_version() == "8.7.6"
+    assert vibecrafted_core._resolve_installed_version() == "8.7.6+UNSTAMPED"
+
+
+def test_version_prefers_staged_stamp_over_bare_package(monkeypatch) -> None:
+    """Living-tree editable must not report bare 3.7.0 when make install stamped."""
+    monkeypatch.setattr(vibecrafted_core, "read_version_file", lambda _root: "3.7.0")
+    monkeypatch.setattr(
+        vibecrafted_core,
+        "read_staged_tools_version",
+        lambda: "3.7.0+ga2b2fbad",
+    )
+    assert vibecrafted_core._resolve_installed_version() == "3.7.0+ga2b2fbad"
+
+
+def test_version_is_stamped_helper() -> None:
+    assert vibecrafted_core.version_is_stamped("3.7.0+ga2b2fbad")
+    assert vibecrafted_core.version_is_stamped("1.0.0+gdeadbeef")
+    assert not vibecrafted_core.version_is_stamped("3.7.0")
+    assert not vibecrafted_core.version_is_stamped("3.7.0+UNSTAMPED")
+    assert not vibecrafted_core.version_is_stamped("unknown")
 
 
 def test_version_bump_updates_every_declared_projection(tmp_path: Path) -> None:

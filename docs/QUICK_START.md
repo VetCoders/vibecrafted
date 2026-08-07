@@ -154,7 +154,7 @@ default:
 id = "refactor-parser"
 agent = "codex"
 workflow = "implement"
-model = "gpt-5-codex"   # pin the model to the cut's class; unset = account default
+model = "<provider-model-id>" # exact provider pin; omit to use the account default
 prompt = "..."
 ```
 

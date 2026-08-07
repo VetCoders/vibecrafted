@@ -562,6 +562,44 @@ impl ControlPlane {
             .collect()
     }
 
+    /// Compact summaries for only the newest lifecycle candidates.
+    ///
+    /// Directory metadata is cheap enough to rank the full set, while parsing
+    /// every nested state and report is not. Dashboard callers use this bounded
+    /// projection; the unbounded list API remains available above.
+    #[must_use]
+    pub fn load_recent_lifecycle_run_summaries(&self, limit: usize) -> Vec<LifecycleRunSummary> {
+        if limit == 0 {
+            return Vec::new();
+        }
+        let Ok(entries) = fs::read_dir(self.lifecycle_runs_dir()) else {
+            return Vec::new();
+        };
+        let mut state_paths = entries
+            .flatten()
+            .filter_map(|entry| {
+                entry
+                    .path()
+                    .is_dir()
+                    .then(|| entry.path().join("state.json"))
+            })
+            .map(|state_path| (modified_at(&state_path), state_path))
+            .collect::<Vec<_>>();
+        state_paths.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+        state_paths
+            .into_iter()
+            .filter_map(|(_, state_path)| {
+                let mut run = read_json::<LifecycleRun>(&state_path)?;
+                if run.run_id.is_empty() {
+                    return None;
+                }
+                run.project_delivery_axes();
+                Some(self.lifecycle_run_summary(&run))
+            })
+            .take(limit)
+            .collect()
+    }
+
     /// Every lifecycle run as a flat status projection for existing state views.
     #[must_use]
     pub fn iter_lifecycle_run_status(&self) -> Vec<RunStatus> {
@@ -651,9 +689,10 @@ impl ControlPlane {
         let settlement_counts = SettlementBoard::from_snapshots(&retained_snapshots);
         // Snapshots are also the durable run baseline. Event rotation is
         // allowed only after Python has projected the generation into these
-        // files, so starting from an empty vector would make an event-only run
-        // disappear as soon as its generation aged out. Fresher raw evidence
-        // below is folded with the normal timestamp-aware merge.
+        // files, so archived generations must not be replayed here. Only the
+        // active segment can contain evidence newer than the snapshots.
+        // Fresher raw evidence below is folded with the normal timestamp-aware
+        // merge.
         let mut merged = retained_snapshots.clone();
         for snapshot in &mut merged {
             snapshot.health = if snapshot.is_terminal() {
@@ -692,7 +731,7 @@ impl ControlPlane {
         // every durable runtime_runs/ directory resurrects old workers.
         let mut events = self
             .events()
-            .read_all()
+            .read_since(0, &[])
             .map(|batch| batch.events)
             .unwrap_or_default();
         events.retain(|event| !event_has_test_provenance(event, &self.home));
@@ -1692,15 +1731,35 @@ mod tests {
     use chrono::{Duration, Utc};
     use serde_json::json;
     use std::fs;
+    use std::io::ErrorKind;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn temp_home(prefix: &str) -> PathBuf {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+        let base = std::env::var_os("TMPDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/tmp"));
+        let nanos = Utc::now().timestamp_nanos_opt().unwrap_or_default();
+        for attempt in 0..100 {
+            let nonce = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+            let candidate = base.join(format!(
+                "control-core-{prefix}-{}-{nanos}-{nonce}-{attempt}",
+                std::process::id()
+            ));
+            match fs::create_dir(&candidate) {
+                Ok(()) => return candidate,
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("create isolated fixture home: {error}"),
+            }
+        }
+        panic!("could not allocate an isolated fixture home")
+    }
 
     #[test]
     fn accepted_operator_stop_survives_later_supervisor_failures() {
-        let unique = format!(
-            "control-core-sticky-stop-{}-{}",
-            std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        );
-        let home = std::env::temp_dir().join(unique);
+        let home = temp_home("sticky-stop");
         let control_plane = home.join("control_plane");
         let snapshots = control_plane.join("runs");
         fs::create_dir_all(&snapshots).expect("snapshots");
@@ -1806,12 +1865,7 @@ mod tests {
 
     #[test]
     fn event_only_run_survives_rotation_via_snapshot() {
-        let unique = format!(
-            "control-core-snapshot-after-rotation-{}-{}",
-            std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        );
-        let home = std::env::temp_dir().join(unique);
+        let home = temp_home("snapshot-after-rotation");
         let control_plane = home.join("control_plane");
         let snapshots = control_plane.join("runs");
         fs::create_dir_all(&snapshots).expect("snapshots");
@@ -1874,13 +1928,70 @@ mod tests {
     }
 
     #[test]
-    fn active_truth_separates_stalls_and_quarantines_pytest_events() {
-        let unique = format!(
-            "control-core-active-truth-{}-{}",
-            std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    fn compute_view_reads_only_active_events_after_rotation() {
+        let home = temp_home("active-segment-only");
+        let control_plane = home.join("control_plane");
+        let archive = control_plane.join("events_archive");
+        fs::create_dir_all(&archive).expect("event archive");
+        let now = Utc::now();
+        let segment = |generation| {
+            json!({
+                "ts": now.to_rfc3339(),
+                "run_id": "",
+                "kind": "stream.segment",
+                "message": "event generation",
+                "payload": {
+                    "schema": STREAM_SEGMENT_SCHEMA,
+                    "epoch": "epoch-active-only",
+                    "generation": generation
+                }
+            })
+        };
+        let active = |run_id: &str| {
+            json!({
+                "ts": now.to_rfc3339(),
+                "run_id": run_id,
+                "kind": "lifecycle:active",
+                "message": "worker active",
+                "payload": {
+                    "state": "active",
+                    "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                    "worker_pid": std::process::id(),
+                    "liveness": "pid_alive"
+                }
+            })
+        };
+        fs::write(
+            archive.join("events-epoch-active-only-g00000000000000000000.jsonl"),
+            format!("{}\n{}\n", segment(0), active("archived-without-snapshot")),
+        )
+        .expect("archived generation");
+        fs::write(
+            control_plane.join("events.jsonl"),
+            format!("{}\n{}\n", segment(1), active("active-generation")),
+        )
+        .expect("active generation");
+
+        let view = ControlPlane::new(&home).compute_view(now);
+
+        assert!(
+            view.active_runs
+                .iter()
+                .any(|run| run.run_id == "active-generation"),
+            "active generation must still contribute fresher evidence"
         );
-        let home = std::env::temp_dir().join(unique);
+        assert!(
+            view.recent_runs
+                .iter()
+                .all(|run| run.run_id != "archived-without-snapshot"),
+            "archived generations are already owned by durable snapshots"
+        );
+        fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn active_truth_separates_stalls_and_quarantines_pytest_events() {
+        let home = temp_home("active-truth");
         let control_plane = home.join("control_plane");
         fs::create_dir_all(&control_plane).expect("control plane");
         let now = Utc::now();
@@ -2034,12 +2145,7 @@ mod tests {
 
     #[test]
     fn lookup_run_projects_typed_trust_receipt_from_runtime_meta() {
-        let unique = format!(
-            "control-core-trust-receipt-{}-{}",
-            std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        );
-        let home = std::env::temp_dir().join(unique);
+        let home = temp_home("trust-receipt");
         let control_plane = home.join("control_plane");
         let runtime = control_plane.join("runtime_runs/receipt-run");
         let snapshots = control_plane.join("runs");

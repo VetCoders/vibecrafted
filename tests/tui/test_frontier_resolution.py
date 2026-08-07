@@ -452,9 +452,10 @@ def test_sourcing_helper_exports_frontier_sidecars_per_asset(
     assert f"VC_FRAME_CONFIG_DIR={vc_frame_config.parent}" in result.stdout
 
 
-def test_frontier_install_dry_run_succeeds_without_repo_alacritty_preset(
+def test_frontier_install_dry_run_stages_host_sidecars_without_global_takeover(
     tmp_path: Path,
 ) -> None:
+    """Host terminal assets land under frontier/, never under ~/.config/alacritty."""
     home = tmp_path / "home"
     xdg_config_home = tmp_path / "xdg"
     home.mkdir()
@@ -477,7 +478,15 @@ def test_frontier_install_dry_run_succeeds_without_repo_alacritty_preset(
     assert "config/vc-frame/config.kdl" in result.stdout
     assert str(sidecar_root / "vc-frame" / "config.kdl") in result.stdout
     assert str(sidecar_root / "starship.toml") in result.stdout
-    assert "config/alacritty" not in result.stdout
+    # Optional host sidecars (present in current repo generations).
+    if (REPO_ROOT / "config" / "alacritty" / "vc-frame.toml").is_file():
+        assert "config/alacritty/vc-frame.toml" in result.stdout
+        assert str(sidecar_root / "alacritty" / "vc-frame.toml") in result.stdout
+    if (REPO_ROOT / "config" / "shell" / "atuin-up.zsh").is_file():
+        assert "config/shell/atuin-up.zsh" in result.stdout
+        assert str(sidecar_root / "shell" / "atuin-up.zsh") in result.stdout
+    # No global takeover of the operator's live Alacritty identity.
+    assert str(xdg_config_home / "alacritty") not in result.stdout
     assert str(xdg_config_home / "vc-frame" / "config.kdl") not in result.stdout
     assert "Done." in result.stdout
 

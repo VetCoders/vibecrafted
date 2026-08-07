@@ -99,6 +99,7 @@ ALLOWED_TOP_LEVEL = frozenset(
         "install.sh",
         "install.ps1",
         "install.toml",
+        "runtime-manifest.json",
         "pyproject.toml",
         "plugin.json",
         "vibecrafted-framework.plugin",
@@ -129,6 +130,7 @@ FORBIDDEN_COMPONENTS = frozenset(
         ".coverage",
         ".devcontainer",
         ".dockerignore",
+        ".env",
         ".git",
         ".github",
         ".gitignore",
@@ -190,24 +192,39 @@ class ManifestError(ValueError):
 
 
 def _relative_path(value: str | Path) -> Path:
+    """Normalize ``value`` to a relative Path, rejecting absolute or ``..`` paths."""
     relative = Path(value)
     if relative.is_absolute() or ".." in relative.parts:
         raise ManifestError(f"unsafe relative path: {value}")
     return relative
 
 
+def _component_is_secret_env(name: str) -> bool:
+    """Return True when a path component is a live-credential env file.
+
+    `.env` and every `.env.*` variant carry live credentials; only the
+    committed `*.example` templates are distributable.
+    """
+    if name == ".env":
+        return True
+    return name.startswith(".env.") and not name.endswith(".example")
+
+
 def path_is_forbidden(relative: str | Path) -> bool:
+    """Return True when a relative path matches a forbidden component/suffix rule."""
     relative_path = _relative_path(relative)
     if not relative_path.parts:
         return True
     if relative_path.as_posix() in REQUIRED_LOCKFILES:
         return False
-    return any(part in FORBIDDEN_COMPONENTS for part in relative_path.parts) or (
-        relative_path.name.endswith(FORBIDDEN_SUFFIXES)
-    )
+    return any(
+        part in FORBIDDEN_COMPONENTS or _component_is_secret_env(part)
+        for part in relative_path.parts
+    ) or relative_path.name.endswith(FORBIDDEN_SUFFIXES)
 
 
 def path_is_included(relative: str | Path) -> bool:
+    """Return True when a relative path is under an allowed top-level and not forbidden."""
     relative_path = _relative_path(relative)
     return bool(
         relative_path.parts
@@ -217,6 +234,11 @@ def path_is_included(relative: str | Path) -> bool:
 
 
 def _symlink_error(root: Path, path: Path) -> str | None:
+    """Return a description of why a symlink is unsafe, or None if it is fine.
+
+    Rejects absolute targets, targets resolving outside ``root``, and targets
+    landing on an excluded path.
+    """
     if not path.is_symlink():
         return None
     raw_target = os.readlink(path)
@@ -238,6 +260,13 @@ def _symlink_error(root: Path, path: Path) -> str | None:
 def _required_candidate(
     root: Path, relative: str, *, allow_runtime_projection: bool
 ) -> Path:
+    """Resolve a required-path candidate, projecting onto a canonical alias if needed.
+
+    When ``allow_runtime_projection`` is set and the direct candidate is absent,
+    falls back to the canonical `runtime`/`skills` package path (see
+    ``CANONICAL_PROJECTIONS``) so source-tree validation survives mounts that
+    drop symlinks (e.g. colima's sshfs view of a macOS checkout).
+    """
     candidate = root / relative
     relative_path = Path(relative)
     if (
@@ -254,6 +283,7 @@ def _required_candidate(
 def _required_errors(
     root: Path, *, allow_runtime_projection: bool = False
 ) -> list[str]:
+    """Collect human-readable errors for every missing required file/dir/surface."""
     errors = []
     for relative in REQUIRED_FILES:
         candidate = _required_candidate(
@@ -277,6 +307,7 @@ def _required_errors(
 
 
 def _walk_entries(root: Path) -> Iterable[Path]:
+    """Yield every directory then file under root, sorted, pruning forbidden dirs in-place."""
     for current, directory_names, file_names in os.walk(root, followlinks=False):
         current_path = Path(current)
         directory_names.sort()
@@ -293,6 +324,7 @@ def _walk_entries(root: Path) -> Iterable[Path]:
 
 
 def validate_payload(root: str | Path) -> None:
+    """Raise ManifestError with every violation found in an already-staged payload."""
     payload_root = Path(root)
     if not payload_root.is_dir():
         raise ManifestError(f"payload root is not a directory: {payload_root}")
@@ -314,6 +346,12 @@ def validate_payload(root: str | Path) -> None:
 
 
 def _validate_source(root: Path) -> None:
+    """Raise ManifestError for missing required paths or unsafe symlinks in a source tree.
+
+    Unlike ``validate_payload`` this only checks included paths and required
+    surfaces (with runtime-projection fallback) — it does not flag paths as
+    forbidden, since the source tree legitimately contains excluded content.
+    """
     errors = _required_errors(root, allow_runtime_projection=True)
     for path in _walk_entries(root):
         relative = path.relative_to(root)
@@ -326,6 +364,7 @@ def _validate_source(root: Path) -> None:
 
 
 def _remove_path(path: Path) -> None:
+    """Delete a path regardless of whether it is a symlink, file, or directory tree."""
     if path.is_symlink() or path.is_file():
         path.unlink()
     elif path.is_dir():
@@ -333,6 +372,11 @@ def _remove_path(path: Path) -> None:
 
 
 def _copy_included(source_root: Path, source: Path, destination: Path) -> None:
+    """Recursively copy source to destination, skipping anything path_is_included() excludes.
+
+    Symlinks are re-created (after a safety check) rather than followed;
+    directories are copied with their own recursive fan-out.
+    """
     relative = source.relative_to(source_root)
     if not path_is_included(relative):
         return
@@ -359,6 +403,12 @@ def _copy_included(source_root: Path, source: Path, destination: Path) -> None:
 def stage_payload(
     source: str | Path, destination: str | Path, *, mirror: bool = False
 ) -> None:
+    """Copy the allowlisted subset of source into destination and validate the result.
+
+    When ``mirror`` is set the destination is wiped first. After copying, the
+    `runtime`/`skills` alias symlinks are (re)created if only the canonical
+    package paths were staged, then the whole payload is re-validated.
+    """
     source_root = Path(source).resolve()
     destination_root = Path(destination)
     if not source_root.is_dir():
@@ -381,6 +431,7 @@ def stage_payload(
 
 
 def _normalized_tar_info(info: tarfile.TarInfo) -> tarfile.TarInfo:
+    """Zero out uid/gid/owner/mtime/pax-headers so archives build reproducibly."""
     info.uid = 0
     info.gid = 0
     info.uname = "root"
@@ -391,6 +442,7 @@ def _normalized_tar_info(info: tarfile.TarInfo) -> tarfile.TarInfo:
 
 
 def _write_archive(payload_root: Path, output: Path, root_name: str) -> None:
+    """Write payload_root as a deterministic gzip+PAX tarball rooted at root_name."""
     output.parent.mkdir(parents=True, exist_ok=True)
     with (
         output.open("wb") as raw_output,
@@ -413,6 +465,10 @@ def _write_archive(payload_root: Path, output: Path, root_name: str) -> None:
 
 
 def create_archive(source: str | Path, output: str | Path, *, root_name: str) -> Path:
+    """Stage source into a temp dir under root_name and archive it to output.
+
+    Returns the output path. Raises ManifestError if root_name is unsafe.
+    """
     if not root_name or root_name in {".", ".."} or "/" in root_name:
         raise ManifestError(f"unsafe archive root name: {root_name!r}")
     output_path = Path(output)
@@ -424,6 +480,7 @@ def create_archive(source: str | Path, output: str | Path, *, root_name: str) ->
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build the CLI parser exposing the check/stage/archive subcommands."""
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -443,6 +500,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint: dispatch to check/stage/archive, printing errors to stderr."""
     args = _build_parser().parse_args(argv)
     try:
         if args.command == "check":

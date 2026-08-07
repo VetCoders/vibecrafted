@@ -78,6 +78,9 @@ def test_install_foundations_default_treats_agent_cli_bootstrap_as_best_effort(
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}{os.pathsep}{BASE_PATH}"
+    # Keep the operator's real cockpit config out of the sandbox so the
+    # vc-frame gate result is deterministic on every host.
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
     env.pop("VIBECRAFTED_ROOT", None)
     env.pop("VIBECRAFTED_HOME", None)
 
@@ -90,10 +93,17 @@ def test_install_foundations_default_treats_agent_cli_bootstrap_as_best_effort(
         text=True,
     )
 
-    assert result.returncode == 0
+    combined = result.stdout + result.stderr
+    # vc-frame is externally released — and today its repo has no release,
+    # so the default spine must DEFER a failed cockpit install with a loud
+    # warn instead of killing the whole bootstrap (REQUIRE_FOUNDATIONS=1
+    # re-arms the hard gate). The agents leg stays best-effort: its failure
+    # is the warn line below, never the exit code.
+    assert result.returncode == 0, combined
+    assert "cockpit" in combined
     assert (
         "agent CLIs incomplete — optional, install later: vibecrafted doctor"
-        in result.stdout
+        in combined
     )
 
 

@@ -1,3 +1,5 @@
+"""LOOP heartbeat cron helper: idle-aware tick execution and crontab line generation."""
+
 from __future__ import annotations
 
 import argparse
@@ -28,14 +30,21 @@ HARD_STOP_NEEDLES = (
 
 
 def utc_now() -> datetime:
+    """Return the current time as a timezone-aware UTC datetime."""
     return datetime.now(timezone.utc)
 
 
 def iso_now() -> str:
+    """Return the current UTC time as an ISO-8601 string with a trailing ``Z``."""
     return utc_now().isoformat().replace("+00:00", "Z")
 
 
 def parse_frontmatter(path: Path) -> dict[str, str]:
+    """Parse a simple ``---``-delimited key: value frontmatter block from a file.
+
+    Returns an empty dict when the file is missing, unreadable, or lacks a
+    frontmatter block. Not a full YAML parser — one ``key: value`` per line.
+    """
     if not path.is_file():
         return {}
     try:
@@ -58,6 +67,10 @@ def parse_frontmatter(path: Path) -> dict[str, str]:
 
 
 def parse_time(raw: str) -> datetime | None:
+    """Parse an ISO-8601 timestamp (``Z`` suffix accepted) into a UTC datetime.
+
+    Returns None for empty or unparseable input rather than raising.
+    """
     if not raw:
         return None
     normalized = raw.strip().strip('"')
@@ -73,6 +86,7 @@ def parse_time(raw: str) -> datetime | None:
 
 
 def idle_minutes(state: dict[str, str]) -> float | None:
+    """Return minutes since ``updated_at`` (falling back to ``started_at``), or None."""
     anchor = parse_time(state.get("updated_at", "")) or parse_time(
         state.get("started_at", "")
     )
@@ -82,14 +96,17 @@ def idle_minutes(state: dict[str, str]) -> float | None:
 
 
 def default_state_file(root: Path) -> Path:
+    """Return the default operator-loop state file path for a repo root."""
     return root / ".vibecrafted" / "operator-loop.local.md"
 
 
 def default_journal() -> Path:
+    """Return the default location for the loop-cron JSONL journal."""
     return vibecrafted_home() / "runtime" / "loop-cron.jsonl"
 
 
 def append_jsonl(path: Path, payload: dict[str, object]) -> None:
+    """Append one JSON payload as a line to ``path``, creating parent dirs as needed."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(
@@ -98,6 +115,7 @@ def append_jsonl(path: Path, payload: dict[str, object]) -> None:
 
 
 def hard_stop_reason(command: str) -> str:
+    """Return the matched HARD_STOP_NEEDLES substring if ``command`` is dangerous, else ""."""
     lowered = command.lower()
     for needle in HARD_STOP_NEEDLES:
         if needle in lowered:
@@ -108,6 +126,11 @@ def hard_stop_reason(command: str) -> str:
 def run_capture(
     command: list[str], cwd: Path, output: Path, timeout: int
 ) -> dict[str, object]:
+    """Run one command, write combined stdout+stderr to ``output``, and report exit status.
+
+    Swallows OSError and TimeoutExpired into the result dict (exit_code 127/124)
+    rather than raising, so a caller can journal a failed capture attempt.
+    """
     output.parent.mkdir(parents=True, exist_ok=True)
     started = iso_now()
     try:
@@ -145,6 +168,10 @@ def run_capture_candidates(
     output: Path,
     timeout: int,
 ) -> dict[str, object]:
+    """Try each command in order via run_capture, stopping at the first exit_code 0.
+
+    Returns the last attempted result (with all attempts recorded) if none succeed.
+    """
     attempts: list[dict[str, object]] = []
     last: dict[str, object] | None = None
     for command in commands:
@@ -172,6 +199,11 @@ def run_capture_candidates(
 
 
 def capture_context(root: Path, run_id: str, timeout: int) -> list[dict[str, object]]:
+    """Capture a loct structural snapshot and an aicx intents snapshot for one tick.
+
+    Output files are stamped under vibecrafted_home()/runtime/cron-context/ using
+    a sanitized run_id. aicx capture tries intents, then search, then a bare list.
+    """
     stamp = utc_now().strftime("%Y%m%dT%H%M%SZ")
     safe_run = "".join(
         ch if ch.isalnum() or ch in "._-" else "-" for ch in (run_id or "loop")
@@ -217,6 +249,10 @@ def capture_context(root: Path, run_id: str, timeout: int) -> list[dict[str, obj
 
 
 def tick(args: argparse.Namespace) -> int:
+    """Run one LOOP heartbeat tick: read state, optionally capture context, optionally
+    run ``--then-cmd`` (refused if it matches a HARD_STOP_NEEDLES pattern or the loop
+    is inactive/too-recently-idle), journal the result, and print a summary.
+    """
     root = Path(args.root or Path.cwd()).expanduser().resolve()
     state_file = (
         Path(args.state_file).expanduser()
@@ -301,6 +337,7 @@ def tick(args: argparse.Namespace) -> int:
 
 
 def cron_line(args: argparse.Namespace) -> int:
+    """Print a ready-to-paste crontab line that invokes ``vibecrafted cron tick``."""
     every = max(args.every_minutes, 1)
     root = Path(args.root or Path.cwd()).expanduser().resolve()
     script = args.deck_command or "vibecrafted"
@@ -332,6 +369,7 @@ def cron_line(args: argparse.Namespace) -> int:
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build the argparse parser for the ``tick`` and ``line`` cron subcommands."""
     parser = argparse.ArgumentParser(prog="vibecrafted cron")
     sub = parser.add_subparsers(dest="action")
 
@@ -369,6 +407,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entrypoint: dispatch to ``tick`` or ``line``, else print help and return 2."""
     parser = _build_parser()
     args = parser.parse_args(argv)
     if args.action == "tick":

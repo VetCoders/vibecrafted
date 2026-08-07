@@ -2,7 +2,6 @@
 
 **Agents:** [`AGENTS.md`](AGENTS.md) · [`llms.txt`](llms.txt)
 
-
 Local control-plane viewer for the Vibecrafted control plane (scaffold editor writes artifacts — local-only). **One core, two frontends.** The Python runtime (`vibecrafted-core/vibecrafted_core/control_plane.py`) is the source of truth that _writes_ `~/.vibecrafted/control_plane/`; this Rust workspace gives a typed, **read-only** view of the same data over HTTP.
 
 | crate          | role                                                                                                                                                                                   |

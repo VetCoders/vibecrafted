@@ -35,12 +35,14 @@ _TOKENS = {
 
 
 def _colors_enabled(stream) -> bool:
+    """True when ``stream`` is a TTY and NO_COLOR is not set."""
     if os.environ.get("NO_COLOR"):
         return False
     return bool(getattr(stream, "isatty", lambda: False)())
 
 
 def _tok(name: str, stream=None) -> str:
+    """Look up one ANSI token, or '' when color is disabled for ``stream``."""
     return _TOKENS[name] if _colors_enabled(stream or sys.stdout) else ""
 
 
@@ -98,6 +100,7 @@ class Spinner:
     """
 
     def __init__(self, message: str, stream=None) -> None:
+        """Prepare the spinner; animation only starts on ``__enter__``."""
         self.message = message
         self.stream = stream or sys.stdout
         self._animated = _colors_enabled(self.stream)
@@ -105,6 +108,7 @@ class Spinner:
         self._thread: threading.Thread | None = None
 
     def __enter__(self) -> Self:
+        """Print the static stage line, or start the animated frame thread."""
         if not self._animated:
             print(f"▸ {self.message}", file=self.stream, flush=True)
             return self
@@ -113,6 +117,7 @@ class Spinner:
         return self
 
     def _spin(self) -> None:
+        """Background loop: redraw the braille frame until ``_stop`` is set."""
         copper, reset = _TOKENS["copper"], _TOKENS["reset"]
         for frame in itertools.cycle(SPINNER_FRAMES):
             if self._stop.wait(SPINNER_INTERVAL):
@@ -121,6 +126,7 @@ class Spinner:
             self.stream.flush()
 
     def _clear(self) -> None:
+        """Stop the spinner thread (if any) and erase the current line."""
         if self._animated:
             self._stop.set()
             if self._thread:
@@ -147,4 +153,5 @@ class Spinner:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
+        """Clear any still-running spinner line on context exit (no error shape)."""
         self._clear()

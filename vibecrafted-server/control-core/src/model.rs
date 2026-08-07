@@ -1594,10 +1594,12 @@ mod status_thread_tests {
 
     #[test]
     fn lifecycle_stage_exit_does_not_finalize_running_workflow() {
-        let mut stage = LifecycleStage::default();
-        stage.id = "stage-a".into();
-        stage.status = "completed".into();
-        stage.await_result = serde_json::json!({ "exit_code": 0 });
+        let stage = LifecycleStage {
+            id: "stage-a".into(),
+            status: "completed".into(),
+            await_result: serde_json::json!({ "exit_code": 0 }),
+            ..Default::default()
+        };
 
         let mut run = LifecycleRun {
             schema: None,

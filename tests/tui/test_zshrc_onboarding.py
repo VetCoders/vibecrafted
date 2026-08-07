@@ -1,4 +1,4 @@
-"""W1-B: host zshrc onboarding."""
+"""W1-B: explicit PATH-only host zshrc onboarding."""
 
 from __future__ import annotations
 
@@ -15,9 +15,10 @@ def test_fresh_home_creates_zshrc(tmp_path: Path) -> None:
     zshrc = home / ".zshrc"
     assert zshrc.is_file()
     text = zshrc.read_text(encoding="utf-8")
-    assert "VETCODERS_CONFIG_DIR" in text
     assert ".local/bin" in text
-    assert "vc-skills.sh" in text
+    assert "vc-skills" not in text
+    assert "VETCODERS_CONFIG_DIR" not in text
+    assert "starship init" not in text
 
 
 def test_existing_zshrc_gets_fenced_append_idempotent(tmp_path: Path) -> None:
@@ -31,6 +32,8 @@ def test_existing_zshrc_gets_fenced_append_idempotent(tmp_path: Path) -> None:
     mid = zshrc.read_text(encoding="utf-8")
     assert mid.startswith("# operator content")
     assert ">>> vibecrafted >>>" in mid
+    assert "vc-skills" not in mid
+    assert 'export PATH="$HOME/.local/bin:$PATH"' in mid
     r2 = ensure_zshrc(home)
     assert r2["action"] == "already_present"
     assert zshrc.read_text(encoding="utf-8") == mid

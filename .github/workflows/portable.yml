@@ -31,6 +31,22 @@ jobs:
           rustup default stable
           echo "RUSTUP_HOME=$HOME/.rustup" >> "$GITHUB_ENV"
           echo "CARGO_HOME=$HOME/.cargo" >> "$GITHUB_ENV"
+      - name: Provision leptos toolchain for the server shell build
+        shell: bash
+        run: |
+          # install-bundle-tools builds the interactive server shell with
+          # cargo-leptos, and the target is deliberately FATAL when cargo
+          # exists but cargo-leptos does not (half a toolchain would ship a
+          # server without hydration assets). cargo-binstall pulls prebuilt
+          # binaries in seconds instead of a multi-minute cargo install
+          # compile; wasm-bindgen-cli is pinned to Cargo.lock because the
+          # build refuses a version-skewed CLI.
+          rustup target add wasm32-unknown-unknown
+          curl -L --proto '=https' --tlsv1.2 -sSf -o /tmp/install-binstall.sh https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh
+          bash /tmp/install-binstall.sh
+          cargo binstall -y cargo-leptos
+          lock_version="$(python3 -c 'import pathlib, tomllib; packages = tomllib.loads(pathlib.Path("vibecrafted-server/Cargo.lock").read_text())["package"]; print(next(item["version"] for item in packages if item["name"] == "wasm-bindgen"))')"
+          cargo binstall -y "wasm-bindgen-cli@${lock_version}"
       - name: Install shellcheck on Linux
         if: matrix.os == 'Linux'
         run: |
@@ -48,7 +64,8 @@ jobs:
             libayatana-appindicator3-dev \
             protobuf-compiler \
             rsync \
-            shellcheck
+            shellcheck \
+            zsh
       - name: Install shellcheck on macOS
         if: matrix.os == 'macOS'
         run: brew install shellcheck
@@ -92,6 +109,18 @@ jobs:
             libxdo-dev \
             libayatana-appindicator3-dev \
             protobuf-compiler
+      - name: Provision leptos toolchain for the server shell build
+        shell: bash
+        run: |
+          # Same requirement as the portable job: install.sh -> make install
+          # -> install-bundle-tools hard-requires cargo-leptos once cargo is
+          # present, plus a Cargo.lock-matched wasm-bindgen-cli.
+          rustup target add wasm32-unknown-unknown
+          curl -L --proto '=https' --tlsv1.2 -sSf -o /tmp/install-binstall.sh https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh
+          bash /tmp/install-binstall.sh
+          cargo binstall -y cargo-leptos
+          lock_version="$(python3 -c 'import pathlib, tomllib; packages = tomllib.loads(pathlib.Path("vibecrafted-server/Cargo.lock").read_text())["package"]; print(next(item["version"] for item in packages if item["name"] == "wasm-bindgen"))')"
+          cargo binstall -y "wasm-bindgen-cli@${lock_version}"
       - name: Serve install.sh locally and bootstrap
         run: |
           archive="/tmp/vibecrafted-bootstrap.tar.gz"

@@ -1,3 +1,5 @@
+"""RuntimeBridge: ACP session glue over vibecrafted_core's workflow/control-plane APIs."""
+
 from __future__ import annotations
 
 import asyncio
@@ -29,6 +31,7 @@ _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 def _terminal(run: dict[str, Any] | None) -> bool:
+    """Return True when ``run``'s operator_state/health/liveness/state marks it finished."""
     if not run:
         return False
     return (
@@ -56,15 +59,18 @@ class RuntimeBridge:
     """Thin ACP glue over the existing workflow and control-plane APIs."""
 
     def __init__(self, *, dry_run: bool = False) -> None:
+        """Set up the bridge; ``dry_run`` swaps real workflow launches for an in-memory fake."""
         self.dry_run = dry_run
         self._dry_runs: dict[str, dict[str, Any]] = {}
         self._dry_audit_events: list[dict[str, Any]] = []
 
     def reserve_run_id(self, skill: str) -> str:
+        """Reserve a fresh control-plane run id for ``skill``."""
         return workflow.reserve_run_id(skill)
 
     @property
     def supports_resume(self) -> bool:
+        """Always True: this bridge implements session/load and session/resume."""
         return True
 
     def launch(
@@ -77,6 +83,7 @@ class RuntimeBridge:
         skill: str,
         runtime: str,
     ) -> dict[str, Any]:
+        """Launch a workflow run for ``run_id``, or record a scripted dry-run stub."""
         if self.dry_run:
             self._dry_runs[run_id] = {
                 "run_id": run_id,
@@ -116,6 +123,7 @@ class RuntimeBridge:
         return workflow.launch_workflow(spec, root, env=dict(os.environ))
 
     def observe(self, run_id: str, *, offset: int = 0) -> dict[str, Any]:
+        """Read transcript bytes for ``run_id`` starting at ``offset``, real or dry-run."""
         if self.dry_run:
             record = self._dry_runs.get(run_id)
             if record is None:
@@ -180,6 +188,7 @@ class RuntimeBridge:
         timeout_seconds: float = 300,
         interval_seconds: float = 0.25,
     ) -> dict[str, Any]:
+        """Block until ``run_id`` reaches a terminal state, polling ``on_poll`` along the way."""
         if self.dry_run:
             record = self._dry_runs.get(run_id)
             if record is None:
@@ -335,6 +344,7 @@ class RuntimeBridge:
         on_chunk: Callable[[str, bytes], None] | None,
         cancelled: Callable[[], bool] | None,
     ) -> dict[str, Any]:
+        """Run a deterministic vc-ship dry-run fixture: launch/observe each stage's dry worker."""
         manifest = WORKFLOW_MANIFESTS["vc-ship"]
         stage_limit = max(1, min(int(dry_stages), len(manifest.stages)))
         run_dir = control_plane.control_plane_home() / "lifecycle_runs" / parent_run_id
@@ -495,6 +505,7 @@ class RuntimeBridge:
         }
 
     def _load_lifecycle_session(self, run_id: str, run_dir: Path) -> dict[str, Any]:
+        """Rebuild resume payload for a vc-ship lifecycle run from its state.json + artifacts."""
         state = self._read_json(run_dir / "state.json")
         if not state:
             raise RuntimeError("session resume unavailable: lifecycle state missing")
@@ -535,6 +546,7 @@ class RuntimeBridge:
 
     @staticmethod
     def _read_json(path: Path | None) -> dict[str, Any]:
+        """Best-effort JSON object read; returns ``{}`` on missing/unreadable/non-dict input."""
         if path is None:
             return {}
         try:
@@ -545,6 +557,7 @@ class RuntimeBridge:
 
     @staticmethod
     def _require_artifacts(*, report: Path | None, transcript: Path | None) -> None:
+        """Raise RuntimeError unless both report and transcript are non-empty files."""
         missing: list[str] = []
         if report is None or not report.is_file() or report.stat().st_size == 0:
             missing.append("report")
@@ -562,6 +575,7 @@ class RuntimeBridge:
 
     @staticmethod
     def _read_artifact(path: Path | None) -> str:
+        """Read up to MAX_RESUME_BYTES of ``path`` as UTF-8 text; "" when path is None."""
         if path is None:
             return ""
         with path.open("rb") as handle:
@@ -569,16 +583,19 @@ class RuntimeBridge:
 
     @staticmethod
     def _is_truncated(path: Path | None) -> bool:
+        """Return True when ``path`` exceeds MAX_RESUME_BYTES (resume read was partial)."""
         return bool(path is not None and path.stat().st_size > MAX_RESUME_BYTES)
 
     @staticmethod
     def _validate_run_id(run_id: str) -> None:
+        """Raise ValueError unless ``run_id`` matches the safe run-id shape."""
         if not _SAFE_RUN_ID.fullmatch(str(run_id or "")):
             raise ValueError("invalid sessionId")
 
     def record_hard_stop_override(
         self, run_id: str, *, category: str, evidence: str
     ) -> dict[str, Any]:
+        """Record an audit event for an operator's allow-once hard-stop approval."""
         payload = {
             "category": category,
             "evidence": evidence,
@@ -604,6 +621,7 @@ class RuntimeBridge:
     def stop(
         self, run_id: str, *, reason: str = "ACP session cancelled"
     ) -> dict[str, Any]:
+        """Cancel ``run_id``, real or dry-run, marking it stopped."""
         if self.dry_run:
             record = self._dry_runs.get(run_id)
             if record is None:

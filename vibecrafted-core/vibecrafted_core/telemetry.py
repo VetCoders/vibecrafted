@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ModelPrice:
+    """Per-million-token USD rates for one model family, plus a rate source label."""
+
     input_per_million: float
     cached_input_per_million: float
     output_per_million: float
@@ -27,6 +29,7 @@ _PRICES: tuple[tuple[tuple[str, ...], ModelPrice], ...] = (
 
 
 def model_price(model: str) -> ModelPrice | None:
+    """Look up the ModelPrice whose alias substring-matches *model*, else None."""
     normalized = (model or "").strip().lower()
     for aliases, price in _PRICES:
         if any(alias in normalized for alias in aliases):
@@ -41,6 +44,11 @@ def estimate_cost_usd(
     tokens_cached_input: int,
     tokens_output: int,
 ) -> tuple[float | None, str | None]:
+    """Estimate a USD cost from token counts and a known model's API rates.
+
+    Returns (None, None) when the model is unrecognized or all token counts
+    are zero. This is a fallback estimate only — provider-reported cost wins.
+    """
     price = model_price(model)
     if price is None or not (tokens_input or tokens_cached_input or tokens_output):
         return None, None

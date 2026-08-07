@@ -145,12 +145,12 @@ to the workflow as `VIBECRAFTED_SIGNING_KEY`; the matching public key ships as
 signature with build provenance. It does not replace the installer-compatible
 RSA path.
 
-Vibecrafted does **not** yet claim a VetCoders organization GPG trust root. GPG
-is a separate future trust path: create an offline VetCoders certification key,
+Vibecrafted does **not** yet claim a Vetcoders organization GPG trust root. GPG
+is a separate future trust path: create an offline Vetcoders certification key,
 issue bounded product signing subkeys, publish and pin their fingerprints, and
 define revocation/rotation before enabling GPG signatures in CI. Do not relabel
 the current RSA key as GPG, and do not silently reuse another organization's
-identity as the permanent VetCoders root. Keep RSA verification operational
+identity as the permanent Vetcoders root. Keep RSA verification operational
 during any announced migration or dual-signing period.
 
 ## Release report contract

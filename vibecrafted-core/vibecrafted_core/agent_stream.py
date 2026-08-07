@@ -1,3 +1,5 @@
+"""Parse agent streaming-json output (Claude/Codex/Gemini/Junie/Grok) into pane text."""
+
 from __future__ import annotations
 
 import json
@@ -40,14 +42,22 @@ GROK_IGNORABLE_TRANSPORT_ERROR = "worker quit with fatal: Transport channel clos
 
 
 def stamp() -> str:
+    """Return the current local time as ``HH:MM:SS``."""
     return time.strftime("%H:%M:%S", time.localtime())
 
 
 def tool_tag(name: str) -> str:
+    """Render a cyan ``[HH:MM:SS name]`` tag used to mark tool-call lines in the pane."""
     return f"\x1b[36m[{stamp()} {name}]\x1b[0m "
 
 
 def _stringish(value: Any) -> str:
+    """Best-effort coercion of an event field to display text.
+
+    Unwraps common envelope dicts (message/error/detail/text/content) and
+    returns "" for a recognized-but-empty envelope, treating it as noise
+    (e.g. grok's ``{"type":"text","text":""}`` heartbeats).
+    """
     if value is None:
         return ""
     if isinstance(value, str):
@@ -55,15 +65,25 @@ def _stringish(value: Any) -> str:
     if isinstance(value, (int, float, bool)):
         return str(value)
     if isinstance(value, dict):
-        return _stringish(
-            value.get("message") or value.get("error") or value.get("detail") or value
-        )
+        # message/error/detail are the classic envelopes; text/content cover
+        # grok tool_call blocks ({"type":"content","content":{"type":"text",
+        # "text":...}}) which otherwise degrade to json.dumps noise.
+        keys = ("message", "error", "detail", "text", "content")
+        inner = next((value[k] for k in keys if value.get(k)), None)
+        if inner is not None and inner is not value:
+            return _stringish(inner)
+        if any(k in value for k in keys):
+            # A recognized envelope whose payload is empty is noise, not data
+            # (grok emits {"type":"text","text":""} heartbeats mid-stream).
+            return ""
+        return json.dumps(value, ensure_ascii=False)
     if isinstance(value, list):
         return ", ".join(_stringish(item) for item in value)
     return json.dumps(value, ensure_ascii=False)
 
 
 def _truncate_block(text: str, *, max_chars: int = 4000) -> str:
+    """Dim-render ``text``, truncating long command/tool output for the pane."""
     lines = text.splitlines()
     if len(text) > max_chars:
         preview = text[:max_chars]
@@ -75,6 +95,11 @@ def _truncate_block(text: str, *, max_chars: int = 4000) -> str:
 
 
 def is_grok_ignorable_transport_error(text: str) -> bool:
+    """Return True for grok transport-closed noise caused by an auth/DNS/TCP failure.
+
+    These lines are expected retry chatter, not a real turn failure worth
+    surfacing to the pane.
+    """
     clean = ANSI_PATTERN.sub("", text or "")
     if GROK_IGNORABLE_TRANSPORT_ERROR not in clean:
         return False
@@ -90,6 +115,7 @@ def is_grok_ignorable_transport_error(text: str) -> bool:
 
 
 def _as_int(value: Any) -> int:
+    """Coerce ``value`` to int, defaulting to 0 for None/unparseable input."""
     try:
         return int(value or 0)
     except (TypeError, ValueError):
@@ -97,6 +123,7 @@ def _as_int(value: Any) -> int:
 
 
 def _as_float(value: Any) -> float | None:
+    """Coerce ``value`` to a float rounded to 6dp, or None for empty/unparseable input."""
     if value in (None, ""):
         return None
     try:
@@ -106,11 +133,13 @@ def _as_float(value: Any) -> float | None:
 
 
 def _clean_model(value: object) -> str:
+    """Stringify ``value`` and blank out known placeholder tokens (e.g. "none", "unknown")."""
     raw = str(value or "").strip()
     return "" if raw.lower() in MODEL_PLACEHOLDERS else raw
 
 
 def _command_model(command: Sequence[str] | None) -> str:
+    """Extract a ``--model``/``-m``/``--model=`` value from a launch command argv."""
     if not command:
         return ""
     items = [str(item) for item in command]
@@ -127,6 +156,7 @@ def _command_model(command: Sequence[str] | None) -> str:
 
 
 def _codex_config_model(env: Mapping[str, str]) -> str:
+    """Read the default model from ``$CODEX_HOME/config.toml``; "" if unset/unreadable."""
     codex_home = Path(env.get("CODEX_HOME") or Path.home() / ".codex")
     config = codex_home / "config.toml"
     try:
@@ -145,6 +175,7 @@ def resolve_default_model(
     command: Sequence[str] | None = None,
     env: Mapping[str, str] | None = None,
 ) -> str:
+    """Resolve a default model id: launch command flag, then env vars, then codex config."""
     model = _command_model(command)
     if model:
         return model
@@ -159,7 +190,14 @@ def resolve_default_model(
 
 
 class AgentStreamParser:
+    """Stateful per-agent parser turning streaming-json lines into human-readable text.
+
+    Accumulates session id, model id, token counts, and cost as a side
+    effect of ``feed_line`` so callers can read telemetry after the stream.
+    """
+
     def __init__(self, agent: str, *, default_model: str = "") -> None:
+        """Initialize parser state for ``agent`` (claude/codex/gemini/junie/grok/agy)."""
         self.agent = agent
         self.session_id = ""
         self._rendered_session_ids: set[str] = set()
@@ -172,6 +210,11 @@ class AgentStreamParser:
         self.cost_source: str | None = None
 
     def feed_line(self, chunk: bytes) -> str:
+        """Decode one line of agent output and render it to human-readable text.
+
+        Non-JSON lines fall through to plain-text scanning for session/token/
+        model/cost markers; JSON lines dispatch to the agent-specific formatter.
+        """
         text = chunk.decode("utf-8", errors="replace")
         if self.agent == "grok" and is_grok_ignorable_transport_error(text):
             return ""
@@ -189,6 +232,7 @@ class AgentStreamParser:
         return self._format_json_event(event)
 
     def resume_command(self, root: str | Path) -> str:
+        """Build the shell command an operator would run to resume this agent's session."""
         session = self.session_id or "<session_id>"
         root_text = str(root)
         if self.agent == "claude":
@@ -206,6 +250,7 @@ class AgentStreamParser:
         return f"cd {root_text} && vc-resume --session {session}"
 
     def _scan_text(self, text: str) -> None:
+        """Regex-scan a plain-text (non-JSON) line for session id, tokens, model, cost."""
         clean = ANSI_PATTERN.sub("", text or "")
         session_matches = SESSION_PATTERN.findall(clean)
         if session_matches:
@@ -223,6 +268,10 @@ class AgentStreamParser:
                 self.cost_usd = _as_float(matches[-1])
 
     def _record_model(self, event: dict[str, Any]) -> None:
+        """Capture the first model id found in ``event`` (recursing into nested dicts).
+
+        No-op once ``self.model_id`` is already set — first sighting wins.
+        """
         if self.model_id:
             return
         for key in ("model", "model_id", "modelId", "model_name", "modelName"):
@@ -255,6 +304,10 @@ class AgentStreamParser:
                     return
 
     def _record_usage(self, usage: dict[str, Any]) -> None:
+        """Accumulate input/cached-input/cache-write/output token counts from a usage dict.
+
+        Handles each provider's differing key names for the same fields.
+        """
         self.tokens_input += _as_int(
             usage.get("input_tokens")
             or usage.get("inputTokens")
@@ -284,6 +337,7 @@ class AgentStreamParser:
         )
 
     def _record_cost(self, event: dict[str, Any]) -> None:
+        """Capture a provider-reported cost field from ``event`` into ``self.cost_usd``."""
         cost = _as_float(
             event.get("total_cost_usd")
             or event.get("cost_usd")
@@ -295,6 +349,11 @@ class AgentStreamParser:
             self.cost_source = "provider_reported"
 
     def _record_nested_telemetry(self, event: dict[str, Any]) -> None:
+        """Walk ``event`` for modelUsage/usage/cost at any nesting depth (junie/grok shapes).
+
+        Falls back to :func:`estimate_cost_usd` when no provider-reported
+        cost was found, so telemetry never stays silently unset.
+        """
         self._record_model(event)
         pending: list[dict[str, Any]] = [event]
         while pending:
@@ -324,6 +383,11 @@ class AgentStreamParser:
             )
 
     def _session_banner(self, session_id: str, suffix: str = "") -> str:
+        """Render the one-time yellow ``session: <id> model: <model>`` banner line.
+
+        Returns "" for an already-rendered session id so the banner only
+        appears once per session.
+        """
         if not session_id or session_id == "?":
             return ""
         self.session_id = session_id
@@ -336,6 +400,7 @@ class AgentStreamParser:
         )
 
     def _format_json_event(self, event: dict[str, Any]) -> str:
+        """Dispatch a decoded JSON event to the formatter for ``self.agent``."""
         if self.agent in {"claude", "agy"}:
             return self._format_claude_event(event)
         if self.agent == "codex":
@@ -349,6 +414,7 @@ class AgentStreamParser:
         return ""
 
     def _format_claude_event(self, event: dict[str, Any]) -> str:
+        """Render one Claude/Agy streaming-json event (system/assistant/stream/result)."""
         self._record_model(event)
         event_type = str(event.get("type") or "")
         session_id = event.get("session_id")
@@ -408,6 +474,7 @@ class AgentStreamParser:
         return ""
 
     def _format_codex_event(self, event: dict[str, Any]) -> str:
+        """Render one Codex streaming-json event (thread/item/turn lifecycle types)."""
         self._record_model(event)
         event_type = str(event.get("type") or "")
         if event_type == "thread.started":
@@ -472,6 +539,7 @@ class AgentStreamParser:
         return ""
 
     def _format_gemini_event(self, event: dict[str, Any]) -> str:
+        """Render one Gemini streaming-json event, including synthesized token-usage lines."""
         self._record_model(event)
         event_type = str(event.get("type") or "")
         if event_type == "init":
@@ -529,6 +597,7 @@ class AgentStreamParser:
         return ""
 
     def _format_junie_event(self, event: dict[str, Any]) -> str:
+        """Render one Junie streaming-json event's message/step text."""
         self._record_nested_telemetry(event)
         for key in ("session_id", "sessionId"):
             value = event.get(key)
@@ -554,6 +623,7 @@ class AgentStreamParser:
         return text + "\n"
 
     def _format_grok_event(self, event: dict[str, Any]) -> str:
+        """Render one Grok streaming-json event (thought/text/tool/diff/error/message)."""
         self._record_nested_telemetry(event)
         for key in ("session_id", "sessionId", "conversation_id"):
             value = event.get(key)
@@ -574,6 +644,9 @@ class AgentStreamParser:
         if event_type in {"tool", "tool_use", "tool_call"}:
             name = event.get("name") or event.get("tool") or event.get("toolName")
             return "\n" + tool_tag(_stringish(name) or "?")
+        if event_type == "diff":
+            path = _stringish(event.get("path"))
+            return "\n" + tool_tag("diff") + (f" {path}\n" if path else "\n")
         if event_type == "error":
             message = event.get("message") or event.get("error") or event.get("data")
             text = _stringish(message)

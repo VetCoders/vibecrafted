@@ -610,10 +610,25 @@ def test_write_command_script_falls_back_to_bash_when_zsh_missing(
     fake_bin.mkdir()
     (fake_bin / "bash").symlink_to(Path("/bin/bash"))
     (fake_bin / "chmod").symlink_to(Path("/bin/chmod"))
+    # "zsh missing" must hold on hosts where zsh lives in /usr/bin (Linux CI
+    # installs it there) — mirror the system dirs minus zsh instead of
+    # trusting a raw /usr/bin on PATH.
+    safe_bin = tmp_path / "safe-bin"
+    safe_bin.mkdir()
+    for src_dir in ("/usr/bin", "/bin"):
+        for tool in Path(src_dir).iterdir():
+            if tool.name == "zsh":
+                continue
+            target = safe_bin / tool.name
+            if not target.exists():
+                try:
+                    target.symlink_to(tool)
+                except OSError:
+                    pass
 
     command_script = tmp_path / "spawn-cmd"
     env = os.environ.copy()
-    env["PATH"] = f"{fake_bin}:/usr/bin"
+    env["PATH"] = f"{fake_bin}:{safe_bin}"
 
     subprocess.run(
         [

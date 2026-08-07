@@ -1,3 +1,5 @@
+"""Typed data model for workflow definitions, ship-lifecycle stages, and manifests."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,6 +16,8 @@ WorkflowRuntimeKind = Literal[
 
 @dataclass(frozen=True)
 class WorkflowDefinition:
+    """Static, immutable contract for one `vibecrafted <workflow>` invocation."""
+
     id: str
     cadence: WorkflowCadence
     lifecycle_order: int
@@ -29,19 +33,24 @@ class WorkflowDefinition:
 
     @property
     def requires_input(self) -> bool:
+        """True when the workflow refuses to launch without an explicit prompt."""
         return self.input_policy == "required"
 
     @property
     def can_use_default_prompt(self) -> bool:
+        """True when a missing prompt falls back to `default_prompt_file` on disk."""
         return self.input_policy == "optional_with_default"
 
     @property
     def can_modify_code(self) -> bool:
+        """True for write-cadence workflows; read/meta workflows never mutate code."""
         return self.cadence == "write"
 
 
 @dataclass(frozen=True)
 class WorkflowStage:
+    """One stage in a `WorkflowManifest`'s lifecycle: pins, transitions, and artifacts."""
+
     id: str
     workflow: str
     phase: WorkflowCadence
@@ -61,11 +70,14 @@ class WorkflowStage:
 
     @property
     def can_modify_code(self) -> bool:
+        """True for write-phase stages; read/meta stages never mutate code."""
         return self.phase == "write"
 
 
 @dataclass(frozen=True)
 class WorkflowManifest:
+    """A named, ordered sequence of stages (e.g. the vc-ship lifecycle)."""
+
     id: str
     name: str
     description: str
@@ -74,6 +86,7 @@ class WorkflowManifest:
     human_controls: tuple[str, ...] = ()
 
     def stage(self, stage_id: str) -> WorkflowStage | None:
+        """Look up a stage by id; ``None`` when the manifest has no such stage."""
         for stage in self.stages:
             if stage.id == stage_id:
                 return stage
@@ -81,6 +94,7 @@ class WorkflowManifest:
 
     @property
     def first_stage(self) -> WorkflowStage:
+        """Resolve the manifest's entry point: ``entry_stage`` if set, else stages[0]."""
         if self.entry_stage:
             stage = self.stage(self.entry_stage)
             if stage is not None:

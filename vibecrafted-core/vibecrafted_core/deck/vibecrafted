@@ -63,6 +63,21 @@ _script_repo_root() {
   cd "$script_dir/.." && pwd
 }
 
+_script_owner_root() {
+  local script_path="${BASH_SOURCE[0]}" script_dir link_target
+  while [[ -L "$script_path" ]]; do
+    script_dir="$(cd "$(dirname "$script_path")" && pwd)"
+    link_target="$(readlink "$script_path")"
+    if [[ "$link_target" == /* ]]; then
+      script_path="$link_target"
+    else
+      script_path="$script_dir/$link_target"
+    fi
+  done
+  script_dir="$(cd "$(dirname "$script_path")" && pwd)"
+  cd "$script_dir/.." && pwd
+}
+
 _package_resource_root() {
   local script_root candidate
   script_root="$(_script_repo_root)"
@@ -113,14 +128,14 @@ _repo_source_root() {
 
 _version() {
   local source_root repo_root vf
-  repo_root="$(_script_repo_root)"
+  repo_root="$(_script_owner_root)"
   source_root="$(_repo_source_root 2>/dev/null || true)"
 
   for vf in \
+    "$repo_root/VERSION" \
     "${source_root:+$source_root/VERSION}" \
     "$crafted_home/VERSION" \
-    "$crafted_tools/VERSION" \
-    "$repo_root/VERSION"; do
+    "$crafted_tools/VERSION"; do
     [[ -f "$vf" ]] || continue
     cat "$vf"
     return 0
@@ -392,20 +407,24 @@ _vibecrafted_python() {
     printf '%s\n' "$VIBECRAFTED_PYTHON"
     return 0
   fi
-  resolved="$(command -v vibecrafted 2>/dev/null || true)"
-  if [[ -n "$resolved" && -f "$resolved" ]]; then
+  for resolved in \
+    "$(command -v vc-server-supervisor 2>/dev/null || true)" \
+    "$(command -v vibecrafted 2>/dev/null || true)"; do
+    [[ -n "$resolved" && -f "$resolved" ]] || continue
     shebang="$(head -n 1 "$resolved" 2>/dev/null || true)"
     if [[ "$shebang" =~ ^#\! ]]; then
       py="${shebang#\#!}"
       # Strip leading/trailing whitespace
       py="${py#"${py%%[![:space:]]*}"}"
       py="${py%"${py##*[![:space:]]}"}"
-      if [[ -x "$py" ]]; then
+      # A direct absolute interpreter path is safe. `/usr/bin/env bash` and
+      # other argument-bearing shebangs are launch recipes, not Python paths.
+      if [[ "$py" == /* && "$py" != *[[:space:]]* && -x "$py" ]]; then
         printf '%s\n' "$py"
         return 0
       fi
     fi
-  fi
+  done
   command -v python3 2>/dev/null || command -v python 2>/dev/null || printf 'python3\n'
 }
 
@@ -1282,6 +1301,12 @@ _server_supervisor_cli() {
       command_args+=(--launcher "$launcher")
       ;;
   esac
+  supervisor_bin="$(_server_supervisor_binary 2>/dev/null || true)"
+  if [[ -n "$supervisor_bin" ]]; then
+    env -u PYTHONHOME -u PYTHONPATH \
+      "$supervisor_bin" "${command_args[@]}" "${common_args[@]}"
+    return
+  fi
   core_dir="$(_core_module_dir 2>/dev/null || true)"
   [[ -n "$core_dir" ]] || {
     printf '%b✗%b server_supervisor runtime module not found; reinstall Vibecrafted.\n' \
@@ -4286,10 +4311,35 @@ cmd_start() {
   fi
   local previous_repo_vc_frame_pref="${VIBECRAFTED_PREFER_REPO_VC_FRAME-}"
   local status
+  # Product entrypoint choke: load full lifecycle helpers (shell modules,
+  # frontier pin, frame launcher). Ordinary shells stay PATH-only.
+  # Note: live operator path is shell `vc-start` → same prepare function;
+  # deck start is secondary (vibecrafted start) and must share that choke.
   _ensure_helpers_loaded || return 1
   export VIBECRAFTED_PREFER_REPO_VC_FRAME=1
-  _run_helper vc-start "$@"
-  status=$?
+  if declare -F _vetcoders_product_entry_prepare >/dev/null 2>&1; then
+    _vetcoders_product_entry_prepare
+  fi
+  if [[ "${VIBECRAFTED_PRODUCT_ENTRY_PROBE:-0}" == "1" ]]; then
+    if declare -F _vetcoders_product_entry_probe_print >/dev/null 2>&1; then
+      _vetcoders_product_entry_probe_print
+    else
+      printf 'VC_FRAME_CONFIG_DIR=%s\n' "${VC_FRAME_CONFIG_DIR:-}"
+    fi
+    status=0
+  elif [[ "${1:-}" == "resume" ]]; then
+    # Call frame launcher directly — never re-enter via public vc-start alias
+    # (thin passthrough to `vibecrafted start` fork-bombs: Python→deck→helper).
+    shift || true
+    _vetcoders_resume_operator_session "$@"
+    status=$?
+  else
+    if [[ "${1:-}" == "operator" || "${1:-}" == "vibecrafted" ]]; then
+      shift || true
+    fi
+    _vetcoders_launch_dashboard operator "$@"
+    status=$?
+  fi
   if [[ -n "${previous_repo_vc_frame_pref}" ]]; then
     export VIBECRAFTED_PREFER_REPO_VC_FRAME="${previous_repo_vc_frame_pref}"
   else
@@ -4362,8 +4412,7 @@ cmd_dispatch() {
 
 cmd_core_workflow_skill() {
   local skill="$1"
-  local agent="$2"
-  shift 2 || true
+  shift || true
   local core_dir core_skill
   core_skill="$skill"
   [[ "$core_skill" != "justdo" ]] || core_skill="implement"
@@ -4374,10 +4423,15 @@ cmd_core_workflow_skill() {
     return 1
   }
   PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" \
-    "$(_vibecrafted_python)" -m vibecrafted_core.cli "$core_skill" "$agent" --source-dir "$(_script_repo_root)" "$@"
+    "$(_vibecrafted_python)" -m vibecrafted_core.cli "$core_skill" "$@" --source-dir "$(_script_repo_root)"
 }
 
 cmd_init() {
+  # Leading --help must never be parsed as an agent name (vc-init --help audit).
+  if _is_help_flag "${1:-}"; then
+    cmd_init_help
+    return 0
+  fi
   local agent="${1:-claude}"
   _prepend_repo_bin_path
   if [[ "$agent" == "gemini" ]]; then
@@ -4569,11 +4623,22 @@ cmd_scaffold_doctor() {
 
 
 cmd_doctor() {
-  # Resolve the installer source tree without going through make.
-  # The Python installer owns the doctor logic; calling it directly
-  # avoids leaking `make: Entering directory` and `make: *** Error 1`
-  # noise into the user-facing output.
-  local source_root="" installer=""
+  # The package doctor composes installer, provenance, server supervision,
+  # vc-frame delivery, and receipt truth. Calling the installer alone produced
+  # a false green while the live server path was broken.
+  local source_root="" installer="" core_dir="" python_bin="" doctor_rc=0
+  case "${1:-}" in
+    ""|--json)
+      core_dir="$(_core_module_dir 2>/dev/null || true)"
+      if [[ -n "$core_dir" ]]; then
+        python_bin="$(_vibecrafted_python)"
+        PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" \
+          "$python_bin" -m vibecrafted_core.cli doctor "$@"
+        return $?
+      fi
+      ;;
+  esac
+  # Repair flags remain owned by the installer CLI.
   source_root="$(_repo_source_root 2>/dev/null || true)"
   for candidate in \
     "${source_root:+$source_root/scripts/vetcoders_install.py}" \
@@ -4585,11 +4650,12 @@ cmd_doctor() {
     printf '%b✗%b Doctor installer not found. Is 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. installed?\n' "$_red" "$_reset" >&2
     return 1
   }
-  python3 "$installer" doctor
+  python3 "$installer" doctor "$@" || doctor_rc=$?
   # Delivery/runtime receipt rides doctor so operators see source↔installed
   # drift without a separate habit. Failure to import is non-fatal here —
   # the dedicated `vibecrafted receipt` command remains the sharp surface.
   cmd_receipt 2>/dev/null || true
+  return "$doctor_rc"
 }
 
 cmd_receipt() {
@@ -4648,7 +4714,10 @@ cmd_dashboard() {
         printf '%b✗%b vc-frame is required.\n' "$_red" "$_reset" >&2; return 1
       }
       [[ -n "${1:-}" ]] || { printf '%b✗%b Session name required.\n' "$_red" "$_reset" >&2; return 1; }
-      if [[ -n "${VC_FRAME+set}" ]]; then
+      # Trusted attached-context signal (pane id + session name): stale
+      # VC_FRAME/ZELLIJ leaks in a parent shell must not pick switch-session,
+      # which has no live client to act on outside a real pane.
+      if [[ -n "${VC_FRAME_PANE_ID:-}" && -n "${VC_FRAME_SESSION_NAME:-}" ]]; then
         "$vc_frame_bin" action switch-session "$1"
       else
         "$vc_frame_bin" attach "$1"
@@ -4662,7 +4731,10 @@ cmd_dashboard() {
         printf '%b✗%b vc-frame is required.\n' "$_red" "$_reset" >&2; return 1
       }
       [[ -n "${1:-}" ]] || { printf '%b✗%b Session name required.\n' "$_red" "$_reset" >&2; return 1; }
-      if [[ -n "${VC_FRAME+set}" ]]; then
+      # Trusted attached-context signal (pane id + session name): stale
+      # VC_FRAME/ZELLIJ leaks in a parent shell must not pick switch-session,
+      # which has no live client to act on outside a real pane.
+      if [[ -n "${VC_FRAME_PANE_ID:-}" && -n "${VC_FRAME_SESSION_NAME:-}" ]]; then
         "$vc_frame_bin" action switch-session "$1"
       else
         "$vc_frame_bin" attach "$1"
@@ -4682,13 +4754,13 @@ cmd_dashboard() {
     gc)
       shift || true
       _ensure_helpers_loaded || return 1
-      _run_helper vc-dashboard gc "$@"
+      _vetcoders_launch_dashboard gc "$@"
       return
       ;;
   esac
 
   _ensure_helpers_loaded || return 1
-  _run_helper vc-dashboard "$@"
+  _vetcoders_launch_dashboard "$@"
 }
 
 cmd_stats() {
@@ -5066,7 +5138,9 @@ cmd_resume() {
     return 1
   }
   _ensure_helpers_loaded || return 1
-  _run_helper vc-resume "$agent" "$@"
+  # Direct impl — public vc-resume must never be `command vibecrafted resume`
+  # (same Python↔deck re-entry bomb as start).
+  _vetcoders_resume_agent "$agent" "$@"
 }
 
 # Core owns the agent lifecycle verbs (observe / await / stop): they resolve a
@@ -5142,6 +5216,18 @@ run_skill() {
     return
   fi
 
+  # Research owns an optional, variadic agent contract. Preserve its argv
+  # verbatim for the core parser instead of forcing the shared one-agent skill
+  # shape (which otherwise mistakes a leading --prompt for an agent).
+  if [[ "$skill" == "research" ]]; then
+    [[ -n "$agent" ]] || {
+      cmd_skill_help "$skill" >&2
+      return 1
+    }
+    cmd_core_workflow_skill "$skill" "$agent" "$@"
+    return
+  fi
+
   if [[ "$skill" == "marbles" ]] && _is_marbles_control_subcommand "$agent"; then
     _ensure_helpers_loaded || return 1
     _run_helper "marbles-$agent" "$@"
@@ -5179,7 +5265,7 @@ run_skill() {
   }
 
   case "$skill" in
-    implement|justdo|workflow|research|review|marbles)
+    implement|justdo|workflow|review|marbles)
       cmd_core_workflow_skill "$skill" "$agent" "$@"
       return
       ;;
@@ -5302,7 +5388,7 @@ main() {
     gui) cmd_gui "$@" ;;
     server) cmd_server "$@" ;;
     tui) cmd_tui "$@" ;;
-    doctor|check) cmd_doctor ;;
+    doctor|check) cmd_doctor "$@" ;;
     receipt) cmd_receipt "$@" ;;
     scaffold-doctor) cmd_scaffold_doctor "$@" ;;
     dashboard|mc|mission-control|sessions) cmd_dashboard "$@" ;;

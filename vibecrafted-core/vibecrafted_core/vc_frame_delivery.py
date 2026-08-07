@@ -1,4 +1,4 @@
-"""Materialize package vc-frame config and wire ~/.config/vc-frame.
+"""Materialize package vc-frame config and wire live config projections.
 
 Delivery contract (plan vcframe-config-delivery):
 - Source: ``vc_frame_config_source()`` (wheel package data or checkout).
@@ -8,10 +8,14 @@ Delivery contract (plan vcframe-config-delivery):
   the published generation.
 - Ownership: config delivery never creates or flips the runtime-owned
   ``vibecrafted-current`` symlink.
-- View: ``$XDG_CONFIG_HOME/vc-frame/{config.kdl,layouts,themes}`` → store-current
-  (or checkout when ``VIBECRAFTED_PREFER_REPO_VC_FRAME=1``).
+- Views (both must stay in lockstep — operator runtime pins frontier first):
+  1. ``$XDG_CONFIG_HOME/vc-frame/{config.kdl,layouts,themes,operator scripts}``
+  2. ``$XDG_CONFIG_HOME/vetcoders/frontier/vc-frame/…`` (``VC_FRAME_CONFIG_DIR``)
 - Stage-time host adaptation: rewrite every shipped zsh entrypoint and select
   an available clipboard command.
+- Operator scripts (Composer / paste-stack / quick-cmd / …) are first-class
+  install artifacts, not hand-copied orphans. STALE-FILE copies under frontier
+  are backed up and re-wired on every delivery pass.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from . import vc_frame_staging as _vc_frame_staging
 from .frontier_assets import vc_frame_config_source
 from .runtime_paths import vibecrafted_tools_home, xdg_config_home
 from .vc_frame_staging import (
+    materialize_vc_frame_config,
     resolve_clipboard_command,
     resolve_pane_shell,
 )
@@ -35,9 +40,26 @@ substitute_pane_shell = _vc_frame_staging.substitute_pane_shell
 _FENCE_BEGIN = "# >>> vibecrafted >>>"
 _FENCE_END = "# <<< vibecrafted <<<"
 
+# Shipped next to config.kdl. compact-bar / default keybinds prefer frontier paths
+# first — if install skips these, an old STALE-FILE on disk shadows the package
+# forever (see scaf-260805-triptych runtime diagnosis, 2026-08-07).
+OPERATOR_SCRIPT_NAMES: tuple[str, ...] = (
+    "auto-theme.sh",
+    "vc-composer.sh",
+    "paste-stack.sh",
+    "copy-scrollback.sh",
+    "scrollback-select.sh",
+    "vc-quick-cmd.sh",
+    "vc-deck.sh",
+)
+
+_CORE_VIEW_NAMES: tuple[str, ...] = ("config.kdl", "layouts", "themes")
+
 
 @dataclass
 class WireAction:
+    """One recorded step of a delivery plan (a symlink write, backup, or note)."""
+
     kind: str  # link | backup | skip | remove | stage | flip | note
     path: str
     detail: str = ""
@@ -45,6 +67,8 @@ class WireAction:
 
 @dataclass
 class DeliveryPlan:
+    """The full set of actions computed by :func:`plan_delivery` for one host."""
+
     source: Path
     version_dir: Path
     current_link: Path
@@ -56,6 +80,7 @@ class DeliveryPlan:
     clipboard_command: str | None = None
 
     def render(self) -> str:
+        """Render the plan (target paths + recorded actions) as human-readable text."""
         lines = [
             f"source: {self.source}",
             f"version_dir: {self.version_dir}",
@@ -76,6 +101,7 @@ class DeliveryPlan:
 
 
 def prefer_repo_vc_frame(env: dict[str, str] | None = None) -> bool:
+    """True when VIBECRAFTED_PREFER_REPO_VC_FRAME opts into the dev-checkout channel."""
     source = env if env is not None else os.environ
     raw = str(source.get("VIBECRAFTED_PREFER_REPO_VC_FRAME", "") or "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
@@ -93,6 +119,7 @@ def vc_frame_user_config_dir(home: Path | None = None) -> Path:
 
 
 def tools_current_path(tools_home: Path | None = None) -> Path:
+    """Path to the runtime-owned ``vibecrafted-current`` publish symlink."""
     base = tools_home if tools_home is not None else vibecrafted_tools_home()
     return base / "vibecrafted-current"
 
@@ -131,6 +158,7 @@ def classify_view_path(
 
 
 def _timestamp() -> str:
+    """UTC timestamp used to make backup filenames collision-resistant."""
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
 
@@ -162,6 +190,11 @@ def _complete_runtime_root(current: Path, *, dry_run: bool) -> Path:
 
 
 def _require_materialized_config(runtime_root: Path, *, dry_run: bool) -> Path:
+    """Return the published generation's pre-materialized vc-frame config dir.
+
+    Raises when the published runtime lacks a complete ``config.kdl``/``layouts``/
+    ``themes`` set — the store-current channel refuses to wire a partial config.
+    """
     generated = runtime_root / "runtime" / "generated" / "vc-frame"
     if dry_run and not runtime_root.exists():
         return generated
@@ -185,6 +218,7 @@ def _require_materialized_config(runtime_root: Path, *, dry_run: bool) -> Path:
 
 
 def _atomic_view_symlink(target: Path, view_path: Path) -> None:
+    """Point ``view_path`` at ``target`` via write-temp-then-rename (no partial state)."""
     view_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = view_path.parent / (
         f".{view_path.name}.vibecrafted-{os.getpid()}-{os.urandom(6).hex()}"
@@ -206,6 +240,7 @@ def _wire_one(
     store_current: Path,
     checkout: Path | None,
 ) -> None:
+    """Wire one view path to ``target``, backing up STALE-FILEs and skipping foreign links."""
     channel = (
         classify_view_path(view_path, store_current=store_current, checkout=checkout)
         if view_path.exists() or view_path.is_symlink()
@@ -263,6 +298,13 @@ def plan_delivery(
     prefer_repo: bool | None = None,
     path_env: str | None = None,
 ) -> DeliveryPlan:
+    """Compute (and, unless ``dry_run``, apply) the vc-frame config delivery plan.
+
+    Re-materializes host-adapted config from the package source into the published
+    generation's ``runtime/generated/vc-frame`` (never mutating the source itself
+    or the ``vibecrafted-current`` owner symlink), then wires both the legacy view
+    and frontier projections to point at that generation.
+    """
     source = vc_frame_config_source()
     tools = tools_home if tools_home is not None else vibecrafted_tools_home()
     # Isolate tools under sandbox when tools_home not overridden
@@ -289,18 +331,11 @@ def plan_delivery(
     )
 
     # The mirrored distribution exposes package data through a symlink back to
-    # ``<runtime>/config/vc-frame``.  Never stage there: deleting the previous
-    # generated tree would then delete the source before it can be copied.
-    staged_cfg = runtime_root / "runtime" / "generated" / "vc-frame"
+    # ``<runtime>/config/vc-frame``.  Never stage *into* that package path:
+    # deleting the previous generated tree would then delete the source.
+    # Re-materialize only into runtime/generated/vc-frame (below).
     if not use_repo:
         _require_materialized_config(runtime_root, dry_run=dry_run)
-        plan.actions.append(
-            WireAction(
-                "note",
-                str(staged_cfg),
-                "pre-materialized before runtime publication",
-            )
-        )
         plan.actions.append(
             WireAction(
                 "note",
@@ -308,7 +343,33 @@ def plan_delivery(
                 f"preserve runtime owner (requested config version {version or 'current'})",
             )
         )
-        base = current / "runtime" / "generated" / "vc-frame"
+        # Re-materialize into the published generation's generated/ tree so
+        # `vibecrafted config install` refreshes operator scripts + Super binds
+        # without a full tools republish. Does not flip vibecrafted-current.
+        generated = current / "runtime" / "generated" / "vc-frame"
+        if dry_run:
+            plan.actions.append(
+                WireAction(
+                    "note",
+                    str(generated),
+                    "would re-materialize host-adapted config from package source",
+                )
+            )
+        else:
+            materialize_vc_frame_config(
+                source,
+                generated,
+                pane_shell=pane_shell,
+                clipboard_command=clipboard_command,
+            )
+            plan.actions.append(
+                WireAction(
+                    "stage",
+                    str(generated),
+                    "re-materialized host-adapted config from package source",
+                )
+            )
+        base = generated
     else:
         plan.actions.append(
             WireAction("note", str(source), "dev-checkout: skip stage copy")
@@ -319,28 +380,73 @@ def plan_delivery(
     # Ownership is the complete current runtime, while exact-target equality
     # decides whether an existing owned link is current or needs migration.
     store_anchor = current
-    for name in ("config.kdl", "layouts", "themes"):
-        _wire_one(
-            view_root / name,
-            base / name,
+    store_current = store_anchor if not use_repo else current
+    # Two projections: legacy view + frontier (the path VC_FRAME_CONFIG_DIR
+    # pins via _vetcoders_pin_vc_frame_config_dir). Wiring only the view left
+    # frontier as STALE-FILE forever — scripts/config never refreshed.
+    projection_roots = (
+        view_root,
+        frontier_root(home) / "vc-frame",
+    )
+    for projection in projection_roots:
+        _wire_projection(
+            projection,
+            base,
             force=force,
             dry_run=dry_run,
             actions=plan.actions,
-            store_current=store_anchor if not use_repo else current,
-            checkout=checkout,
-        )
-    # auto-theme.sh optional at view root for operators who expect it nearby
-    if (base / "auto-theme.sh").exists() or dry_run:
-        _wire_one(
-            view_root / "auto-theme.sh",
-            base / "auto-theme.sh",
-            force=force,
-            dry_run=dry_run,
-            actions=plan.actions,
-            store_current=store_anchor if not use_repo else current,
+            store_current=store_current,
             checkout=checkout,
         )
     return plan
+
+
+def _wire_projection(
+    projection_root: Path,
+    base: Path,
+    *,
+    force: bool,
+    dry_run: bool,
+    actions: list[WireAction],
+    store_current: Path,
+    checkout: Path | None,
+) -> None:
+    """Wire one config projection (view or frontier) from the staged base."""
+    for name in _CORE_VIEW_NAMES:
+        target = base / name
+        if not target.exists() and not dry_run:
+            continue
+        _wire_one(
+            projection_root / name,
+            target,
+            force=force,
+            dry_run=dry_run,
+            actions=actions,
+            store_current=store_current,
+            checkout=checkout,
+        )
+    for name in OPERATOR_SCRIPT_NAMES:
+        target = base / name
+        if not target.exists() and not dry_run:
+            # dry_run still records the intended link so plans stay auditable
+            if dry_run:
+                actions.append(
+                    WireAction(
+                        "note",
+                        str(projection_root / name),
+                        f"operator script absent from source base: {name}",
+                    )
+                )
+            continue
+        _wire_one(
+            projection_root / name,
+            target,
+            force=force,
+            dry_run=dry_run,
+            actions=actions,
+            store_current=store_current,
+            checkout=checkout,
+        )
 
 
 def stage_vc_frame_config(
@@ -388,34 +494,23 @@ def wire_vc_frame_config(
 
 
 # ---------------------------------------------------------------------------
-# Host zshrc onboarding (W1-B)
+# Host zshrc PATH onboarding (W1-B)
 # ---------------------------------------------------------------------------
 
 _ZSHRC_TEMPLATE = """\
-# vibecrafted host zshrc template — minimal, guarded optionals
-# Installed by vibecrafted ensure_zshrc / make install
-
-export PATH="$HOME/.local/bin:$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$PATH"
-export VETCODERS_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders"
-if [ -f "$VETCODERS_CONFIG_DIR/vc-skills.sh" ]; then
-  # shellcheck source=/dev/null
-  source "$VETCODERS_CONFIG_DIR/vc-skills.sh"
-fi
-
-# Optional tooling (no hard failure if absent)
-command -v starship >/dev/null 2>&1 && eval "$(starship init zsh)"
-command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init zsh)"
-command -v mise >/dev/null 2>&1 && eval "$(mise activate zsh)"
+# Vibecrafted launcher path. Product helpers are loaded only by vc-start.
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
 """
 
 _FENCED_BLOCK = f"""\
 {_FENCE_BEGIN}
-export PATH="$HOME/.local/bin:$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$PATH"
-export VETCODERS_CONFIG_DIR="${{XDG_CONFIG_HOME:-$HOME/.config}}/vetcoders"
-if [ -f "$VETCODERS_CONFIG_DIR/vc-skills.sh" ]; then
-  # shellcheck source=/dev/null
-  source "$VETCODERS_CONFIG_DIR/vc-skills.sh"
-fi
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
 {_FENCE_END}
 """
 
@@ -439,7 +534,7 @@ def zshrc_template_text() -> str:
 
 
 def ensure_zshrc(home: Path | None = None, *, dry_run: bool = False) -> dict[str, str]:
-    """Idempotent host zshrc ensure. Never overwrites operator content outside fence."""
+    """Idempotently add only the launcher PATH to zshrc after explicit invocation."""
     root = home if home is not None else Path.home()
     zshrc = root / ".zshrc"
     result = {"path": str(zshrc), "action": "noop"}
@@ -465,6 +560,7 @@ def ensure_zshrc(home: Path | None = None, *, dry_run: bool = False) -> dict[str
 
 
 def frontier_root(home: Path | None = None) -> Path:
+    """Root of the frontier config projection (``VC_FRAME_CONFIG_DIR`` target)."""
     if home is not None:
         xdg = os.environ.get("XDG_CONFIG_HOME")
         if xdg:
@@ -474,6 +570,7 @@ def frontier_root(home: Path | None = None) -> Path:
 
 
 def list_dangling_frontier_links(root: Path | None = None) -> list[Path]:
+    """Recursively find symlinks under the frontier root whose target no longer exists."""
     base = root if root is not None else frontier_root()
     dangling: list[Path] = []
     if not base.exists():
@@ -490,6 +587,7 @@ def list_dangling_frontier_links(root: Path | None = None) -> list[Path]:
 def remove_dangling_frontier_links(
     root: Path | None = None, *, dry_run: bool = False
 ) -> list[Path]:
+    """Delete dangling frontier symlinks (or, if ``dry_run``, just report them)."""
     removed: list[Path] = []
     for path in list_dangling_frontier_links(root):
         removed.append(path)

@@ -1,15 +1,15 @@
 # Control status threads (vc-server)
 
-Investigation notes captured during the control-plane status-thread fixes.
+Investigation + partial fix branch: `fix/control-status-threads`.
 
 ## Orthogonal threads (by design)
 
-| Thread | Owner | Ends when |
-|--------|-------|-----------|
-| Process `state` / health | merge of snapshots+meta+locks+events | FINAL_STATES / terminal liveness / exit_code (workers) |
-| Settlement f / x / n | Python snapshot only | `finalized` / `failed` / `needs_attention` / `invalid` |
-| Delivery axes | kernel receipt | never invented from `completed` |
-| Lifecycle container | lifecycle_runs state.json | **overall workflow status** final (not stage exit alone) |
+| Thread                   | Owner                                | Ends when                                                |
+| ------------------------ | ------------------------------------ | -------------------------------------------------------- |
+| Process `state` / health | merge of snapshots+meta+locks+events | FINAL_STATES / terminal liveness / exit_code (workers)   |
+| Settlement f / x / n     | Python snapshot only                 | `finalized` / `failed` / `needs_attention` / `invalid`   |
+| Delivery axes            | kernel receipt                       | never invented from `completed`                          |
+| Lifecycle container      | lifecycle_runs state.json            | **overall workflow status** final (not stage exit alone) |
 
 ## Bugs fixed here
 

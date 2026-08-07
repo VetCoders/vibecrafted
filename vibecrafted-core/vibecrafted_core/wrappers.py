@@ -1,3 +1,5 @@
+"""CLI entrypoint wrappers: supervised-skill dispatch, lifecycle launch, resume/stop."""
+
 from __future__ import annotations
 
 import argparse
@@ -31,6 +33,7 @@ SKILL_PREFIX = {
 
 
 def repo_root() -> Path:
+    """The working directory the CLI was invoked from (the target repo root)."""
     return Path.cwd()
 
 
@@ -43,6 +46,7 @@ def deck_path() -> Path:
 
 
 def _print_workflow_help(workflow_id: str) -> int:
+    """Print rendered help text for a workflow and return the CLI exit code 0."""
     from .help_surface import render_workflow_help
 
     print(render_workflow_help(workflow_id), end="")
@@ -50,16 +54,19 @@ def _print_workflow_help(workflow_id: str) -> int:
 
 
 def _has_flag(args: Sequence[str], name: str) -> bool:
+    """True if `name` appears bare or as `name=value` among `args`."""
     return name in args or any(arg.startswith(f"{name}=") for arg in args)
 
 
 def _help_requested(args: Sequence[str]) -> bool:
+    """True when args ask for help: leading `help`, or `-h`/`--help` anywhere."""
     return (
         bool(args) and args[0] == "help" or any(arg in {"-h", "--help"} for arg in args)
     )
 
 
 def _consume_sandbox_flags(args: Sequence[str]) -> tuple[list[str], bool, str | None]:
+    """Strip `--sandbox`/`--sandbox-policy` from args, returning (rest, sandbox, policy)."""
     cleaned: list[str] = []
     sandbox = False
     policy: str | None = None
@@ -79,10 +86,12 @@ def _consume_sandbox_flags(args: Sequence[str]) -> tuple[list[str], bool, str | 
 
 
 def _run_id(prefix: str) -> str:
+    """Generate a run id: `<prefix>-<HHMMSS>-<pid>`. Not guaranteed globally unique."""
     return f"{prefix}-{time.strftime('%H%M%S')}-{os.getpid()}"
 
 
 def _env_for_run(run_id: str, skill_code: str) -> dict[str, str]:
+    """Base child-process env: run id, skill code, root/python defaults, PYTHONPATH."""
     env = os.environ.copy()
     env["VIBECRAFTED_RUN_ID"] = run_id
     env["VIBECRAFTED_SKILL_CODE"] = skill_code
@@ -101,6 +110,7 @@ def _dispatcher_command(
     root: Path,
     worker_command: Sequence[str],
 ) -> list[str]:
+    """Build the argv for launching `vibecrafted_core.dispatcher run` around a worker."""
     return [
         sys.executable,
         "-m",
@@ -118,6 +128,7 @@ def _dispatcher_command(
 
 
 def _env_for_dispatcher(run_id: str, skill_code: str, agent: str) -> dict[str, str]:
+    """`_env_for_run` plus the `VIBECRAFTED_AGENT` the dispatched worker runs as."""
     env = _env_for_run(run_id, skill_code)
     env["VIBECRAFTED_AGENT"] = agent
     return env
@@ -131,6 +142,7 @@ def _call_dispatcher(
     root: Path,
     worker_command: Sequence[str],
 ) -> int:
+    """Run the dispatcher synchronously (blocking) and return its exit code."""
     return subprocess.call(
         _dispatcher_command(run_id, root, worker_command),
         cwd=str(root),
@@ -146,6 +158,7 @@ def _popen_dispatcher(
     root: Path,
     worker_command: Sequence[str],
 ) -> subprocess.Popen[bytes]:
+    """Launch the dispatcher non-blocking (for parallel research-lane fan-out)."""
     return subprocess.Popen(
         _dispatcher_command(run_id, root, worker_command),
         cwd=str(root),
@@ -154,6 +167,11 @@ def _popen_dispatcher(
 
 
 def _print_completed(run_id: str, payload: dict[str, Any]) -> int:
+    """Print a completed run's summary and derive the CLI's own exit code from it.
+
+    Distinguishes a clean terminal success from a "report delivered but worker
+    still alive" state and from an unresolved non-terminal disagreement (exit 3).
+    """
     run = payload.get("run") or {}
     if run:
         print(
@@ -197,6 +215,7 @@ def _print_completed(run_id: str, payload: dict[str, Any]) -> int:
 
 
 def _await_run_forever(run_id: str, interval: float = 5.0) -> dict[str, Any]:
+    """Poll the control plane until a run completes, printing a heartbeat each poll."""
     while True:
         payload = control_plane.await_run(
             run_id,
@@ -209,6 +228,11 @@ def _await_run_forever(run_id: str, interval: float = 5.0) -> dict[str, Any]:
 
 
 def supervised_skill_main(skill: str, argv: Sequence[str] | None = None) -> int:
+    """Shared CLI entry for supervised single-agent skills: parses agent/flags,
+    dispatches (raw sandboxed command or `cli.py` launch), then awaits and prints
+    the terminal result. Backs every `vibecrafted <skill>` wrapper that is not a
+    lifecycle-manifest stage.
+    """
     args, sandbox, sandbox_policy = _consume_sandbox_flags(
         list(sys.argv[1:] if argv is None else argv)
     )
@@ -278,20 +302,26 @@ def supervised_skill_main(skill: str, argv: Sequence[str] | None = None) -> int:
 
 
 def agents_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted agents`."""
     return supervised_skill_main("agents", argv)
 
 
 def followup_main(argv: Sequence[str] | None = None) -> int:
     # One path with `vibecrafted followup` (lifecycle stages live under `ship`).
+    """CLI entry for `vibecrafted followup`."""
     return supervised_skill_main("followup", argv)
 
 
 def implement_main(argv: Sequence[str] | None = None) -> int:
     # One path with `vibecrafted implement` / shell `vc-implement`.
+    """CLI entry for `vibecrafted implement`."""
     return supervised_skill_main("implement", argv)
 
 
 def _lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
+    """Shared CLI entry for lifecycle-manifest workflows: help short-circuit,
+    then delegate to `lifecycle_runner.lifecycle_main`.
+    """
     args = list(sys.argv[1:] if argv is None else argv)
     if _help_requested(args):
         return _print_workflow_help(workflow_id)
@@ -302,18 +332,25 @@ def _lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
 
 
 def audit_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted audit` (lifecycle manifest `vc-audit`)."""
     return _lifecycle_main("vc-audit", argv)
 
 
 def dou_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted dou` (lifecycle manifest `vc-dou`)."""
     return _lifecycle_main("vc-dou", argv)
 
 
 def hydrate_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted hydrate` (lifecycle manifest `vc-hydrate`)."""
     return _lifecycle_main("vc-hydrate", argv)
 
 
 def marbles_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted marbles`: control subcommands (pause/stop/resume/
+    session/inspect/delete/gc) route to the legacy deck script; everything else
+    runs the `vc-marbles` lifecycle manifest.
+    """
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] in {
         "pause",
@@ -329,15 +366,18 @@ def marbles_main(argv: Sequence[str] | None = None) -> int:
 
 
 def polarize_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted polarize` (lifecycle manifest `vc-polarize`)."""
     return _lifecycle_main("vc-polarize", argv)
 
 
 def prune_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted prune`."""
     return supervised_skill_main("prune", argv)
 
 
 def review_main(argv: Sequence[str] | None = None) -> int:
     # One path with `vibecrafted review` (lifecycle stages live under `ship`).
+    """CLI entry for `vibecrafted review`."""
     return supervised_skill_main("review", argv)
 
 
@@ -346,38 +386,51 @@ def scaffold_main(argv: Sequence[str] | None = None) -> int:
     # Lifecycle-stage flags used to diverge here (second CLI brain); skill
     # delivery is the cli + dispatcher path. Use `vibecrafted ship` for staged
     # lifecycle orchestration, not a private second scaffold parser.
+    """CLI entry for `vibecrafted scaffold`."""
     return supervised_skill_main("scaffold", argv)
 
 
 def decorate_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted decorate`."""
     return supervised_skill_main("decorate", argv)
 
 
 def delegate_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted delegate`."""
     return supervised_skill_main("delegate", argv)
 
 
 def intents_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted intents`."""
     return supervised_skill_main("intents", argv)
 
 
 def ownership_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted ownership`."""
     return supervised_skill_main("ownership", argv)
 
 
 def partner_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted partner`."""
     return supervised_skill_main("partner", argv)
 
 
 def release_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted release` (lifecycle manifest `vc-release`)."""
     return _lifecycle_main("vc-release", argv)
 
 
 def workflow_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted workflow` (lifecycle manifest `vc-workflow`)."""
     return _lifecycle_main("vc-workflow", argv)
 
 
 def _prepare_research(args: Sequence[str], run_id: str) -> tuple[int, str]:
+    """Run the deck's research-preparation step and capture its combined output.
+
+    Preparation announces per-agent launcher script paths on stdout, which
+    `_launcher_paths` later parses; it does not itself spawn the swarm.
+    """
     command = [str(deck_path()), "research", *args]
     if not _has_flag(args, "--runtime"):
         command.extend(["--runtime", "headless"])
@@ -397,6 +450,7 @@ def _prepare_research(args: Sequence[str], run_id: str) -> tuple[int, str]:
 def _launcher_paths(output: str) -> dict[str, Path]:
     # Must recognise every supported agent: the default swarm is configurable
     # (claude+codex+junie today) and uno mode can pick any single agent.
+    """Parse `<agent>: <path>.sh` lines from research-prep output into a dict."""
     launchers: dict[str, Path] = {}
     agent_alternation = "|".join(sorted(AGENTS))
     pattern = re.compile(rf"\s*({agent_alternation}):\s+(.+\.sh)\s*$")
@@ -408,6 +462,10 @@ def _launcher_paths(output: str) -> dict[str, Path]:
 
 
 def research_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted research`: prepares per-agent launcher scripts
+    then spawns exactly the agents that were actually prepared (not a fixed
+    six-agent set) under the dispatcher or microsandbox, and waits for all of them.
+    """
     args, sandbox, sandbox_policy = _consume_sandbox_flags(
         list(sys.argv[1:] if argv is None else argv)
     )
@@ -471,6 +529,9 @@ def research_main(argv: Sequence[str] | None = None) -> int:
 
 
 def research_await_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted research-await`: shells out to `scripts/await.sh`
+    in research mode.
+    """
     args = list(sys.argv[1:] if argv is None else argv)
     script = runtime_root() / "scripts" / "await.sh"
     return subprocess.call(
@@ -479,6 +540,9 @@ def research_await_main(argv: Sequence[str] | None = None) -> int:
 
 
 def _load_meta_files(run_id: str) -> list[dict[str, Any]]:
+    """Load every research lane's `*.meta.json` for a run id, tagging each with
+    its source path under `_meta_path`. Malformed/unreadable files are skipped.
+    """
     home = control_plane.vibecrafted_home()
     metas: list[dict[str, Any]] = []
     for path in home.glob(f"artifacts/**/research/{run_id}/**/*.meta.json"):
@@ -492,6 +556,9 @@ def _load_meta_files(run_id: str) -> list[dict[str, Any]]:
 
 
 def research_synthesize_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry that spawns last-finisher synthesis for a research run once at
+    least 3 lane metas exist; refuses (exit 1) below that quorum.
+    """
     parser = argparse.ArgumentParser(
         description="Spawn last-finisher synthesis for a research run."
     )
@@ -525,6 +592,9 @@ def research_synthesize_main(argv: Sequence[str] | None = None) -> int:
 
 
 def resume_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted resume`: dispatches a tracked provider-native
+    resume via `workflow.native_resume_run` and prints/returns its verdict.
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Create a tracked provider-native resume attempt from explicit "
@@ -568,6 +638,9 @@ def resume_main(argv: Sequence[str] | None = None) -> int:
 
 
 def stop_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted stop`: terminates a run's launcher process
+    group via `workflow.stop_run` and reports the outcome.
+    """
     parser = argparse.ArgumentParser(
         description="Stop a Vibecrafted run by terminating its launcher process group."
     )
@@ -616,6 +689,9 @@ def stop_main(argv: Sequence[str] | None = None) -> int:
 
 
 def sandbox_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted sandbox`: status/start/stop the msbserver
+    lifecycle, or print the resolved sandbox policy.
+    """
     from vibecrafted_core.sandbox import MsbserverLifecycle, SandboxPolicy
     from vibecrafted_core.sandbox.policy import default_policy_path
 

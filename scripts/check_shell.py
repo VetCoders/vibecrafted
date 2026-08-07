@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""Shell quality gate: shellcheck (or syntax-only fallback) over tracked shell files.
+
+Runs shellcheck on bash/sh scripts and falls back to `zsh -n` / `<shell> -n`
+syntax checks for zsh files (shellcheck cannot parse zsh) or when shellcheck
+itself is unavailable on the host.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -15,6 +22,7 @@ SHELL_NAMES = ("zsh", "bash", "sh")
 
 
 def read_shebang(path: Path) -> str:
+    """Return the file's shebang line verbatim, or "" if absent/unreadable."""
     try:
         with path.open("rb") as handle:
             first_line = handle.readline().decode("utf-8", errors="ignore").strip()
@@ -24,6 +32,7 @@ def read_shebang(path: Path) -> str:
 
 
 def shell_for_path(path: Path) -> str | None:
+    """Infer the shell dialect ("zsh"/"bash"/"sh") from shebang, else suffix."""
     shebang = read_shebang(path)
     if shebang:
         shebang_parts = shebang[2:].strip().split()
@@ -44,10 +53,12 @@ def shell_for_path(path: Path) -> str | None:
 
 
 def is_shell_path(path: Path) -> bool:
+    """True if `path` has a shell suffix or a recognized shell shebang."""
     return path.suffix.lower() in SHELL_SUFFIXES or shell_for_path(path) is not None
 
 
 def tracked_shell_files(repo_root: Path = REPO_ROOT) -> list[Path]:
+    """List every git-tracked shell file under `repo_root`, sorted."""
     result = subprocess.run(
         ["git", "-C", str(repo_root), "ls-files"],
         check=True,
@@ -67,6 +78,10 @@ def tracked_shell_files(repo_root: Path = REPO_ROOT) -> list[Path]:
 def resolve_shell_files(
     raw_paths: list[str], repo_root: Path = REPO_ROOT
 ) -> list[Path]:
+    """Resolve explicit CLI paths to shell files, or fall back to tracked files.
+
+    Non-shell, non-existent, or duplicate paths are silently dropped.
+    """
     if not raw_paths:
         return tracked_shell_files(repo_root)
 
@@ -88,6 +103,7 @@ def resolve_shell_files(
 
 
 def build_shellcheck_command(files: list[Path]) -> list[str]:
+    """Build the shellcheck invocation with the repo's excluded rule codes."""
     return [
         "shellcheck",
         "-e",
@@ -97,6 +113,7 @@ def build_shellcheck_command(files: list[Path]) -> list[str]:
 
 
 def syntax_check_command(path: Path) -> list[str]:
+    """Build the ``<shell> -n`` syntax-check command for `path`'s dialect."""
     shell_name = shell_for_path(path)
     if shell_name == "zsh":
         shell_binary = shutil.which("zsh") or "zsh"
@@ -108,16 +125,46 @@ def syntax_check_command(path: Path) -> list[str]:
 
 
 def run_shellcheck(files: list[Path]) -> int:
-    print(f"Running shellcheck on {len(files)} shell files...")
-    return subprocess.run(build_shellcheck_command(files), check=False).returncode
+    """Run shellcheck on non-zsh files and the syntax-only fallback on zsh files.
+
+    ShellCheck only parses sh/bash/dash/ksh. Zsh sources get syntax-only
+    (`zsh -n`) so operator fragments like config/shell/atuin-up.zsh stay
+    gateable without false SC1071 failures.
+    """
+    zsh_files = [path for path in files if shell_for_path(path) == "zsh"]
+    other_files = [path for path in files if path not in zsh_files]
+    rc = 0
+    if other_files:
+        print(f"Running shellcheck on {len(other_files)} shell files...")
+        rc = max(
+            rc,
+            subprocess.run(
+                build_shellcheck_command(other_files), check=False
+            ).returncode,
+        )
+    if zsh_files:
+        print(f"Running zsh -n on {len(zsh_files)} zsh files...")
+        rc = max(rc, run_syntax_fallback(zsh_files))
+    return rc
 
 
 def run_syntax_fallback(files: list[Path]) -> int:
-    print("shellcheck not found; running syntax-only shell checks with local shells.")
+    """Run per-file ``<shell> -n`` syntax checks, skipping shells missing on host.
+
+    Prints failures and a skip summary; returns 1 on any real failure, 0
+    otherwise (skips alone do not fail the gate).
+    """
     failed = False
+    skipped: list[Path] = []
 
     for path in files:
         command = syntax_check_command(path)
+        if shutil.which(command[0]) is None:
+            # A host without this shell (ubuntu-latest ships no zsh) cannot
+            # syntax-check the file at all; an honest skip beats a crash, and
+            # CI hosts are expected to install the shell for real coverage.
+            skipped.append(path)
+            continue
         result = subprocess.run(command, check=False, capture_output=True, text=True)
         if result.returncode == 0:
             continue
@@ -128,14 +175,25 @@ def run_syntax_fallback(files: list[Path]) -> int:
         if result.stderr:
             print(result.stderr.rstrip(), file=sys.stderr)
 
+    if skipped:
+        names = ", ".join(str(p.relative_to(REPO_ROOT)) for p in skipped[:5])
+        more = f" (+{len(skipped) - 5} more)" if len(skipped) > 5 else ""
+        print(
+            f"[skip] {len(skipped)} file(s) unverifiable — interpreter missing"
+            f" on this host: {names}{more}",
+            file=sys.stderr,
+        )
+
     if failed:
         return 1
 
-    print(f"Syntax-only shell checks passed for {len(files)} shell files.")
+    checked = len(files) - len(skipped)
+    print(f"Syntax-only shell checks passed for {checked} shell files.")
     return 0
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse CLI args: optional explicit paths and --require-shellcheck."""
     parser = argparse.ArgumentParser(
         description="Run the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell quality gate across tracked files."
     )
@@ -153,6 +211,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI entry point: run shellcheck (or the syntax-only fallback) and exit."""
     args = parse_args(argv)
     files = resolve_shell_files(args.paths)
     if not files:
@@ -161,6 +220,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if shutil.which("shellcheck"):
         return run_shellcheck(files)
+
+    print("shellcheck not found; running syntax-only shell checks with local shells.")
 
     if args.require_shellcheck or os.environ.get("CI"):
         print(

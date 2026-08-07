@@ -8,24 +8,24 @@ Also: [`README.md`](README.md) · [`llms.txt`](llms.txt) · monorepo `docs/runti
 
 ## 0) Identity
 
-| Field | Value |
-|-------|--------|
-| Path | `vibecrafted-server/` (Rust workspace) |
-| Binary | `vc-server` → `~/.local/bin` via `make install-server` |
-| Role | **Read-only** HTTP + SSR console over `~/.vibecrafted/control_plane/` |
-| Writer truth | Python `vibecrafted_core.control_plane` (not this crate) |
-| Crates | `control-core` (model/merge) · `web` (Leptos SSR + axum API) |
+| Field        | Value                                                                 |
+| ------------ | --------------------------------------------------------------------- |
+| Path         | `vibecrafted-server/` (Rust workspace)                                |
+| Binary       | `vc-server` → `~/.local/bin` via `make install-server`                |
+| Role         | **Read-only** HTTP + SSR console over `~/.vibecrafted/control_plane/` |
+| Writer truth | Python `vibecrafted_core.control_plane` (not this crate)              |
+| Crates       | `control-core` (model/merge) · `web` (Leptos SSR + axum API)          |
 
 ---
 
 ## 1) Status threads (do not collapse)
 
-| Thread | Owner | Ends when |
-|--------|-------|-----------|
-| Process `state` / `health` | merge snapshots+meta+events | final / terminal liveness / exit |
-| Settlement **f / x / n** | Python snapshot only | finalized / failed / needs_attention |
-| Delivery axes | kernel receipt | never from bare `completed` |
-| Lifecycle container | `lifecycle_runs/*/state.json` | **workflow status** final — not stage exit alone |
+| Thread                     | Owner                         | Ends when                                        |
+| -------------------------- | ----------------------------- | ------------------------------------------------ |
+| Process `state` / `health` | merge snapshots+meta+events   | final / terminal liveness / exit                 |
+| Settlement **f / x / n**   | Python snapshot only          | finalized / failed / needs_attention             |
+| Delivery axes              | kernel receipt                | never from bare `completed`                      |
+| Lifecycle container        | `lifecycle_runs/*/state.json` | **workflow status** final — not stage exit alone |
 
 UI: Active / **Stalled** / Recent = live merge. All Runs = snapshots only. Board = settlement.
 

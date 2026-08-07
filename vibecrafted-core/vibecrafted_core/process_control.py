@@ -72,6 +72,7 @@ __all__ = [
 
 
 def command_sha256(command: str) -> str:
+    """Stable hash of a process's full command line, used as identity evidence."""
     return hashlib.sha256(command.encode("utf-8", errors="replace")).hexdigest()
 
 
@@ -130,6 +131,8 @@ def _read_proc_start(pid: int) -> int | None:
 
 @dataclass(frozen=True)
 class ProcessIdentity:
+    """A captured OS identity snapshot for one pid, used for re-check before kill."""
+
     pid: int
     ppid: int
     pgid: int
@@ -251,6 +254,8 @@ def validate_process_identity(
 
 @dataclass(frozen=True)
 class ProcessSnapshotRow:
+    """One row of the ``vc-procs`` snapshot: a process plus its ownership verdict."""
+
     pid: int
     ppid: int
     pgid: int
@@ -264,11 +269,14 @@ class ProcessSnapshotRow:
     kill_reason: str
 
     def as_dict(self) -> dict[str, Any]:
+        """Serialize this row for JSON output."""
         return asdict(self)
 
 
 @dataclass
 class TerminateOutcome:
+    """Result of one ``terminate_process`` call."""
+
     ok: bool
     outcome: str
     pid: int
@@ -276,6 +284,7 @@ class TerminateOutcome:
     detail: str = ""
 
     def as_dict(self) -> dict[str, Any]:
+        """Serialize this outcome for JSON output."""
         return {
             "ok": self.ok,
             "outcome": self.outcome,
@@ -293,6 +302,7 @@ def _classify_row(
     protected: bool,
     legacy: bool,
 ) -> ProcessSnapshotRow:
+    """Combine a process-table entry with reaper classification into one row."""
     start = process_start_token(entry.pid, entry.command)
     cmd_hash = command_sha256(entry.command)
     if protected:
@@ -419,6 +429,9 @@ def snapshot_processes(
 
 
 def _looks_vc_family(command: str) -> bool:
+    """Whether ``command`` looks like part of the Vetcoders/vibecrafted process
+    family, for display-only inclusion in a snapshot even without reaper proof.
+    """
     low = command.lower()
     markers = (
         "aicx-mcp",
@@ -552,6 +565,7 @@ def terminate_process(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """``vibecrafted procs`` CLI entry point: ``snapshot`` or ``terminate``."""
     import argparse
     import sys
 

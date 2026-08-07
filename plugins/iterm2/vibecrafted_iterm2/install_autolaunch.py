@@ -43,11 +43,13 @@ DYNAMIC_PROFILES_RELPATH = Path("Library/Application Support/iTerm2/DynamicProfi
 
 
 def autolaunch_dir(home: Path | None = None) -> Path:
+    """Resolve iTerm2's per-user AutoLaunch scripts directory under `home`."""
     base = home or Path.home()
     return base / AUTOLAUNCH_RELPATH
 
 
 def dynamic_profiles_dir(home: Path | None = None) -> Path:
+    """Resolve iTerm2's per-user DynamicProfiles directory under `home`."""
     base = home or Path.home()
     return base / DYNAMIC_PROFILES_RELPATH
 
@@ -58,6 +60,7 @@ def launcher_source() -> Path:
 
 
 def iterm2_app_candidates(home: Path | None = None) -> tuple[Path, ...]:
+    """List candidate iTerm2/locterm .app paths, env override first."""
     base = home or Path.home()
     env_override = os.environ.get("VIBECRAFTED_ITERM2_APP")
     candidates = []
@@ -77,6 +80,7 @@ def iterm2_app_candidates(home: Path | None = None) -> tuple[Path, ...]:
 def find_iterm2_app(
     candidates: Iterable[str | Path] | None = None,
 ) -> str | None:
+    """Return the first existing terminal app path from `candidates`, or None."""
     candidates = candidates or iterm2_app_candidates()
     for raw in candidates:
         path = Path(raw).expanduser()
@@ -115,6 +119,7 @@ def install(*, home: Path | None = None, force: bool = False) -> Path:
 
 
 def _write_uninstaller(target_dir: Path, target: Path, profile_target: Path) -> Path:
+    """Generate and chmod the self-removing uninstall_vc_launcher.sh script."""
     uninstaller = target_dir / UNINSTALL_SCRIPT
     body = dedent(
         f"""\
@@ -143,6 +148,10 @@ def _write_uninstaller(target_dir: Path, target: Path, profile_target: Path) -> 
 
 
 def uninstall(*, home: Path | None = None) -> bool:
+    """Remove the AutoLaunch symlink, uninstall script, and DynamicProfile.
+
+    Returns True if anything was actually removed.
+    """
     removed = False
     target = autolaunch_dir(home) / LAUNCHER_FILENAME
     if target.exists() or target.is_symlink():
@@ -158,6 +167,7 @@ def uninstall(*, home: Path | None = None) -> bool:
 
 
 def _print_next_steps(target: Path, iterm2_app: str | None) -> None:
+    """Print post-install user instructions to stdout."""
     where = iterm2_app or "iTerm2 (or locterm) not detected in /Applications"
     print(
         dedent(
@@ -188,6 +198,7 @@ def _print_next_steps(target: Path, iterm2_app: str | None) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI entry point: install or --uninstall the AutoLaunch plugin."""
     parser = argparse.ArgumentParser(
         description="Install or remove the vibecrafted iTerm2 / locterm AutoLaunch plugin."
     )

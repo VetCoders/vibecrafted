@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Bilingual (PL + EN) step-by-step wizard for vc-workspace dev container setup."""
 # ============================================================================
 # vc-onboard — bilingual (PL + EN) step-by-step wizard for vc-workspace
 # dev container setup.
@@ -64,6 +65,8 @@ def t(path: str, lang: str = "pl") -> str | list[str]:
 
 @dataclass
 class WizardState:
+    """Mutable accumulator for wizard answers, threaded through every step function."""
+
     lang: str = "pl"
     host_mode: str = ""  # "local" | "tailnet" | "custom"
     tailnet_hostname: str = ""
@@ -545,6 +548,7 @@ def build_and_run(state: WizardState) -> int:
 
 
 def main() -> int:
+    """Run the full wizard flow and dispatch the operator's final review action."""
     if not check_docker():
         console.print(f"[bold red]✗[/bold red] {t('errors.docker_missing', 'pl')}")
         console.print(f"[bold red]✗[/bold red] {t('errors.docker_missing', 'en')}")

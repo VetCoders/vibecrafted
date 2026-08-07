@@ -235,7 +235,7 @@ session start is already dense (vc-init, loctree context card, AICX
 living-tree pack), and every additional automatic prompt dilutes the previous
 ones. Instead it rides the channel every agent already opens: the
 **intentions sense of `vc-init`** points here before any fleet dispatch,
-resume, or recovery, and `aicx search -p VetCoders/vibecrafted '<command>'`
+resume, or recovery, and `aicx search -p Vetcoders/vibecrafted '<command>'`
 reaches the same doctrine as retrieval. Workers receive it whenever a brief
 cites a command listed here — cite the entry, not the whole file.
 
@@ -259,4 +259,25 @@ incident, not optional hygiene.
 - Loctree hak backlog: `~/.vibecrafted/loctree/loctree-fail.md` (operator-side,
   append-only)
 
-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
+
+### Dispatch verify vs runtime `--report` (dual report contract)
+
+- **❌ Observed:** In a `vibecrafted dispatch` line (wave10-engine-diet,
+  8 cuts), both codex cuts wrote their report ONLY to the runtime-provided
+  `--report` path (`2026_0730/reports/implement/…`), ignoring the brief's
+  frontmatter `report_path` (`2026_0728/reports/<cut>_report.md`). claude and
+  grok cuts honored the brief. The supervisor verifier (`test -f <brief
+report_path>`) failed on both codex cuts → each burned a full repair round
+  (~10 min) whose only delivery was publishing the missing report file.
+- **✅ Correct:** One report contract per cell, not two. Until the dispatch
+  layer passes the brief's `report_path` as the cell's `--report` (or the
+  supervisor verifier accepts the runtime report it already knows), treat
+  this as a codex-line hazard: the implementation is usually delivered and
+  committed — check `git log` before suspecting the worker, and let the
+  repair round publish the report (idempotent briefs make it cheap).
+- **Evidence:** 2026-07-30, codescribe wave10-engine-diet: B3
+  `impl-260730-044817-30941` (work `410841ca`, repair published report in
+  `83ab5fa0`), C1 `impl-260730-053220-84226` (work `68380d9f`, repair
+  `impl-260730-055020-09345`). claude/grok cuts A2/A1/B2/C2 all verified
+  first-pass.

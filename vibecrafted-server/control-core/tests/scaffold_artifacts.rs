@@ -2,9 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use control_core::{
-    SCAFFOLD_MANIFEST_SCHEMA_JSON, ScaffoldArtifactPatch, ScaffoldArtifactRole,
-    ScaffoldArtifactStore, ScaffoldCheckpointPatch, ScaffoldError, ScaffoldManifest,
-    doctor_plan_root,
+    SCAFFOLD_EXPORT_SCHEMA_VERSION, SCAFFOLD_MANIFEST_SCHEMA_JSON, ScaffoldArtifactPatch,
+    ScaffoldArtifactRole, ScaffoldArtifactStore, ScaffoldCheckpointPatch, ScaffoldError,
+    ScaffoldManifest, doctor_plan_root,
 };
 use serde_json::json;
 
@@ -298,6 +298,65 @@ fn manifest_plan_is_discovered_without_operator_mirror_and_roles_are_explicit() 
 }
 
 #[test]
+fn portable_export_removes_host_paths_and_freezes_no_branch() {
+    let home = temp_home("portable-export");
+    let root = write_plan(&home, "plan-a", declarations());
+    populate(&root, "plan-a");
+    let driver = fs::read_to_string(root.join("DRIVER.md")).expect("driver");
+    fs::write(
+        root.join("DRIVER.md"),
+        driver.replace(
+            "/Users/polyversai/.vibecrafted/artifacts/vetcoders/vibecrafted/2026_0720/plans/plan-a",
+            &root.display().to_string(),
+        ),
+    )
+    .expect("portable fixture driver");
+    let repo_root = "/Volumes/vc-workspace/vetcoders/vibecrafted";
+    fs::write(
+        root.join("notes/architecture.md"),
+        format!(
+            "{}baseline_branch: feat/author-host\nrepo={repo_root}/src\nplan: {}/briefs\n",
+            frontmatter("design-doc", "plan-a"),
+            root.display(),
+        ),
+    )
+    .expect("portable fixture design");
+    let store = ScaffoldArtifactStore::new(&home);
+
+    assert!(
+        store
+            .export_bundle("vetcoders", "vibecrafted", "2026_0720", "plan-a", None)
+            .is_err(),
+        "undeclared repo root must fail closed"
+    );
+    let bundle = store
+        .export_bundle(
+            "vetcoders",
+            "vibecrafted",
+            "2026_0720",
+            "plan-a",
+            Some(repo_root),
+        )
+        .expect("portable bundle");
+    let encoded = serde_json::to_string(&bundle).expect("bundle json");
+
+    assert_eq!(bundle.schema_version, SCAFFOLD_EXPORT_SCHEMA_VERSION);
+    assert!(!encoded.contains("/Users/"));
+    assert!(!encoded.contains("/Volumes/"));
+    assert!(encoded.contains("${SCAFFOLD_ROOT}"));
+    assert!(encoded.contains("${REPO_ROOT}"));
+    assert!(encoded.contains("baseline_branch: <living-tree>"));
+    assert!(
+        bundle
+            .artifacts
+            .iter()
+            .all(|artifact| !artifact.relative_path.starts_with('/'))
+    );
+
+    fs::remove_dir_all(home).ok();
+}
+
+#[test]
 fn plan_selection_is_explicit_when_more_than_one_manifest_exists() {
     let home = temp_home("selection");
     for plan_id in ["plan-a", "plan-b"] {
@@ -571,6 +630,83 @@ fn legacy_operator_workspace_is_read_only() {
         .expect("legacy readable");
     assert!(workspace.legacy_read_only);
     assert!(!workspace.artifacts[0].editable);
+
+    fs::remove_dir_all(home).ok();
+}
+
+#[test]
+fn typed_status_update_and_control_event_bridge_holds() {
+    use control_core::ScaffoldStatusPatch;
+
+    let home = temp_home("status-bridge");
+    let plan_id = "plan-status-test";
+    let root = write_plan(
+        &home,
+        plan_id,
+        json!([
+            {"id":"tracker","role":"tracker","path":"tracker.md","editable":true,"required":true}
+        ]),
+    );
+    fs::write(
+        root.join("tracker.md"),
+        "# Tracker\n\n- [ ] W1-01 first task\n- [x] W1-02 second task\n",
+    )
+    .expect("tracker");
+
+    let store = ScaffoldArtifactStore::new(&home);
+
+    // 1. Update W1-01 to done ([x])
+    let updated = store
+        .write_status(
+            "vetcoders",
+            "vibecrafted",
+            "2026_0720",
+            plan_id,
+            ScaffoldStatusPatch {
+                artifact_id: "tracker".into(),
+                item_id: Some("W1-01".into()),
+                item_index: None,
+                status: "done".into(),
+                note: Some("verified in test".into()),
+            },
+        )
+        .expect("write status");
+
+    assert!(updated.content.contains("- [x] W1-01 first task"));
+
+    // Check .scaffold-changes.jsonl
+    let changes = store
+        .changes("vetcoders", "vibecrafted", "2026_0720", plan_id)
+        .expect("changes");
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].action, "status");
+    assert!(changes[0].note.contains("W1-01"));
+
+    // Check control_plane/events.jsonl
+    let events_path = home.join("control_plane/events.jsonl");
+    assert!(events_path.is_file());
+    let events_text = fs::read_to_string(&events_path).expect("events read");
+    assert!(events_text.contains("scaffold.status.updated"));
+    assert!(events_text.contains(plan_id));
+
+    // 2. Update W1-01 to running ([~])
+    let running = store
+        .write_status(
+            "vetcoders",
+            "vibecrafted",
+            "2026_0720",
+            plan_id,
+            ScaffoldStatusPatch {
+                artifact_id: "tracker".into(),
+                item_id: Some("W1-01".into()),
+                item_index: None,
+                status: "running".into(),
+                note: None,
+            },
+        )
+        .expect("write running status");
+
+    assert!(running.content.contains("- [~] W1-01 first task"));
 
     fs::remove_dir_all(home).ok();
 }

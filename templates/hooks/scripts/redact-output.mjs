@@ -8,7 +8,7 @@
 //
 // Vibecrafted with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 
-import { createInterface } from 'node:readline';
+import { createInterface } from "node:readline";
 
 const SECRET_PATTERNS = [
   // OpenAI / similar
@@ -38,9 +38,9 @@ const SECRET_PATTERNS = [
 const REPLACEMENTS = SECRET_PATTERNS.map((re, idx) => {
   // Bearer header keeps the prefix, the rest gets replaced wholesale.
   if (idx === SECRET_PATTERNS.length - 1) {
-    return [re, '$1<REDACTED>'];
+    return [re, "$1<REDACTED>"];
   }
-  return [re, '<REDACTED>'];
+  return [re, "<REDACTED>"];
 });
 
 function redactLine(line) {
@@ -52,9 +52,9 @@ function redactLine(line) {
 }
 
 const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
-rl.on('line', line => {
+rl.on("line", (line) => {
   process.stdout.write(`${redactLine(line)}\n`);
 });
-rl.on('close', () => {
+rl.on("close", () => {
   process.exit(0);
 });

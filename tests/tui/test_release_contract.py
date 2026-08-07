@@ -167,7 +167,7 @@ def test_release_docs_keep_rsa_and_future_gpg_as_distinct_trust_paths() -> None:
         assert current_truth in normalized
 
     for future_truth in (
-        "does **not** yet claim a VetCoders organization GPG trust root",
+        "does **not** yet claim a Vetcoders organization GPG trust root",
         "GPG is a separate future trust path",
         "Do not relabel the current RSA key as GPG",
     ):

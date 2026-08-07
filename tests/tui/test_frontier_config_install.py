@@ -72,3 +72,37 @@ def test_frontier_removes_dangling_zellij_links(tmp_path: Path) -> None:
     assert not zombie.exists()
     assert healthy.is_file()
     assert healthy.stat().st_mtime == mtime
+
+
+@pytest.mark.skipif(not SCRIPT.is_file(), reason="install-frontier-config.sh missing")
+def test_frontier_materializes_legacy_backup_symlinks(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["XDG_CONFIG_HOME"] = str(home / ".config")
+    env["VIBECRAFTED_PREFER_REPO_VC_FRAME"] = "1"
+    frontier = home / ".config" / "vetcoders" / "frontier"
+    frontier.mkdir(parents=True)
+    readable_source = tmp_path / "checkout-starship.toml"
+    readable_source.write_text("format = 'legacy'\n", encoding="utf-8")
+    readable_backup = frontier / "starship.toml.bak.20260730"
+    readable_backup.symlink_to(readable_source)
+    dangling_backup = frontier / "atuin.toml.bak.20260730"
+    dangling_backup.symlink_to(tmp_path / "deleted-checkout.toml")
+
+    proc = subprocess.run(
+        ["bash", str(SCRIPT), "--source", str(REPO)],
+        cwd=str(REPO),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert readable_backup.is_file() and not readable_backup.is_symlink()
+    assert readable_backup.read_text(encoding="utf-8") == "format = 'legacy'\n"
+    assert dangling_backup.is_file() and not dangling_backup.is_symlink()
+    assert "legacy_symlink_target=" in dangling_backup.read_text(encoding="utf-8")

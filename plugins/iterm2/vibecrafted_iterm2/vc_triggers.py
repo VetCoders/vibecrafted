@@ -88,6 +88,7 @@ VIBECRAFTED_TRIGGERS: tuple[VibecraftedTrigger, ...] = (
 def triggers_as_iterm2_payload(
     triggers: Iterable[VibecraftedTrigger],
 ) -> list[dict[str, Any]]:
+    """Encode a sequence of triggers as the iTerm2 profile ``Triggers`` list."""
     return [t.to_iterm2_dict() for t in triggers]
 
 

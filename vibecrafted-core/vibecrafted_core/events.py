@@ -1,3 +1,5 @@
+"""Typed delivery-event kinds and the append-only control-plane event writer."""
+
 from __future__ import annotations
 
 from enum import Enum

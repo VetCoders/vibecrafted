@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const SCAFFOLD_SCHEMA_VERSION: &str = "1";
+pub const SCAFFOLD_EXPORT_SCHEMA_VERSION: &str = "vibecrafted.scaffold-export.v1";
 pub const SCAFFOLD_MANIFEST_SCHEMA_JSON: &str =
     include_str!("../schema/scaffold-manifest-v1.schema.json");
 
@@ -127,6 +128,27 @@ pub struct ScaffoldPlanSummary {
     pub legacy_read_only: bool,
 }
 
+/// A `manifest.json` that looked like a scaffold plan path but failed parse/identity.
+///
+/// Catalog surfaces must show these — silent skip is how plans "vanish" from
+/// `/scaffold` (classic failure: illegal role string e.g. `"mission"` instead of
+/// `"other"` for `MISSION.md`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScaffoldCatalogSkip {
+    pub plan_root: String,
+    pub reason: String,
+    /// Best-effort guess from path segments when manifest is unreadable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guessed_plan_id: Option<String>,
+}
+
+/// Full catalog for operator UIs: valid plans + skipped (invalid) roots.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ScaffoldCatalog {
+    pub plans: Vec<ScaffoldPlanSummary>,
+    pub skipped: Vec<ScaffoldCatalogSkip>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ScaffoldCheckpoint {
     pub artifact_id: String,
@@ -165,6 +187,25 @@ pub struct ScaffoldWorkspace {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScaffoldExportArtifact {
+    pub id: String,
+    pub role: ScaffoldArtifactRole,
+    pub relative_path: String,
+    pub editable: bool,
+    pub required: bool,
+    pub content: String,
+    pub content_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScaffoldExportBundle {
+    pub schema_version: String,
+    pub exported_at: String,
+    pub manifest: ScaffoldManifest,
+    pub artifacts: Vec<ScaffoldExportArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScaffoldArtifactPatch {
     pub artifact_id: String,
     pub content: String,
@@ -176,6 +217,18 @@ pub struct ScaffoldCheckpointPatch {
     pub artifact_id: String,
     pub approved: bool,
     pub note: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScaffoldStatusPatch {
+    pub artifact_id: String,
+    #[serde(default)]
+    pub item_id: Option<String>,
+    #[serde(default)]
+    pub item_index: Option<usize>,
+    pub status: String,
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -323,26 +376,61 @@ impl ScaffoldArtifactStore {
     /// The artifacts tree can also contain unrelated `manifest.json` files
     /// (for example Loctree context atlases). Those are deliberately ignored:
     /// this catalog is scaffold truth, not a filename census.
+    ///
+    /// Prefer [`Self::catalog_detailed`] when the UI must surface parse failures
+    /// (silent skip is how operators lose plans).
     #[must_use]
     pub fn catalog(&self) -> Vec<ScaffoldPlanSummary> {
+        self.catalog_detailed().plans
+    }
+
+    /// Valid plans plus roots that look like scaffold plans but failed to load.
+    #[must_use]
+    pub fn catalog_detailed(&self) -> ScaffoldCatalog {
         let mut manifest_paths = Vec::new();
         collect_scaffold_manifest_paths(&self.home.join("artifacts"), &mut manifest_paths);
-        let mut plans = manifest_paths
-            .into_iter()
-            .filter_map(|path| {
-                let root = path.parent()?;
-                let manifest = read_manifest(root).ok()?;
-                Some(ScaffoldPlanSummary {
-                    plan_id: manifest.plan_id,
-                    org: manifest.org,
-                    repo: manifest.repo,
-                    day: manifest.day,
-                    plan_root: root.display().to_string(),
-                    artifact_count: manifest.artifacts.len(),
-                    legacy_read_only: false,
-                })
-            })
-            .collect::<Vec<_>>();
+        let mut plans = Vec::new();
+        let mut skipped = Vec::new();
+        for path in manifest_paths {
+            let Some(root) = path.parent() else {
+                continue;
+            };
+            match read_manifest(root) {
+                Ok(manifest) => {
+                    if let Err(message) = validate_plan_root_identity(root, &manifest) {
+                        skipped.push(ScaffoldCatalogSkip {
+                            plan_root: root.display().to_string(),
+                            reason: message,
+                            guessed_plan_id: Some(manifest.plan_id),
+                        });
+                        continue;
+                    }
+                    plans.push(ScaffoldPlanSummary {
+                        plan_id: manifest.plan_id,
+                        org: manifest.org,
+                        repo: manifest.repo,
+                        day: manifest.day,
+                        plan_root: root.display().to_string(),
+                        artifact_count: manifest.artifacts.len(),
+                        legacy_read_only: false,
+                    });
+                }
+                Err(error) => {
+                    // `collect_scaffold_manifest_paths` only walks …/plans/<id>/manifest.json,
+                    // so failures here are broken scaffold packages — never silent.
+                    skipped.push(ScaffoldCatalogSkip {
+                        plan_root: root.display().to_string(),
+                        reason: format!(
+                            "manifest unreadable: {error} — check schema_version, plan_id/org/repo/day, and role enum (driver|wave-atlas|brief|design-doc|traceability|tracker|falsification|report|other). Note: use role \"other\" for MISSION.md — \"mission\" is not a valid manifest role."
+                        ),
+                        guessed_plan_id: path
+                            .parent()
+                            .and_then(|p| p.file_name())
+                            .map(|n| n.to_string_lossy().into_owned()),
+                    });
+                }
+            }
+        }
         plans.sort_by(|left, right| {
             right
                 .day
@@ -351,7 +439,8 @@ impl ScaffoldArtifactStore {
                 .then_with(|| left.repo.cmp(&right.repo))
                 .then_with(|| left.plan_id.cmp(&right.plan_id))
         });
-        plans
+        skipped.sort_by(|left, right| left.plan_root.cmp(&right.plan_root));
+        ScaffoldCatalog { plans, skipped }
     }
 
     pub fn latest_workspace(&self) -> ScaffoldResult<ScaffoldWorkspace> {
@@ -418,6 +507,55 @@ impl ScaffoldArtifactStore {
             }
         };
         self.manifest_workspace(org, repo, day, &selected.plan_id)
+    }
+
+    /// Export a manifest-backed plan without author-host filesystem identity.
+    ///
+    /// Artifact paths are always relative. Known host roots inside content are
+    /// replaced with stable placeholders; any remaining `/Users/...` or
+    /// `/Volumes/...` token fails closed instead of shipping a deceptive bundle.
+    pub fn export_bundle(
+        &self,
+        org: &str,
+        repo: &str,
+        day: &str,
+        plan_id: &str,
+        repo_root: Option<&str>,
+    ) -> ScaffoldResult<ScaffoldExportBundle> {
+        let root = self.plan_root(org, repo, day, plan_id)?;
+        let manifest = read_manifest(&root)?;
+        validate_identity(&manifest, org, repo, day, plan_id)?;
+        let workspace = self.manifest_workspace(org, repo, day, plan_id)?;
+        let plan_root = root.display().to_string();
+        let home = self.home.display().to_string();
+        let mut artifacts = Vec::with_capacity(workspace.artifacts.len());
+        for artifact in workspace.artifacts {
+            let content =
+                portable_scaffold_content(&artifact.content, &plan_root, &home, repo_root);
+            if let Some(path) = first_private_absolute_path(&content) {
+                return Err(ScaffoldError::UnsafePath {
+                    message: format!(
+                        "portable export still contains host path {path:?} in artifact {}; pass repo_root when exporting or replace the undeclared host path",
+                        artifact.id
+                    ),
+                });
+            }
+            artifacts.push(ScaffoldExportArtifact {
+                id: artifact.id,
+                role: artifact.role,
+                relative_path: artifact.relative_path,
+                editable: artifact.editable,
+                required: artifact.required,
+                content_hash: content_hash(content.as_bytes()),
+                content,
+            });
+        }
+        Ok(ScaffoldExportBundle {
+            schema_version: SCAFFOLD_EXPORT_SCHEMA_VERSION.to_string(),
+            exported_at: Utc::now().to_rfc3339(),
+            manifest,
+            artifacts,
+        })
     }
 
     fn manifest_workspace(
@@ -624,6 +762,22 @@ impl ScaffoldArtifactStore {
                 note: String::new(),
             },
         )?;
+        emit_scaffold_control_event(
+            &self.home,
+            "scaffold.artifact.saved",
+            plan_id,
+            &format!("Scaffold artifact {} saved", refreshed.id),
+            serde_json::json!({
+                "org": org,
+                "repo": repo,
+                "day": day,
+                "plan_id": plan_id,
+                "artifact_id": refreshed.id,
+                "role": refreshed.role.as_str(),
+                "relative_path": refreshed.relative_path,
+                "bytes": refreshed.bytes,
+            }),
+        );
         Ok(refreshed)
     }
 
@@ -674,7 +828,124 @@ impl ScaffoldArtifactStore {
                 note: checkpoint.note.clone(),
             },
         )?;
+        emit_scaffold_control_event(
+            &self.home,
+            "scaffold.checkpoint.saved",
+            plan_id,
+            &format!(
+                "Scaffold artifact {} checkpointed (approved: {})",
+                artifact.id, checkpoint.approved
+            ),
+            serde_json::json!({
+                "org": org,
+                "repo": repo,
+                "day": day,
+                "plan_id": plan_id,
+                "artifact_id": artifact.id,
+                "role": artifact.role.as_str(),
+                "approved": checkpoint.approved,
+                "note": checkpoint.note,
+            }),
+        );
         Ok(checkpoint)
+    }
+
+    pub fn write_status(
+        &self,
+        org: &str,
+        repo: &str,
+        day: &str,
+        plan_id: &str,
+        patch: ScaffoldStatusPatch,
+    ) -> ScaffoldResult<ScaffoldArtifact> {
+        let workspace = self.workspace(org, repo, day, Some(plan_id))?;
+        if workspace.legacy_read_only {
+            return Err(ScaffoldError::ReadOnly {
+                message: "legacy scaffold workspaces are read-only".into(),
+            });
+        }
+        let artifact = workspace
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.id == patch.artifact_id)
+            .ok_or_else(|| ScaffoldError::ArtifactNotFound {
+                id: patch.artifact_id.clone(),
+            })?;
+        if !artifact.editable {
+            return Err(ScaffoldError::ReadOnly {
+                message: format!("artifact is not editable: {}", artifact.id),
+            });
+        }
+
+        let root = PathBuf::from(&workspace.plan_root);
+        let path = root.join(validate_relative_markdown_path(&artifact.relative_path)?);
+        reject_symlink_path(&root, &path)?;
+
+        let current_content = fs::read_to_string(&path)?;
+        let updated_content = update_markdown_status(
+            &current_content,
+            patch.item_id.as_deref(),
+            patch.item_index,
+            &patch.status,
+        );
+
+        write_atomic(&path, updated_content.as_bytes())?;
+
+        let refreshed = self
+            .workspace(org, repo, day, Some(plan_id))?
+            .artifacts
+            .into_iter()
+            .find(|candidate| candidate.id == artifact.id)
+            .ok_or_else(|| ScaffoldError::ArtifactNotFound {
+                id: artifact.id.clone(),
+            })?;
+
+        let note = patch.note.clone().unwrap_or_default();
+        let change_note = if let Some(item) = &patch.item_id {
+            format!("item: {item}, status: {}, note: {note}", patch.status)
+        } else {
+            format!("status: {}, note: {note}", patch.status)
+        };
+
+        append_change(
+            &root,
+            ScaffoldChange {
+                ts: now_ts(),
+                plan_id: plan_id.to_string(),
+                artifact_id: refreshed.id.clone(),
+                relative_path: refreshed.relative_path.clone(),
+                role: refreshed.role,
+                action: "status".into(),
+                bytes: refreshed.bytes,
+                checkpointed: refreshed.checkpoint.approved,
+                note: change_note,
+            },
+        )?;
+
+        emit_scaffold_control_event(
+            &self.home,
+            "scaffold.status.updated",
+            plan_id,
+            &format!(
+                "Scaffold artifact {} status updated to {}",
+                refreshed.id, patch.status
+            ),
+            serde_json::json!({
+                "org": org,
+                "repo": repo,
+                "day": day,
+                "plan_id": plan_id,
+                "artifact_id": refreshed.id,
+                "item_id": patch.item_id,
+                "item_index": patch.item_index,
+                "status": patch.status,
+                "note": patch.note,
+                "relative_path": refreshed.relative_path,
+                "role": refreshed.role.as_str(),
+            }),
+        );
+
+        Ok(refreshed)
     }
 
     pub fn changes(
@@ -1615,6 +1886,53 @@ fn content_hash(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
+fn portable_scaffold_content(
+    content: &str,
+    plan_root: &str,
+    home: &str,
+    repo_root: Option<&str>,
+) -> String {
+    let mut portable = content.replace(plan_root, "${SCAFFOLD_ROOT}");
+    if let Some(repo_root) = repo_root.filter(|value| !value.trim().is_empty()) {
+        portable = portable.replace(repo_root, "${REPO_ROOT}");
+    }
+    portable = portable.replace(home, "${VIBECRAFTED_HOME}");
+    portable
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("baseline_branch:") {
+                let indent = &line[..line.len() - trimmed.len()];
+                format!("{indent}baseline_branch: <living-tree>")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + if content.ends_with('\n') { "\n" } else { "" }
+}
+
+fn first_private_absolute_path(content: &str) -> Option<String> {
+    ["/Users/", "/Volumes/"].into_iter().find_map(|marker| {
+        let start = content.find(marker)?;
+        let rest = &content[start..];
+        let end = rest
+            .char_indices()
+            .find_map(|(index, character)| {
+                (index > 0
+                    && (character.is_whitespace()
+                        || matches!(
+                            character,
+                            '`' | '\'' | '"' | ')' | ']' | '}' | ',' | ';'
+                        )))
+                .then_some(index)
+            })
+            .unwrap_or(rest.len());
+        Some(rest[..end].to_string())
+    })
+}
+
 fn modified_at(path: &Path) -> String {
     fs::metadata(path)
         .and_then(|metadata| metadata.modified())
@@ -1679,6 +1997,110 @@ fn append_change(root: &Path, change: ScaffoldChange) -> ScaffoldResult<()> {
 
 fn now_ts() -> String {
     Utc::now().to_rfc3339()
+}
+
+fn emit_scaffold_control_event(
+    home: &Path,
+    kind: &str,
+    run_id: &str,
+    message: &str,
+    payload: serde_json::Value,
+) {
+    let cp_dir = home.join("control_plane");
+    if fs::create_dir_all(&cp_dir).is_err() {
+        return;
+    }
+    let events_path = cp_dir.join("events.jsonl");
+
+    let event = serde_json::json!({
+        "ts": now_ts(),
+        "run_id": run_id,
+        "kind": kind,
+        "message": message,
+        "payload": payload,
+    });
+
+    let Ok(line) = serde_json::to_string(&event) else {
+        return;
+    };
+
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(events_path)
+    {
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+fn update_markdown_status(
+    content: &str,
+    item_id: Option<&str>,
+    item_index: Option<usize>,
+    status: &str,
+) -> String {
+    let new_symbol = match status.trim() {
+        "done" | "completed" | "checked" | "x" | "X" | "[x]" | "[X]" | "true" => "x",
+        "running" | "in_progress" | "in-progress" | "~" | "[~]" => "~",
+        "unverified" | "done-unverified" | "?" | "[?]" => "?",
+        "blocked" | "!" | "[!]" => "!",
+        "todo" | "pending" | "unchecked" | " " | "[ ]" | "false" => " ",
+        custom if custom.starts_with('[') && custom.ends_with(']') && custom.len() == 3 => {
+            &custom[1..2]
+        }
+        custom if custom.len() == 1 => custom,
+        _ => status.trim(),
+    };
+
+    let mut lines: Vec<String> = content.lines().map(String::from).collect();
+    let trailing_newline = content.ends_with('\n');
+
+    let mut current_checkbox_idx = 0;
+    let mut updated = false;
+
+    for line in lines.iter_mut() {
+        if line.contains("[ ]")
+            || line.contains("[x]")
+            || line.contains("[X]")
+            || line.contains("[~]")
+            || line.contains("[?]")
+            || line.contains("[!]")
+        {
+            let is_match = match (item_id, item_index) {
+                (Some(id), _) => line.contains(id),
+                (None, Some(idx)) => idx == current_checkbox_idx,
+                (None, None) => true,
+            };
+
+            if is_match {
+                if let Some(s) = line.find('[') {
+                    if let Some(rel_e) = line[s..].find(']') {
+                        let e = s + rel_e;
+                        if e == s + 2 {
+                            line.replace_range(s + 1..e, new_symbol);
+                            updated = true;
+                            if item_id.is_none() && item_index.is_none() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            current_checkbox_idx += 1;
+        }
+    }
+
+    if !updated {
+        if let Some(id) = item_id {
+            lines.push(format!("- [{new_symbol}] {id}"));
+        }
+    }
+
+    let mut result = lines.join("\n");
+    if trailing_newline {
+        result.push('\n');
+    }
+    result
 }
 
 #[cfg(test)]

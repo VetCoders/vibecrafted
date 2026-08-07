@@ -100,3 +100,15 @@ pub fn ThemeBridge() -> impl IntoView {
 
     view! { <></> }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Theme;
+
+    #[test]
+    fn toggle_round_trips_between_supported_themes() {
+        assert_eq!(Theme::Dark.toggle(), Theme::Light);
+        assert_eq!(Theme::Light.toggle(), Theme::Dark);
+        assert_eq!(Theme::Dark.toggle().toggle(), Theme::Dark);
+    }
+}

@@ -192,6 +192,11 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
         "_materialize_vc_frame_generation",
         lambda runtime_root: seen.update(materialized=runtime_root),
     )
+    monkeypatch.setattr(
+        installer,
+        "_write_runtime_generation_manifest",
+        lambda runtime_root, **_kwargs: seen.update(manifested=runtime_root),
+    )
 
     installer.sync_control_plane_tree(source, destination, mirror=True)
 
@@ -200,6 +205,7 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
     assert Path(seen["destination"]).parent == destination.parent
     assert seen["mirror"] is True
     assert seen["materialized"] == seen["destination"]
+    assert seen["manifested"] == seen["destination"]
     assert (destination / "payload.txt").read_text(encoding="utf-8") == "validated\n"
     source_text = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
         encoding="utf-8"
@@ -222,9 +228,12 @@ def test_install_manifest_post_install_uses_mirror_sync() -> None:
     assert "$(MAKE) --no-print-directory install-server-payload" in makefile
     assert "make --no-print-directory install-server-service" not in text
     assert (
-        'bash "$PWD/vibecrafted-core/vibecrafted_core/runtime/scripts/'
-        'install-frontier-config.sh" --source "$PWD"'
+        'bash "$stable_root/vibecrafted-core/vibecrafted_core/runtime/scripts/'
+        'install-frontier-config.sh" --source "$stable_root"'
     ) in text
+    assert text.index("make --no-print-directory install-bundle-tools") < text.index(
+        'install-frontier-config.sh" --source "$stable_root"'
+    )
     assert "bash runtime/scripts/install-frontier-config.sh" not in text
 
 
@@ -241,10 +250,17 @@ def test_make_install_stages_vc_frame_from_published_runtime() -> None:
         install_block.index("uv tool dir")
     )
     assert 'PYTHONPATH="$(SOURCE)/vibecrafted-core"' not in install_block
+    assert install_block.index("install-bundle-tools") < install_block.index(
+        'install-frontier-config.sh" --source "$$stable_root"'
+    )
     assert (
-        "from vibecrafted_core.vc_frame_delivery import "
-        "wire_vc_frame_config, ensure_zshrc"
+        'stable_root="$${XDG_DATA_HOME:-$$HOME/.local/share}/vibecrafted/tools/'
+        'vibecrafted-current"'
     ) in install_block
+    assert (
+        "from vibecrafted_core.vc_frame_delivery import wire_vc_frame_config"
+    ) in install_block
+    assert "ensure_zshrc" not in install_block
     assert "stage_vc_frame_config" not in install_block
     assert "vc-frame config delivery skipped" not in install_block
     assert install_block.index("skills and launchers") < install_block.index(
@@ -425,6 +441,15 @@ def test_install_all_installs_python_tools_with_uv_tool_install() -> None:
         not in python_tools_block
     )
     assert "vibecrafted-current" in python_tools_block
+    assert (
+        "v._install_launcher(Path(sys.argv[1]), dry_run=False, update_rc=False)"
+        in python_tools_block
+    )
+    assert (
+        "$$stable_root/vibecrafted-core/vibecrafted_core/deck/vibecrafted"
+        in python_tools_block
+    )
+    assert 'if [ "$$entrypoint" = "vibecrafted" ]' in python_tools_block
     assert "vibecrafted-mcp" in (
         REPO_ROOT / "vibecrafted-mcp" / "pyproject.toml"
     ).read_text(encoding="utf-8")
@@ -474,7 +499,17 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
     server_build_block = makefile.split("\nbuild-server-release:", 1)[1].split(
         "\ninstall-server-payload:", 1
     )[0]
-    assert "cargo build --release --locked -p $(SERVER_PACKAGE)" in server_build_block
+    assert "cargo leptos build --release" in server_build_block
+    assert '--bin-cargo-args="--locked"' in server_build_block
+    assert '--lib-cargo-args="--locked"' in server_build_block
+    assert "wasm-bindgen CLI $$cli_version does not match Cargo.lock" in (
+        server_build_block
+    )
+    assert (
+        "cargo install --force wasm-bindgen-cli --version $$lock_version --locked"
+        in (server_build_block)
+    )
+    assert "hydration wasm is missing" in server_build_block
     assert "install-server-payload" in makefile
 
 
@@ -573,7 +608,7 @@ def test_foundations_product_binaries_are_validation_only() -> None:
         1,
     )[0]
     aicx_block = text.split("install_aicx() {", 1)[1].split(
-        "# ---------------------------------------------------------------------------\n# vc-frame installer",
+        "# ---------------------------------------------------------------------------\n# vc-frame — product frame binary",
         1,
     )[0]
 
@@ -602,6 +637,15 @@ def test_foundations_product_binaries_are_validation_only() -> None:
         "will not guess crates, npm packages, or local checkout paths" in loctree_block
     )
     assert "will not guess crates, npm packages, or local checkout paths" in aicx_block
+
+
+def test_foundations_never_overwrite_uv_owned_python_entrypoints() -> None:
+    text = (REPO_ROOT / "scripts" / "install-foundations.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "install_vc_wrappers" not in text
+    assert 'for src in "$source_bin"/vc-*' not in text
 
 
 def test_setup_installer_uses_canonical_foundation_action_only() -> None:
@@ -670,10 +714,11 @@ def test_installer_paths_do_not_write_shell_rc_without_consent_flag() -> None:
     assert "update_rc=write_shell_rc" in installer
     assert "if write_shell_rc:\n        for rcname in" in installer
 
-    # The "already sourced" skip must be ACTIVE-only: a commented/disabled hook
-    # cannot count as present, or a cleaned machine never re-wires on reinstall.
+    # The host shell is PATH-only. Even explicitly consented rc mutation removes
+    # legacy helper sourcing instead of re-wiring product functions globally.
     assert 'grep -Fq "vetcoders/vc-skills.sh"' not in install_shell
-    assert "[^#[:space:]].*vetcoders/vc-skills" in install_shell
+    assert "/vetcoders\\/vc-skills\\.sh/ { next }" in install_shell
+    assert "path_line=" in install_shell
 
 
 def test_product_mcp_paths_do_not_hardcode_cargo_bin() -> None:
@@ -734,12 +779,31 @@ def test_make_install_verifies_server_supervisor_entrypoint() -> None:
     ].split("\ndef _symlink_target(", 1)[0]
 
     assert "vc-server-supervisor" in install_tools_block
+    assert "python_entrypoints=" in install_tools_block
+    assert "PYTHON_ENTRYPOINT_LAUNCHERS" in install_tools_block
+    assert "is not owned by the uv interpreter" in install_tools_block
+    assert 'if [ "$$entrypoint" = "vibecrafted-mcp" ]' in install_tools_block
+    assert "$${tool_root%/vibecrafted}/vibecrafted-mcp" in install_tools_block
+    assert "reconnect the operator session after install" in install_tools_block
+    assert "vibecrafted vc-workflow vc-guardian vc-server-supervisor" in (
+        install_tools_block
+    )
     assert "expected executable entrypoint" in install_tools_block
     assert '"$$resolved" --help' in install_tools_block
-    assert 'tool_root="$$(uv tool dir)/vibecrafted"' in install_tools_block
-    assert "expected uv tool target" in install_tools_block
+    # --color never is load-bearing: FORCE_COLOR-style env makes `uv tool dir`
+    # emit ANSI codes into command substitution, producing a nonexistent path
+    assert (
+        'tool_root="$$(uv tool dir --color never)/vibecrafted"' in install_tools_block
+    )
+    assert "uv tool dir)" not in install_tools_block
+    assert "expected installed target" in install_tools_block
     assert "uv tool imports vibecrafted_core" in install_tools_block
     assert "$$stable_root/vibecrafted-core" in install_tools_block
+    assert (
+        "unset PYTHONPATH; \\\n"
+        "\tuv tool install --force --reinstall --editable "
+        '"$$stable_root/vibecrafted-core"; \\' in install_tools_block
+    )
     assert "uv tool uninstall" not in install_tools_block
     assert "run_with_tools_install_lease" in install_tools_block
     assert "INSTALL_TOOLS_SERVICE_POLICY ?= preserve" in text
@@ -764,6 +828,12 @@ def test_make_install_verifies_server_supervisor_entrypoint() -> None:
         '$(PYTHON) $(INSTALLER) install --source "$(SOURCE)"'
     ) < install_tools_block.index("uv tool install --force --reinstall")
     assert "outer lease owner will reconcile service ownership" in install_tools_block
+    assert "scripts/slack_provider.py install" in install_tools_block
+    assert '--framework-source "$(SOURCE)"' in install_tools_block
+    assert '--source "$(SLACK_AGENT_SOURCE)"' in install_tools_block
+    assert install_tools_block.index("scripts/slack_provider.py install") < (
+        install_tools_block.index("outer lease owner will reconcile service ownership")
+    )
     assert "prepare_runtime_service_for_install" in handoff_block
     assert "_runtime_lifecycle_handoff_fence" in handoff_block
     assert "_runtime_supervisor_handoff_fence" in handoff_block
@@ -833,6 +903,15 @@ def test_public_install_server_uses_transaction_and_payload_target_is_internal()
     assert "install-server-payload" in install_server_block
     assert "VIBECRAFTED_INSTALL_LEASE_FD" in payload_block
     assert "_require_inherited_tools_install_lease" in payload_block
+    assert 'cp -R "$(SERVER_BUILD_SITE_ROOT)/." "$(SERVER_INSTALL_SITE_ROOT)/"' in (
+        payload_block
+    )
+    service_block = text.split("\ninstall-server-service:", 1)[1].split(
+        "\nserver-smoke:", 1
+    )[0]
+    assert service_block.index("unset PYTHONPATH") < service_block.index(
+        'launcher="$$(command -v vibecrafted'
+    )
     assert payload_block.index("VIBECRAFTED_INSTALL_LEASE_FD") < payload_block.index(
         "command -v cargo"
     )

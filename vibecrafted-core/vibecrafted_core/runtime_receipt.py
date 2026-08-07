@@ -90,18 +90,23 @@ _DIRTY_TRUE_RE = re.compile(
 
 @dataclass(frozen=True)
 class Unknown:
+    """A refused-to-guess field: always ``value="unknown"`` plus why."""
+
     value: str = "unknown"
     reason: str = ""
 
     def as_dict(self) -> dict[str, str]:
+        """JSON projection of this unknown marker."""
         return {"value": "unknown", "reason": self.reason}
 
 
 def _unknown(reason: str) -> dict[str, str]:
+    """Shorthand for ``Unknown(reason=...).as_dict()``."""
     return Unknown(reason=reason).as_dict()
 
 
 def _sha_prefix_match(a: str | None, b: str | None) -> bool:
+    """Whether two SHAs are the same commit at possibly different abbreviation lengths."""
     if not a or not b or a == "unknown" or b == "unknown":
         return False
     a = a.lower().strip()
@@ -110,6 +115,7 @@ def _sha_prefix_match(a: str | None, b: str | None) -> bool:
 
 
 def _is_sha(value: str) -> bool:
+    """Whether ``value`` looks like a git SHA: 7+ hex characters."""
     v = value.strip()
     return bool(v) and len(v) >= 7 and all(c in "0123456789abcdefABCDEF" for c in v)
 
@@ -180,6 +186,11 @@ def checkout_head_sha(start: Path) -> str | None:
 
 
 def checkout_branch(start: Path) -> str | None:
+    """Resolve the checked-out branch name by reading ``.git/HEAD`` only.
+
+    Returns ``"HEAD"`` for a detached checkout, ``None`` when no ``.git`` is found
+    or ``HEAD`` cannot be read.
+    """
     git_dir = find_git_dir(start)
     if git_dir is None:
         return None
@@ -219,6 +230,7 @@ def owner_repo_from_git(start: Path) -> str | None:
 
 
 def _parse_owner_repo(url: str) -> str | None:
+    """Extract ``owner/repo`` from an https or ssh-style git remote URL."""
     url = url.rstrip("/")
     url = url.removesuffix(".git")
     # git@host:owner/repo  or  https://host/owner/repo
@@ -241,6 +253,7 @@ def _parse_owner_repo(url: str) -> str | None:
 def _git(
     root: Path, *args: str, timeout: float = 8.0
 ) -> subprocess.CompletedProcess[str] | None:
+    """Run ``git <args>`` in ``root``; ``None`` when git is missing or times out."""
     try:
         return subprocess.run(
             ["git", *args],
@@ -299,6 +312,7 @@ def dirty_split(root: Path) -> dict[str, Any]:
 
 
 def _is_generated_path(path: str) -> bool:
+    """Whether ``path`` falls under a known build/cache prefix (not a source edit)."""
     normalized = path.replace("\\", "/")
     while normalized.startswith("./"):
         normalized = normalized[2:]
@@ -368,6 +382,7 @@ def commit_exists(root: Path, sha: str) -> bool | None:
 def which_binary(
     name: str, which: Callable[[str], str | None] | None = None
 ) -> str | None:
+    """PATH lookup for ``name``, defaulting to ``shutil.which`` (injectable for tests)."""
     finder = which or shutil.which
     return finder(name)
 
@@ -400,6 +415,7 @@ def _vibecrafted_tools_path_hints() -> list[str]:
 
 
 def run_version(binary: str, timeout: float = 5.0) -> str:
+    """Try ``--version``/``version``/``-V`` in turn; return the first non-blank line."""
     for args in ([binary, "--version"], [binary, "version"], [binary, "-V"]):
         try:
             proc = subprocess.run(
@@ -495,6 +511,8 @@ def parse_installed_provenance(
 
 @dataclass(frozen=True)
 class ToolSpec:
+    """Declarative identity contract for one fleet tool: how to find and verify it."""
+
     name: str
     binaries: tuple[str, ...]
     env_roots: tuple[str, ...]
@@ -533,6 +551,7 @@ def _vibecrafted_package_repo() -> Path | None:
 
 
 def _fleet_root_from_env() -> Path | None:
+    """Resolved ``VIBECRAFTED_FLEET_ROOT``/``VC_FLEET_ROOT``, if set and a directory."""
     raw = os.environ.get("VIBECRAFTED_FLEET_ROOT") or os.environ.get("VC_FLEET_ROOT")
     if not raw:
         return None
@@ -608,6 +627,7 @@ def _default_candidate_roots(name: str) -> list[Path]:
 
 
 def _verify_markers(root: Path, markers: Sequence[tuple[str, str | None]]) -> bool:
+    """Whether every ``(relative_path, optional content regex)`` marker matches."""
     if not root.is_dir():
         return False
     for rel, pattern in markers:
@@ -824,6 +844,7 @@ def probe_aicx_index() -> dict[str, Any]:
 
 
 def fleet_tool_specs() -> list[ToolSpec]:
+    """The fixed roster of fleet tools this receipt reports on."""
     return [
         ToolSpec(
             name="vc-frame",
@@ -894,6 +915,11 @@ def classify_drift(
     index_stale: bool,
     source_known: bool,
 ) -> list[str]:
+    """Derive the named drift classes for one tool from its already-probed signals.
+
+    Order in the returned list is not significance — use :func:`primary_drift`
+    for that.
+    """
     classes: list[str] = []
     if not on_path:
         classes.append(DRIFT_NOT_ON_PATH)
@@ -925,6 +951,7 @@ def classify_drift(
 
 
 def primary_drift(classes: Sequence[str]) -> str:
+    """Pick the single most-severe drift class per ``_PRIMARY_ORDER``."""
     for name in _PRIMARY_ORDER:
         if name in classes:
             return name
@@ -937,6 +964,7 @@ def primary_drift(classes: Sequence[str]) -> str:
 
 
 def _link_or_unknown(value: Any, reason_if_none: str) -> Any:
+    """Pass ``value`` through, or substitute an :func:`_unknown` marker for ``None``."""
     if value is None:
         return _unknown(reason_if_none)
     if isinstance(value, dict) and value.get("value") == "unknown":
@@ -944,7 +972,50 @@ def _link_or_unknown(value: Any, reason_if_none: str) -> Any:
     return value
 
 
+def _installed_runtime_manifest(installed_path: str | None) -> dict[str, Any] | None:
+    """Read a checkout-free ``runtime-manifest.json`` sitting beside the binary.
+
+    Lets a uv-tool/staged install report its source provenance without a git
+    checkout on disk; validates schema, owner/repo shape, a 40-char revision,
+    and that the manifest's declared entrypoint resolves to ``installed_path``.
+    """
+    if not installed_path:
+        return None
+    try:
+        resolved = Path(installed_path).resolve(strict=True)
+    except OSError:
+        return None
+    for directory in (resolved.parent, *resolved.parents):
+        manifest_path = directory / "runtime-manifest.json"
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        owner_repo = payload.get("owner_repo")
+        revision = payload.get("source_revision")
+        entrypoint = payload.get("entrypoint")
+        if (
+            payload.get("schema") == "vibecrafted.runtime-generation.v1"
+            and isinstance(owner_repo, str)
+            and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", owner_repo)
+            and isinstance(revision, str)
+            and re.fullmatch(r"[0-9a-fA-F]{40}", revision)
+            and isinstance(entrypoint, str)
+            and (directory / entrypoint).resolve(strict=False) == resolved
+        ):
+            return {
+                "path": str(directory),
+                "owner_repo": owner_repo,
+                "branch": _unknown("checkout-free installed generation has no branch"),
+                "checkout_sha": revision.lower(),
+                "resolution": "installed_runtime_manifest",
+                "dirty": False,
+            }
+    return None
+
+
 def inspect_tool(spec: ToolSpec) -> dict[str, Any]:
+    """Build the full receipt row for one tool: PATH, source, remote, index, drift."""
     # PATH
     primary_bin = spec.binaries[0]
     path_hits: dict[str, str | None] = {}
@@ -985,9 +1056,33 @@ def inspect_tool(spec: ToolSpec) -> dict[str, Any]:
                 break
 
     # Source
-    source_root, source_method = resolve_source_root(spec)
+    installed_manifest = (
+        _installed_runtime_manifest(installed_path)
+        if spec.name == "vibecrafted"
+        else None
+    )
+    source_root, source_method = (
+        (None, "installed_runtime_manifest")
+        if installed_manifest is not None
+        else resolve_source_root(spec)
+    )
     source_block: dict[str, Any]
-    if source_root is None:
+    if installed_manifest is not None:
+        source_block = installed_manifest
+        ab = {
+            "upstream": _unknown("checkout-free installed generation"),
+            "ahead": _unknown("checkout-free installed generation"),
+            "behind": _unknown("checkout-free installed generation"),
+        }
+        dirty = {
+            "dirty": False,
+            "source_dirty_count": 0,
+            "generated_dirty_count": 0,
+            "source_paths": [],
+            "generated_paths": [],
+        }
+        checkout_sha = source_block["checkout_sha"]
+    elif source_root is None:
         source_block = {
             "path": _unknown(source_method),
             "owner_repo": _unknown(source_method),
@@ -1068,7 +1163,7 @@ def inspect_tool(spec: ToolSpec) -> dict[str, Any]:
         installed_dirty=installed_dirty if isinstance(installed_dirty, bool) else None,
         ahead=ab.get("ahead") if isinstance(ab.get("ahead"), int) else None,
         index_stale=index_stale,
-        source_known=source_root is not None and isinstance(checkout_sha, str),
+        source_known=isinstance(checkout_sha, str),
     )
     # For related binaries (scaffold-doctor under vibecrafted), not primary
     if not path_hits.get(primary_bin) and DRIFT_NOT_ON_PATH not in classes:
@@ -1134,6 +1229,7 @@ def inspect_tool(spec: ToolSpec) -> dict[str, Any]:
 def build_receipt(
     specs: Sequence[ToolSpec] | None = None,
 ) -> dict[str, Any]:
+    """Inspect every tool spec (default: the fleet roster) into one receipt payload."""
     tool_specs = list(specs) if specs is not None else fleet_tool_specs()
     tools = [inspect_tool(spec) for spec in tool_specs]
     return {
@@ -1153,6 +1249,7 @@ def build_receipt(
 
 
 def _count_primary(tools: Sequence[dict[str, Any]]) -> dict[str, int]:
+    """Tally tool rows by their ``primary_drift`` class."""
     counts: dict[str, int] = {}
     for tool in tools:
         key = str(tool.get("primary_drift") or "unknown")
@@ -1166,6 +1263,7 @@ def _count_primary(tools: Sequence[dict[str, Any]]) -> dict[str, int]:
 
 
 def _fmt_link(value: Any) -> str:
+    """Render a receipt field for text output: unwrap ``Unknown`` markers and bools."""
     if isinstance(value, dict) and value.get("value") == "unknown":
         reason = value.get("reason") or ""
         return f"unknown ({reason})" if reason else "unknown"
@@ -1177,6 +1275,7 @@ def _fmt_link(value: Any) -> str:
 
 
 def render_receipt_text(receipt: dict[str, Any]) -> str:
+    """Render a :func:`build_receipt` payload as the human-readable CLI report."""
     lines: list[str] = []
     lines.append("Delivery / Runtime Receipt")
     lines.append(f"schema: {receipt.get('schema')}")
@@ -1240,6 +1339,7 @@ def render_receipt_text(receipt: dict[str, Any]) -> str:
 
 
 def receipt_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry point for ``vibecrafted receipt``: build and print the receipt."""
     args = list(argv or [])
     as_json = False
     filtered: list[str] = []

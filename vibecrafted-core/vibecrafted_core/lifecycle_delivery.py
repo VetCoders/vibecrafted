@@ -66,12 +66,14 @@ class StageSealResult:
     proof_id: str = ""
 
     def axes_payload(self) -> dict[str, str]:
+        """Just the proof/delivery axes, for merging into a stage or run record."""
         return {
             "proof_state": self.proof_state,
             "delivery_state": self.delivery_state,
         }
 
     def to_payload(self) -> dict[str, Any]:
+        """Full JSON-serializable representation of this seal result."""
         return {
             "granted": self.granted,
             "proof_state": self.proof_state,
@@ -105,6 +107,7 @@ def mission_claim_digest(
 
 
 def _file_sha256(path: Path) -> str:
+    """``sha256:<hex>`` of a file's contents, or the all-zero digest if it's missing."""
     if not path.is_file():
         return ZERO_DIGEST
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -112,6 +115,7 @@ def _file_sha256(path: Path) -> str:
 
 
 def _text_sha256(text: str) -> str:
+    """``sha256:<hex>`` of a UTF-8 encoded text string."""
     return f"sha256:{hashlib.sha256(text.encode('utf-8')).hexdigest()}"
 
 
@@ -165,6 +169,7 @@ def report_claim_matches(
 
 
 def _report_verification_payload(report: Path, mission_digest: str) -> dict[str, Any]:
+    """Verified-claim proof payload for a report; raises ValueError on any mismatch reason."""
     ok, reason = report_claim_matches(report, mission_digest=mission_digest)
     if not ok:
         raise ValueError(reason)
@@ -176,6 +181,7 @@ def _report_verification_payload(report: Path, mission_digest: str) -> dict[str,
 
 
 def _git_value(root: Path, *args: str) -> str:
+    """Run a git subcommand in ``root`` and return trimmed stdout, or "" on any failure."""
     try:
         result = subprocess.run(
             ["git", "-C", str(root), *args],
@@ -190,6 +196,7 @@ def _git_value(root: Path, *args: str) -> str:
 
 
 def _repo_identity(root: Path) -> str:
+    """``owner/repo`` derived from the origin remote URL, else the directory name."""
     remote = _git_value(root, "config", "--get", "remote.origin.url")
     if remote:
         normalized = remote.removesuffix(".git").replace(":", "/")
@@ -200,6 +207,7 @@ def _repo_identity(root: Path) -> str:
 
 
 def _upstream_relation(root: Path) -> tuple[str, dict[str, int]]:
+    """Upstream branch name and its ahead/behind commit counts vs HEAD; ("", {}) if none."""
     upstream = _git_value(root, "rev-parse", "--abbrev-ref", "@{upstream}")
     if not upstream:
         return "", {}
@@ -217,6 +225,7 @@ def _persist_proof(
     contract: DeliveryProofContract,
     proof: ProofResult,
 ) -> None:
+    """Write the envelope, contract, per-evidence-role executions, and proof result to disk."""
     store.write_execution_envelope(envelope)
     store.write_proof_contract(contract)
     sequence_by_role: dict[str, int] = {}
@@ -560,6 +569,7 @@ def resettle_retained_snapshots(
     scanned = 0
 
     def _count(bucket: dict[str, int], verdict: str | None) -> None:
+        """Bump the f/x/n(/invalid/none) counter matching a settlement verdict string."""
         raw = str(verdict or "").strip().lower()
         if raw == "finalized":
             bucket["f"] += 1
@@ -636,6 +646,7 @@ def resettle_retained_snapshots(
 
 
 def _main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint: ``verify-report`` subcommand used as the seal's proof subject."""
     parser = argparse.ArgumentParser(
         prog="python -m vibecrafted_core.lifecycle_delivery"
     )

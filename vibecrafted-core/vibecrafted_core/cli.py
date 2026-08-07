@@ -1,3 +1,6 @@
+"""Vibecrafted core entrypoint: routes ``vibecrafted``/shell-wrapper argv to the
+Python launch/observe/await surface or falls back to the legacy bash deck."""
+
 from __future__ import annotations
 
 import argparse
@@ -30,6 +33,7 @@ from .workflow import (
 )
 
 AGENTS = {"claude", "codex", "agy", "junie", "grok", "swarm"}
+RESEARCH_ARITY = {"uno": 1, "duo": 2, "trio": 3}
 LAUNCHERS = (
     "audit",
     "decorate",
@@ -90,7 +94,39 @@ _INSTALLER_LOCK_NAME = ".vibecrafted-install.lock"
 _EX_TEMPFAIL = 75
 
 
+def _normalize_research_arity_args(args: Sequence[str]) -> list[str]:
+    """Expand the stable uno/duo/trio contract before argparse sees agents."""
+    normalized = list(args)
+    if len(normalized) < 2 or normalized[0] != "research":
+        return normalized
+    keyword = normalized[1]
+    expected = RESEARCH_ARITY.get(keyword)
+    if expected is None:
+        return normalized
+
+    agents: list[str] = []
+    cursor = 2
+    while cursor < len(normalized) and not normalized[cursor].startswith("-"):
+        agents.append(normalized[cursor])
+        cursor += 1
+    if len(agents) != expected:
+        raise ValueError(
+            f"{keyword} expects exactly {expected} agent(s), got {len(agents)}"
+        )
+    unsupported = [agent for agent in agents if agent not in AGENTS - {"swarm"}]
+    if unsupported:
+        raise ValueError(f"Unsupported research agent: {unsupported[0]}")
+    return ["research", *agents, *normalized[cursor:]]
+
+
 def _installer_lease_pass_fds(tools_home: Path) -> tuple[int, ...]:
+    """Validate an inherited installer coordination fd and return it to pass through.
+
+    Returns an empty tuple when no lease fd is present. Raises ``OSError`` if the
+    fd is set but does not verifiably own ``tools_home``'s install lock file
+    (regular file, same uid, single hardlink, same device/inode) — a forged or
+    stale descriptor must never be forwarded to the deck subprocess.
+    """
     raw_descriptor = os.environ.get(_INSTALLER_LEASE_FD_ENV)
     if not raw_descriptor:
         return ()
@@ -125,6 +161,7 @@ def _installer_lease_pass_fds(tools_home: Path) -> tuple[int, ...]:
 
 
 def _add_launch_parser(sub: argparse._SubParsersAction, name: str) -> None:
+    """Register one LAUNCHERS subcommand with its shared and per-skill flags."""
     run = sub.add_parser(name, help=f"launch vc-{name} through core runtime")
     if name == "research":
         run.add_argument("agent", nargs="*")
@@ -158,6 +195,7 @@ def _add_launch_parser(sub: argparse._SubParsersAction, name: str) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Assemble the full argparse tree for every python-owned subcommand."""
     parser = argparse.ArgumentParser(
         prog="vibecrafted",
         description="Vibecrafted core command surface.",
@@ -392,24 +430,41 @@ def _default_runtime(explicit_runtime: str, root: str = "") -> str:
 
 
 def _normalize_raw_args(raw_args: list[str]) -> list[str]:
+    """Swap a leading ``<agent> <launcher>`` pair into ``<launcher> <agent>`` order."""
     if len(raw_args) >= 2 and raw_args[0] in AGENTS and raw_args[1] in LAUNCHERS:
         return [raw_args[1], raw_args[0], *raw_args[2:]]
     return raw_args
 
 
 def _field(payload: dict[str, Any], name: str, default: str = "") -> str:
+    """Coerce a payload value to ``str``, substituting ``default`` when falsy."""
     return str(payload.get(name) or default)
 
 
 def _clip_line(line: str, *, max_chars: int = 500) -> str:
+    """Truncate a display line to ``max_chars``, appending an ellipsis when cut."""
     if len(line) <= max_chars:
         return line
     return line[: max_chars - 1] + "…"
 
 
+# Per-token streamers (grok emits one JSON event per token, e.g.
+# {"type":"thought","data":"Good"}) render to far fewer lines than raw events:
+# whole sentences coalesce into a single rendered line. Cutting the raw tail to
+# `max_lines` BEFORE rendering would leave ~40 tokens (~1.5 sentences) of
+# visibility, so we feed the parser a much wider raw tail and window to
+# `max_lines` only AFTER rendering. 2000 raw lines comfortably covers 40
+# rendered lines even at one-token-per-event rates while capping the
+# render-feed cost on huge transcripts.
+RAW_TAIL_LINES = 2000
+
+
 def _tail_lines(
     path: str, *, agent: str = "", max_lines: int = 40
 ) -> tuple[list[str], str]:
+    """Return the last ``max_lines`` of a transcript, rendered through the agent's
+    stream parser when ``agent`` is given. Second element is an error code
+    (``""`` on success) rather than a raised exception."""
     if not path:
         return [], "missing_path"
     transcript = Path(path).expanduser()
@@ -421,28 +476,32 @@ def _tail_lines(
         return [], f"read_error:{type(exc).__name__}"
     if not lines:
         return [], "empty"
-    tail = lines[-max_lines:]
     if not agent:
-        return [_clip_line(line) for line in tail], ""
+        return [_clip_line(line) for line in lines[-max_lines:]], ""
+    tail = lines[-RAW_TAIL_LINES:]
     parser = AgentStreamParser(agent, default_model=resolve_default_model(agent))
-    rendered: list[str] = []
+    chunks: list[str] = []
     saw_json = False
     for line in tail:
         if line.lstrip().startswith("{"):
             saw_json = True
-        text = parser.feed_line((line + "\n").encode("utf-8"))
-        for rendered_line in text.splitlines():
-            clean = rendered_line.strip()
-            if clean and ANSI_PATTERN.sub("", clean).strip():
-                rendered.append(_clip_line(clean))
+        chunks.append(parser.feed_line((line + "\n").encode("utf-8")))
+    # Coalesce first: parser fragments without trailing newlines (grok thought
+    # tokens) must merge into full lines before any windowing happens.
+    rendered: list[str] = []
+    for rendered_line in "".join(chunks).splitlines():
+        clean = rendered_line.strip()
+        if clean and ANSI_PATTERN.sub("", clean).strip():
+            rendered.append(_clip_line(clean))
     if rendered:
         return rendered[-max_lines:], ""
     if saw_json:
         return [], "no_renderable_events"
-    return [_clip_line(line) for line in tail], ""
+    return [_clip_line(line) for line in lines[-max_lines:]], ""
 
 
 def _run_succeeded(run: dict[str, Any]) -> bool:
+    """True when the run reached a success state with a clean artifact gate."""
     state = str(run.get("state") or "")
     errors = [str(item) for item in (run.get("artifact_errors") or []) if str(item)]
     return (
@@ -451,6 +510,7 @@ def _run_succeeded(run: dict[str, Any]) -> bool:
 
 
 def _run_terminal(run: dict[str, Any]) -> bool:
+    """True when the run's state, liveness, or exit code marks it finished."""
     if str(run.get("state") or "") in TERMINAL_STATES:
         return True
     if str(run.get("liveness") or "") == "terminal":
@@ -459,6 +519,7 @@ def _run_terminal(run: dict[str, Any]) -> bool:
 
 
 def _print_launch_receipt(payload: dict[str, Any]) -> None:
+    """Print the human-readable launch receipt block for a freshly spawned run."""
     run_id = _field(payload, "run_id")
     agent = _field(payload, "agent")
     print("==================== VIBECRAFTED LAUNCH RECEIPT ====================")
@@ -468,6 +529,9 @@ def _print_launch_receipt(payload: dict[str, Any]) -> None:
     print(f"root:       {_field(payload, 'root')}")
     print(f"dispatch:   {_field(payload, 'dispatch', '0')}")
     print(f"status:     {_field(payload, 'status', 'launching')}")
+    reasons = _launch_receipt_reasons(payload)
+    if reasons:
+        print(f"reasons:    {'; '.join(reasons)}")
     print(f"control:    {_field(payload, 'control')}")
     print(f"report:     {_field(payload, 'report')}")
     print(f"transcript: {_field(payload, 'transcript')}")
@@ -478,7 +542,29 @@ def _print_launch_receipt(payload: dict[str, Any]) -> None:
     print("=====================================================================")
 
 
+def _launch_receipt_reasons(payload: dict[str, Any]) -> list[str]:
+    raw = payload.get("reasons") or payload.get("block_reasons")
+    if isinstance(raw, str):
+        reasons = [raw]
+    elif isinstance(raw, (list, tuple)):
+        reasons = [str(item) for item in raw if str(item).strip()]
+    else:
+        reasons = []
+    direct = str(payload.get("reason") or "").strip()
+    if direct and direct not in reasons:
+        reasons.append(direct)
+    failure_card = payload.get("failure_card")
+    if isinstance(failure_card, dict):
+        card_reason = str(
+            failure_card.get("reason") or failure_card.get("message") or ""
+        ).strip()
+        if card_reason and card_reason not in reasons:
+            reasons.append(card_reason)
+    return reasons
+
+
 def _print_resume_session_receipt(payload: dict[str, Any]) -> None:
+    """Print the manual explicit-resume receipt, or a rejection notice to stderr."""
     if not payload.get("accepted"):
         reason = _field(payload, "reason", "launch_rejected")
         print(
@@ -507,6 +593,7 @@ def _print_resume_session_receipt(payload: dict[str, Any]) -> None:
 
 
 def _print_launch_input_error(*, command: str, agent: str | None, message: str) -> None:
+    """Print a launch-spec validation failure with usage hints to stderr."""
     base = f"vibecrafted {command}"
     if agent:
         base = f"{base} {agent}"
@@ -518,6 +605,7 @@ def _print_launch_input_error(*, command: str, agent: str | None, message: str) 
 
 
 def _pid_alive(pid: object) -> bool:
+    """True when a pid exists (signal-0 probe); ``PermissionError`` still counts as alive."""
     if not isinstance(pid, (str, int)):
         return False
     try:
@@ -533,6 +621,7 @@ def _pid_alive(pid: object) -> bool:
 
 
 def _pgid_alive(pgid: object) -> bool:
+    """True when a process group exists (signal-0 probe via ``killpg``)."""
     if not isinstance(pgid, (str, int)):
         return False
     try:
@@ -575,12 +664,17 @@ def _apply_live_liveness(run: dict[str, Any] | None) -> dict[str, Any] | None:
 
     run = dict(run)
     run["liveness"] = "pid_gone"
+    run["liveness_note"] = (
+        "process proof is gone while metadata remains non-terminal; "
+        "projection is not yet reconciled — inspect transcript/report before recovery"
+    )
     return run
 
 
 def _run_for_agent(
     agent: str, run_id: str, *, last: bool = False
 ) -> dict[str, Any] | None:
+    """Resolve one agent's run: by explicit id, or its most recent run when ``last``."""
     # With an explicit run id the scoped, lockless lookup is the whole answer.
     # The old unconditional full sync_state() here queued every await/observe
     # behind the global board lock — during an install/doctor full sync that
@@ -598,6 +692,7 @@ def _run_for_agent(
 
 
 def _print_run_status(run: dict[str, Any], *, include_tail: bool = True) -> None:
+    """Print the standard multi-line run status block, optionally with transcript tail."""
     state = str(run.get("state") or "")
     print(f"run_id:     {run.get('run_id') or ''}")
     print(f"state:      {state}")
@@ -605,6 +700,8 @@ def _print_run_status(run: dict[str, Any], *, include_tail: bool = True) -> None
     print(f"skill:      {run.get('skill') or ''}")
     print(f"root:       {run.get('root') or ''}")
     print(f"liveness:   {run.get('liveness') or ''}")
+    if run.get("liveness_note"):
+        print(f"note:       {run.get('liveness_note')}")
     if run.get("last_error") and state not in {"completed", "report_validated"}:
         print(f"last_error: {run.get('last_error')}")
     print(f"report:     {run.get('latest_report') or run.get('report') or ''}")
@@ -622,6 +719,7 @@ def _print_run_status(run: dict[str, Any], *, include_tail: bool = True) -> None
 
 
 def _agent_observe(agent: str, argv: Sequence[str]) -> int:
+    """``vibecrafted <agent> observe`` verb: print/emit one run's current status."""
     parser = argparse.ArgumentParser(prog=f"vibecrafted {agent} observe")
     parser.add_argument("--run-id", default="")
     parser.add_argument("--last", action="store_true")
@@ -643,6 +741,8 @@ def _agent_observe(agent: str, argv: Sequence[str]) -> int:
 
 
 def _observe_resolved(run_id: str, *, json_output: bool) -> int:
+    """Fallback observe path: resolve a run directly from runtime_runs/artifacts
+    on disk when the control-plane projection has no record of it yet."""
     try:
         resolved = resolve_run(run_id)
     except RunNotResolved as exc:
@@ -684,6 +784,8 @@ def _observe_resolved(run_id: str, *, json_output: bool) -> int:
 
 
 def _agent_await(agent: str, argv: Sequence[str]) -> int:
+    """``vibecrafted <agent> await`` verb: block on control_plane.await_run and
+    print/emit the terminal outcome. Never implement a private polling loop here."""
     # ONE await loop lives in control_plane.await_run — this verb must never
     # grow a private wall-clock loop again. The old inline loop here treated
     # --timeout as an absolute deadline and abandoned demonstrably-working
@@ -738,6 +840,7 @@ def _agent_await(agent: str, argv: Sequence[str]) -> int:
     next_status = {"at": time.monotonic() + status_interval}
 
     def _print_progress(current: dict[str, Any] | None) -> None:
+        """on_poll callback for await_run: print a status line every status_interval."""
         now = time.monotonic()
         if current is not None and now >= next_status["at"]:
             print("await: still running")
@@ -822,6 +925,9 @@ def _cmd_resettle(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Top-level ``vibecrafted`` entrypoint: dispatches to python subcommands,
+    the legacy bash deck, or the acp/dispatch/stop/observe/await verbs based
+    on the invoked name and leading argv token."""
     raw_args = list(sys.argv[1:] if argv is None else argv)
     invoked_as = Path(sys.argv[0]).name if argv is None else "vibecrafted"
     shell_wrapper_verb = SHELL_WRAPPER_VERBS.get(invoked_as) if argv is None else None
@@ -882,6 +988,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if help_requested:
             print(render_workflow_help(raw_args[0]), end="")
             return 0
+
+    try:
+        raw_args = _normalize_research_arity_args(raw_args)
+    except ValueError as exc:
+        print(f"vibecrafted research: {exc}", file=sys.stderr)
+        return 2
 
     python_commands = {
         "acp",

@@ -122,6 +122,7 @@ install-all: init-hooks
 # VERBOSE=1 shows the full bazaar.
 VERBOSE ?= 0
 INSTALL_LOG := $(HOME)/.vibecrafted/install.log
+SLACK_AGENT_SOURCE ?= $(abspath $(SOURCE)/../vc-slack-agent)
 # Invoke via bash, never via the execute bit: sshfs-backed mounts (colima
 # containers viewing a macOS checkout) strip +x from files.
 INSTALL_STEP := bash scripts/install-step.sh
@@ -141,11 +142,11 @@ install:
 	@: > "$(INSTALL_LOG)"
 	@printf "Installing Vibecrafted\n"
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "foundations" -- bash -e -c 'make --no-print-directory init-hooks; bash scripts/install-foundations.sh'
-	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "frontier config" -- bash -c 'bash "$$1/vibecrafted-core/vibecrafted_core/runtime/scripts/install-frontier-config.sh" --source "$$1" || printf "[warn] Frontier config skipped (non-fatal)\n"' _ "$(SOURCE)"
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "runtime tools" -- bash scripts/install-runtime.sh --runtime "$(RUNTIME)" --yes
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "app binaries" -- bash -e -c 'make --no-print-directory install-vendored-binaries; make --no-print-directory install-app-binaries'
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "skills and launchers" -- $(MAKE) --no-print-directory install-bundle-tools
-	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "vc-frame config" -- bash -e -c 'export PATH="$$HOME/.local/bin:$$PATH"; stable_root="$$($(PYTHON) -c '\''import sys; sys.path.insert(0, "$(SOURCE)/scripts"); from runtime_paths import vibecrafted_tools_home; print(vibecrafted_tools_home() / "vibecrafted-current")'\'')"; tool_python="$$(uv tool dir)/vibecrafted/bin/python"; test -x "$$tool_python"; PYTHONPATH="$$stable_root/vibecrafted-core" "$$tool_python" -c "from vibecrafted_core.vc_frame_delivery import wire_vc_frame_config, ensure_zshrc; print(wire_vc_frame_config().render(), end=\"\"); print(ensure_zshrc())"'
+	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "frontier config" -- bash -c 'stable_root="$${XDG_DATA_HOME:-$$HOME/.local/share}/vibecrafted/tools/vibecrafted-current"; bash "$$stable_root/vibecrafted-core/vibecrafted_core/runtime/scripts/install-frontier-config.sh" --source "$$stable_root" || printf "[warn] Frontier config skipped (non-fatal)\n"'
+	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "vc-frame config" -- bash -e -c 'export PATH="$$HOME/.local/bin:$$PATH"; stable_root="$$($(PYTHON) -c '\''import sys; sys.path.insert(0, "$(SOURCE)/scripts"); from runtime_paths import vibecrafted_tools_home; print(vibecrafted_tools_home() / "vibecrafted-current")'\'')"; tool_python="$$(uv tool dir --color never)/vibecrafted/bin/python"; test -x "$$tool_python"; PYTHONPATH="$$stable_root/vibecrafted-core" "$$tool_python" -c "from vibecrafted_core.vc_frame_delivery import wire_vc_frame_config; print(wire_vc_frame_config().render(), end=\"\")"'
 	@printf "\nVibecrafted is ready.\n\nStart here:\n  vc-start\n\nHealth:\n  vibecrafted doctor\n\nLog:\n  ~/.vibecrafted/install.log\n"
 
 # `make install` calls `install-python-tools`; it was an empty .PHONY name
@@ -164,9 +165,12 @@ install-bundle-tools:
 	@set -eu; \
 	case "$(INSTALL_SERVER_SERVICE_POLICY)" in preserve|ensure|isolated) ;; *) echo "[server] INSTALL_SERVER_SERVICE_POLICY must be preserve, ensure, or isolated" >&2; exit 2 ;; esac; \
 	payload=0; \
-	if command -v cargo >/dev/null 2>&1; then \
+	if command -v cargo >/dev/null 2>&1 && command -v cargo-leptos >/dev/null 2>&1; then \
 		$(MAKE) --no-print-directory build-server-release; \
 		payload=1; \
+	elif command -v cargo >/dev/null 2>&1; then \
+		echo "[server] cargo-leptos not found — preserving the installed server payload" >&2; \
+		echo "[server] interactive shell deferred: cargo install cargo-leptos && make install-bundle-tools" >&2; \
 	else \
 		echo "[server] cargo not found — preserving the installed server payload" >&2; \
 	fi; \
@@ -194,6 +198,9 @@ endif
 # both the tools-install lease and, on macOS, the post-drain supervisor fence
 # across publish -> uv replacement. Service reconciliation and handoff sealing
 # remain in the outer Python owner so a shell failure cannot strand ownership.
+# Dispatched workers legitimately carry PYTHONPATH for their immutable runtime
+# generation; clear it only after source-side staging so it cannot override the
+# replacement uv tool or its exact-generation import check.
 install-tools-held:
 	@set -eu; \
 	if [ -z "$${VIBECRAFTED_INSTALL_LEASE_FD:-}" ]; then \
@@ -217,25 +224,55 @@ install-tools-held:
 		echo "[install-tools] FATAL: stable runtime home not staged at $$stable_root; refusing to source the uv-tool from the dev checkout" >&2; \
 		exit 1; \
 	fi; \
+	unset PYTHONPATH; \
 	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-core"; \
 	uv tool install --force --reinstall --editable "$$stable_root/plugins/iterm2"; \
+	echo "[install-tools] NOTICE: replacing vibecrafted-mcp may close attached stdio clients; reconnect the operator session after install" >&2; \
 	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-mcp" --with-editable "$$stable_root/vibecrafted-core"; \
-	tool_root="$$(uv tool dir)/vibecrafted"; \
+	$(PYTHON) -c 'import sys; from pathlib import Path; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; v._install_launcher(Path(sys.argv[1]), dry_run=False, update_rc=False)' "$$stable_root"; \
+	tool_root="$$(uv tool dir --color never)/vibecrafted"; \
 	tool_python="$$tool_root/bin/python"; \
 	if [ ! -x "$$tool_python" ]; then \
 		echo "[install-tools] FATAL: expected uv tool interpreter missing at $$tool_python" >&2; \
 		exit 1; \
 	fi; \
-	for entrypoint in vibecrafted vc-guardian vc-server-supervisor; do \
+	python_entrypoints="$$($(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; print(" ".join(v.PYTHON_ENTRYPOINT_LAUNCHERS))')"; \
+	for entrypoint in $$python_entrypoints; do \
+		entrypoint_tool_root="$$tool_root"; \
+		if [ "$$entrypoint" = "vibecrafted-mcp" ]; then \
+			entrypoint_tool_root="$${tool_root%/vibecrafted}/vibecrafted-mcp"; \
+		fi; \
+		entrypoint_path="$$entrypoint_tool_root/bin/$$entrypoint"; \
+		if [ ! -x "$$entrypoint_path" ]; then \
+			echo "[install-tools] FATAL: uv tool entrypoint $$entrypoint is missing or not executable" >&2; \
+			exit 1; \
+		fi; \
+		entrypoint_shebang="$$(sed -n '1p' "$$entrypoint_path")"; \
+		case "$$entrypoint_shebang" in \
+			"#!$$entrypoint_tool_root/bin/python"|"#!$$entrypoint_tool_root/bin/python3") ;; \
+			"#!/bin/sh") \
+				if ! sed -n '2p' "$$entrypoint_path" | grep -F "$$entrypoint_tool_root/bin/python" >/dev/null; then \
+					echo "[install-tools] FATAL: uv tool entrypoint $$entrypoint is not owned by the uv interpreter: $$entrypoint_shebang" >&2; \
+					exit 1; \
+				fi ;; \
+			*) echo "[install-tools] FATAL: uv tool entrypoint $$entrypoint is not owned by the uv interpreter: $$entrypoint_shebang" >&2; exit 1 ;; \
+		esac; \
+	done; \
+	for entrypoint in vibecrafted vc-workflow vc-guardian vc-server-supervisor; do \
 		resolved="$$(command -v "$$entrypoint" 2>/dev/null || true)"; \
 		if [ -z "$$resolved" ] || [ ! -x "$$resolved" ]; then \
 			echo "[install-tools] FATAL: expected executable entrypoint $$entrypoint was not installed" >&2; \
 			exit 1; \
 		fi; \
 		resolved_real="$$($(PYTHON) -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$$resolved")"; \
-		expected_real="$$($(PYTHON) -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$$tool_root/bin/$$entrypoint")"; \
+		if [ "$$entrypoint" = "vibecrafted" ]; then \
+			expected_path="$$stable_root/vibecrafted-core/vibecrafted_core/deck/vibecrafted"; \
+		else \
+			expected_path="$$tool_root/bin/$$entrypoint"; \
+		fi; \
+		expected_real="$$($(PYTHON) -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$$expected_path")"; \
 		if [ "$$resolved_real" != "$$expected_real" ]; then \
-			echo "[install-tools] FATAL: $$entrypoint resolves to $$resolved_real, expected uv tool target $$expected_real" >&2; \
+			echo "[install-tools] FATAL: $$entrypoint resolves to $$resolved_real, expected installed target $$expected_real" >&2; \
 			exit 1; \
 		fi; \
 		if ! "$$resolved" --help >/dev/null 2>&1; then \
@@ -253,6 +290,7 @@ install-tools-held:
 	if [ "$(INSTALL_SERVER_PAYLOAD)" = "1" ]; then \
 		$(MAKE) --no-print-directory install-server-payload; \
 	fi; \
+	$(PYTHON) scripts/slack_provider.py install --framework-source "$(SOURCE)" --source "$(SLACK_AGENT_SOURCE)"; \
 	echo "[install-tools] staged runtime and uv tools; outer lease owner will reconcile service ownership"
 
 # install-all owns every binary the product ships into BIN (~/.local/bin).
@@ -722,6 +760,7 @@ SERVER_BIN  := vc-server
 SERVER_COMPAT_BIN := vibecrafted-server-web
 SERVER_ADDR ?= 127.0.0.1:3024
 VIBECRAFTED_RUNTIME_HOME ?= $(HOME)/.local/share/vibecrafted
+SERVER_BUILD_SITE_ROOT := $(SERVER_DIR)/target/site
 SERVER_INSTALL_SITE_ROOT := $(VIBECRAFTED_RUNTIME_HOME)/server/site
 
 server-build:
@@ -748,8 +787,29 @@ build-server-release:
 		exit 0; \
 	fi; \
 	set -e; \
-	echo "[server] building release package ($(SERVER_PACKAGE))"; \
-	ulimit -f unlimited; ( cd $(SERVER_DIR) && cargo build --release --locked -p $(SERVER_PACKAGE) --no-default-features --features ssr $(INSTALL_QUIET) )
+	if ! command -v cargo-leptos >/dev/null 2>&1; then \
+		echo "[server] FATAL: cargo-leptos is required to build the interactive server shell" >&2; \
+		exit 1; \
+	fi; \
+	if command -v wasm-bindgen >/dev/null 2>&1; then \
+		lock_version="$$(cd "$(SERVER_DIR)" && $(PYTHON) -c 'import pathlib, tomllib; packages = tomllib.loads(pathlib.Path("Cargo.lock").read_text())["package"]; print(next(item["version"] for item in packages if item["name"] == "wasm-bindgen"))')"; \
+		cli_version="$$(wasm-bindgen --version | awk '{print $$2}')"; \
+		if [ "$$cli_version" != "$$lock_version" ]; then \
+			echo "[server] FATAL: wasm-bindgen CLI $$cli_version does not match Cargo.lock $$lock_version" >&2; \
+			echo "[server] repair: cargo install --force wasm-bindgen-cli --version $$lock_version --locked" >&2; \
+			exit 1; \
+		fi; \
+	fi; \
+	echo "[server] building release package + hydration assets ($(SERVER_PACKAGE))"; \
+	ulimit -f unlimited; ( cd $(SERVER_DIR) && cargo leptos build --release --bin-cargo-args="--locked" --lib-cargo-args="--locked" ); \
+	if [ ! -x "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" ] || [ ! -d "$(SERVER_BUILD_SITE_ROOT)/pkg" ]; then \
+		echo "[server] FATAL: cargo-leptos did not produce the server + site package" >&2; \
+		exit 1; \
+	fi; \
+	if ! find "$(SERVER_BUILD_SITE_ROOT)/pkg" -type f -name '*.wasm' -print -quit | grep -q .; then \
+		echo "[server] FATAL: hydration wasm is missing from $(SERVER_BUILD_SITE_ROOT)/pkg" >&2; \
+		exit 1; \
+	fi
 
 install-server-payload:
 	@set -eu; \
@@ -770,9 +830,9 @@ install-server-payload:
 	rm -f "$(BIN_DIR)/$(SERVER_BIN)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"; \
 	install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_BIN)"; \
 	install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"; \
-	echo "[server] copying public assets/fonts to $(SERVER_INSTALL_SITE_ROOT)"; \
+	echo "[server] copying interactive site assets to $(SERVER_INSTALL_SITE_ROOT)"; \
 	rm -rf "$(SERVER_INSTALL_SITE_ROOT)"/*; \
-	cp -R "$(SERVER_DIR)/web/public/"* "$(SERVER_INSTALL_SITE_ROOT)/"; \
+	cp -R "$(SERVER_BUILD_SITE_ROOT)/." "$(SERVER_INSTALL_SITE_ROOT)/"; \
 	echo "[server] installed: $(SERVER_BIN) -> $(BIN_DIR) (real file)"; \
 	echo "[server] compat: $(SERVER_COMPAT_BIN) -> $(BIN_DIR) (real file)"; \
 	echo "[server] assets -> $(SERVER_INSTALL_SITE_ROOT)"
@@ -795,6 +855,7 @@ install-server-service:
 	fi; \
 	set -e; \
 	export PATH="$(BIN_DIR):$$PATH"; \
+	unset PYTHONPATH; \
 	launcher="$$(command -v vibecrafted 2>/dev/null || true)"; \
 	supervisor="$$(command -v vc-server-supervisor 2>/dev/null || true)"; \
 	if [ -z "$$launcher" ] || [ ! -x "$$launcher" ]; then \

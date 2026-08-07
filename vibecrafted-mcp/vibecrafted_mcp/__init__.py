@@ -15,6 +15,11 @@ __all__ = ["__version__", "build_server", "main"]
 
 
 def __getattr__(name: str) -> Any:
+    """Lazily resolve ``build_server``/``main`` from ``server`` on first access.
+
+    Deferring the ``server`` import here (instead of at module load) is what
+    avoids the import cycle described in the module docstring.
+    """
     if name in {"build_server", "main"}:
         from . import server as _server
 
@@ -23,4 +28,5 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
+    """Report both eagerly-bound globals and the lazily-resolved ``__all__`` names."""
     return sorted({*globals(), *__all__})

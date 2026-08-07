@@ -2978,6 +2978,146 @@ def test_spawn_vc_frame_session_action_happy_path_no_create_background(
     assert not (state / "create").exists()
 
 
+def test_spawn_vc_frame_session_action_ack_timeout_presence_is_success(
+    tmp_path: Path,
+) -> None:
+    """G3b: NewTab ACK timeout but tab already listed → success, no retry."""
+    host = "ack-host"
+    tab = "worker-run-ack"
+    state = tmp_path / "state"
+    state.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f'STATE="{state}"',
+                f'TAB="{tab}"',
+                'printf -- "--CALL--\\n" >> "$STATE/calls"',
+                'printf "%s\\n" "$@" >> "$STATE/calls"',
+                'if [[ "${1:-}" == "list-sessions" ]]; then',
+                f'  printf "%s [Created]\\n" "{host}"',
+                "  exit 0",
+                "fi",
+                # Presence probe path: list-tabs --json after ACK fail.
+                'if [[ "$*" == *list-tabs* ]]; then',
+                '  printf \'[{"name":"%s","tab_id":7}]\\n\' "$TAB"',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "attach" ]]; then',
+                '  printf "UNEXPECTED_CREATE\\n" >> "$STATE/create"',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "--session" ]]; then',
+                "  # First (and only) new-tab: ambiguous ACK. Presence probe succeeds.",
+                "  printf \"action 'NewTab' did not acknowledge completion within 25s\\n\" >&2",
+                "  exit 1",
+                "fi",
+                "exit 1",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        source "{COMMON_SH}"
+        spawn_vc_frame_session_action vc-frame "{host}" action new-tab --name "{tab}" --cwd "{tmp_path}" -- /bin/true
+        printf 'status=%s\\n' "$?"
+        '''
+    )
+
+    assert "status=0" in result.stdout
+    assert "treating as success" in result.stderr
+    calls = (state / "calls").read_text(encoding="utf-8")
+    # One new-tab only — presence probe must not trigger a second create.
+    assert calls.count("new-tab") == 1
+    assert "list-tabs" in calls
+    assert not (state / "create").exists()
+
+
+def test_spawn_vc_frame_session_action_ack_timeout_retries_once(
+    tmp_path: Path,
+) -> None:
+    """G3b: ACK timeout + tab absent → one retry succeeds."""
+    host = "ack-retry-host"
+    tab = "worker-run-retry"
+    state = tmp_path / "state"
+    state.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f'STATE="{state}"',
+                'printf -- "--CALL--\\n" >> "$STATE/calls"',
+                'printf "%s\\n" "$@" >> "$STATE/calls"',
+                'if [[ "${1:-}" == "list-sessions" ]]; then',
+                f'  printf "%s [Created]\\n" "{host}"',
+                "  exit 0",
+                "fi",
+                'if [[ "$*" == *list-tabs* ]]; then',
+                # Empty inventory until the successful retry lands.
+                '  if [[ -f "$STATE/action" ]]; then',
+                f'    printf \'[{{"name":"{tab}","tab_id":9}}]\\n\'',
+                "  else",
+                "    printf '[]\\n'",
+                "  fi",
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "attach" ]]; then',
+                '  printf "UNEXPECTED_CREATE\\n" >> "$STATE/create"',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "--session" ]]; then',
+                '  count="$(wc -l < "$STATE/newtab" 2>/dev/null || echo 0)"',
+                '  printf "x\\n" >> "$STATE/newtab"',
+                '  if [[ "${count// /}" -lt 1 ]]; then',
+                "    printf \"action 'NewTab' did not acknowledge completion within 25s\\n\" >&2",
+                "    exit 1",
+                "  fi",
+                '  printf "action-ok\\n" >> "$STATE/action"',
+                "  exit 0",
+                "fi",
+                "exit 1",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        source "{COMMON_SH}"
+        spawn_vc_frame_session_action vc-frame "{host}" action new-tab --name "{tab}" --cwd "{tmp_path}" -- /bin/true
+        printf 'status=%s\\n' "$?"
+        printf 'action=%s\\n' "$(cat "{state}/action" 2>/dev/null || true)"
+        '''
+    )
+
+    assert "status=0" in result.stdout
+    assert "action-ok" in result.stdout
+    assert "one retry after brief backoff" in result.stderr
+    calls = (state / "calls").read_text(encoding="utf-8")
+    assert calls.count("new-tab") == 2
+    assert not (state / "create").exists()
+
+
 # ---------------------------------------------------------------------------
 # G7 — worker tabs host in per-project sessions, never the operator seat
 # ---------------------------------------------------------------------------

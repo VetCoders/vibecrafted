@@ -1,3 +1,5 @@
+"""Async lifecycle runner: walks a workflow manifest stage-by-stage, launching workers."""
+
 from __future__ import annotations
 
 import argparse
@@ -65,6 +67,7 @@ def delivery_axes_for_receipt(
         )
 
     def enum_value(name: str, enum_type: type[Any], default: Any) -> str:
+        """Coerce a raw payload field into a valid enum value, or fall back to default."""
         raw = source.get(name)
         if (
             name == "execution_state"
@@ -225,6 +228,8 @@ def _read_phase_evidence(
     await_result: dict[str, Any],
     observed_paths: list[str],
 ) -> dict[str, Any]:
+    """Reconcile the READ-stage worker's self-attested code_mutation claim against
+    observed repository deltas; classifies attribution and hard-violation status."""
     launch_value = record.get("launch")
     launch = launch_value if isinstance(launch_value, dict) else {}
     report_path = str(await_result.get("report") or launch.get("report") or "").strip()
@@ -261,6 +266,7 @@ def _read_phase_evidence(
 
 
 def _read_phase_violation_error(record: dict[str, Any]) -> str:
+    """Human-readable error message describing why a READ-phase stage failed hard."""
     evidence_value = record.get("read_phase_evidence")
     evidence = evidence_value if isinstance(evidence_value, dict) else {}
     claim = str(evidence.get("worker_claim") or "invalid")
@@ -277,6 +283,8 @@ def _read_phase_violation_error(record: dict[str, Any]) -> str:
 
 @dataclass(frozen=True)
 class LifecycleRunSpec:
+    """Immutable request to launch (or continue) a lifecycle run for one workflow."""
+
     workflow_id: str
     agent: str
     # Protocol adapters may need to publish the parent lifecycle identity
@@ -306,6 +314,7 @@ class LifecycleRunSpec:
 
 
 def _lifecycle_run_id(workflow_id: str) -> str:
+    """Generate a unique lifecycle run id: ``life-<wf4>-<timestamp>-<CSPRNG entropy>``."""
     stamp = time.strftime("%y%m%d-%H%M%S")
     code = workflow_id.removeprefix("vc-")[:4].ljust(4, "x")
     # CSPRNG, not clock remainder — see workflow.reserve_run_id.
@@ -314,6 +323,7 @@ def _lifecycle_run_id(workflow_id: str) -> str:
 
 
 def _git_head(root: Path) -> str:
+    """Current HEAD commit sha of ``root``, or "" if git is unavailable/fails."""
     try:
         proc = subprocess.run(
             ["git", "-C", str(root), "rev-parse", "HEAD"],
@@ -328,6 +338,7 @@ def _git_head(root: Path) -> str:
 
 
 def _git_status(root: Path) -> list[str]:
+    """Sorted, non-empty ``git status --porcelain`` lines for ``root``; [] on failure."""
     try:
         proc = subprocess.run(
             ["git", "-C", str(root), "status", "--porcelain"],
@@ -344,6 +355,7 @@ def _git_status(root: Path) -> list[str]:
 
 
 def _status_paths(lines: list[str]) -> set[str]:
+    """Extract bare file paths from ``git status --porcelain`` lines (rename-aware)."""
     paths: set[str] = set()
     for line in lines:
         raw = line[3:] if len(line) > 3 else line
@@ -355,6 +367,7 @@ def _status_paths(lines: list[str]) -> set[str]:
 
 
 def _file_fingerprint(root: Path, relative_path: str) -> str:
+    """Sha256 hex digest of a file's contents, or "dir"/"missing"/"error:<Type>" markers."""
     path = root / relative_path
     try:
         if path.is_dir():
@@ -371,6 +384,7 @@ def _file_fingerprint(root: Path, relative_path: str) -> str:
 
 
 def _git_worktree_snapshot(root: Path, status_lines: list[str]) -> dict[str, str]:
+    """Map each dirty path from status lines to its current content fingerprint."""
     return {path: _file_fingerprint(root, path) for path in _status_paths(status_lines)}
 
 
@@ -380,6 +394,7 @@ def _changed_paths_between(
     before_snapshot: dict[str, str],
     after_snapshot: dict[str, str],
 ) -> list[str]:
+    """Paths that newly appeared in status or whose fingerprint changed, before vs after."""
     paths = _status_paths(after_status) - _status_paths(before_status)
     for path in set(before_snapshot) | set(after_snapshot):
         if before_snapshot.get(path) != after_snapshot.get(path):
@@ -388,6 +403,8 @@ def _changed_paths_between(
 
 
 def _commits_between(root: Path, before: str, after: str) -> list[str]:
+    """Commit shas reachable from ``before..after`` in chronological order; [after] on
+    a git-command failure so the caller still sees something happened."""
     if not before or not after or before == after:
         return []
     try:
@@ -405,6 +422,7 @@ def _commits_between(root: Path, before: str, after: str) -> list[str]:
 
 
 def _committed_paths_between(root: Path, before: str, after: str) -> list[str]:
+    """Sorted file paths touched by committed diffs between ``before`` and ``after``."""
     if not before or not after or before == after:
         return []
     try:
@@ -423,6 +441,8 @@ def _committed_paths_between(root: Path, before: str, after: str) -> list[str]:
 
 
 def _read_file(path: str) -> str:
+    """Read a text file's contents; on I/O failure return a fallback instruction string
+    rather than raising, so the worker prompt still names the file to check."""
     if not path:
         return ""
     try:
@@ -432,6 +452,7 @@ def _read_file(path: str) -> str:
 
 
 def load_context_atlas(root: Path, *, task: str) -> dict[str, Any]:
+    """Run ``loct context --task`` in ``root`` and capture its output (or the failure)."""
     command = ["loct", "context", "--task", task]
     try:
         proc = subprocess.run(
@@ -460,6 +481,7 @@ def load_context_atlas(root: Path, *, task: str) -> dict[str, Any]:
 
 
 def _context_excerpt(context: dict[str, Any]) -> str:
+    """Human-readable excerpt from a load_context_atlas() result for embedding in a prompt."""
     stdout = str(context.get("stdout") or "").strip()
     stderr = str(context.get("stderr") or "").strip()
     if stdout:
@@ -473,6 +495,7 @@ def _context_excerpt(context: dict[str, Any]) -> str:
 
 
 def _env_float(name: str, default: float | None) -> float | None:
+    """Parse a positive float from an env var, falling back to ``default`` if unset/invalid."""
     raw = str(os.environ.get(name) or "").strip()
     if not raw:
         return default
@@ -525,6 +548,7 @@ def _surfaced_dou_index(payload: dict[str, Any]) -> int | None:
 
 
 def _state_dou_value(state: dict[str, Any]) -> int | None:
+    """Validated DoU index already recorded on the lifecycle state, if any."""
     dou = state.get("dou_index")
     if not isinstance(dou, dict):
         return None
@@ -709,12 +733,15 @@ def _lifecycle_max_stage_launches(manifest: WorkflowManifest) -> int:
 
 
 class LifecycleRunner:
+    """Drives one lifecycle run: launches each stage's worker and walks the manifest graph."""
+
     def __init__(
         self,
         *,
         launcher: LaunchWorkflow = launch_workflow,
         awaiter: AwaitWorkflow | None = None,
     ) -> None:
+        """Wire the workflow launcher and awaiter (defaults to the real runtime paths)."""
         self.launcher = launcher
         self.awaiter = awaiter or (
             lambda payload: await_launch_truth(
@@ -726,6 +753,8 @@ class LifecycleRunner:
         )
 
     async def run(self, spec: LifecycleRunSpec) -> dict[str, Any]:
+        """Execute the full lifecycle: initialize state, then loop launching stages until
+        the baton has no next_stage, a hard violation fires, or the stage cap is hit."""
         manifest = workflow_manifest(spec.workflow_id)
         if manifest is None:
             raise ValueError(f"Unsupported lifecycle workflow: {spec.workflow_id}")
@@ -950,6 +979,8 @@ class LifecycleRunner:
         context: dict[str, Any],
         state_path: Path | None = None,
     ) -> dict[str, Any]:
+        """Build the stage prompt, capture the pre-launch git baseline, and launch the
+        stage worker; returns the initial stage record (before await/completion)."""
         prompt = self._stage_prompt(
             manifest=manifest,
             stage=stage,
@@ -1014,6 +1045,8 @@ class LifecycleRunner:
         previous_reports: list[str],
         context: dict[str, Any],
     ) -> str:
+        """Render the full worker-facing prompt for a stage, embedding the manifest
+        contract, prior reports, the context atlas excerpt, and the operator prompt."""
         previous = "\n".join(f"- {path}" for path in previous_reports) or "- none"
         mutation = "may modify code" if stage.can_modify_code else "must stay read-only"
         atlas = _context_excerpt(context)
@@ -1089,6 +1122,9 @@ Operator prompt:
         stage: WorkflowStage,
         await_result: dict[str, Any],
     ) -> str:
+        """Resolve the next stage id: worker-requested steering wins if manifest-known,
+        else fall back to the fallback_stage on a failed artifact, else audit_after,
+        else the manifest's default next_stage."""
         requested = str(await_result.get("next_stage") or "").strip()
         if requested and manifest.stage(requested) is not None:
             return requested
@@ -1117,6 +1153,7 @@ Operator prompt:
         dou_index: int | None,
         reason: str,
     ) -> dict[str, Any]:
+        """Assemble the baton payload handed to the next stage/operator decision."""
         return {
             "from_stage": stage.id,
             "from_phase": stage.phase,
@@ -1130,13 +1167,16 @@ Operator prompt:
         }
 
     def _write_state(self, path: Path, state: dict[str, Any]) -> None:
+        """Instance-method wrapper over the module-level write_lifecycle_state."""
         write_lifecycle_state(path, state)
 
     def _write_report(self, path: Path, state: dict[str, Any]) -> None:
+        """Instance-method wrapper over the module-level write_lifecycle_report."""
         write_lifecycle_report(path, state)
 
 
 def write_lifecycle_state(path: Path, state: dict[str, Any]) -> None:
+    """Persist a lifecycle run's state.json, pretty-printed and key-sorted."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(state, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
@@ -1397,6 +1437,7 @@ def record_stage_worker_completion(
 
 
 def write_lifecycle_report(path: Path, state: dict[str, Any]) -> None:
+    """Render the human-readable Markdown lifecycle report.md from run state."""
     stages = state.get("stages") or []
     axes = delivery_axes_for_receipt(str(state.get("status") or ""), state)
     lines = [
@@ -1483,16 +1524,20 @@ class LifecycleSupervisor:
     """Small async facade for lifecycle supervision and future server wiring."""
 
     def __init__(self, runner: LifecycleRunner | None = None) -> None:
+        """Wrap a LifecycleRunner (or construct the default one)."""
         self.runner = runner or LifecycleRunner()
 
     async def start(self, spec: LifecycleRunSpec) -> dict[str, Any]:
+        """Delegate to the wrapped runner's run()."""
         return await self.runner.run(spec)
 
     def read_state(self, state_path: str | Path) -> dict[str, Any]:
+        """Load a lifecycle run's state.json from disk."""
         path = Path(state_path).expanduser()
         return json.loads(path.read_text(encoding="utf-8"))
 
     def status(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Compact status projection of a lifecycle state: stage, axes, baton, liveness."""
         stages = list(state.get("stages") or [])
         last_stage = stages[-1] if stages else {}
         stage_launch = dict(last_stage.get("launch") or {})
@@ -1521,10 +1566,12 @@ class LifecycleSupervisor:
 
 
 def run_lifecycle(spec: LifecycleRunSpec) -> dict[str, Any]:
+    """Synchronous entrypoint: run a lifecycle spec to completion via asyncio.run."""
     return asyncio.run(LifecycleSupervisor().start(spec))
 
 
 def _print_lifecycle_receipt(state: dict[str, Any]) -> None:
+    """Print the human-readable terminal receipt block for a finished lifecycle run."""
     workflow = str(state.get("workflow") or "lifecycle")
     title = f"{workflow.upper()} LIFECYCLE RECEIPT"
     print(f"==================== {title} ====================")
@@ -1541,12 +1588,14 @@ def _print_lifecycle_receipt(state: dict[str, Any]) -> None:
 
 
 def _control_verbs() -> frozenset[str]:
+    """Lazily import the operator control-verb set (avoids a module import cycle)."""
     from .lifecycle_control import CONTROL_VERBS
 
     return CONTROL_VERBS
 
 
 def lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
+    """CLI entrypoint for a lifecycle workflow: dispatches control verbs or launches a run."""
     manifest = workflow_manifest(workflow_id)
     if manifest is None:
         raise ValueError(f"Unsupported lifecycle workflow: {workflow_id}")

@@ -27,10 +27,16 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 
 def _trim_home(path: str) -> str:
+    """Replace the user's home directory prefix in path with `~`."""
     return path.replace(str(Path.home()), "~")
 
 
 def run_manifest_diagnostics(manifest: Any) -> dict[str, dict[str, dict[str, Any]]]:
+    """Run the manifest's generic diagnostics.categories/commands/paths checks.
+
+    Returns a nested {category: {name: {label, found, detail, kind}}} map,
+    empty when the manifest has no `diagnostics` table.
+    """
     diags: dict[str, dict[str, dict[str, Any]]] = {}
     if not manifest or not manifest.diagnostics:
         return diags
@@ -80,6 +86,7 @@ def run_manifest_diagnostics(manifest: Any) -> dict[str, dict[str, dict[str, Any
 def summarize_diagnostics(
     diags: dict[str, dict[str, dict[str, Any]]], manifest: Any
 ) -> tuple[list[str], list[str], dict[str, list[str]]]:
+    """Flatten diagnostics results into (found labels, missing labels, missing-by-category)."""
     found_items: list[str] = []
     missing_items: list[str] = []
     needs_install: dict[str, list[str]] = {}
@@ -147,9 +154,11 @@ class InstallerIntroApp(App):
     ]
 
     def action_scroll_up(self) -> None:
+        """Scroll the content pane up one step."""
         self.query_one("#scroll-area", VerticalScroll).scroll_up()
 
     def action_scroll_down(self) -> None:
+        """Scroll the content pane down one step."""
         self.query_one("#scroll-area", VerticalScroll).scroll_down()
 
     def __init__(
@@ -160,6 +169,7 @@ class InstallerIntroApp(App):
         advanced: bool = False,
         manifest: Any = None,
     ) -> None:
+        """Seed the wizard's screen deck and mutable diagnostics/install state."""
         super().__init__()
         self._screens = screens
         self._version = version
@@ -194,20 +204,24 @@ class InstallerIntroApp(App):
         self._diag_msg = "Starting..."
 
     def compose(self) -> ComposeResult:
+        """Lay out the sticky header, scrollable content area, and sticky footer."""
         yield Static(id="header", markup=False)
         with VerticalScroll(id="scroll-area"):
             yield Vertical(id="content-container")
         yield Static(id="footer", markup=False)
 
     async def on_mount(self) -> None:
+        """Render the first screen once the app widgets are mounted."""
         await self._render_screen()
 
     def action_toggle_details(self) -> None:
+        """Toggle expanded-detail rendering for the diagnostics/results screens."""
         self.details_view = not self.details_view
         if self._current in (3, 4):
             self.call_later(self._render_content)
 
     async def _render_screen(self) -> None:
+        """Redraw header/footer chrome and content for the current screen index."""
         idx = min(self._current, len(self._screens) - 1)
         header, _content, footer = self._screens[idx]
 
@@ -222,6 +236,7 @@ class InstallerIntroApp(App):
         self.query_one("#scroll-area", VerticalScroll).scroll_home(animate=False)
 
     def _terminal_size(self) -> tuple[int, int]:
+        """Return (width, height) from the live app size, falling back to shutil."""
         size = getattr(self, "size", None)
         width = int(getattr(size, "width", 0) or 0)
         height = int(getattr(size, "height", 0) or 0)
@@ -231,17 +246,21 @@ class InstallerIntroApp(App):
         return fallback.columns, fallback.lines
 
     def _pane_width(self) -> int:
+        """Content pane width: terminal width minus a 2-column margin, floored."""
         width, _ = self._terminal_size()
         return max(DEFAULT_RENDER_WIDTH, width - 2)
 
     def _render_width(self) -> int:
+        """Box-drawing render width, clamped between the default and max widths."""
         return max(DEFAULT_RENDER_WIDTH, min(self._pane_width(), MAX_RENDER_WIDTH))
 
     def _install_box_rows(self) -> int:
+        """Row budget for the scrolling install-log box given current terminal height."""
         _, height = self._terminal_size()
         return max(INSTALL_BOX_MIN_ROWS, height - INSTALL_BOX_FIXED_CHROME_ROWS)
 
     def _render_chrome(self, text: str) -> str:
+        """Center each line of header/footer text (or expand a rule) to pane width."""
         width = self._pane_width()
         lines = []
         for raw_line in text.splitlines():
@@ -255,6 +274,7 @@ class InstallerIntroApp(App):
         return "\n".join(lines)
 
     def _render_box(self, title: str, body_lines: list[str], rows: int = 0) -> str:
+        """Draw a box-drawn panel with a titled header, tailing/padding to `rows` lines."""
         width = self._render_width()
         inner_width = max(24, width - 6)
         display_lines = body_lines[:]
@@ -274,6 +294,7 @@ class InstallerIntroApp(App):
         return "\n".join(lines)
 
     def _wrap_panel_line(self, label: str, value: str, width: int) -> list[str]:
+        """Word-wrap value under a fixed-width label, indenting continuation lines."""
         label_text = f"  {label:<11} "
         body_width = max(24, width - len(label_text))
         wrapped = textwrap.wrap(value, width=body_width) or [""]
@@ -283,6 +304,7 @@ class InstallerIntroApp(App):
         return lines
 
     def _render_install_panel(self, title: str, status_lines: list[str]) -> str:
+        """Render the live install status panel: phase rail, checkpoint, latest status line."""
         width = self._render_width()
         visible = [line for line in status_lines if line.strip()]
         if not visible:
@@ -320,6 +342,7 @@ class InstallerIntroApp(App):
         return "\n".join(lines)
 
     def _render_phase_rail(self, width: int) -> str:
+        """Render the ●/◆/○ phase-progress rail, truncated with an ellipsis at width."""
         names = self.install_phase_names or [self.install_phase_label]
         parts = []
         for index, name in enumerate(names, start=1):
@@ -341,6 +364,7 @@ class InstallerIntroApp(App):
         return rail
 
     def _summarize_phase_reason(self, reason: str) -> str:
+        """Collapse a multi-line phase reason block to one display line."""
         lines = [
             line.strip().lstrip("-").strip()
             for line in reason.splitlines()
@@ -353,6 +377,11 @@ class InstallerIntroApp(App):
         return lines[0]
 
     async def _render_content(self) -> None:
+        """Remount the content pane's widgets for the current screen.
+
+        Also kicks off diagnostics (screen 3) or install (screen 5) as a
+        side effect the first time each of those screens is shown.
+        """
         container = self.query_one("#content-container", Vertical)
         await container.query("*").remove()
 
@@ -376,6 +405,7 @@ class InstallerIntroApp(App):
             await container.mount(Static(self._build_step_6(), markup=True))
 
     def _build_step_3(self) -> str:
+        """Render the diagnostics screen: preflight box plus per-category results."""
         lines = []
         lines.append("  [bold]Diagnostics[/bold]\n")
 
@@ -417,16 +447,19 @@ class InstallerIntroApp(App):
 
     @work(exclusive=True, thread=True)
     def run_diagnostics(self) -> None:
+        """Run manifest diagnostics on a worker thread, then hand results back to the UI."""
         self.app.call_from_thread(self._update_diag_msg, "Running diagnostics...")
         diags = run_manifest_diagnostics(self.manifest)
         self.app.call_from_thread(self._finish_diagnostics, diags)
 
     def _update_diag_msg(self, msg: str) -> None:
+        """Update the preflight status message and re-render if screen 3 is visible."""
         self._diag_msg = msg
         if self._current == 3:
             self._update_static_content(self._build_step_3())
 
     def _finish_diagnostics(self, diags) -> None:
+        """Store diagnostics results, seed default selections, and auto-advance."""
         self.diagnostics_results = diags
         self.found_items, self.missing_items, self.needs_install = (
             summarize_diagnostics(diags, self.manifest)
@@ -439,6 +472,7 @@ class InstallerIntroApp(App):
             self.action_next_screen()
 
     def _update_static_content(self, text: str) -> None:
+        """Update the content pane's Static widget text, tolerating a mid-refresh unmount."""
         try:
             widget = self.query_one("#content-container > Static", Static)
             widget.update(text)
@@ -446,6 +480,7 @@ class InstallerIntroApp(App):
             _ = _update_exc  # widget may be unmounted mid-refresh
 
     def _build_step_4_static(self) -> str:
+        """Render the read-only results screen: found vs. missing items."""
         lines = ["[bold]  Results[/bold]\n"]
         lines.append("  [bold]Already have[/bold] (no action needed)")
         if not self.found_items:
@@ -461,6 +496,7 @@ class InstallerIntroApp(App):
         return "\n".join(lines)
 
     async def _mount_step_4_advanced(self, container: Vertical) -> None:
+        """Mount the advanced results screen: found items plus toggleable checkboxes."""
         await container.mount(
             Static(
                 "[bold]  Results (Advanced Mode)[/bold]\n\n  [bold]Already have[/bold] (no action needed)",
@@ -482,6 +518,7 @@ class InstallerIntroApp(App):
             await container.mount(cb)
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
+        """Sync selected_items with an advanced-mode checkbox toggle."""
         if event.checkbox.label is None:
             return
         item = str(event.checkbox.label)
@@ -491,6 +528,7 @@ class InstallerIntroApp(App):
             self.selected_items.discard(item)
 
     def _build_step_5(self) -> str:
+        """Render the live installation screen: status panel plus per-item outcome."""
         lines = ["  [bold]Installation[/bold]\n"]
 
         if self.install_running:
@@ -536,6 +574,11 @@ class InstallerIntroApp(App):
 
     @work(exclusive=True, thread=True)
     def run_install(self) -> None:
+        """Run the manifest's non-diagnostic phases sequentially on a worker thread.
+
+        Streams subprocess output back to the UI line-by-line and stops at
+        the first non-optional phase failure.
+        """
         self.install_running = True
 
         # Loop through manifest phases
@@ -591,18 +634,25 @@ class InstallerIntroApp(App):
         self.app.call_from_thread(self._finish_install, exit_code, err)
 
     def _set_install_phases(self, names: list[str]) -> None:
+        """Record the ordered runnable-phase labels and refresh the phase rail."""
         self.install_phase_names = names
         self.install_phase_total = len(names)
         if self._current == 5:
             self._update_static_content(self._build_step_5())
 
     def _set_install_phase(self, index: int, label: str, reason: str) -> None:
+        """Advance the current-phase pointer and log a start marker for it."""
         self.install_phase_index = index
         self.install_phase_label = label
         self.install_phase_reason = reason
         self._add_install_log(f"{label} started.")
 
     def _status_from_install_line(self, line: str) -> str | None:
+        """Distill a raw subprocess output line into a short status string, or None to drop it.
+
+        Strips ANSI/box-drawing noise, filters boilerplate "ok/done" lines,
+        and condenses long paths to "Checking <basename>".
+        """
         clean = ANSI_RE.sub("", line)
         clean = BOX_DRAWING_RE.sub(" ", clean)
         clean = re.sub(r"\s+", " ", clean).strip()
@@ -627,6 +677,7 @@ class InstallerIntroApp(App):
         return clean
 
     def _add_install_log(self, line: str) -> None:
+        """Append a raw log line and, if it yields a new status, the status tail too."""
         self.install_log.append(line)
         if len(self.install_log) > INSTALL_OUTPUT_TAIL:
             self.install_log = self.install_log[-INSTALL_OUTPUT_TAIL:]
@@ -641,6 +692,7 @@ class InstallerIntroApp(App):
             self._update_static_content(self._build_step_5())
 
     def _finish_install(self, rc: int, err: str | None) -> None:
+        """Record the install outcome and auto-advance from the install screen."""
         self.install_running = False
         self.install_done = True
         self.install_exit_code = rc
@@ -650,6 +702,7 @@ class InstallerIntroApp(App):
             self.action_next_screen()
 
     def _build_step_6(self) -> str:
+        """Render the final screen: success/failure banner plus branded next steps."""
         lines = []
         if self.install_exit_code == 0:
             lines.append("  [bold green]Installation complete.[/bold green]\n")
@@ -682,6 +735,7 @@ class InstallerIntroApp(App):
     # -- Actions bound to keys ----------------------------------------------
 
     def action_next_screen(self) -> None:
+        """Advance to the next screen, gated on diagnostics/install completion; exits at the end."""
         if self._current == 3 and not self.diagnostics_done:
             return
         if self._current == 5 and not self.install_done:
@@ -695,6 +749,7 @@ class InstallerIntroApp(App):
             self.exit()
 
     def action_prev_screen(self) -> None:
+        """Step back a screen, unless the current screen locks navigation (3, 5, 6)."""
         if self._current in (3, 5, 6):
             return
         if self._current > 0:
@@ -702,6 +757,7 @@ class InstallerIntroApp(App):
             self.call_later(self._render_screen)
 
     def action_quit_installer(self) -> None:
+        """Quit the wizard, unless an install is actively running (screen 5)."""
         if self._current == 5 and self.install_running:
             return
         self.result = "quit"

@@ -5,67 +5,74 @@
 
 :root {
   /* Backgrounds (warm dark print surfaces) */
-  --ink:   #0e0e0e;       /* page background — neutral ink, not pure black */
-  --ink2:  #161616;       /* alternating/editorial section tone */
-  --ink3:  #1e1e1e;       /* elevated editorial surface */
+  --ink: #0e0e0e; /* page background — neutral ink, not pure black */
+  --ink2: #161616; /* alternating/editorial section tone */
+  --ink3: #1e1e1e; /* elevated editorial surface */
 
   /* Foreground (cream-on-ink, editorial print feel).
    * Bone bumped 2026-05-03 from #ece7dc → #f5f1e7 — slightly brighter, less yellow.
    * Body/subtle alphas raised so the text reads as "warm white" not "cream". */
-  --bone:        #f5f1e7;
-  --bone-dim:    rgba(245, 241, 231, 0.86);  /* body text */
-  --bone-mute:   rgba(245, 241, 231, 0.64);  /* subtle text */
-  --bone-faint:  rgba(245, 241, 231, 0.20);  /* borders — decorative, exempted from WCAG contrast */
+  --bone: #f5f1e7;
+  --bone-dim: rgba(245, 241, 231, 0.86); /* body text */
+  --bone-mute: rgba(245, 241, 231, 0.64); /* subtle text */
+  --bone-faint: rgba(
+    245,
+    241,
+    231,
+    0.2
+  ); /* borders — decorative, exempted from WCAG contrast */
 
   /* Nav-specific themable surfaces (sticky nav has slight transparency for blur).
    * Light theme override below flips ink → white. */
-  --nav-bg:        rgba(14, 14, 14, 0.88);       /* sticky topnav background */
-  --nav-bg-mobile: rgba(14, 14, 14, 0.94);       /* mobile drawer expansion */
-  --nav-bg-strip:  rgba(14, 14, 14, 0.96);       /* install strip overlay */
-  --btn-border:    rgba(255, 255, 255, 0.42);    /* install pill outline */
-  --btn-bg-hover:  rgba(255, 255, 255, 0.045);   /* install pill hover wash */
-  --modal-backdrop: rgba(14, 14, 14, 0.78);      /* pricing modal backdrop blur */
+  --nav-bg: rgba(14, 14, 14, 0.88); /* sticky topnav background */
+  --nav-bg-mobile: rgba(14, 14, 14, 0.94); /* mobile drawer expansion */
+  --nav-bg-strip: rgba(14, 14, 14, 0.96); /* install strip overlay */
+  --btn-border: rgba(255, 255, 255, 0.42); /* install pill outline */
+  --btn-bg-hover: rgba(255, 255, 255, 0.045); /* install pill hover wash */
+  --modal-backdrop: rgba(14, 14, 14, 0.78); /* pricing modal backdrop blur */
 
   /* Accents — two-color editorial system (post-2026-05-05 consolidation).
    * --amber is the narrative accent (hero emphasis, CTA, active stats, warm
    *   markers, italic <em> in headings, tag-cycles, mistake markers).
    * --teal is the interaction accent (hover, focus, state). */
-  --amber:       #c99a3b;  /* narrative accent + warning/waiting */
-  --teal:        #3d7a72;  /* state, success, highlight, focus glow */
+  --amber: #c99a3b; /* narrative accent + warning/waiting */
+  --teal: #3d7a72; /* state, success, highlight, focus glow */
 
   /* ─── Semantic layer ────────────────────────────────────────────────────
    * UI components consume these role names, not the brand primitives above.
    * This is what survives a brand repaint. */
 
   /* Surface roles */
-  --surface-page:    var(--ink);
+  --surface-page: var(--ink);
   --surface-section: var(--ink2);
-  --surface-card:    var(--ink-card);
+  --surface-card: var(--ink-card);
   --surface-elevated: var(--ink3);
 
   /* Text roles */
-  --text-primary:   var(--bone);
+  --text-primary: var(--bone);
   --text-secondary: var(--bone-dim);
-  --text-muted:     var(--bone-mute);
-  --text-faint:     var(--bone-faint);
+  --text-muted: var(--bone-mute);
+  --text-faint: var(--bone-faint);
 
   /* Accent roles — two-color editorial system */
-  --accent-narrative:   var(--amber);   /* hero "see", evidence stats, mistake markers, narrative beats */
-  --accent-interaction: var(--teal);    /* hover, focus, success, demo glow */
-  --focus-ring:         var(--teal);
+  --accent-narrative: var(
+    --amber
+  ); /* hero "see", evidence stats, mistake markers, narrative beats */
+  --accent-interaction: var(--teal); /* hover, focus, success, demo glow */
+  --focus-ring: var(--teal);
 
   /* Status tokens — semantic, not decorative.
    * Without these, agents will reach for amber for warning/active/featured/error/CTA all at once. */
   --status-success: var(--teal);
   --status-warning: var(--amber);
-  --status-info:    var(--bone-dim);
-  --status-danger:  #b86a5c;            /* status-only — NOT a brand accent. Keep dim and never reuse for branding. */
+  --status-info: var(--bone-dim);
+  --status-danger: #b86a5c; /* status-only — NOT a brand accent. Keep dim and never reuse for branding. */
 
   /* Elevation scale — sections rest, cards lift on interaction, modals own the highest layer.
    * Do not invent ad-hoc box-shadows; pick from this scale. */
-  --shadow-rest:   none;
-  --shadow-hover:  0 8px 24px rgba(0, 0, 0, 0.30);
-  --shadow-modal:  0 24px 80px rgba(0, 0, 0, 0.55);
+  --shadow-rest: none;
+  --shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.3);
+  --shadow-modal: 0 24px 80px rgba(0, 0, 0, 0.55);
   --border-subtle: rgba(255, 255, 255, 0.06);
   --border-active: rgba(61, 122, 114, 0.25);
 
@@ -74,13 +81,16 @@
   --motion-fast: 160ms;
   --motion-base: 220ms;
   --motion-slow: 420ms;
-  --ease-ui:        ease;
+  --ease-ui: ease;
   --ease-editorial: cubic-bezier(0.2, 0.8, 0.2, 1);
 
   /* Typography roles */
-  --font-display: 'Instrument Serif', 'Instrument Serif Fallback', ui-serif, Georgia, serif;
-  --font-body:    'Inter', 'Inter Fallback', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+  --font-display:
+    "Instrument Serif", "Instrument Serif Fallback", ui-serif, Georgia, serif;
+  --font-body:
+    "Inter", "Inter Fallback", system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
 
   /* Spacing scale (4px base) */
   --space-1: 0.25rem;
@@ -115,9 +125,10 @@
   --card-border-color: rgba(255, 255, 255, 0.06);
   --card-border-hover: rgba(255, 255, 255, 0.16);
   --card-border: 1px solid var(--card-border-color);
-  --card-transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
-  --card-feature-icon-bg: rgba(61, 122, 114, 0.10);
-  --card-feature-icon-border: rgba(61, 122, 114, 0.20);
+  --card-transition:
+    border-color 160ms ease, background 160ms ease, transform 160ms ease;
+  --card-feature-icon-bg: rgba(61, 122, 114, 0.1);
+  --card-feature-icon-border: rgba(61, 122, 114, 0.2);
 
   /* Layout width scale */
   --max-w-page: 1180px;
@@ -188,9 +199,13 @@
    * stack logos sit at a quieter neutral so the chip cluster reads as a
    * field rather than a parade. */
   --icon-color-default: rgba(243, 238, 232, 0.68);
-  --icon-color-card: var(--amber);            /* feature card icons — narrative warm */
-  --icon-color-active: var(--amber);          /* active interaction — consolidated into amber family */
-  --icon-color-success: var(--teal);          /* success state — consolidated into teal (state) family */
+  --icon-color-card: var(--amber); /* feature card icons — narrative warm */
+  --icon-color-active: var(
+    --amber
+  ); /* active interaction — consolidated into amber family */
+  --icon-color-success: var(
+    --teal
+  ); /* success state — consolidated into teal (state) family */
   --icon-color-stack: rgba(243, 238, 232, 0.74);
 
   /* Rounded square containers (NOT circles — circles read as buttons,
@@ -201,7 +216,7 @@
   --icon-box-bg: rgba(255, 255, 255, 0.035);
   --icon-box-border: rgba(255, 255, 255, 0.08);
   --icon-box-bg-hover: rgba(61, 122, 114, 0.12);
-  --icon-box-border-hover: rgba(61, 122, 114, 0.30);
+  --icon-box-border-hover: rgba(61, 122, 114, 0.3);
 
   /* Stack chips */
   --chip-stack-height: 34px;
@@ -230,28 +245,41 @@
 /* Italic emphasis pattern (drugie słowo/fraza w sekcji)
  * Used as: Statement before <em class="warm">emphasis</em>
  * warm = identity/hot, cool = solution/done */
-em.warm  { font-style: italic; color: var(--bone); font-family: var(--font-display); }
-em.cool  { font-style: italic; color: var(--bone); font-family: var(--font-display); }
+em.warm {
+  font-style: italic;
+  color: var(--bone);
+  font-family: var(--font-display);
+}
+em.cool {
+  font-style: italic;
+  color: var(--bone);
+  font-family: var(--font-display);
+}
 
 /* Light theme override — opt-in via <html data-theme="light"> attribute set
  * by ThemeContext in app.rs. Inverts ink/bone palette; accent micro-colors
  * (rust/teal/amber/accent-red) zostają — działają na obu tłach. */
 :root[data-theme="light"] {
-  --ink:   #fbfbf8;                       /* page background — warm off-white */
-  --ink2:  rgba(5, 5, 4, 0.04);           /* glass surfaces */
-  --ink3:  rgba(5, 5, 4, 0.07);           /* elevated glass */
+  --ink: #fbfbf8; /* page background — warm off-white */
+  --ink2: rgba(5, 5, 4, 0.04); /* glass surfaces */
+  --ink3: rgba(5, 5, 4, 0.07); /* elevated glass */
 
-  --bone:        #050504;                 /* primary text */
-  --bone-dim:    rgba(5, 5, 4, 0.86);     /* body text — bumped for parity with dark */
-  --bone-mute:   rgba(5, 5, 4, 0.64);     /* subtle text — bumped for parity with dark */
-  --bone-faint:  rgba(5, 5, 4, 0.20);     /* borders */
+  --bone: #050504; /* primary text */
+  --bone-dim: rgba(5, 5, 4, 0.86); /* body text — bumped for parity with dark */
+  --bone-mute: rgba(
+    5,
+    5,
+    4,
+    0.64
+  ); /* subtle text — bumped for parity with dark */
+  --bone-faint: rgba(5, 5, 4, 0.2); /* borders */
 
   /* Nav surfaces flipped: light backdrop with subtle alpha for blur. */
-  --nav-bg:        rgba(251, 251, 248, 0.88);
+  --nav-bg: rgba(251, 251, 248, 0.88);
   --nav-bg-mobile: rgba(251, 251, 248, 0.94);
-  --nav-bg-strip:  rgba(251, 251, 248, 0.96);
-  --btn-border:    rgba(5, 5, 4, 0.42);
-  --btn-bg-hover:  rgba(5, 5, 4, 0.045);
+  --nav-bg-strip: rgba(251, 251, 248, 0.96);
+  --btn-border: rgba(5, 5, 4, 0.42);
+  --btn-bg-hover: rgba(5, 5, 4, 0.045);
   --modal-backdrop: rgba(251, 251, 248, 0.78);
   --card-border-color: rgba(5, 5, 4, 0.08);
   --card-border-hover: rgba(5, 5, 4, 0.18);
@@ -260,14 +288,14 @@ em.cool  { font-style: italic; color: var(--bone); font-family: var(--font-displ
   --icon-color-stack: rgba(5, 5, 4, 0.68);
 
   /* Surface + text role re-points for light mode */
-  --surface-page:     var(--ink);
-  --surface-section:  var(--ink2);
-  --surface-card:     var(--ink-card);
+  --surface-page: var(--ink);
+  --surface-section: var(--ink2);
+  --surface-card: var(--ink-card);
   --surface-elevated: var(--ink3);
-  --text-primary:     var(--bone);
-  --text-secondary:   var(--bone-dim);
-  --text-muted:       var(--bone-mute);
-  --text-faint:       var(--bone-faint);
+  --text-primary: var(--bone);
+  --text-secondary: var(--bone-dim);
+  --text-muted: var(--bone-mute);
+  --text-faint: var(--bone-faint);
 }
 
 /* Smooth transition between themes (prefers-reduced-motion respected). */
@@ -279,7 +307,9 @@ em.cool  { font-style: italic; color: var(--bone); font-family: var(--font-displ
 }
 @media (prefers-reduced-motion: no-preference) {
   body {
-    transition: background-color 220ms ease, color 220ms ease;
+    transition:
+      background-color 220ms ease,
+      color 220ms ease;
   }
 }
 

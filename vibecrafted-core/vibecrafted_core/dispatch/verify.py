@@ -1,3 +1,5 @@
+"""Deterministic verifier execution: run declared commands, match output, build a Verdict."""
+
 from __future__ import annotations
 
 import os
@@ -48,6 +50,11 @@ def sanitize_env(
     *,
     extra: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
+    """Build a minimal verifier-shell env from a safe key allowlist plus explicit extras.
+
+    Drops everything else (API keys, agent-session/runtime markers) so verifier
+    shells never inherit launcher secrets or state.
+    """
     source = os.environ if base is None else base
     env = {key: source[key] for key in _SAFE_ENV_KEYS if key in source}
     env.setdefault("PATH", _FALLBACK_PATH)
@@ -126,6 +133,7 @@ def _run_verifier(
     timeout_s: float,
     env: Mapping[str, str],
 ) -> tuple[VerifierEvidence, list[str]]:
+    """Run one verifier command under bash with a timeout, then evaluate its matchers."""
     started = time.monotonic()
     try:
         proc = subprocess.run(
@@ -182,6 +190,7 @@ def _run_verifier(
 
 
 def _excerpt(output: str) -> str:
+    """Trim captured output to a bounded head/tail excerpt for journals and evidence."""
     text = output.strip()
     lines = text.splitlines()
     if len(lines) > _EXCERPT_HEAD_LINES + _EXCERPT_TAIL_LINES:
@@ -200,6 +209,7 @@ def _excerpt(output: str) -> str:
 
 
 def _failure_evidence(excerpt: str) -> str:
+    """Flatten an excerpt to a single line, truncated for inline failure messages."""
     flat = " ".join(excerpt.split())
     if len(flat) > _FAILURE_EVIDENCE_CHARS:
         flat = flat[:_FAILURE_EVIDENCE_CHARS] + "..."
@@ -207,6 +217,7 @@ def _failure_evidence(excerpt: str) -> str:
 
 
 def _text(value: object) -> str:
+    """Coerce a subprocess stdout/stderr capture (str, bytes, or None) to text."""
     if value is None:
         return ""
     if isinstance(value, bytes):
@@ -215,4 +226,5 @@ def _text(value: object) -> str:
 
 
 def _now() -> str:
+    """Return the current UTC timestamp in second-precision ISO 8601."""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")

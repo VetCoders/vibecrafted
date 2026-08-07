@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 
-use super::model::{MonitorSnapshot, format_bytes};
+use super::model::MonitorSnapshot;
 use super::sampler::Sampler;
 use super::ui;
 
@@ -225,10 +225,4 @@ impl Default for ProcsApp {
     fn default() -> Self {
         Self::new()
     }
-}
-
-// silence unused import warning in some builds
-#[allow(dead_code)]
-fn _fmt(b: u64) -> String {
-    format_bytes(b)
 }

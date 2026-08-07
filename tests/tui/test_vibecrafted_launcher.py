@@ -1057,6 +1057,44 @@ def test_repo_launcher_is_directly_executable() -> None:
     assert "telemetry smoke" not in result.stdout
 
 
+def test_installed_deck_version_is_owned_by_deck_not_checkout_cwd(
+    tmp_path: Path,
+) -> None:
+    package_root = tmp_path / "generation" / "vibecrafted_core"
+    deck = package_root / "deck" / "vibecrafted"
+    deck.parent.mkdir(parents=True)
+    deck.write_text(
+        (REPO_ROOT / "vibecrafted-core/vibecrafted_core/deck/vibecrafted").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
+    deck.chmod(0o755)
+    (package_root / "VERSION").write_text("3.7.0+ginstalled\n", encoding="utf-8")
+    (package_root / "runtime").mkdir()
+    (package_root / "skills").mkdir()
+    checkout = tmp_path / "checkout"
+    (checkout / "scripts").mkdir(parents=True)
+    (checkout / "scripts/vibecrafted").write_text("fixture\n", encoding="utf-8")
+    (checkout / "skills").mkdir()
+    (checkout / "runtime").mkdir()
+    (checkout / "VERSION").write_text("3.7.0\n", encoding="utf-8")
+    public_bin = tmp_path / "bin"
+    public_bin.mkdir()
+    public_launcher = public_bin / "vibecrafted"
+    public_launcher.symlink_to(deck)
+
+    result = subprocess.run(
+        [str(public_launcher), "--version"],
+        check=True,
+        cwd=checkout,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "vibecrafted 3.7.0+ginstalled"
+
+
 def test_update_web_fallback_verifies_install_sh_against_sha256sums(
     tmp_path: Path,
 ) -> None:
@@ -1225,6 +1263,56 @@ def test_installed_launcher_gui_uses_python_control_plane_surface(
     )
     assert "Listening URL: http://127.0.0.1:4173/" in result.stdout
     assert "Press Ctrl-C to stop." in result.stdout
+
+
+def test_installed_launcher_doctor_forwards_fix_flags(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    launcher = home / ".local" / "bin" / "vibecrafted"
+    current_root = (
+        home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
+    )
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "python3-calls.txt"
+
+    home.mkdir(parents=True)
+    fake_bin.mkdir()
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text(LAUNCHER.read_text(encoding="utf-8"), encoding="utf-8")
+    launcher.chmod(0o755)
+    (current_root / "scripts").mkdir(parents=True, exist_ok=True)
+    (current_root / "vibecrafted-core").mkdir(parents=True, exist_ok=True)
+    (current_root / "VERSION").write_text("0.0.0-test\n", encoding="utf-8")
+    (current_root / "scripts" / "vetcoders_install.py").write_text(
+        "#!/usr/bin/env python3\n", encoding="utf-8"
+    )
+    _write_fake_python3(fake_bin, capture_file)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:/bin:/usr/bin"
+    env["CAPTURE_FILE"] = str(capture_file)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(launcher),
+            "doctor",
+            "--fix-rc",
+            "--fix-launchers",
+        ],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    calls = capture_file.read_text(encoding="utf-8").splitlines()
+    assert (
+        f"{current_root / 'scripts' / 'vetcoders_install.py'} "
+        "doctor --fix-rc --fix-launchers"
+    ) in calls
 
 
 def test_installed_launcher_tui_uses_shared_state_and_voc_binary(
@@ -1498,6 +1586,68 @@ def test_autonomous_delivery_skills_route_to_core_async_launcher(
     assert str(REPO_ROOT) in args
     assert "--prompt" in args
     assert "Ship the cut" in args
+
+
+@pytest.mark.parametrize(
+    ("research_args", "expected_prefix"),
+    [
+        (
+            ["--prompt", "Check Codescribe"],
+            ["research", "--prompt", "Check Codescribe"],
+        ),
+        (
+            ["codex", "--prompt", "Check Codescribe"],
+            ["research", "codex", "--prompt", "Check Codescribe"],
+        ),
+        (
+            ["codex", "agy", "--prompt", "Check Codescribe"],
+            ["research", "codex", "agy", "--prompt", "Check Codescribe"],
+        ),
+        (
+            ["trio", "claude", "codex", "agy", "--prompt", "Check Codescribe"],
+            [
+                "research",
+                "trio",
+                "claude",
+                "codex",
+                "agy",
+                "--prompt",
+                "Check Codescribe",
+            ],
+        ),
+    ],
+)
+def test_research_preserves_optional_variadic_agents_for_core_parser(
+    tmp_path: Path,
+    research_args: list[str],
+    expected_prefix: list[str],
+) -> None:
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "python-args.txt"
+    fake_bin.mkdir()
+    _write_fake_python(fake_bin, capture_file)
+
+    env = os.environ.copy()
+    env["CAPTURE_FILE"] = str(capture_file)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VIBECRAFTED_PYTHON"] = str(fake_bin / "python3")
+
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "research", *research_args],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Unknown agent" not in result.stderr
+    args = capture_file.read_text(encoding="utf-8").splitlines()
+    assert args[:2] == ["-m", "vibecrafted_core.cli"]
+    assert args[2 : 2 + len(expected_prefix)] == expected_prefix
+    assert args[-2:] == ["--source-dir", str(REPO_ROOT)]
 
 
 def test_compact_help_teaches_implement_before_alias() -> None:
@@ -2416,6 +2566,46 @@ def test_dashboard_switch_outside_vc_frame_uses_attach(tmp_path: Path) -> None:
     payload = capture_file.read_text(encoding="utf-8").splitlines()
     assert "attach" in payload
     assert "target-session" in payload
+
+
+def test_dashboard_switch_with_stale_frame_env_uses_attach(tmp_path: Path) -> None:
+    """Stale VC_FRAME/session-name leaks (no pane id) must not fake 'inside'.
+
+    A shell that once ran vc-start carries exported VC_FRAME_SESSION_NAME (and
+    a leaked VC_FRAME/ZELLIJ) without any pane id. From such a shell 'switch'
+    must attach — an 'action switch-session' has no live client to act on.
+    """
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "vc_frame-args.txt"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_fake_command(fake_bin, "vc-frame", capture_file)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["CAPTURE_FILE"] = str(capture_file)
+    env["VC_FRAME"] = "0"
+    env["ZELLIJ"] = "0"
+    env["VC_FRAME_SESSION_NAME"] = "stale-session"
+    env["ZELLIJ_SESSION_NAME"] = "stale-session"
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("ZELLIJ_PANE_ID", None)
+
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "dashboard", "switch", "target-session"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = capture_file.read_text(encoding="utf-8").splitlines()
+    assert "attach" in payload
+    assert "target-session" in payload
+    assert "switch-session" not in payload
 
 
 def test_dashboard_gc_ignores_untyped_listing_in_dry_run(tmp_path: Path) -> None:

@@ -37,8 +37,24 @@ if command -v starship >/dev/null 2>&1; then
 fi
 
 # atuin shell history (encrypted sync optional)
+# Keyboard Up → Atuin. Mouse wheel is host-side (Alacritty ~Alt scrollback /
+# Alt arrows) — see config/shell/atuin-up.zsh and vc-frame tools/alacritty.
 if command -v atuin >/dev/null 2>&1; then
-    eval "$(atuin init zsh --disable-up-arrow)"
+    eval "$(atuin init zsh --disable-ctrl-r --disable-up-arrow)"
+    atuin-up-or-history() {
+        emulate -L zsh
+        if [[ $BUFFER == *$'\n'* ]]; then
+            zle up-line-or-history
+        else
+            _atuin_search --shell-up-key-binding "$@"
+        fi
+    }
+    zle -N atuin-up-or-history atuin-up-or-history
+    bindkey '^[[A' atuin-up-or-history
+    bindkey '^[OA' atuin-up-or-history
+    bindkey '^[[B' down-line-or-history
+    bindkey '^[OB' down-line-or-history
+    bindkey '^R' atuin-search
 fi
 
 # zoxide directory jump (alias 'cd' to 'z')

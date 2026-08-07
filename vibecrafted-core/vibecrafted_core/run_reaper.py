@@ -127,11 +127,14 @@ _ENV_RUN_ID_PATTERN = re.compile(r"(?:^|\s)SPAWN_RUN_ID=(\S+)")
 
 
 def reaper_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """Whether the reaper is enabled; disabled by ``VIBECRAFTED_REAPER`` in
+    {"0", "false", "no", "off"} (case-insensitive)."""
     env = os.environ if env is None else env
     return str(env.get(REAPER_ENABLED_ENV, "") or "").strip().lower() not in _TRUTHY_OFF
 
 
 def grace_seconds(env: Mapping[str, str] | None = None) -> float:
+    """TERM->KILL grace window in seconds, from env or :data:`DEFAULT_GRACE_SECONDS`."""
     env = os.environ if env is None else env
     raw = str(env.get(REAPER_GRACE_ENV, "") or "").strip()
     if not raw:
@@ -180,6 +183,7 @@ class OwnershipBuckets:
     undecidable: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, list[str]]:
+        """Serialize the three ownership buckets for JSON output."""
         return {
             OWNERSHIP_PROVABLE: list(self.provable),
             OWNERSHIP_LEGACY: list(self.legacy),
@@ -200,6 +204,7 @@ class QuarantineResult:
     changed: int = 0
 
     def as_dict(self) -> dict[str, Any]:
+        """Serialize the quarantine migration outcome for JSON output."""
         return {
             "marked_legacy": list(self.marked_legacy),
             "recovered_pgid": list(self.recovered_pgid),
@@ -234,9 +239,11 @@ class ReapCandidate:
 
     @property
     def proven(self) -> bool:
+        """True only when both an evidence kind and an owning run id are set."""
         return bool(self.evidence and self.run_id)
 
     def row(self) -> dict[str, Any]:
+        """Serialize this candidate as one table/JSON row (command truncated)."""
         return {
             "pid": self.pid,
             "run_id": self.run_id,
@@ -317,6 +324,7 @@ class ReapReceipt:
     skipped_reason: str = ""
 
     def payload(self) -> dict[str, Any]:
+        """Fields to merge into a run's control-plane snapshot after reaping."""
         data: dict[str, Any] = {"reaped": self.reaped}
         if self.unproven:
             data["reap_unproven"] = self.unproven
@@ -326,6 +334,7 @@ class ReapReceipt:
 
 
 def _default_runner(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    """Default ``runner`` callable: a bounded, non-raising subprocess invocation."""
     return subprocess.run(
         list(argv),
         capture_output=True,
@@ -412,6 +421,7 @@ def _ancestors(pid: int, by_pid: Mapping[int, ProcessEntry]) -> set[int]:
 
 
 def _is_protected(command: str) -> bool:
+    """Whether ``command`` matches a :data:`PROTECTED_COMMAND_PATTERNS` entry."""
     lowered = command.lower()
     return any(pattern in lowered for pattern in PROTECTED_COMMAND_PATTERNS)
 
@@ -589,6 +599,7 @@ def _signal_pid(pid: int, sig: int) -> str:
 
 
 def _pid_alive(pid: int) -> bool:
+    """Default ``alive_check`` callable, delegating to the control plane's probe."""
     from .control_plane import _pid_is_alive
 
     return _pid_is_alive(pid)
@@ -851,6 +862,7 @@ def sweep_quietly(env: Mapping[str, str] | None = None) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """``vibecrafted-reap`` CLI entry point; always exits 0 (maintenance, not a gate)."""
     parser = argparse.ArgumentParser(
         prog="vibecrafted-reap",
         description="Terminate processes that outlived their run.",

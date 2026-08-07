@@ -75,18 +75,22 @@ class ReportFrontmatter:
 
     @property
     def ok(self) -> bool:
+        """True when frontmatter parsed and no required-key/structural errors exist."""
         return self.has_frontmatter and not self.errors
 
     @property
     def run_id(self) -> str:
+        """The ``run_id`` field, stripped; empty string if absent."""
         return self.fields.get("run_id", "").strip()
 
     @property
     def agent(self) -> str:
+        """The ``agent`` field, stripped; empty string if absent."""
         return self.fields.get("agent", "").strip()
 
     @property
     def skill(self) -> str:
+        """The ``skill`` field, stripped; empty string if absent."""
         return self.fields.get("skill", "").strip()
 
     @property
@@ -101,6 +105,7 @@ class ReportFrontmatter:
 
     @property
     def claim_kind(self) -> str:
+        """``claim_kind`` field, falling back to ``skill`` when unset."""
         return (self.fields.get("claim_kind") or self.fields.get("skill") or "").strip()
 
     @property
@@ -119,6 +124,7 @@ class ReportFrontmatter:
         return (self.fields.get("claim") or "").strip()
 
     def as_payload(self) -> dict[str, Any]:
+        """Serialize this frontmatter for JSON output / dashboard consumption."""
         return {
             "contract": CONTRACT_ID,
             "has_frontmatter": self.has_frontmatter,
@@ -162,6 +168,7 @@ def parse_report_text(text: str) -> tuple[dict[str, str], str, bool]:
 
 
 def parse_report_path(path: str | Path) -> ReportFrontmatter:
+    """Read and validate a report file's frontmatter; never raises on I/O errors."""
     path = Path(path)
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -180,6 +187,9 @@ def validate_frontmatter_fields(
     has_fm: bool,
     require_recommended: bool = False,
 ) -> ReportFrontmatter:
+    """Validate parsed frontmatter fields against required/recommended keys and
+    the known claim-status vocabulary, producing errors and warnings.
+    """
     errors: list[str] = []
     warnings: list[str] = []
     normalized = {
@@ -246,6 +256,11 @@ def validate_report_file(
     *,
     require_frontmatter: bool = True,
 ) -> ReportFrontmatter:
+    """Validate a report file on disk; missing/unreadable files are errors.
+
+    When ``require_frontmatter`` is False, a missing frontmatter block is
+    downgraded from an error to a warning instead of failing validation.
+    """
     if path is None:
         return ReportFrontmatter(errors=("report_path_missing",))
     p = Path(path)
@@ -334,6 +349,7 @@ def render_minimal_frontmatter(
 
 
 def _render_frontmatter_fields(fields: Mapping[str, str], body: str) -> str:
+    """Re-render a frontmatter block from an already-parsed field mapping + body."""
     return render_minimal_frontmatter(
         run_id=fields.get("run_id", ""),
         agent=fields.get("agent", ""),

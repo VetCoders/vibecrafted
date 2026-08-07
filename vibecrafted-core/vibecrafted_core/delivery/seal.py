@@ -130,6 +130,7 @@ class SealReconstruction:
 
     @property
     def verified(self) -> bool:
+        """True only when every bound component matched its recomputed digest."""
         return self.status == "verified"
 
 
@@ -312,6 +313,7 @@ def digest_file(path: str | Path) -> str:
 
 
 def digest_bytes(data: bytes) -> str:
+    """Return the canonical ``sha256:`` digest of an in-memory byte string."""
     return f"sha256:{hashlib.sha256(data).hexdigest()}"
 
 
@@ -340,6 +342,7 @@ def _derive_seal_id(
 
 
 def _components_payload(components: SealComponents) -> dict[str, Any]:
+    """Flatten ``SealComponents`` into a JSON-safe dict (tuples become lists)."""
     payload: dict[str, Any] = {}
     for key, value in vars(components).items():
         payload[key] = list(value) if isinstance(value, tuple) else value

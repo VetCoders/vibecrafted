@@ -178,6 +178,51 @@ def test_never_uses_cwd_for_source(tmp_path: Path, monkeypatch) -> None:
     )
 
 
+def test_vibecrafted_receipt_uses_checkout_free_runtime_manifest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    revision = "0123456789abcdef0123456789abcdef01234567"
+    generation = tmp_path / "vibecrafted-generation-3.7.0+g01234567"
+    deck = generation / "vibecrafted-core" / "vibecrafted_core" / "deck" / "vibecrafted"
+    deck.parent.mkdir(parents=True)
+    deck.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    deck.chmod(0o755)
+    (generation / "runtime-manifest.json").write_text(
+        json.dumps(
+            {
+                "schema": "vibecrafted.runtime-generation.v1",
+                "owner_repo": "Vetcoders/vibecrafted",
+                "source_revision": revision,
+                "entrypoint": "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        rr, "which_binary", lambda name: str(deck) if name == "vibecrafted" else None
+    )
+    monkeypatch.setattr(rr, "run_version", lambda _path: "vibecrafted 3.7.0+g01234567")
+    monkeypatch.setattr(rr, "_vibecrafted_tools_path_hints", list)
+
+    [tool] = rr.build_receipt(
+        [
+            rr.ToolSpec(
+                name="vibecrafted",
+                binaries=("vibecrafted",),
+                env_roots=("VIBECRAFTED_SOURCE",),
+                markers=(("VERSION", r".+"),),
+                candidate_roots=(),
+            )
+        ]
+    )["tools"]
+
+    assert tool["source"]["resolution"] == "installed_runtime_manifest"
+    assert tool["source"]["owner_repo"] == "Vetcoders/vibecrafted"
+    assert tool["source"]["checkout_sha"] == revision
+    assert tool["installed"]["dirty_build"] is False
+    assert rr.DRIFT_DIRTY_BUILD not in tool["drift"]
+
+
 def test_render_contains_drift_tokens() -> None:
     receipt = {
         "schema": rr.SCHEMA_VERSION,
@@ -188,7 +233,7 @@ def test_render_contains_drift_tokens() -> None:
                 "primary_drift": rr.DRIFT_SOURCE_AHEAD,
                 "drift": [rr.DRIFT_SOURCE_AHEAD, rr.DRIFT_UNPUSHED],
                 "chain": {
-                    "owner_repo": "VetCoders/vc-frame",
+                    "owner_repo": "Vetcoders/vc-frame",
                     "branch": "develop",
                     "checkout_sha": "7fa51c66",
                     "dirty": False,

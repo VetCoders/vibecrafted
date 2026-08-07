@@ -1,3 +1,5 @@
+"""Operator interactive loop (continue/complete) plus await-run and spanko recovery CLI verbs."""
+
 from __future__ import annotations
 
 import argparse
@@ -16,10 +18,13 @@ from . import control_plane, cron, ui
 
 
 def utc_now() -> str:
+    """Current UTC time as an ISO-8601 string with a trailing ``Z``."""
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def repo_root(start: Path | None = None) -> Path:
+    """Resolve the git repository root from ``start`` (or cwd); falls back to that
+    resolved directory itself when git is unavailable or the path isn't a repo."""
     proc = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
         cwd=start or Path.cwd(),
@@ -33,35 +38,43 @@ def repo_root(start: Path | None = None) -> Path:
 
 
 def default_state_file(root: Path | None = None) -> Path:
+    """Default path of the operator loop's local state file within the repo."""
     return repo_root(root) / ".vibecrafted" / "operator-loop.local.md"
 
 
 @dataclass
 class LoopState:
+    """Parsed operator-loop state file: YAML-ish frontmatter fields plus the prompt body."""
+
     path: Path
     fields: dict[str, str]
     prompt: str
 
     @property
     def active(self) -> bool:
+        """True when the loop is still running (has not been cancelled/completed)."""
         return self.fields.get("active") == "true"
 
     @property
     def iteration(self) -> int:
+        """Current iteration counter (0 if absent/unparsable)."""
         return int(self.fields.get("iteration") or "0")
 
     @property
     def max_iterations(self) -> int:
+        """Configured iteration ceiling; 0 means unlimited."""
         return int(self.fields.get("max_iterations") or "0")
 
 
 def quote_yaml(value: str | None) -> str:
+    """JSON-quote a string for embedding as a scalar frontmatter value, or "null"."""
     if value is None:
         return "null"
     return json.dumps(value, ensure_ascii=False)
 
 
 def parse_state(path: Path) -> LoopState:
+    """Read and parse the operator loop's state file; raises FileNotFoundError if missing."""
     if not path.is_file():
         raise FileNotFoundError(f"no active operator loop state: {path}")
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -80,6 +93,7 @@ def parse_state(path: Path) -> LoopState:
 
 
 def write_state(path: Path, fields: dict[str, str], prompt: str) -> None:
+    """Write the operator loop's state file: frontmatter fields plus the prompt body."""
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = ["---"]
     for key, value in fields.items():
@@ -89,12 +103,14 @@ def write_state(path: Path, fields: dict[str, str], prompt: str) -> None:
 
 
 def update_field(state: LoopState, key: str, value: str) -> None:
+    """Set one field on the loop state and rewrite the state file."""
     fields = dict(state.fields)
     fields[key] = value
     write_state(state.path, fields, state.prompt)
 
 
 def resolve_state_file(raw: str = "") -> Path:
+    """Resolve the loop state file path: explicit arg, then env var, then default."""
     if raw:
         return Path(raw).expanduser()
     env = os.environ.get("VIBECRAFTED_LOOP_STATE_FILE")
@@ -104,10 +120,12 @@ def resolve_state_file(raw: str = "") -> Path:
 
 
 def command_deck() -> str:
+    """The ``vibecrafted`` CLI entrypoint name/path, overridable via env var."""
     return os.environ.get("VIBECRAFTED_CMD") or "vibecrafted"
 
 
 def _framework_heartbeat(*, root: Path, run_id: str, then_cmd: str = "") -> int:
+    """Fire one immediate ``vibecrafted cron tick`` heartbeat for a running worker."""
     argv = [
         "tick",
         "--root",
@@ -121,11 +139,15 @@ def _framework_heartbeat(*, root: Path, run_id: str, then_cmd: str = "") -> int:
 
 
 def _run_report_path(run: dict[str, Any]) -> Path | None:
+    """Extract the run's report path from a run payload, if present."""
     raw = str(run.get("latest_report") or run.get("report") or "")
     return Path(raw).expanduser() if raw else None
 
 
 def _run_from_resolved(run_id: str) -> dict[str, Any] | None:
+    """Load a run's meta payload via control_plane.resolve_run, merged with report paths.
+
+    Returns None on any resolution/parse failure so callers can fall back safely."""
     try:
         resolved = control_plane.resolve_run(run_id)
     except (
@@ -157,6 +179,7 @@ def _run_from_resolved(run_id: str) -> dict[str, Any] | None:
 
 
 def _runtime_run_terminal(run: dict[str, Any]) -> bool:
+    """True when a resolved run payload shows the worker has reached a terminal state."""
     state = str(run.get("state") or run.get("status") or "")
     liveness = str(run.get("liveness") or "")
     return (
@@ -167,6 +190,7 @@ def _runtime_run_terminal(run: dict[str, Any]) -> bool:
 
 
 def _report_gate_lines(report: Path | None) -> list[str]:
+    """First up to 6 report lines that mention gate/check/test/verify keywords."""
     if report is None or not report.is_file():
         return []
     needles = ("gate", "check", "test", "verify", "verification", "pytest", "cargo")
@@ -183,6 +207,7 @@ def _report_gate_lines(report: Path | None) -> list[str]:
 
 
 def _commit_from_run_or_report(run: dict[str, Any], report: Path | None) -> str:
+    """Best-effort commit sha: prefer run payload fields, else scan the report text."""
     for key in ("commit", "commit_sha", "sha", "head_sha"):
         value = str(run.get(key) or "").strip()
         if value:
@@ -197,11 +222,13 @@ def _commit_from_run_or_report(run: dict[str, Any], report: Path | None) -> str:
 
 
 def _artifact_green(run: dict[str, Any]) -> bool:
+    """True unless the run explicitly flags artifact_ok=False or lists artifact errors."""
     errors = [str(item) for item in (run.get("artifact_errors") or []) if str(item)]
     return run.get("artifact_ok") is not False and not errors
 
 
 def _evidence(run: dict[str, Any], *, verifier: str) -> str:
+    """One-line evidence string (sha, gate hits, verifier) for a tracker-flip annotation."""
     report = _run_report_path(run)
     sha = _commit_from_run_or_report(run, report) or "sha:unknown"
     gate_lines = _report_gate_lines(report)
@@ -217,6 +244,8 @@ def _replace_tracker_state(
     to_state: str,
     evidence: str,
 ) -> bool:
+    """Flip a cut's state marker in a tracker file's first matching line and append
+    evidence; returns whether a matching line was found and changed."""
     if not tracker.is_file():
         raise FileNotFoundError(f"tracker not found: {tracker}")
     lines = tracker.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -252,6 +281,7 @@ def _stop_stalled_run(run_id: str) -> dict[str, Any]:
 
 
 def _run_then(command: str, *, root: Path, baton: str) -> int:
+    """Run an operator-approved ``--then`` command with the baton in its environment."""
     if not command:
         return 0
     env = os.environ.copy()
@@ -262,6 +292,7 @@ def _run_then(command: str, *, root: Path, baton: str) -> int:
 
 
 def _baton(run_id: str, run: dict[str, Any], *, phase: str, evidence: str) -> str:
+    """Render the fixed-shape BATON text block printed/handed off between spanko phases."""
     return "\n".join(
         [
             f"BATON phase={phase}",
@@ -274,6 +305,7 @@ def _baton(run_id: str, run: dict[str, Any], *, phase: str, evidence: str) -> st
 
 
 def cmd_start(args: argparse.Namespace) -> int:
+    """``loop start``: create/overwrite the operator loop state with a fresh prompt."""
     state_file = resolve_state_file(args.state_file)
     prompt = args.prompt or ""
     if args.file:
@@ -320,6 +352,7 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
+    """``loop status``: print the current loop state's frontmatter fields."""
     state = parse_state(resolve_state_file(args.state_file))
     for key, value in state.fields.items():
         print(f"{key}: {value}")
@@ -327,6 +360,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def cmd_cancel(args: argparse.Namespace) -> int:
+    """``loop cancel``: mark the loop inactive with stop_reason=cancel."""
     state = parse_state(resolve_state_file(args.state_file))
     fields = dict(state.fields)
     fields["active"] = "false"
@@ -338,6 +372,7 @@ def cmd_cancel(args: argparse.Namespace) -> int:
 
 
 def cmd_complete(args: argparse.Namespace) -> int:
+    """``loop complete``: stop the loop, requiring the completion promise to match if set."""
     state = parse_state(resolve_state_file(args.state_file))
     expected = state.fields.get("completion_promise", "null").strip('"')
     if expected not in {"", "null"} and args.promise != expected:
@@ -356,6 +391,7 @@ def cmd_complete(args: argparse.Namespace) -> int:
 
 
 def cmd_next(args: argparse.Namespace) -> int:
+    """``loop next``: advance one iteration, printing CONTINUE with the prompt or STOP."""
     state = parse_state(resolve_state_file(args.state_file))
     if not state.active:
         print("STOP: operator loop inactive.")
@@ -385,6 +421,7 @@ def cmd_next(args: argparse.Namespace) -> int:
 
 
 def cmd_await_run(args: argparse.Namespace) -> int:
+    """``loop await-run``: block (or background-spawn) an await of one run via the deck."""
     if args.agent not in {
         "claude",
         "codex",
@@ -404,6 +441,7 @@ def cmd_await_run(args: argparse.Namespace) -> int:
         return 1
 
     def run_wait() -> int:
+        """Foreground await of the run via the agent deck, then run --then-cmd on success."""
         print(f"[{utc_now()}] awaiting {args.run_id} via {args.agent}")
         proc = subprocess.run(
             [command_deck(), args.agent, "await", "--run-id", args.run_id], check=False
@@ -451,6 +489,8 @@ def cmd_await_run(args: argparse.Namespace) -> int:
 
 
 def cmd_spanko(args: argparse.Namespace) -> int:
+    """``loop spanko``: heartbeat + await a run to completion, verify, and flip the tracker
+    on green; on stall or a failed artifact gate, hand off a recovery baton instead."""
     if args.agent not in {
         "claude",
         "codex",
@@ -541,6 +581,8 @@ def cmd_spanko(args: argparse.Namespace) -> int:
 def _cmd_spanko_stall(
     args: argparse.Namespace, *, root: Path, run: dict[str, Any]
 ) -> int:
+    """Recovery path for cmd_spanko when the await times out: stop the stalled worker,
+    flip the tracker to the recovery marker, and emit a recovery-phase baton."""
     evidence = (
         "stall: control-plane await timed out; follow "
         "skills/vc-dispatch/references/pulse-and-stall.md before blind restart"
@@ -570,6 +612,7 @@ def _cmd_spanko_stall(
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Construct the ``vibecrafted loop`` argparse CLI with all subcommands wired."""
     parser = argparse.ArgumentParser(prog="vibecrafted loop")
     sub = parser.add_subparsers(dest="command")
 
@@ -618,6 +661,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """``vibecrafted loop`` CLI entrypoint: parse argv and dispatch to the matched subcommand."""
     parser = _build_parser()
     args = parser.parse_args(argv)
     if not hasattr(args, "func"):

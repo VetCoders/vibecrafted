@@ -1,3 +1,5 @@
+"""Shared branding constants and formatting helpers for installer surfaces."""
+
 from __future__ import annotations
 
 VAPOR_HEADER = "\uff36\uff49\uff42\uff45\uff43\uff52\uff41\uff46\uff54\uff45\uff44"
@@ -16,8 +18,10 @@ FOOTER_BRANDING = "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents 
 
 
 def version_line(version: str) -> str:
+    """Render the mono-styled 'Vibecrafted (vc-cli) v<version>' banner line."""
     return f"{MONO_SUB} ({MONO_CLI}) \U0001d69f{version}"
 
 
 def separator(width: int = 57) -> str:
+    """Return a horizontal box-drawing rule at least 24 characters wide."""
     return "\u2500" * max(24, width)

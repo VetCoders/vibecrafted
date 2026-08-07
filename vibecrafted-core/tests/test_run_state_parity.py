@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
 from vibecrafted_core import control_plane
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -282,9 +283,11 @@ def test_shell_meta_projection_reaches_active_with_session_id(
     assert projection["session_id"].lower() not in SESSION_PLACEHOLDERS
 
 
+@pytest.mark.parametrize("session_id", ["session-live", ""])
 def test_active_projection_without_report_is_not_blocked_mid_delivery(
     tmp_path: Path,
     monkeypatch,
+    session_id: str,
 ) -> None:
     run_id = "active-report-pending"
     home = tmp_path / "home"
@@ -304,7 +307,7 @@ def test_active_projection_without_report_is_not_blocked_mid_delivery(
             "root": str(tmp_path),
             "report": str(report),
             "transcript": str(transcript),
-            "session_id": "session-live",
+            "session_id": session_id,
             "identity_required": True,
             "liveness": "pid_alive",
         },

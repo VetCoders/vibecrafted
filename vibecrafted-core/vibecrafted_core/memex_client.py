@@ -144,18 +144,21 @@ class MemexClientError(RuntimeError):
 
 
 def _coerce_str(value: Any, default: str) -> str:
+    """Return ``value`` if it is a non-empty string, else ``default``."""
     if isinstance(value, str) and value:
         return value
     return default
 
 
 def _coerce_float(value: Any, default: float) -> float:
+    """Return ``value`` as a positive float, else ``default``."""
     if isinstance(value, (int, float)) and value > 0:
         return float(value)
     return default
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
+    """Parse a TOML config file; return ``{}`` on any I/O or decode failure."""
     try:
         with path.open("rb") as handle:
             loaded: dict[str, Any] = tomllib.load(handle)

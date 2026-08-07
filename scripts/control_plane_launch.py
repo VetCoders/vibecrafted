@@ -1,3 +1,9 @@
+"""Legacy scripts/ shim re-exporting vibecrafted_core.workflow (PEP 562).
+
+Kept so old ``scripts/control_plane_launch.py`` import paths and callers
+keep working; the canonical implementation lives in vibecrafted-core.
+"""
+
 from __future__ import annotations
 
 import sys
@@ -17,4 +23,5 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
+    """Report the canonical module's public names for tab-completion/introspection."""
     return sorted(set(dir(_workflow)))

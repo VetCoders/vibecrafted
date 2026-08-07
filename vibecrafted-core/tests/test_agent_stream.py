@@ -261,3 +261,33 @@ def test_cost_estimates_lock_user_reported_grok_and_codex_regressions() -> None:
         tokens_cached_input=20536960,
         tokens_output=48906,
     ) == (116.24325, "estimated:openai-api-2026-07")
+
+
+def test_grok_event_with_keyless_dict_message_does_not_recurse() -> None:
+    parser = AgentStreamParser("grok")
+
+    rendered = parser.feed_line(
+        b'{"type":"error","error":{"code":429,"retriable":true}}\n'
+    )
+
+    assert rendered is not None
+    assert "429" in rendered
+
+
+def test_grok_tool_call_update_renders_nested_content_text() -> None:
+    """grok 0.2.x tool_call_update: content is a list of {"type":"content",
+    "content":{"type":"text","text":...}} blocks; render the text, not the
+    JSON envelope, and never surface the rawOutput byte array."""
+    parser = AgentStreamParser("grok")
+
+    rendered = parser.feed_line(
+        b'{"type":"tool_call_update","toolCallId":"call-1","status":"completed",'
+        b'"content":[{"type":"content","content":{"type":"text",'
+        b'"text":"Exit code 0"}}],'
+        b'"rawOutput":{"type":"Bash","output":[84,114,97]}}\n'
+    )
+
+    assert "Exit code 0" in rendered
+    assert '{"type"' not in rendered
+    assert "rawOutput" not in rendered
+    assert "84" not in rendered

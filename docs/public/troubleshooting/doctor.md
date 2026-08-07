@@ -1,0 +1,74 @@
+---
+title: "Doctor"
+description: "vibecrafted doctor is the canonical health gate: what it audits, how to read the output, and how receipt adds provenance."
+section: troubleshooting
+order: 10
+---
+
+# Doctor
+
+`vibecrafted doctor` is the canonical health gate for an install. It audits the installed runtime — not your checkout — and answers one question with pass/fail discipline: is the thing on your `PATH` exactly the thing that was published?
+
+```bash
+vibecrafted doctor
+vibecrafted doctor --verbose      # list every check, including passing ones
+```
+
+## What doctor audits
+
+| Audit               | What it proves                                                                                                                                                      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Generation manifest | `runtime-manifest.json` (schema `vibecrafted.runtime-generation.v1`) exists and is valid for the current generation                                                 |
+| Content hashes      | SHA-256 digests for `VERSION`, the command deck, and generated vc-frame config still match — any manifest-bound file that drifted fails                             |
+| Launcher binding    | The public launcher resolves to the exact current generation entrypoint inside `~/.local/share/vibecrafted` — a launcher resolving outside the installed root fails |
+| Checkout-link scan  | No active config, KDL, helper, or command-deck content references a source checkout                                                                                 |
+| Symlink census      | No installed symlink is broken or resolves outside its generation                                                                                                   |
+| Foundations         | Product-managed foundation binaries (loct, aicx, prview, screenscribe) are present and are never silently replaced with stale copies                                |
+
+This is the same audit that gates publication of a new generation: what fails a publish also fails doctor afterward.
+
+## Reading the output
+
+- **Pass (green / ok)** — the install is bound, hashed, and checkout-free. A healthy install reports on the order of 100+ ok with 0 failures.
+- **Warn (yellow)** — something is weak but operable; the doctor names what to check next. Typical warns: an optional surface not installed, an environment nicety missing.
+- **Fail (red)** — the runtime contract is broken: stale launcher, drifted manifest-bound file, checkout-linked config, or a broken symlink. Treat any fail as "do not trust this install until fixed".
+
+Doctor ships targeted repair flags for the most common launcher and shell-config failures:
+
+```bash
+vibecrafted doctor --fix-rc                 # repair old shell startup lines, restore helper/PATH hints
+vibecrafted doctor --fix-launchers          # refresh vibecrafted, vc-help, and vc-* wrappers, then verify
+vibecrafted doctor --fix-legacy-bootstrap   # neutralize retired bootstrap roots (comments out, never deletes)
+```
+
+Each fix flag re-verifies after repairing, so a clean exit means the repair actually held.
+
+## Receipt — provenance on top of health
+
+Doctor proves the install is internally consistent. `vibecrafted receipt` proves where it **came from**:
+
+```bash
+vibecrafted receipt
+vibecrafted receipt --json
+```
+
+The receipt (schema `vibecrafted.delivery_receipt.v1`) covers the fleet tools `vc-frame`, `vibecrafted`, `scaffold-doctor`, `loct`, and `aicx`. Each row binds owner/repo → branch → checkout SHA → dirty state → installed SHA → ahead/behind, and yields one drift verdict:
+
+```text
+CLEAN | SOURCE_AHEAD_OF_INSTALLED | INSTALLED_NOT_ON_PATH |
+UNPUSHED | DIRTY_BUILD_PROVENANCE | INDEX_STALE
+```
+
+Policy: the receipt never uses the process working directory to identify a tool's source — resolution goes env override → binary path → verified candidate only. When auto-discovery cannot find a source checkout, set the `*_SOURCE` variables described in [Environment](/docs/environment/).
+
+Use `--json` when you want to gate automation on provenance:
+
+```bash
+vibecrafted receipt --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d)'
+```
+
+## When to run it
+
+- After every install, update, or rollback — non-negotiable.
+- Before filing a bug: attach `vibecrafted doctor --verbose` output.
+- Whenever behavior does not match the code you think is installed — that is almost always a drift verdict, not a mystery. Start with [Common issues](/docs/common-issues/).

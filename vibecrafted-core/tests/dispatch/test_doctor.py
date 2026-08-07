@@ -58,6 +58,29 @@ def test_dispatch_doctor_allows_observational_read_with_mutation_policy() -> Non
     assert report.errors == ()
 
 
+def test_dispatch_doctor_warns_model_pin_is_not_provider_validated() -> None:
+    report = diagnose_file(FIXTURES / "model-pin.dispatch.toml")
+
+    assert report.ok is True
+    assert report.errors == ()
+    assert len(report.warnings) == 1
+    assert report.warnings[0].path == "cuts[0].model"
+    assert (
+        "provider/account availability is not validated" in report.warnings[0].message
+    )
+
+
+def test_dispatch_doctor_json_includes_model_pin_warning_and_exits_zero(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = main([str(FIXTURES / "model-pin.dispatch.toml"), "--json"])
+
+    payload = __import__("json").loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["ok"] is True
+    assert payload["warnings"][0]["path"] == "cuts[0].model"
+
+
 def test_dispatch_doctor_rejects_legacy_stage0_review_no_edit_read() -> None:
     report = diagnose_file(FIXTURES / "legacy-stage0-read-no-edit.dispatch.toml")
 

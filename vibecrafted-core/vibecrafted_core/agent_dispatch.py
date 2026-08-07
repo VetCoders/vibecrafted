@@ -44,6 +44,8 @@ __all__ = [
 
 @dataclass(frozen=True)
 class DispatchGranularity:
+    """Recommended cut shape/size for delegating work to a given model tier."""
+
     shape: str
     max_files_per_cut: int
     max_parallel_cuts: int

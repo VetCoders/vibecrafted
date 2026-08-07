@@ -1,3 +1,5 @@
+"""Inject an operator-requested model pin into an agent's launch command."""
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -35,6 +37,12 @@ def _model_override_receipt(
 def _with_model_override(
     agent: str, command: Sequence[str], model_requested: str | None
 ) -> list[str]:
+    """Splice the agent's model flag + value into ``command`` when supported.
+
+    Returns ``command`` unchanged (as a list) when no model was requested, the
+    agent has no known flag, or the command is empty. ``codex exec`` gets the
+    flag inserted after the ``exec`` subcommand rather than at the head.
+    """
     requested = str(model_requested or "").strip()
     command_list = list(command)
     flag = MODEL_OVERRIDE_FLAGS.get(agent)

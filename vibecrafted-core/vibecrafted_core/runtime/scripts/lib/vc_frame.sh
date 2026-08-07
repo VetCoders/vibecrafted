@@ -438,19 +438,29 @@ spawn_in_marbles_tab() {
 }
 
 # ---------------------------------------------------------------------------
-# Host-session action wrapper (G3): never swallow "Session not found".
+# Host-session action wrapper (G3 + G3b): never swallow host-launch failures.
 #
-# Observed failure mode: `vc-frame --session X action ...` prints
-# "Session 'X' not found" while some builds still exit 0. The launcher then
-# records process_spawned and later stalls as pid_gone with no receipt error.
+# G3 — dead hosting session:
+# Observed: `vc-frame --session X action ...` prints "Session 'X' not found"
+# while some builds still exit 0. Launcher then records process_spawned and
+# later stalls as pid_gone with no receipt error.
+#
+# G3b — ambiguous NewTab ACK (2026-08):
+# Observed: `action 'NewTab' did not acknowledge completion within 25s` under
+# load (plugin cold-start on layout activation). The tab often *did* land —
+# server ACK just lagged past CRITICAL_ACTION_COMPLETION_TIMEOUT. Blind retry
+# would open a duplicate worker tab; presence probe first is mandatory.
 #
 # Contract:
 #   1. Run the action, capture stderr (still re-emit it).
-#   2. On session-not-found diagnostics: ONE `attach --create-background NAME`
-#      then retry the action once.
-#   3. On second failure: return 2 and set SPAWN_VC_FRAME_LAST_ERROR so the
-#      caller can fail the control-plane receipt immediately.
-# Happy path (session live, action ok): no create-background, same argv.
+#   2. On session-not-found: ONE `attach --create-background NAME`, retry once.
+#   3. On ambiguous ACK (did-not-acknowledge / channel-closed / timed-out):
+#        a. if action carries --name NAME: list-tabs probe; present → success
+#        b. else (or absent): brief backoff, ONE retry
+#        c. after retry ACK fail: probe --name again before failing loud
+#   4. On unrecoverable second failure: return 2 + SPAWN_VC_FRAME_LAST_ERROR
+#      so the caller fails the control-plane receipt immediately.
+# Happy path (session live, action ok): no create-background, no extra list.
 # ---------------------------------------------------------------------------
 
 SPAWN_VC_FRAME_LAST_ERROR=""
@@ -460,6 +470,40 @@ spawn_vc_frame_stderr_is_session_not_found() {
   [[ -n "$text" ]] || return 1
   printf '%s' "$text" | command grep -qiE \
     "Session ['\"][^'\"]+['\"] not found|There is no active session!"
+}
+
+# Ambiguous host-action ACK: server may have applied the mutation (new-tab)
+# even though the oneshot completion channel timed out. Parity with
+# vc-frame triage `is_ambiguous_new_tab_failure`.
+spawn_vc_frame_stderr_is_ambiguous_action_ack() {
+  local text="${1:-}"
+  [[ -n "$text" ]] || return 1
+  printf '%s' "$text" | command grep -qiE \
+    "did not acknowledge completion|completion channel closed before acknowledgement|timed out after"
+}
+
+# Extract `--name VALUE` from a vc-frame action argv (skip the action verb itself).
+spawn_vc_frame_action_name_arg() {
+  local prev=""
+  local arg=""
+  for arg in "$@"; do
+    if [[ "$prev" == "--name" ]]; then
+      printf '%s\n' "$arg"
+      return 0
+    fi
+    prev="$arg"
+  done
+  return 1
+}
+
+# True when a named tab is already enumerable in the host session (G3b presence).
+spawn_vc_frame_tab_present() {
+  local session_name="${1:-}"
+  local tab_name="${2:-}"
+  local tab_id=""
+  [[ -n "$tab_name" ]] || return 1
+  tab_id="$(spawn_tab_id_by_name "$tab_name" "$session_name" 2>/dev/null || true)"
+  [[ -n "$tab_id" ]]
 }
 
 spawn_vc_frame_create_host_session() {
@@ -516,7 +560,7 @@ PY
   fi
 }
 
-# Run `vc-frame [--session NAME] <action...>` with one host-resurrect retry.
+# Run `vc-frame [--session NAME] <action...>` with host-resurrect + ACK recovery.
 # Args: <vc_frame_bin> <session_name_or_empty> <action args...>
 # Returns 0 ok, 2 unrecoverable host-session failure, else action exit status.
 spawn_vc_frame_session_action() {
@@ -528,6 +572,8 @@ spawn_vc_frame_session_action() {
   [[ "$#" -ge 1 ]] || return 1
 
   local err_file out_file status=0 err=""
+  local tab_name=""
+  tab_name="$(spawn_vc_frame_action_name_arg "$@" 2>/dev/null || true)"
   err_file="$(mktemp "${TMPDIR:-/tmp}/vc-frame-action.XXXXXX.err")"
   out_file="$(mktemp "${TMPDIR:-/tmp}/vc-frame-action.XXXXXX.out")"
 
@@ -537,6 +583,20 @@ spawn_vc_frame_session_action() {
     else
       "$vc_frame_bin" "$@" >"$out_file" 2>"$err_file"
     fi
+  }
+
+  # G3b: if ACK timed out but the named tab is already live, accept success.
+  _spawn_vc_frame_ack_presence_ok() {
+    local label="${1:-presence}"
+    [[ -n "$tab_name" ]] || return 1
+    # Tiny grace: list-tabs can lag the just-created tab by a beat.
+    sleep 1
+    if spawn_vc_frame_tab_present "$session_name" "$tab_name"; then
+      printf 'vc-frame action ACK ambiguous (%s) but tab %s is present; treating as success\n' \
+        "$label" "$tab_name" >&2
+      return 0
+    fi
+    return 1
   }
 
   status=0
@@ -571,6 +631,30 @@ spawn_vc_frame_session_action() {
       return 2
     fi
   elif [[ "$status" -ne 0 ]]; then
+    # G3b: ambiguous NewTab/critical-action ACK — presence first, then one retry.
+    if spawn_vc_frame_stderr_is_ambiguous_action_ack "$err"; then
+      if _spawn_vc_frame_ack_presence_ok "first-ack"; then
+        rm -f "$err_file" "$out_file"
+        return 0
+      fi
+      printf 'vc-frame action ACK timeout; one retry after brief backoff\n' >&2
+      sleep 2
+      status=0
+      _spawn_vc_frame_action_invoke "$@" || status=$?
+      err="$(cat "$err_file" 2>/dev/null || true)"
+      if [[ -n "$err" ]]; then
+        printf '%s\n' "$err" >&2
+      fi
+      if [[ "$status" -eq 0 ]]; then
+        rm -f "$err_file" "$out_file"
+        return 0
+      fi
+      if spawn_vc_frame_stderr_is_ambiguous_action_ack "$err" \
+        && _spawn_vc_frame_ack_presence_ok "retry-ack"; then
+        rm -f "$err_file" "$out_file"
+        return 0
+      fi
+    fi
     SPAWN_VC_FRAME_LAST_ERROR="${err:-vc-frame action exit ${status}}"
     rm -f "$err_file" "$out_file"
     return "$status"

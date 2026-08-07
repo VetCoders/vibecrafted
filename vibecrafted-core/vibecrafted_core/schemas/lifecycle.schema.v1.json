@@ -51,10 +51,7 @@
       "type": "boolean"
     },
     "parent_run_id": {
-      "type": [
-        "string",
-        "null"
-      ]
+      "type": ["string", "null"]
     },
     "operator_actions": {
       "type": "array",
@@ -111,10 +108,7 @@
       ]
     },
     "accepted_dou": {
-      "type": [
-        "integer",
-        "null"
-      ],
+      "type": ["integer", "null"],
       "minimum": 0
     },
     "accepted_dou_findings": {
@@ -135,10 +129,7 @@
     "spec": {
       "type": "object",
       "additionalProperties": true,
-      "required": [
-        "workflow_id",
-        "agent"
-      ],
+      "required": ["workflow_id", "agent"],
       "properties": {
         "workflow_id": {
           "type": "string"
@@ -165,16 +156,10 @@
           "type": "string"
         },
         "count": {
-          "type": [
-            "integer",
-            "null"
-          ]
+          "type": ["integer", "null"]
         },
         "depth": {
-          "type": [
-            "integer",
-            "null"
-          ]
+          "type": ["integer", "null"]
         },
         "previous_reports": {
           "type": "array",
@@ -243,10 +228,7 @@
           "type": "string"
         },
         "dou_index": {
-          "type": [
-            "integer",
-            "null"
-          ],
+          "type": ["integer", "null"],
           "minimum": 0
         },
         "reason": {
@@ -263,9 +245,7 @@
     "stage": {
       "type": "object",
       "additionalProperties": true,
-      "required": [
-        "id"
-      ],
+      "required": ["id"],
       "properties": {
         "id": {
           "type": "string"
@@ -278,11 +258,7 @@
         },
         "phase": {
           "type": "string",
-          "enum": [
-            "read",
-            "write",
-            ""
-          ]
+          "enum": ["read", "write", ""]
         },
         "agent": {
           "type": "string"
@@ -323,10 +299,7 @@
           "$ref": "#/$defs/transition"
         },
         "dou_index": {
-          "type": [
-            "integer",
-            "null"
-          ],
+          "type": ["integer", "null"],
           "minimum": 0
         }
       }
@@ -364,17 +337,10 @@
     "dou_index": {
       "type": "object",
       "additionalProperties": true,
-      "required": [
-        "value",
-        "stage",
-        "report"
-      ],
+      "required": ["value", "stage", "report"],
       "properties": {
         "value": {
-          "type": [
-            "integer",
-            "null"
-          ],
+          "type": ["integer", "null"],
           "minimum": 0
         },
         "stage": {
@@ -398,10 +364,7 @@
           "description": "Supported agent id requested by the worker."
         },
         "dou_index": {
-          "type": [
-            "integer",
-            "string"
-          ],
+          "type": ["integer", "string"],
           "description": "Open Definition-of-Undone finding count; 0 means launch-ready."
         },
         "status": {
