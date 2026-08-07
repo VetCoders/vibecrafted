@@ -792,7 +792,11 @@ build-server-release:
 		exit 1; \
 	fi; \
 	if command -v wasm-bindgen >/dev/null 2>&1; then \
-		lock_version="$$(cd "$(SERVER_DIR)" && $(PYTHON) -c 'import pathlib, tomllib; packages = tomllib.loads(pathlib.Path("Cargo.lock").read_text())["package"]; print(next(item["version"] for item in packages if item["name"] == "wasm-bindgen"))')"; \
+		lock_version="$$(cd "$(SERVER_DIR)" && cargo tree --locked -p wasm-bindgen --depth 0 --prefix none | awk 'NR == 1 { sub(/^v/, "", $$2); print $$2 }')"; \
+		if [ -z "$$lock_version" ]; then \
+			echo "[server] FATAL: could not resolve wasm-bindgen version from Cargo.lock" >&2; \
+			exit 1; \
+		fi; \
 		cli_version="$$(wasm-bindgen --version | awk '{print $$2}')"; \
 		if [ "$$cli_version" != "$$lock_version" ]; then \
 			echo "[server] FATAL: wasm-bindgen CLI $$cli_version does not match Cargo.lock $$lock_version" >&2; \
