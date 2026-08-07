@@ -48,7 +48,8 @@ jobs:
             libayatana-appindicator3-dev \
             protobuf-compiler \
             rsync \
-            shellcheck
+            shellcheck \
+            zsh
       - name: Install shellcheck on macOS
         if: matrix.os == 'macOS'
         run: brew install shellcheck

@@ -129,11 +129,17 @@ def run_shellcheck(files: list[Path]) -> int:
 
 
 def run_syntax_fallback(files: list[Path]) -> int:
-    print("shellcheck not found; running syntax-only shell checks with local shells.")
     failed = False
+    skipped: list[Path] = []
 
     for path in files:
         command = syntax_check_command(path)
+        if shutil.which(command[0]) is None:
+            # A host without this shell (ubuntu-latest ships no zsh) cannot
+            # syntax-check the file at all; an honest skip beats a crash, and
+            # CI hosts are expected to install the shell for real coverage.
+            skipped.append(path)
+            continue
         result = subprocess.run(command, check=False, capture_output=True, text=True)
         if result.returncode == 0:
             continue
@@ -144,10 +150,20 @@ def run_syntax_fallback(files: list[Path]) -> int:
         if result.stderr:
             print(result.stderr.rstrip(), file=sys.stderr)
 
+    if skipped:
+        names = ", ".join(str(p.relative_to(REPO_ROOT)) for p in skipped[:5])
+        more = f" (+{len(skipped) - 5} more)" if len(skipped) > 5 else ""
+        print(
+            f"[skip] {len(skipped)} file(s) unverifiable — interpreter missing"
+            f" on this host: {names}{more}",
+            file=sys.stderr,
+        )
+
     if failed:
         return 1
 
-    print(f"Syntax-only shell checks passed for {len(files)} shell files.")
+    checked = len(files) - len(skipped)
+    print(f"Syntax-only shell checks passed for {checked} shell files.")
     return 0
 
 
@@ -177,6 +193,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if shutil.which("shellcheck"):
         return run_shellcheck(files)
+
+    print("shellcheck not found; running syntax-only shell checks with local shells.")
 
     if args.require_shellcheck or os.environ.get("CI"):
         print(
