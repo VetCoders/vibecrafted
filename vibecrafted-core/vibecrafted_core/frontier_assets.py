@@ -14,7 +14,11 @@ from .package_resources import resource_path
 
 
 def _repo_root_config() -> Path | None:
-    """Return ``<repo>/config/vc-frame`` when running from a source checkout."""
+    """Return ``<repo>/config/vc-frame`` when running from a source checkout.
+
+    Walks parent directories looking for a monorepo layout; returns ``None``
+    when no matching ``config/vc-frame/config.kdl`` is found (packaged install).
+    """
     # vibecrafted_core/frontier_assets.py → package dir → vibecrafted-core → repo
     here = Path(__file__).resolve()
     for parent in here.parents:
@@ -67,6 +71,7 @@ def vc_frame_config_source() -> Path:
 
 
 def vc_frame_config_kdl() -> Path:
+    """Return the resolved ``config.kdl`` path, raising if it is missing."""
     path = vc_frame_config_source() / "config.kdl"
     if not path.is_file():
         raise FileNotFoundError(f"missing config.kdl under {vc_frame_config_source()}")

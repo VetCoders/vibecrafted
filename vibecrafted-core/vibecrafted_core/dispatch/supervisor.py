@@ -1,3 +1,5 @@
+"""Deterministic dispatch control plane: render, launch, await, verify, repair, record."""
+
 from __future__ import annotations
 
 import hashlib
@@ -70,6 +72,8 @@ CellLauncher = Callable[[Cut, str, str], CellRun]
 
 @dataclass(frozen=True)
 class AwaitOutcome:
+    """Result of awaiting one launched cell: whether it finished, timed out, and its report."""
+
     finished: bool
     timed_out: bool
     elapsed_s: float
@@ -80,6 +84,8 @@ class AwaitOutcome:
 
 @dataclass(frozen=True)
 class DispatchResult:
+    """Final outcome of one full dispatch run: per-cut states, baton, and artifact paths."""
+
     line_broken: bool
     baton: Baton
     states: dict[str, str] = field(default_factory=dict)
@@ -89,6 +95,7 @@ class DispatchResult:
     cuts: tuple[dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
+        """Render this result as the ``vibecrafted.dispatch-result.v1`` JSON-safe mapping."""
         return {
             "schema": RESULT_SCHEMA,
             "line_broken": self.line_broken,
@@ -109,6 +116,7 @@ def workflow_cell_launcher(
     base_dir = Path(source_dir) if source_dir is not None else Path(dispatch.meta.repo)
 
     def launch(cut: Cut, prompt: str, kind: str) -> CellRun:
+        """Launch one cell via ``launch_workflow`` and adapt its result into a ``CellRun``."""
         spec = WorkflowLaunchSpec(
             agent=cut.agent,
             mode=cut.resolved_workflow,
@@ -152,6 +160,7 @@ class DispatchSupervisor:
         source_dir: str | Path | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        """Resolve artifact paths (tracker/journal/handoff/result) and seed pending states."""
         self.dispatch = dispatch
         self.policy = dispatch.policy
         self.repo = dispatch.meta.repo
@@ -187,6 +196,11 @@ class DispatchSupervisor:
     # ------------------------------------------------------------------ run
 
     def run(self) -> DispatchResult:
+        """Execute every cut in order, breaking the line on an unverified critical cut.
+
+        Always writes final artifacts (tracker/journal/handoff/result) via the
+        ``finally`` clause, even when an unhandled exception aborts the loop.
+        """
         baton = self.dispatch.empty_baton()
         line_broken = False
         active_cut: Cut | None = None
@@ -254,6 +268,11 @@ class DispatchSupervisor:
     # -------------------------------------------------------------- per cut
 
     def _run_cut(self, cut: Cut, baton: Baton) -> Verdict:
+        """Run one cut end-to-end: envelope gate, launch, timeout/repair handling, verify.
+
+        Also enforces the ``require_commit`` WRITE-cut contract (clean start, new
+        commit or valid idempotent proof, commit message identifies the cut).
+        """
         blocked = self._envelope_block_failures(cut)
         if blocked:
             self._journal(
@@ -439,6 +458,12 @@ class DispatchSupervisor:
     def _execute_cell(
         self, cut: Cut, prompt: str, kind: str
     ) -> tuple[AwaitOutcome | None, Verdict | None]:
+        """Launch one cell, await it, and check its contract.
+
+        Returns ``(outcome, None)`` on a normal (possibly timed-out) completion, or
+        ``(None, verdict)`` for a launch-time refusal/crash. Raises
+        ``CellContractError`` when the finished cell fails the exit/meta/report contract.
+        """
         try:
             cell = self.launcher(cut, prompt, kind)
         except Exception as exc:  # noqa: BLE001
@@ -484,6 +509,10 @@ class DispatchSupervisor:
         return outcome, None
 
     def _cell_contract_failure(self, cell: CellRun, outcome: AwaitOutcome) -> str:
+        """Check exit code, meta.json status, and report presence/non-emptiness.
+
+        Returns "" when the contract is satisfied, else a description of the breach.
+        """
         if cell.exit_code not in (None, 0):
             return f"runtime process failed: exit_code={cell.exit_code}"
 
@@ -528,6 +557,10 @@ class DispatchSupervisor:
         return ""
 
     def _existing_delivery_commit(self, cut: Cut, report_text: str) -> str:
+        """Accept a worker-claimed pre-existing commit as this cut's delivery, if provable.
+
+        Requires the commit to resolve, be an ancestor of HEAD, and identify the cut.
+        """
         if not self.policy.allow_idempotent_existing:
             return ""
         match = re.search(
@@ -547,6 +580,7 @@ class DispatchSupervisor:
         return resolved
 
     def _commit_matches_cut(self, cut: Cut, commit: str) -> bool:
+        """Check the commit message names this cut's id or its slot bracket tag."""
         message = self._git(["show", "-s", "--format=%B", commit])
         slot = cut.id.split("_", 1)[0]
         return cut.id in message or f"[{slot}]" in message
@@ -575,6 +609,7 @@ class DispatchSupervisor:
         )
 
     def _cell_finished(self, cell: CellRun) -> bool:
+        """Poll one cell's liveness: Popen.poll() in-process, else waitpid/kill(0) probing."""
         if cell.proc is not None:
             exit_code = cell.proc.poll()
             if exit_code is None:
@@ -603,6 +638,7 @@ class DispatchSupervisor:
         return False
 
     def _terminate(self, cell: CellRun) -> None:
+        """Kill a timed-out cell's process (or process group for launch_workflow pids)."""
         try:
             if cell.proc is not None:
                 cell.proc.terminate()
@@ -616,6 +652,10 @@ class DispatchSupervisor:
     def _resolve_report(
         self, cell: CellRun, wall_started: float
     ) -> tuple[str, str, bool]:
+        """Read the announced report, or recover the freshest report written since launch.
+
+        Returns ``(path, text, recovered_by_mtime)``; all-empty when nothing is found.
+        """
         announced = Path(cell.report_path).expanduser() if cell.report_path else None
         if announced is not None and announced.is_file():
             try:
@@ -652,6 +692,7 @@ class DispatchSupervisor:
     # ------------------------------------------------------------- checks
 
     def _substrate_failure(self, cut: Cut, outcome: AwaitOutcome) -> Verdict | None:
+        """Detect a worker-reported SUBSTRATE_FAILURE marker and build its failed verdict."""
         if SUBSTRATE_FAILURE_MARKER not in outcome.report_text:
             return None
         line = next(
@@ -672,6 +713,7 @@ class DispatchSupervisor:
         )
 
     def _read_violation(self, cut: Cut, before: tuple[str, str]) -> str:
+        """Detect a READ cut mutating the repo against its declared mutation policy."""
         # "allow-report-only" permits artifact writes outside the repo;
         # any in-repo git drift still violates it, same as "forbid".
         if cut.mutation == "allow":
@@ -690,6 +732,7 @@ class DispatchSupervisor:
         )
 
     def _verify(self, cut: Cut) -> Verdict:
+        """Run the cut's rendered verifiers and journal each verifier's outcome."""
         if self.policy.verify_executor != "supervisor":
             self._journal(
                 f"[{cut.id}] verify_executor={self.policy.verify_executor!r}"
@@ -707,6 +750,7 @@ class DispatchSupervisor:
         return verdict
 
     def _repair_prompt(self, prompt: str, failures: tuple[str, ...]) -> str:
+        """Append a REPAIR ROUND directive citing prior failure evidence to the base prompt."""
         details = "\n".join(f"- {failure}" for failure in failures)
         return (
             f"{prompt}\n\nREPAIR ROUND — the supervisor refuted the previous"
@@ -782,6 +826,7 @@ class DispatchSupervisor:
         return tuple(failures)
 
     def _dirty_policy_failures(self, envelope: ExecutionEnvelope) -> list[str]:
+        """Enforce living-tree-scoped dirt policy: only dirt inside owned_paths blocks launch."""
         if envelope.dirty_policy != "living-tree-scoped":
             # Fail closed: an unknown policy never degrades to "allow".
             return [
@@ -803,6 +848,7 @@ class DispatchSupervisor:
         return []
 
     def _dirty_paths(self) -> set[str]:
+        """Parse `git status --porcelain` into the set of dirty (and rename-target) paths."""
         paths: set[str] = set()
         # `_git` strips stdout, which eats the leading status column of the
         # first porcelain line — split on whitespace instead of slicing.
@@ -819,12 +865,15 @@ class DispatchSupervisor:
     # ------------------------------------------------------------- git
 
     def _git_state(self) -> tuple[str, str]:
+        """Return ``(HEAD sha, porcelain status)`` as one drift-detection snapshot."""
         return self._git_head(), self._git(["status", "--porcelain"])
 
     def _git_head(self) -> str:
+        """Return the repo's current HEAD sha, or "" if it cannot be resolved."""
         return self._git(["rev-parse", "HEAD"])
 
     def _git(self, args: list[str]) -> str:
+        """Run a git command in the dispatch repo; return trimmed stdout, or "" on failure."""
         try:
             proc = subprocess.run(
                 ["git", *args],
@@ -839,6 +888,7 @@ class DispatchSupervisor:
         return proc.stdout.strip() if proc.returncode == 0 else ""
 
     def _git_ok(self, args: list[str]) -> bool:
+        """Run a git command in the dispatch repo; return True only on exit code 0."""
         try:
             proc = subprocess.run(
                 ["git", *args],
@@ -855,22 +905,26 @@ class DispatchSupervisor:
     # --------------------------------------------------------- artifacts
 
     def _await_config(self) -> tuple[float, float]:
+        """Resolve ``(poll_s, timeout_s)`` from policy.await_config, clamped to sane minimums."""
         config = self.policy.await_config or {}
         poll_s = float(config.get("poll_s", DEFAULT_POLL_S))
         timeout_s = float(config.get("timeout_min", DEFAULT_TIMEOUT_MIN)) * 60.0
         return max(poll_s, 0.01), max(timeout_s, 0.01)
 
     def _materialize_prompt(self, cut: Cut, kind: str, prompt: str) -> None:
+        """Write a rendered prompt to ``prompts/<cut_id>_<kind>.md`` for provenance."""
         self.prompts_dir.mkdir(parents=True, exist_ok=True)
         path = self.prompts_dir / f"{cut.id}_{kind}.md"
         path.write_text(prompt, encoding="utf-8")
 
     def _set_state(self, cut_id: str, state: str, note: str) -> None:
+        """Update one cut's in-memory state, journal the transition, and rewrite the tracker."""
         self._states[cut_id] = (state, note)
         self._journal(f"[{cut_id}] state {state}: {note}")
         self._write_tracker()
 
     def _verdict_note(self, verdict: Verdict) -> str:
+        """Compose a one-line tracker note summarizing a verdict's commit/verifiers/failures."""
         parts: list[str] = []
         if verdict.commit:
             parts.append(f"commit {verdict.commit[:8]}")
@@ -884,11 +938,13 @@ class DispatchSupervisor:
         return "; ".join(parts) or "no evidence recorded"
 
     def _journal(self, message: str) -> None:
+        """Append one timestamped line to journal.md."""
         timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
         with self.journal_path.open("a", encoding="utf-8") as handle:
             handle.write(f"- {timestamp} {message}\n")
 
     def _write_tracker(self) -> None:
+        """Rewrite tracker.md in full from the current in-memory per-cut states."""
         meta = self.dispatch.meta
         lines = [
             f"# dispatch tracker — {meta.name or 'unnamed'}",
@@ -912,6 +968,7 @@ class DispatchSupervisor:
         self.tracker_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def _mark_downstream_skipped(self, cut_id: str) -> None:
+        """Mark every still-pending cut after ``cut_id`` as skipped (line broken upstream)."""
         past_failed_cut = False
         for cut in self.dispatch.cuts:
             if cut.id == cut_id:
@@ -921,6 +978,7 @@ class DispatchSupervisor:
                 self._set_state(cut.id, STATE_PENDING, "skipped: line broken upstream")
 
     def _build_result(self, baton: Baton, line_broken: bool) -> DispatchResult:
+        """Assemble the final ``DispatchResult`` from the baton and current per-cut states."""
         verdicts = {state.cut_id: state for state in baton.states}
         return DispatchResult(
             line_broken=line_broken,
@@ -947,6 +1005,7 @@ class DispatchSupervisor:
         )
 
     def _write_final_artifacts(self, result: DispatchResult) -> None:
+        """Write dispatch-result.json and handoff.md, then journal the run's end summary."""
         self.result_path.write_text(
             json.dumps(result.to_dict(), ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
@@ -958,6 +1017,7 @@ class DispatchSupervisor:
         )
 
     def _write_handoff(self, result: DispatchResult) -> None:
+        """Render handoff.md: per-cut state table, final-verdict evidence, next action."""
         baton = result.baton
         meta = self.dispatch.meta
         lines = [
@@ -1005,6 +1065,7 @@ class DispatchSupervisor:
         self.handoff_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def _next_action(self, result: DispatchResult) -> str:
+        """Compose the handoff's operator-facing recommended next step."""
         if result.line_broken:
             broken = [
                 cut_id
@@ -1048,12 +1109,14 @@ def _repo_identity_from_url(url: str) -> str:
 
 
 def _normalize_digest(digest: str) -> str:
+    """Normalize a digest string to lowercase, always prefixed with ``sha256:``."""
     cleaned = digest.strip().lower()
     cleaned = cleaned.removeprefix("sha256:")
     return f"sha256:{cleaned}"
 
 
 def _path_in_scope(path: str, scopes: tuple[str, ...]) -> bool:
+    """True when ``path`` equals or is nested under any of the given scope prefixes."""
     for scope in scopes:
         anchor = scope.rstrip("/")
         if not anchor:
@@ -1071,6 +1134,7 @@ def run_dispatch(
     source_dir: str | Path | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> DispatchResult:
+    """Construct a ``DispatchSupervisor`` for ``dispatch`` and run it to completion."""
     supervisor = DispatchSupervisor(
         dispatch,
         launcher=launcher,

@@ -34,6 +34,8 @@ class ContractValidationError(ContractError):
 
 
 class ExecutionState(str, Enum):
+    """Lifecycle states of one subprocess execution, from creation to a terminal outcome."""
+
     CREATED = "created"
     LAUNCHED = "launched"
     RUNNING = "running"
@@ -44,6 +46,8 @@ class ExecutionState(str, Enum):
 
 
 class ProofState(str, Enum):
+    """Lifecycle states of a proof evaluation, from undeclared to a terminal verdict."""
+
     UNDECLARED = "undeclared"
     DECLARED = "declared"
     RUNNING = "running"
@@ -54,6 +58,8 @@ class ProofState(str, Enum):
 
 
 class DeliveryState(str, Enum):
+    """Lifecycle states of a delivery qualification, from unverified to sealed/invalidated."""
+
     UNVERIFIED = "unverified"
     DELIVERED = "delivered"
     SEALED = "sealed"
@@ -146,6 +152,7 @@ def delivery_transition_allowed(
 
 
 def _payload_value(value: Any) -> Any:
+    """Recursively convert enums/dataclasses/mappings/sequences into JSON-plain values."""
     if isinstance(value, Enum):
         return value.value
     if is_dataclass(value) and not isinstance(value, type):
@@ -161,15 +168,28 @@ def _payload_value(value: Any) -> Any:
 
 
 class _ContractModel:
+    """Shared payload (de)serialization and content-identity mixin for delivery records.
+
+    Subclasses are frozen dataclasses. Serialization is schema-checked and rejects
+    unknown fields; identity hashing excludes wall-clock-only fields so replaying
+    the same immutable evidence produces the same digest.
+    """
+
     SCHEMA: ClassVar[str]
     IDENTITY_EXCLUDED_FIELDS: ClassVar[frozenset[str]] = frozenset()
 
     @classmethod
     def _normalize_payload(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Base hook: pass the payload through unchanged (subclasses coerce list->tuple)."""
         return dict(payload)
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> Self:
+        """Construct an instance from a mapping, enforcing schema match and known fields.
+
+        Raises UnsupportedSchemaError on a schema mismatch and
+        ContractValidationError on unknown fields or a construction failure.
+        """
         if not isinstance(payload, Mapping):
             raise ContractValidationError(f"{cls.__name__} payload must be a mapping")
         schema = payload.get("schema")
@@ -193,12 +213,14 @@ class _ContractModel:
             ) from exc
 
     def to_payload(self) -> dict[str, Any]:
+        """Return the full JSON-plain payload for every dataclass field, in order."""
         return {
             item.name: _payload_value(getattr(self, item.name))
             for item in fields(cast(Any, self))
         }
 
     def identity_payload(self) -> dict[str, Any]:
+        """Return to_payload() minus the fields excluded from content identity."""
         return {
             key: value
             for key, value in self.to_payload().items()
@@ -216,12 +238,19 @@ class _ContractModel:
         )
 
     def content_digest(self) -> str:
+        """Return the ``sha256:<hex>`` digest of this record's canonical identity JSON."""
         canonical_bytes = self.canonical_json().encode("utf-8")
         return f"sha256:{hashlib.sha256(canonical_bytes).hexdigest()}"
 
 
 @dataclass(frozen=True)
 class ExecutionEnvelope(_ContractModel):
+    """The declared launch context for one delivery run: repo, branch, HEAD, and scope.
+
+    Anchors an execution to a specific checkout/agent identity before any proof
+    or delivery claim can be made about it.
+    """
+
     SCHEMA: ClassVar[str] = "vibecrafted.execution-envelope.v1"
 
     schema: str
@@ -241,6 +270,7 @@ class ExecutionEnvelope(_ContractModel):
 
     @classmethod
     def _normalize_payload(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Coerce list-valued path fields to tuples for the frozen dataclass."""
         normalized = dict(payload)
         normalized["protected_paths"] = tuple(normalized["protected_paths"])
         normalized["owned_paths"] = tuple(normalized["owned_paths"])
@@ -249,6 +279,13 @@ class ExecutionEnvelope(_ContractModel):
 
 @dataclass(frozen=True)
 class DeliveryProofContract(_ContractModel):
+    """The declared subject/oracle/assertion/negative-control shape of one proof.
+
+    Requires either a distinct oracle producer_id or, in the oracle-free case, a
+    witness expected_outcome, assertion, and at least one negative control —
+    enforced in ``__post_init__`` so a malformed contract cannot even construct.
+    """
+
     SCHEMA: ClassVar[str] = "vibecrafted.delivery-proof.v1"
 
     schema: str
@@ -264,6 +301,7 @@ class DeliveryProofContract(_ContractModel):
     runtime_probes: tuple[Mapping[str, Any], ...]
 
     def __post_init__(self) -> None:
+        """Enforce the subject/oracle producer_id distinctness and oracle-free evidence rule."""
         subject_id = self.subject.get("producer_id")
         if not isinstance(subject_id, str) or not subject_id:
             raise ContractValidationError("subject requires a non-empty producer_id")
@@ -288,6 +326,7 @@ class DeliveryProofContract(_ContractModel):
 
     @classmethod
     def _normalize_payload(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Coerce negative_controls and runtime_probes lists to tuples."""
         normalized = dict(payload)
         normalized["negative_controls"] = tuple(normalized["negative_controls"])
         normalized["runtime_probes"] = tuple(normalized["runtime_probes"])
@@ -296,6 +335,12 @@ class DeliveryProofContract(_ContractModel):
 
 @dataclass(frozen=True)
 class ExecutionEvidence(_ContractModel):
+    """Immutable record of one subprocess run: argv, environment, exit, and digests.
+
+    Wall-clock fields (``started_at``/``ended_at``) are excluded from content
+    identity so the record hashes deterministically across replays.
+    """
+
     SCHEMA: ClassVar[str] = "vibecrafted.execution-evidence.v1"
     IDENTITY_EXCLUDED_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {"started_at", "ended_at"}
@@ -330,6 +375,7 @@ class ExecutionEvidence(_ContractModel):
 
     @classmethod
     def _normalize_payload(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Coerce argv and liveness_evidence_sha256 lists to tuples."""
         normalized = dict(payload)
         normalized["argv"] = tuple(normalized["argv"])
         normalized["liveness_evidence_sha256"] = tuple(
@@ -340,6 +386,12 @@ class ExecutionEvidence(_ContractModel):
 
 @dataclass(frozen=True)
 class ProofResult(_ContractModel):
+    """The terminal outcome of evaluating a DeliveryProofContract against evidence.
+
+    ``state`` must be one of the four terminal ProofState values — an
+    in-progress state cannot be constructed (enforced in ``__post_init__``).
+    """
+
     SCHEMA: ClassVar[str] = "vibecrafted.proof-result.v1"
     IDENTITY_EXCLUDED_FIELDS: ClassVar[frozenset[str]] = frozenset({"evaluated_at"})
 
@@ -357,6 +409,7 @@ class ProofResult(_ContractModel):
     evaluated_at: str
 
     def __post_init__(self) -> None:
+        """Reject construction with any non-terminal ProofState value."""
         if self.state not in {
             ProofState.PASSED,
             ProofState.FAILED,
@@ -369,6 +422,7 @@ class ProofResult(_ContractModel):
 
     @classmethod
     def _normalize_payload(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Coerce the state string to ProofState and list fields to tuples."""
         normalized = dict(payload)
         normalized["state"] = ProofState(normalized["state"])
         for name in (
@@ -383,6 +437,12 @@ class ProofResult(_ContractModel):
 
 @dataclass(frozen=True)
 class DeliveryRecord(_ContractModel):
+    """The qualified delivery outcome for a proof: declared vs. actually checked scope.
+
+    ``state`` is restricted to UNVERIFIED/DELIVERED — sealing and invalidation
+    are recorded elsewhere (DeliverySeal), not on this record.
+    """
+
     SCHEMA: ClassVar[str] = "vibecrafted.delivery-record.v1"
     IDENTITY_EXCLUDED_FIELDS: ClassVar[frozenset[str]] = frozenset({"recorded_at"})
 
@@ -399,6 +459,7 @@ class DeliveryRecord(_ContractModel):
     recorded_at: str
 
     def __post_init__(self) -> None:
+        """Reject construction with a sealed/invalidated state (not this record's job)."""
         if self.state not in {DeliveryState.UNVERIFIED, DeliveryState.DELIVERED}:
             raise ContractValidationError(
                 f"DeliveryRecord cannot use state {self.state.value!r}"
@@ -406,6 +467,7 @@ class DeliveryRecord(_ContractModel):
 
     @classmethod
     def _normalize_payload(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Coerce the state string to DeliveryState and list fields to tuples."""
         normalized = dict(payload)
         normalized["runtime_probe_results"] = tuple(normalized["runtime_probe_results"])
         normalized["state"] = DeliveryState(normalized["state"])
@@ -415,6 +477,13 @@ class DeliveryRecord(_ContractModel):
 
 @dataclass(frozen=True)
 class DeliverySeal(_ContractModel):
+    """The final cross-signed record binding a passed proof to a specific commit/scope.
+
+    Aggregates digests of every upstream artifact (envelope, contract, proof
+    result, executor source) so the seal itself becomes the tamper-evident
+    terminal authority for a delivered change.
+    """
+
     SCHEMA: ClassVar[str] = "vibecrafted.delivery-seal.v1"
     IDENTITY_EXCLUDED_FIELDS: ClassVar[frozenset[str]] = frozenset({"issued_at"})
 
@@ -454,6 +523,7 @@ class DeliverySeal(_ContractModel):
 
     @classmethod
     def _normalize_payload(cls, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Coerce the seal's list-valued digest/surface fields to tuples."""
         normalized = dict(payload)
         for name in (
             "liveness_evidence_sha256",

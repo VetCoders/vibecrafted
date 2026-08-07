@@ -1,3 +1,5 @@
+"""TOML parsing, validation, and prompt rendering for ``vibecrafted.dispatch.v1`` plans."""
+
 from __future__ import annotations
 
 import re
@@ -45,18 +47,24 @@ FORBIDDEN_COMMAND_NEEDLES = (
 
 @dataclass(frozen=True)
 class DispatchDoctorResult:
+    """Outcome of doctor-validating dispatch text: pass/fail plus raw error strings."""
+
     ok: bool
     errors: tuple[str, ...]
     dispatch: Dispatch | None = None
 
 
 class DispatchSchemaError(ValueError):
+    """Raised when dispatch TOML fails structural or policy validation; carries all errors."""
+
     def __init__(self, errors: list[str] | tuple[str, ...]) -> None:
+        """Store the full error list and join it into the exception message."""
         self.errors = tuple(errors)
         super().__init__("\n".join(self.errors))
 
 
 def load_dispatch(path: str | Path) -> Dispatch:
+    """Read and parse a dispatch TOML file from disk; raises on any validation error."""
     source = Path(path).expanduser()
     return parse_dispatch(source.read_text(encoding="utf-8"), base_dir=source.parent)
 
@@ -64,6 +72,7 @@ def load_dispatch(path: str | Path) -> Dispatch:
 def doctor_dispatch(
     text: str, *, base_dir: str | Path | None = None
 ) -> DispatchDoctorResult:
+    """Validate dispatch TOML text (structure + READ-cut policy) without raising."""
     try:
         dispatch = parse_dispatch(text, base_dir=base_dir)
         policy_errors = _doctor_policy_errors(dispatch)
@@ -83,6 +92,10 @@ def doctor_dispatch(
 
 
 def parse_dispatch(text: str, *, base_dir: str | Path | None = None) -> Dispatch:
+    """Parse and fully validate dispatch TOML text into a typed ``Dispatch``.
+
+    Raises ``DispatchSchemaError`` with every collected error (not just the first).
+    """
     try:
         raw = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
@@ -140,6 +153,7 @@ def parse_dispatch(text: str, *, base_dir: str | Path | None = None) -> Dispatch
 def render_cell_prompt(
     dispatch: Dispatch, cut: Cut, *, baton: Baton | None = None
 ) -> str:
+    """Assemble one cut's worker prompt: common text + brief/prompt + extra + baton JSON."""
     active_baton = baton if baton is not None else dispatch.empty_baton()
     variables = {
         "repo": dispatch.meta.repo,
@@ -182,6 +196,7 @@ def render_cut_verifies(dispatch: Dispatch, cut: Cut) -> Cut:
 
 
 def _brief_or_prompt(cut: Cut) -> str:
+    """Read the cut's brief file if resolvable, else fall back to its inline prompt."""
     if cut.brief:
         path = Path(cut.brief).expanduser()
         if path.is_file():
@@ -190,6 +205,7 @@ def _brief_or_prompt(cut: Cut) -> str:
 
 
 def _format_known(text: str, variables: dict[str, str]) -> str:
+    """Substitute ``{name}`` placeholders for known variables only; unknowns pass through."""
     rendered = text
     for name, value in variables.items():
         rendered = rendered.replace("{" + name + "}", value)
@@ -197,6 +213,7 @@ def _format_known(text: str, variables: dict[str, str]) -> str:
 
 
 def _parse_meta(value: Any, errors: list[str]) -> Meta:
+    """Parse the ``[meta]`` table; records an error when ``repo`` is missing."""
     if not isinstance(value, dict):
         errors.append("meta: table is required")
         return Meta(name="", repo="")
@@ -250,6 +267,7 @@ def _parse_proof(value: Any, errors: list[str]) -> dict[str, Any] | None:
 
 
 def _parse_policy(value: Any, errors: list[str]) -> Policy:
+    """Parse the ``[policy]`` table, validating enum fields and concurrency bounds."""
     raw = value if isinstance(value, dict) else {}
     on_timeout = _string(raw.get("on_timeout")) or "fail"
     if on_timeout not in TIMEOUT_POLICIES:
@@ -280,11 +298,13 @@ def _parse_policy(value: Any, errors: list[str]) -> Policy:
 
 
 def _parse_common(value: Any) -> Common:
+    """Parse the optional ``[common]`` table (shared prompt text); defaults to empty."""
     raw = value if isinstance(value, dict) else {}
     return Common(text=_string(raw.get("text")))
 
 
 def _parse_workflow_map(value: Any, errors: list[str]) -> dict[str, str]:
+    """Parse the alias -> supported-workflow mapping used to resolve ``cut.workflow``."""
     if value is None:
         return {}
     if not isinstance(value, dict):
@@ -306,6 +326,7 @@ def _parse_workflow_map(value: Any, errors: list[str]) -> dict[str, str]:
 
 
 def _parse_phases(value: Any, errors: list[str]) -> list[Phase]:
+    """Parse the ``[[phases]]`` array, requiring unique non-empty titles."""
     if value is None:
         return []
     if not isinstance(value, list):
@@ -338,6 +359,7 @@ def _parse_cuts(
     base_dir: Path | None,
     errors: list[str],
 ) -> list[Cut]:
+    """Parse the ``[[cuts]]`` array: ids, phase refs, workflow resolution, verify/mutation rules."""
     if not isinstance(value, list) or not value:
         errors.append("cuts: at least one cut table is required")
         return []
@@ -406,6 +428,7 @@ def _parse_cuts(
 
 
 def _doctor_policy_errors(dispatch: Dispatch) -> list[str]:
+    """Policy-level checks that require a fully parsed ``Dispatch`` (post-structural)."""
     errors: list[str] = []
     for index, cut in enumerate(dispatch.cuts):
         if cut.mode == "read" and not cut.mutation:
@@ -414,6 +437,7 @@ def _doctor_policy_errors(dispatch: Dispatch) -> list[str]:
 
 
 def _parse_verify(value: Any, cut_index: int, errors: list[str]) -> list[Verify]:
+    """Parse one cut's ``verify`` array, including forbidden-command checks."""
     if value is None:
         return []
     if not isinstance(value, list):
@@ -436,6 +460,7 @@ def _parse_verify(value: Any, cut_index: int, errors: list[str]) -> list[Verify]
 
 
 def _parse_matchers(value: Any, prefix: str, errors: list[str]) -> list[Matcher]:
+    """Parse one verifier's ``expect`` table into typed matchers, validating each kind."""
     if not isinstance(value, dict) or not value:
         errors.append(f"{prefix}.expect: non-empty matcher table is required")
         return []
@@ -465,6 +490,7 @@ def _parse_matchers(value: Any, prefix: str, errors: list[str]) -> list[Matcher]
 
 
 def _parse_recovery(value: Any, cut_index: int, errors: list[str]) -> Recovery | None:
+    """Parse a cut's optional ``[cuts.recovery]`` table."""
     if value is None:
         return None
     if not isinstance(value, dict):
@@ -488,6 +514,7 @@ def _parse_recovery(value: Any, cut_index: int, errors: list[str]) -> Recovery |
 def _validate_recovery_targets(
     cuts: list[Cut], phases: list[Phase], errors: list[str]
 ) -> None:
+    """Ensure every ``recovery.goto`` names an existing cut id or phase title."""
     cut_ids = {cut.id for cut in cuts if cut.id}
     phase_titles = {phase.title for phase in phases}
     for index, cut in enumerate(cuts):
@@ -501,6 +528,7 @@ def _validate_recovery_targets(
 def _validate_brief_path(
     brief: str, base_dir: Path | None, cut_index: int, errors: list[str]
 ) -> None:
+    """Resolve a cut's brief path against ``base_dir`` and require it to exist."""
     path = Path(brief).expanduser()
     if not path.is_absolute() and base_dir is not None:
         path = base_dir / path
@@ -509,6 +537,7 @@ def _validate_brief_path(
 
 
 def _resolve_brief(brief: str, base_dir: Path | None) -> str:
+    """Resolve a brief path to an absolute string, anchored at ``base_dir`` if relative."""
     if not brief:
         return ""
     path = Path(brief).expanduser()
@@ -518,6 +547,7 @@ def _resolve_brief(brief: str, base_dir: Path | None) -> str:
 
 
 def _validate_command(run: str, prefix: str, errors: list[str]) -> None:
+    """Reject verifier commands containing a hard-stop needle (release/force ops)."""
     if not run:
         return
     normalized = " ".join(shlex.split(run)) if _can_shlex(run) else run
@@ -528,6 +558,7 @@ def _validate_command(run: str, prefix: str, errors: list[str]) -> None:
 
 
 def _can_shlex(value: str) -> bool:
+    """True when ``value`` tokenizes cleanly under POSIX shell-lexing rules."""
     try:
         shlex.split(value)
     except ValueError:
@@ -536,10 +567,12 @@ def _can_shlex(value: str) -> bool:
 
 
 def _string(value: Any) -> str:
+    """Coerce a TOML value to a trimmed string, or "" when it is not a string."""
     return value.strip() if isinstance(value, str) else ""
 
 
 def _int(value: Any, default: int) -> int:
+    """Coerce a TOML value to an int, rejecting bools; falls back to ``default``."""
     if isinstance(value, bool):
         return default
     if isinstance(value, int):
@@ -548,4 +581,5 @@ def _int(value: Any, default: int) -> int:
 
 
 def _dict(value: Any) -> dict[str, Any]:
+    """Coerce a TOML value to a plain dict, or {} when it is not a table."""
     return dict(value) if isinstance(value, dict) else {}

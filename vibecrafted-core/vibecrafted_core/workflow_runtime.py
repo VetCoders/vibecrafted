@@ -1,3 +1,7 @@
+"""Supervised runtime for research/marbles/polarize workflows: spawns child
+agent processes, tracks their durable artifacts, and writes the parent report.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -24,6 +28,10 @@ from .supervisor_async import AsyncRunHandle, AsyncSupervisor
 
 @dataclass(frozen=True)
 class ChildResult:
+    """Durable outcome of one supervised child agent run (research lane, marbles
+    loop iteration, or synthesis), as recorded from its meta.json / handle.
+    """
+
     label: str
     agent: str
     run_id: str
@@ -48,6 +56,8 @@ class ChildResult:
 
 
 def _parent_run_id() -> str:
+    """The parent supervised run's id, from `VIBECRAFTED_RUN_ID` (falls back to
+    a fixed placeholder outside a real run)."""
     return os.environ.get("VIBECRAFTED_RUN_ID", "workflow-runtime")
 
 
@@ -60,28 +70,33 @@ def _parent_meta_path() -> Path:
 
 
 def _child_dir() -> Path:
+    """Directory for this run's child artifacts, created on first access."""
     base = _parent_report_path().parent / f"{_parent_run_id()}-children"
     base.mkdir(parents=True, exist_ok=True)
     return base
 
 
 def _safe_label(label: str) -> str:
+    """Filesystem-safe form of a label: non-alnum runs become `-`, trimmed."""
     return "".join(ch if ch.isalnum() else "-" for ch in label).strip("-")
 
 
 def _slug(value: str, fallback: str) -> str:
+    """Lowercase, hyphenated, 64-char-capped slug of `value`; `fallback` if empty."""
     raw = re.sub(r"[^A-Za-z0-9._-]+", "-", value.lower()).strip("-")
     raw = raw[:64].strip("-")
     return raw or fallback
 
 
 def _artifact_ts() -> str:
+    """Artifact date stamp: `VIBECRAFTED_ARTIFACT_TS` override, else today's UTC date."""
     return os.environ.get("VIBECRAFTED_ARTIFACT_TS") or datetime.now(
         timezone.utc
     ).strftime("%Y-%m-%d")
 
 
 def _artifact_slug(prompt: str) -> str:
+    """Artifact slug: `VIBECRAFTED_ARTIFACT_SLUG` override, else slugified prompt."""
     return os.environ.get("VIBECRAFTED_ARTIFACT_SLUG") or _slug(
         prompt, _parent_run_id()
     )
@@ -92,6 +107,7 @@ def _artifact_suffix() -> str:
 
 
 def _research_artifact_agent(label: str, agent: str) -> str:
+    """Agent token used in a research artifact's canonical filename."""
     if label == "research-synthesis":
         return "synthesis"
     if agent:
@@ -102,6 +118,9 @@ def _research_artifact_agent(label: str, agent: str) -> str:
 
 
 def _canonical_research_dir() -> Path | None:
+    """Canonical research artifact directory from env, created if configured;
+    `None` when unset, signaling callers to fall back to the per-run child dir.
+    """
     raw = os.environ.get("VIBECRAFTED_CANONICAL_REPORT_DIR", "").strip()
     if not raw:
         return None
@@ -113,6 +132,10 @@ def _canonical_research_dir() -> Path | None:
 def _research_artifact_paths(
     *, label: str, agent: str, prompt: str
 ) -> tuple[Path, Path, Path]:
+    """Report/transcript/meta paths for a research child: canonical dated stem
+    when a canonical dir is configured, else plain label-named files in the
+    per-run child dir.
+    """
     base = _canonical_research_dir()
     if base is None:
         child_base = _child_dir()
@@ -138,6 +161,9 @@ def _research_artifact_paths(
 def _child_artifact_paths(
     *, kind: str, label: str, agent: str, prompt: str
 ) -> tuple[Path, Path, Path, Path]:
+    """Report/transcript/meta/prompt paths for any child: research kind uses the
+    canonical-or-child-dir research layout, other kinds use the plain child dir.
+    """
     safe_label = _safe_label(label)
     if kind == "research":
         report, transcript, meta = _research_artifact_paths(
@@ -161,6 +187,7 @@ def _child_env(
     meta: Path,
     model_requested: str = "",
 ) -> dict[str, str]:
+    """Child process env: agent + artifact paths, plus model override if requested."""
     env = os.environ.copy()
     env["VIBECRAFTED_AGENT"] = agent
     env["VIBECRAFTED_REPORT_PATH"] = str(report)
@@ -176,6 +203,7 @@ def _tee_enabled() -> bool:
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
+    """Write `payload` as pretty-printed UTF-8 JSON, creating parent dirs."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -183,6 +211,7 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 
 
 def _optional_int(value: object) -> int | None:
+    """Best-effort int coercion (bool/int/whole-float/digit-string); `None` otherwise."""
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):
@@ -195,6 +224,7 @@ def _optional_int(value: object) -> int | None:
 
 
 def _optional_float(value: object) -> float | None:
+    """Best-effort float coercion (int/float/numeric string); `None` for bool/junk."""
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
@@ -225,6 +255,7 @@ def _tokens_total(
 
 
 def _child_tokens_total(result: ChildResult) -> int:
+    """Total token count for one child result, via `_tokens_total`."""
     return _tokens_total(
         result.tokens_input,
         result.tokens_cached_input,
@@ -233,6 +264,7 @@ def _child_tokens_total(result: ChildResult) -> int:
 
 
 def _sum_cache_write(results: Sequence[ChildResult]) -> int | None:
+    """Sum `tokens_cache_write` across results that report it; `None` if none do."""
     values = [
         item.tokens_cache_write
         for item in results
@@ -242,15 +274,18 @@ def _sum_cache_write(results: Sequence[ChildResult]) -> int | None:
 
 
 def _sum_cost_usd(results: Sequence[ChildResult]) -> float | None:
+    """Sum `cost_usd` across results that report it, rounded to 6 places."""
     values = [item.cost_usd for item in results if item.cost_usd is not None]
     return round(sum(values), 6) if values else None
 
 
 def _runtime_model_requested() -> str:
+    """The model requested for this run, from `VIBECRAFTED_MODEL_REQUESTED`."""
     return str(os.environ.get("VIBECRAFTED_MODEL_REQUESTED") or "").strip()
 
 
 def _remember_runtime_model_request(model_requested: str) -> str:
+    """Stash a non-empty requested model into the process env for later readers."""
     requested = str(model_requested or "").strip()
     if requested:
         os.environ["VIBECRAFTED_MODEL_REQUESTED"] = requested
@@ -258,6 +293,7 @@ def _remember_runtime_model_request(model_requested: str) -> str:
 
 
 def _result_meta(result: ChildResult) -> dict[str, object]:
+    """Serialize one `ChildResult` into the JSON shape written to meta.json."""
     payload: dict[str, object] = {
         "label": result.label,
         "agent": result.agent,
@@ -288,6 +324,7 @@ def _result_meta(result: ChildResult) -> dict[str, object]:
 
 
 def _parent_receipt(results: Sequence[ChildResult]) -> dict[str, object]:
+    """Aggregate token/cost accounting across all children into the parent receipt."""
     tokens_input = sum(result.tokens_input for result in results)
     tokens_cached_input = sum(result.tokens_cached_input for result in results)
     tokens_output = sum(result.tokens_output for result in results)
@@ -310,6 +347,7 @@ def _parent_receipt(results: Sequence[ChildResult]) -> dict[str, object]:
 
 
 def _parent_footer(run_id: str, status: str, receipt: dict[str, object]) -> list[str]:
+    """Render the machine-parsed `run_closure:` YAML footer block for the parent report."""
     cost = receipt.get("cost_usd")
     lines = [
         "",
@@ -342,6 +380,8 @@ def _parent_footer(run_id: str, status: str, receipt: dict[str, object]) -> list
 
 
 def _read_prompt_file(path: str) -> str:
+    """Read a prompt file's text; on read failure, return a fallback instruction
+    naming the path instead of raising."""
     if not path:
         return ""
     try:
@@ -355,11 +395,14 @@ def _repo_root() -> Path:
 
 
 def _user_config_path() -> Path:
+    """Per-user config.toml path under `$XDG_CONFIG_HOME` (or `~/.config`)."""
     config_home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
     return config_home.expanduser() / "vibecrafted" / "config.toml"
 
 
 def _manifest_config_paths() -> tuple[Path, ...]:
+    """Candidate `install.toml` locations (VIBECRAFTED_ROOT, repo root, tools
+    home), de-duplicated in precedence order."""
     roots = [
         Path(os.environ["VIBECRAFTED_ROOT"]).expanduser()
         if os.environ.get("VIBECRAFTED_ROOT")
@@ -383,6 +426,7 @@ def _manifest_config_paths() -> tuple[Path, ...]:
 
 
 def research_agent_selection() -> ResearchAgentSelection:
+    """Resolve the live research agent selection (env/config/manifest/builtin)."""
     return resolve_research_runtime_config()
 
 
@@ -401,6 +445,10 @@ WORKER_SIGNAL_DISCIPLINE = (
 
 
 def _child_prompt(kind: str, label: str, root: str, prompt: str) -> str:
+    """Compose the full prompt handed to a supervised child worker: contract
+    boilerplate, worker-signal discipline, marbles blindness note if applicable,
+    then the operator prompt.
+    """
     marbles_blindness = ""
     if kind == "marbles":
         marbles_blindness = (
@@ -424,6 +472,8 @@ Operator prompt:
 
 
 def _loop_prompt(kind: str, prompt: str, index: int, count: int, depth: int) -> str:
+    """Append this loop iteration's instruction (polarize vs. marbles wording)
+    to the base operator prompt."""
     if kind == "polarize":
         instruction = (
             f"Polarize loop: L{index}/{count}. Depth target: {depth}. "
@@ -442,6 +492,7 @@ def _loop_prompt(kind: str, prompt: str, index: int, count: int, depth: int) -> 
 def _research_synthesis_prompt(
     root: str, prompt: str, results: Sequence[ChildResult]
 ) -> str:
+    """Compose the synthesis worker's prompt, citing each surviving lane's report path."""
     reports = "\n".join(
         f"- {result.agent}: {result.report}" for result in results if result.report
     )
@@ -538,6 +589,10 @@ async def _run_child(
     command: Sequence[str] | None = None,
     prompt_body: str | None = None,
 ) -> ChildResult:
+    """Spawn and await one supervised child agent process, writing its prompt
+    file, resolving its command (default: stdin command with model override),
+    and returning the collected `ChildResult`.
+    """
     safe_label = _safe_label(label)
     run_id = f"{_parent_run_id()}-{safe_label}"
     report, transcript, meta, prompt_file = _child_artifact_paths(
@@ -597,6 +652,7 @@ async def _run_child(
 
 
 def _meta_sibling_path(meta_path: Path, suffix: str) -> Path:
+    """Derive a sibling artifact path (e.g. report/transcript) from a meta.json path."""
     marker = ".meta.json"
     if meta_path.name.endswith(marker):
         return meta_path.with_name(f"{meta_path.name[: -len(marker)]}{suffix}")
@@ -604,6 +660,12 @@ def _meta_sibling_path(meta_path: Path, suffix: str) -> Path:
 
 
 def _child_result_from_meta(label: str, meta_path: Path) -> ChildResult | None:
+    """Reconstruct a `ChildResult` by reading a child's meta.json off disk.
+
+    `None` when the file is missing/unreadable/malformed. Infers a successful
+    exit code from a non-empty report when the meta omits `exit_code` and
+    reports no errors (covers workers that wrote a report but no explicit code).
+    """
     try:
         payload = json.loads(meta_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -659,6 +721,7 @@ def _child_result_from_meta(label: str, meta_path: Path) -> ChildResult | None:
 
 
 def _non_empty_file(path: Path) -> bool:
+    """True if `path` exists as a regular file with size > 0; false on OSError."""
     try:
         return path.is_file() and path.stat().st_size > 0
     except OSError:
@@ -666,6 +729,7 @@ def _non_empty_file(path: Path) -> bool:
 
 
 def _lane_meta_path(agent: str) -> Path:
+    """Meta.json path for a research agent's lane."""
     return _research_artifact_paths(
         label=f"research-{agent}",
         agent=agent,
@@ -676,6 +740,8 @@ def _lane_meta_path(agent: str) -> Path:
 def _lane_progress_fingerprint(
     meta_path: Path, result: ChildResult | None
 ) -> tuple[tuple[str, int, int], ...]:
+    """(path, size, mtime_ns) tuples for a lane's meta/report/transcript, used
+    to detect whether a pending lane is still making progress."""
     paths = (
         meta_path,
         result.report if result is not None else _meta_sibling_path(meta_path, ".md"),
@@ -699,6 +765,9 @@ def _lane_progress_fingerprint(
 def _timed_out_lane_result(
     agent: str, observed: ChildResult | None, reason: str
 ) -> ChildResult:
+    """Synthesize a failed `ChildResult` (exit 124) for a lane that never
+    finished, preserving whatever was already observed plus the timeout reason.
+    """
     meta_path = _lane_meta_path(agent)
     errors = tuple(
         dict.fromkeys(
@@ -766,6 +835,7 @@ def _research_quorum(total: int) -> int:
 
 
 def _research_survivors(results: Sequence[ChildResult]) -> list[ChildResult]:
+    """Filter to results that exited cleanly with a valid artifact."""
     return [r for r in results if r.exit_code == 0 and r.artifact_ok]
 
 
@@ -809,6 +879,11 @@ async def _wait_for_research_lanes(
     quorum_idle_seconds: float = 120,
     interval_seconds: float = 5,
 ) -> list[ChildResult]:
+    """Poll research lane meta files until all finish, quorum becomes impossible,
+    the hard timeout elapses, or quorum is reached and stays idle past
+    `quorum_idle_seconds` — whichever comes first. Pending lanes at exit are
+    synthesized as timed-out `ChildResult`s via `_timed_out_lane_result`.
+    """
     quorum = _research_quorum(len(agents))
     loop = asyncio.get_running_loop()
     hard_deadline = loop.time() + max(timeout_seconds, 0.0)
@@ -915,6 +990,8 @@ async def _wait_for_research_lanes(
 
 
 def _failed_synthesis_result(last: ChildResult, reason: str) -> ChildResult:
+    """Write and return a failed synthesis `ChildResult` (exit 1) with `reason`
+    recorded in a fresh report/transcript, for when synthesis cannot proceed."""
     report, transcript, _meta, _prompt_file = _child_artifact_paths(
         kind="research",
         label="research-synthesis",
@@ -956,6 +1033,11 @@ async def _run_research_synthesis(
     selection: ResearchAgentSelection | None = None,
     model_requested: str = "",
 ) -> ChildResult | None:
+    """Run research synthesis: an explicit synthesizer agent if configured,
+    else a native resume of the last-finishing survivor (falling back to a
+    fresh stdin command when native resume is unsupported for that agent).
+    `None` when there are too few survivors to meet quorum.
+    """
     survivors = _research_survivors(results)
     if not survivors or len(survivors) < _research_quorum(len(results)):
         return None
@@ -1000,6 +1082,9 @@ def _write_parent_report(
     synthesis: ChildResult | None = None,
     research_selection: ResearchAgentSelection | None = None,
 ) -> None:
+    """Write the parent supervised run's Markdown report and meta.json: status,
+    receipt, research lane selection, synthesis and per-child sections.
+    """
     status = _research_run_status(results, synthesis, kind=kind)
     lanes_failed = [
         result.agent
@@ -1204,6 +1289,10 @@ def _write_parent_report(
 
 
 async def run_research(root: str, prompt: str, model_requested: str = "") -> int:
+    """Run all research lanes concurrently, then synthesis; write the parent
+    report. Returns 0 for completed/partial_success, 1 otherwise (including
+    when no supported research agents are configured).
+    """
     model_requested = _remember_runtime_model_request(model_requested)
     selection = research_agent_selection()
     for agent in selection.ignored:
@@ -1248,6 +1337,9 @@ async def run_research(root: str, prompt: str, model_requested: str = "") -> int
 async def run_research_lane(
     root: str, prompt: str, agent: str, model_requested: str = ""
 ) -> int:
+    """Run a single research lane for one agent. Returns 0 on clean exit with
+    a valid artifact, 1 for an unsupported agent or a failed/invalid run.
+    """
     model_requested = _remember_runtime_model_request(model_requested)
     if agent not in SUPPORTED_RESEARCH_AGENTS:
         print(f"vc-research: unsupported research agent: {agent}", file=sys.stderr)
@@ -1267,6 +1359,10 @@ async def run_research_lane(
 async def run_research_synthesis(
     root: str, prompt: str, model_requested: str = ""
 ) -> int:
+    """Wait for already-launched research lanes to finish (via meta polling),
+    then synthesize and write the parent report. Returns 0 for completed/
+    partial_success, 1 otherwise.
+    """
     model_requested = _remember_runtime_model_request(model_requested)
     selection = research_agent_selection()
     for agent in selection.ignored:
@@ -1316,6 +1412,10 @@ async def run_marbles(
     workflow: str = "marbles",
     model_requested: str = "",
 ) -> int:
+    """Run up to `count` sequential marbles/polarize loop iterations, stopping
+    early on the first failed/invalid child; writes the parent report.
+    Returns 0 only if all `count` iterations completed cleanly.
+    """
     model_requested = _remember_runtime_model_request(model_requested)
     kind = _safe_label(workflow) or "marbles"
     results: list[ChildResult] = []
@@ -1342,6 +1442,8 @@ async def run_marbles(
 
 
 def _parser() -> argparse.ArgumentParser:
+    """Build the `workflow_runtime` CLI's argparse parser (research/research-lane/
+    research-synthesis/marbles subcommands)."""
     parser = argparse.ArgumentParser(
         description="Vibecrafted supervised workflow runtimes."
     )
@@ -1379,6 +1481,9 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entrypoint: parse args, stash requested model/synthesizer overrides
+    into env, and dispatch to the matching `run_*` coroutine via `asyncio.run`.
+    """
     ns = _parser().parse_args(argv)
     model_requested = str(
         getattr(ns, "model", "") or os.environ.get("VIBECRAFTED_MODEL_REQUESTED") or ""

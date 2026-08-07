@@ -1,3 +1,5 @@
+"""Hard-stop classification and operator-permission payloads for the ACP bridge."""
+
 from __future__ import annotations
 
 import json
@@ -8,6 +10,8 @@ from typing import Any
 
 @dataclass(frozen=True)
 class HardStop:
+    """A matched hard-stop trigger: which category and the literal text that matched."""
+
     category: str
     evidence: str
 
@@ -47,6 +51,7 @@ _HARD_STOP_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 
 def _searchable_text(value: Any) -> str:
+    """Coerce ``value`` to a string for regex matching, JSON-serializing non-strings."""
     if isinstance(value, str):
         return value
     try:

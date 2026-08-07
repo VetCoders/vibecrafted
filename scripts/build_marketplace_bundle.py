@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""Build the vibecrafted-framework.plugin marketplace bundle from repo state.
+
+Zips generated manifest/README/license files, discovered ``vc-*`` skills
+(pipeline + foundation), and any notarized ``tools/bin/`` binaries into a
+single deterministic-timestamp zip archive.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -32,6 +39,8 @@ SUPPORT_DOC_PATHS = (
 
 @dataclass(frozen=True)
 class ListingMetadata:
+    """Registry metadata parsed out of docs/MARKETPLACE_LISTING.md."""
+
     description: str
     keywords: tuple[str, ...]
     homepage: str
@@ -45,10 +54,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def read_version(repo_root: Path) -> str:
+    """Read the release version string from the repo's VERSION file."""
     return (repo_root / "VERSION").read_text(encoding="utf-8").strip()
 
 
 def parse_listing_metadata(text: str) -> ListingMetadata:
+    """Parse the ``## Registry Metadata`` section of the listing doc.
+
+    Raises ``ValueError`` if any required key is missing.
+    """
     in_registry_section = False
     values: dict[str, str] = {}
 
@@ -95,11 +109,13 @@ def parse_listing_metadata(text: str) -> ListingMetadata:
 
 
 def load_listing_metadata(repo_root: Path) -> ListingMetadata:
+    """Read and parse docs/MARKETPLACE_LISTING.md into `ListingMetadata`."""
     listing_path = repo_root / "docs" / "MARKETPLACE_LISTING.md"
     return parse_listing_metadata(listing_path.read_text(encoding="utf-8"))
 
 
 def discover_bundle_skills(repo_root: Path) -> list[Path]:
+    """Find top-level ``vc-*`` skill directories to ship in the bundle."""
     return sorted(
         (skill for skill in discover_skills(repo_root) if skill.name.startswith("vc-")),
         key=lambda path: path.name,
@@ -132,12 +148,14 @@ def discover_foundation_skills(repo_root: Path) -> list[Path]:
 
 
 def should_skip_path(path: Path) -> bool:
+    """True if `path` is a compiled artifact or lives under an ignored dir part."""
     if path.name.endswith(".pyc"):
         return True
     return any(part in IGNORED_PATH_PARTS for part in path.parts)
 
 
 def iter_skill_files(skill_dir: Path) -> list[Path]:
+    """List every non-ignored file under `skill_dir`, sorted for stable zips."""
     return sorted(
         (
             path
@@ -176,6 +194,7 @@ def iter_bundled_tool_files(repo_root: Path) -> list[Path]:
 
 
 def plugin_manifest(version: str, metadata: ListingMetadata) -> dict[str, object]:
+    """Build the ``.claude-plugin/plugin.json`` manifest dict."""
     return {
         "name": PLUGIN_NAME,
         "version": version,
@@ -192,12 +211,15 @@ def plugin_manifest(version: str, metadata: ListingMetadata) -> dict[str, object
 
 
 def mcp_config() -> dict[str, object]:
-    # Canon transport for runs is streamable HTTP, not a stdio server spawned
-    # per run: a single scan-only `loct watch --bg` keeps the root indexed;
-    # 127.0.0.1:5174/mcp and every agent shell on that root shares it. This is a
-    # shipped, root-less template, so it documents the default port; vibecrafted's
-    # own per-run wiring derives the port per root. Source of truth for this shape
-    # is vibecrafted_core.perception.default_loctree_mcp_config_entry().
+    """Build the bundle's ``.mcp.json`` default loctree server config.
+
+    Canon transport for runs is streamable HTTP, not a stdio server spawned
+    per run: a single scan-only `loct watch --bg` keeps the root indexed;
+    127.0.0.1:5174/mcp and every agent shell on that root shares it. This is a
+    shipped, root-less template, so it documents the default port; vibecrafted's
+    own per-run wiring derives the port per root. Source of truth for this shape
+    is vibecrafted_core.perception.default_loctree_mcp_config_entry().
+    """
     return {
         "mcpServers": {
             "loctree": {
@@ -211,6 +233,7 @@ def mcp_config() -> dict[str, object]:
 def write_zip_entry(
     bundle: zipfile.ZipFile, arcname: str, data: bytes, mode: int
 ) -> None:
+    """Write one deterministic-timestamp, mode-preserving entry into `bundle`."""
     info = zipfile.ZipInfo(arcname, FIXED_ZIP_DATE_TIME)
     info.compress_type = zipfile.ZIP_DEFLATED
     info.create_system = 3
@@ -219,6 +242,7 @@ def write_zip_entry(
 
 
 def build_bundle_bytes(repo_root: Path) -> bytes:
+    """Assemble the full marketplace .plugin zip in memory and return its bytes."""
     version = read_version(repo_root)
     metadata = load_listing_metadata(repo_root)
     listing_path = repo_root / "docs" / "MARKETPLACE_LISTING.md"
@@ -285,11 +309,13 @@ def build_bundle_bytes(repo_root: Path) -> bytes:
 
 
 def write_bundle(repo_root: Path, output_path: Path) -> None:
+    """Build the bundle bytes and write them to `output_path`, making dirs as needed."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(build_bundle_bytes(repo_root))
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse the ``--output`` CLI flag for the bundle build script."""
     parser = argparse.ArgumentParser(
         description="Build the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. marketplace bundle from current repo state."
     )
@@ -302,6 +328,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI entry point: build the marketplace bundle and print a summary."""
     args = parse_args(argv)
     output_path = Path(args.output).expanduser().resolve()
 

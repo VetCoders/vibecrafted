@@ -1,3 +1,5 @@
+"""Thin git CLI wrappers backing the `repo-full` compact repo-state summary."""
+
 from __future__ import annotations
 
 import subprocess
@@ -8,6 +10,7 @@ from typing import Any
 def _git(
     path: Path, *args: str, check: bool = False
 ) -> subprocess.CompletedProcess[str]:
+    """Run one git subcommand in `path`, returning the raw completed process."""
     return subprocess.run(
         ["git", *args],
         cwd=path,
@@ -18,6 +21,7 @@ def _git(
 
 
 def _git_text(path: Path, *args: str, default: str = "") -> str:
+    """Return trimmed stdout for one git command, or `default` on non-zero exit."""
     result = _git(path, *args)
     if result.returncode != 0:
         return default
@@ -25,16 +29,19 @@ def _git_text(path: Path, *args: str, default: str = "") -> str:
 
 
 def _git_lines(path: Path, *args: str) -> list[str]:
+    """Return non-blank stdout lines for one git command."""
     text = _git_text(path, *args)
     return [line for line in text.splitlines() if line.strip()]
 
 
 def _git_root(path: Path) -> Path:
+    """Resolve the repo toplevel for `path`; falls back to `path` if not a repo."""
     root = _git_text(path, "rev-parse", "--show-toplevel")
     return Path(root).resolve() if root else path.resolve()
 
 
 def _require_git_root(path: Path) -> Path:
+    """Resolve the repo toplevel for `path`, raising RuntimeError if not a git repo."""
     try:
         result = _git(path, "rev-parse", "--show-toplevel")
     except FileNotFoundError as exc:
@@ -49,6 +56,7 @@ def _require_git_root(path: Path) -> Path:
 
 
 def _ahead_behind(path: Path, upstream: str) -> tuple[int, int]:
+    """Return (ahead, behind) commit counts of HEAD vs `upstream`; (0, 0) if unset."""
     if not upstream:
         return (0, 0)
     raw = _git_text(path, "rev-list", "--left-right", "--count", f"HEAD...{upstream}")
@@ -62,6 +70,7 @@ def _ahead_behind(path: Path, upstream: str) -> tuple[int, int]:
 
 
 def _status_counts(path: Path) -> dict[str, int]:
+    """Tally staged/unstaged/untracked files from `git status --porcelain`."""
     staged = unstaged = untracked = 0
     for line in _git_lines(path, "status", "--porcelain"):
         if line.startswith("??"):
@@ -75,6 +84,7 @@ def _status_counts(path: Path) -> dict[str, int]:
 
 
 def _remotes(path: Path) -> dict[str, dict[str, str]]:
+    """Map remote name -> {fetch/push: url} from `git remote -v`."""
     remotes: dict[str, dict[str, str]] = {}
     for line in _git_lines(path, "remote", "-v"):
         parts = line.split()
@@ -86,6 +96,7 @@ def _remotes(path: Path) -> dict[str, dict[str, str]]:
 
 
 def _recent_commits(path: Path, limit: int = 10) -> list[dict[str, str]]:
+    """Return up to `limit` recent commits as short/full/date/author/title dicts."""
     commits: list[dict[str, str]] = []
     for line in _git_lines(
         path,
@@ -111,6 +122,7 @@ def _recent_commits(path: Path, limit: int = 10) -> list[dict[str, str]]:
 
 
 def _worktrees(path: Path) -> list[dict[str, str]]:
+    """Parse `git worktree list --porcelain` into one dict per worktree entry."""
     worktrees: list[dict[str, str]] = []
     current: dict[str, str] = {}
     for line in _git_lines(path, "worktree", "list", "--porcelain"):
@@ -171,6 +183,7 @@ def repo_full(path: str | Path = ".") -> dict[str, Any]:
 
 
 def repo_full_summary(path: str | Path = ".") -> str:
+    """Render `repo_full` state as a short Markdown summary (branch/dirt/commits)."""
     state = repo_full(path)
     status = state["status"]
     lines = [

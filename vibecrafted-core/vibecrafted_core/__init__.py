@@ -1,3 +1,5 @@
+"""Vibecrafted core package: version resolution plus lazy re-exports of runtime helpers."""
+
 from __future__ import annotations
 
 import importlib.metadata

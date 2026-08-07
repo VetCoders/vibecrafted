@@ -41,6 +41,7 @@ MARBLES_SWARM_FALLBACK_AGENT = "codex"
 
 
 def _synthesizer_payload(selection: ResearchAgentSelection) -> dict[str, Any]:
+    """Project a research selection's synthesizer fields into the capability payload."""
     return {
         "agent": selection.synthesizer,
         "model": selection.synthesizer_model,
@@ -52,6 +53,7 @@ def _synthesizer_payload(selection: ResearchAgentSelection) -> dict[str, Any]:
 
 
 def _selection_payload(selection: ResearchAgentSelection) -> dict[str, Any]:
+    """Project a live research agent selection into its JSON-serializable form."""
     return {
         "source": selection.source,
         "agents": list(selection.agents),
@@ -64,6 +66,11 @@ def _selection_payload(selection: ResearchAgentSelection) -> dict[str, Any]:
 def _workflow_record(
     definition: Any, selection: ResearchAgentSelection
 ) -> dict[str, Any]:
+    """Build one workflow's capability record, adding runtime-kind-specific fields.
+
+    Research workflows get positional-agent semantics and the live lane
+    selection; marbles-kind workflows get the swarm-agent fallback note.
+    """
     is_research = definition.runtime_kind == "supervised_research"
     record: dict[str, Any] = {
         "name": definition.id,

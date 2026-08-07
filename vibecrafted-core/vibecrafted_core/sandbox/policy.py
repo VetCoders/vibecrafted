@@ -1,3 +1,5 @@
+"""Sandbox resource/network/mount policy: defaults, YAML overlay, and start kwargs."""
+
 from __future__ import annotations
 
 import os
@@ -10,6 +12,8 @@ from vibecrafted_core.runtime_paths import vibecrafted_home
 
 @dataclass(frozen=True)
 class SandboxPolicy:
+    """Resource, network, and mount constraints applied to a sandboxed execution."""
+
     cpu: float = 1.0
     memory_mb: int = 512
     network: str = "deny"
@@ -20,6 +24,9 @@ class SandboxPolicy:
 
     @classmethod
     def default(cls, root: str | os.PathLike[str] | None = None) -> SandboxPolicy:
+        """Build the baseline policy: `/tmp` writable, and `root` (if given)
+        read-only mounted at `/workspace`."""
+
         root_mount = f"{Path(root).resolve()}:/workspace:ro" if root else ""
         mounts = (root_mount, "/tmp:/tmp:rw") if root_mount else ("/tmp:/tmp:rw",)
         return cls(mounts=mounts)
@@ -31,6 +38,10 @@ class SandboxPolicy:
         *,
         root: str | os.PathLike[str] | None = None,
     ) -> SandboxPolicy:
+        """Build the default policy for `root`, then overlay it with values
+        parsed from a simple YAML file at `path` (or `default_policy_path()`)
+        when that file exists."""
+
         policy = cls.default(root)
         candidate = Path(path).expanduser() if path else default_policy_path()
         if not candidate.is_file():
@@ -38,6 +49,9 @@ class SandboxPolicy:
         return policy.overlay(_parse_simple_yaml(candidate))
 
     def overlay(self, data: dict[str, Any]) -> SandboxPolicy:
+        """Return a new policy with fields replaced by matching keys in `data`,
+        coercing each field to its declared type; unknown keys are ignored."""
+
         values: dict[str, Any] = {
             "cpu": self.cpu,
             "memory_mb": self.memory_mb,
@@ -63,20 +77,31 @@ class SandboxPolicy:
         return SandboxPolicy(**values)
 
     def to_start_kwargs(self) -> dict[str, int | float]:
+        """Project cpu/memory fields into the kwargs microsandbox's `start()`
+        expects; network/filesystem/mount fields are not passed here."""
+
         return {"memory": self.memory_mb, "cpus": self.cpu}
 
 
 def default_policy_path() -> Path:
+    """Default location of the operator-owned sandbox policy YAML file."""
+
     return vibecrafted_home() / "sandbox" / "policy.yaml"
 
 
 def _as_bool(value: Any) -> bool:
+    """Coerce a YAML scalar to bool: real bools pass through; strings match
+    against a case-insensitive truthy set (1/true/yes/on)."""
+
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _as_list(value: Any) -> list[Any]:
+    """Normalize a YAML value to a list: pass lists through, tuple-to-list,
+    empty/None to `[]`, and wrap any other scalar as a single-item list."""
+
     if isinstance(value, list):
         return value
     if isinstance(value, tuple):
@@ -87,6 +112,9 @@ def _as_list(value: Any) -> list[Any]:
 
 
 def _parse_scalar(raw: str) -> Any:
+    """Parse one YAML-flow scalar: bracketed inline lists, booleans, ints,
+    floats, falling back to a quote-stripped string."""
+
     value = raw.strip()
     if value.startswith("[") and value.endswith("]"):
         inner = value[1:-1].strip()
@@ -107,6 +135,10 @@ def _parse_scalar(raw: str) -> Any:
 
 
 def _parse_simple_yaml(path: Path) -> dict[str, Any]:
+    """Parse a restricted YAML subset (flat `key: value` pairs plus `key:`
+    followed by `- item` block-list lines; `#` starts a comment); not a
+    general-purpose YAML parser."""
+
     data: dict[str, Any] = {}
     current_list: str | None = None
     for raw_line in path.read_text(encoding="utf-8").splitlines():

@@ -1,3 +1,5 @@
+"""Legacy launcher supervisor: spawns agent CLIs, extracts usage, finalizes artifacts."""
+
 from __future__ import annotations
 
 import argparse
@@ -89,6 +91,8 @@ MODEL_PLACEHOLDERS = {"", "none", "null", "unknown", "pending"}
 
 @dataclass
 class SpawnHandle:
+    """Live/completed handle to one spawned agent process and its artifact paths."""
+
     run_id: str
     agent: str
     skill: str
@@ -108,27 +112,35 @@ class SpawnHandle:
 
     @property
     def pid(self) -> int:
+        """Underlying child process id."""
         return self.process.pid
 
     def wait(self, timeout: float | None = None) -> int:
+        """Block until the spawned process finishes; raise TimeoutError if it doesn't."""
         if not self._done.wait(timeout):
             raise TimeoutError(f"spawn {self.run_id} still running")
         return int(self.exit_code if self.exit_code is not None else 1)
 
 
 class _SandboxProcess:
+    """Process-like stand-in used when a run executes inside the sandbox adapter."""
+
     def __init__(self) -> None:
+        """Adopt the current process's own pid as the stand-in "child" pid."""
         self.pid = os.getpid()
 
     def wait(self) -> int:
+        """Sandbox execution is synchronous by the time this is called; always exit 0."""
         return 0
 
 
 def _now_iso() -> str:
+    """Current UTC timestamp in ISO 8601 form."""
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
 def _set_child_pgid() -> None:
+    """Put the current (child) process into its own process group; best-effort."""
     try:
         os.setpgid(0, 0)
     except OSError:
@@ -136,6 +148,10 @@ def _set_child_pgid() -> None:
 
 
 def _default_command(agent: str, prompt: str) -> list[str]:
+    """Build the argv for launching *agent* with *prompt* passed inline (ARG_MAX risk).
+
+    Raises ValueError for the deprecated gemini CLI and any unsupported agent.
+    """
     if agent == "gemini":
         raise ValueError(
             "gemini CLI is deprecated. Google Antigravity CLI (agy) is the replacement. "
@@ -251,6 +267,7 @@ def _stdin_command(agent: str) -> list[str]:
 
 
 def _parse_launcher_assignment(path: Path, key: str) -> str:
+    """Extract the shell-quoted value assigned to *key* (e.g. ``meta=...``) in a launcher script."""
     if not path.is_file():
         return ""
     prefix = f"{key}="
@@ -267,6 +284,7 @@ def _parse_launcher_assignment(path: Path, key: str) -> str:
 
 
 def _read_meta(path: Path | None) -> dict[str, Any]:
+    """Read a launcher meta.json; return {} on missing path, missing file, or bad JSON."""
     if path is None or not path.is_file():
         return {}
     try:
@@ -276,12 +294,14 @@ def _read_meta(path: Path | None) -> dict[str, Any]:
 
 
 def _write_meta(path: Path, payload: dict[str, Any]) -> None:
+    """Write *payload* as pretty-printed, newline-terminated JSON to *path*."""
     path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
 
 
 def _read_text(path: Path) -> str:
+    """Best-effort UTF-8 read of *path*; returns "" on any OSError."""
     try:
         return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -289,15 +309,18 @@ def _read_text(path: Path) -> str:
 
 
 def _write_text(path: Path, text: str) -> None:
+    """Write *text* to *path* as UTF-8, creating parent directories as needed."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
 
 
 def _clean_text(text: str) -> str:
+    """Strip ANSI escape sequences from terminal-captured transcript text."""
     return ANSI_PATTERN.sub("", text)
 
 
 def _extract_session(text: str) -> str:
+    """Find the last session/thread/conversation id mentioned in transcript text."""
     clean = _clean_text(text)
     for pattern in SESSION_PATTERNS:
         matches = pattern.findall(clean)
@@ -324,6 +347,11 @@ def _tokens_total(
 
 
 def _extract_tokens(text: str) -> dict[str, int | None]:
+    """Parse token usage from combined transcript/report text.
+
+    Prefers the authoritative run-closure footer, then JSON usage fields,
+    then per-event ``tokens: N in / N out`` lines, in that priority order.
+    """
     clean = _clean_text(text)
     found = TOKEN_PATTERN.findall(clean)
     json_tokens = {
@@ -388,6 +416,7 @@ def _extract_tokens(text: str) -> dict[str, int | None]:
 
 
 def _extract_cost(text: str) -> float | None:
+    """Parse a USD cost from combined transcript/report text, preferring the footer."""
     clean = _clean_text(text)
     footer = re.findall(
         r"^\s*cost_usd:\s*\$?([0-9]+(?:\.[0-9]+)?)\s*$",
@@ -418,11 +447,13 @@ def _extract_cost(text: str) -> float | None:
 
 
 def _clean_model(value: object) -> str:
+    """Normalize a candidate model value; return "" for known placeholder strings."""
     raw = str(value or "").strip()
     return "" if raw.lower() in MODEL_PLACEHOLDERS else raw
 
 
 def _fallback_model(agent: object) -> str:
+    """Synthesize a `<agent>-cli-default` model label when no real model is known."""
     agent_name = str(agent or "agent").strip() or "agent"
     if agent_name == "agy":
         return "gemini-cli-default"
@@ -430,6 +461,7 @@ def _fallback_model(agent: object) -> str:
 
 
 def _extract_model_from_text(text: str) -> str:
+    """Find a model identifier in transcript/report text via footer, JSON, or usage-map fields."""
     clean = _clean_text(text)
     for match in reversed(re.findall(r"^model:\s*(.+?)\s*$", clean, re.MULTILINE)):
         model = _clean_model(match)
@@ -450,6 +482,7 @@ def _extract_model_from_text(text: str) -> str:
 
 
 def _resolve_model(payload: dict[str, Any], combined_text: str) -> str:
+    """Resolve the effective model: payload, then env vars, then text, then fallback."""
     model = _clean_model(payload.get("model"))
     if model:
         return model
@@ -464,6 +497,7 @@ def _resolve_model(payload: dict[str, Any], combined_text: str) -> str:
 
 
 def _parse_dt(value: object) -> dt.datetime | None:
+    """Parse an ISO-ish timestamp string to a UTC-aware datetime, or None if unparsable."""
     if not isinstance(value, str) or not value:
         return None
     try:
@@ -478,6 +512,7 @@ def _parse_dt(value: object) -> dt.datetime | None:
 def _resolve_duration(
     payload: dict[str, Any], completed_at_iso: str
 ) -> float | int | None:
+    """Resolve run duration: an existing valid value wins, else derive from timestamps."""
     current = payload.get("duration_s")
     if isinstance(current, (int, float)):
         return current
@@ -634,6 +669,7 @@ def finish_meta(
 
 
 def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    """Split a markdown document into its ``---`` frontmatter dict and body."""
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         return {}, text
@@ -655,6 +691,7 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
 
 
 def _render_frontmatter(data: dict[str, object]) -> str:
+    """Render *data* as ``---``-delimited YAML-ish frontmatter in a fixed key order."""
     order = [
         "run_id",
         "prompt_id",
@@ -694,12 +731,14 @@ def _render_frontmatter(data: dict[str, object]) -> str:
 
 
 def _slug_component(value: object, fallback: str) -> str:
+    """Sanitize *value* into a filename-safe slug, falling back to *fallback* if empty."""
     raw = str(value or fallback)
     raw = re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip("-")
     return raw or fallback
 
 
 def _same_file(left: Path, right: Path) -> bool:
+    """True when both paths resolve to the same inode, falling back to path equality."""
     try:
         return left.samefile(right)
     except OSError:
@@ -707,6 +746,10 @@ def _same_file(left: Path, right: Path) -> bool:
 
 
 def _infer_artifact_store(meta: Path) -> dict[str, object] | None:
+    """Infer the org/repo/day artifact-store location from a meta.json's directory shape.
+
+    Returns None unless meta lives at ``.../<org>/<repo>/<YYYY_MMDD>/reports/``.
+    """
     reports_dir = meta.parent
     if reports_dir.name != "reports":
         return None
@@ -729,6 +772,7 @@ def _infer_artifact_store(meta: Path) -> dict[str, object] | None:
 def _unique_stem(
     reports_dir: Path, stem: str, sources: list[Path], disambiguator: str
 ) -> str:
+    """Find a collision-free artifact stem, treating *sources* themselves as non-blocking."""
     candidates = [stem]
     if disambiguator:
         candidates.append(f"{stem}-{_slug_component(disambiguator, 'run')}")
@@ -755,6 +799,7 @@ def _unique_stem(
 
 
 def _move_artifact(source: Path, target: Path) -> Path:
+    """Rename *source* to *target*; no-op (returns source) if already identical or missing."""
     if not str(source) or not source.is_file() or _same_file(source, target):
         return source
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -763,6 +808,10 @@ def _move_artifact(source: Path, target: Path) -> Path:
 
 
 def _leave_compat_link(announced: Path, final: Path) -> None:
+    """Symlink the originally-announced artifact path to its relocated *final* path.
+
+    Best-effort: never overwrites an existing path and swallows OSError.
+    """
     if not str(announced) or not final.is_file():
         return
     if announced == final or _same_file(announced, final):
@@ -780,6 +829,7 @@ def _leave_compat_link(announced: Path, final: Path) -> None:
 
 
 def _footer(marker: str, payload: dict[str, object]) -> str:
+    """Render the `<!-- vibecrafted-artifact-footer:MARKER -->` run-closure YAML block."""
     lines = [
         "",
         f"<!-- vibecrafted-artifact-footer:{marker} -->",
@@ -818,6 +868,7 @@ def _footer(marker: str, payload: dict[str, object]) -> str:
 def _normalize_markdown_artifact(
     path: Path, payload: dict[str, object], *, fallback_body: str = ""
 ) -> None:
+    """Stamp/refresh frontmatter and append the run-closure footer on a markdown artifact."""
     text = _read_text(path)
     if not text and fallback_body:
         text = fallback_body
@@ -1077,6 +1128,7 @@ def finalize_artifacts(
 def _ensure_failed_report_artifact(
     handle: SpawnHandle, exit_code: int, completed_at: str
 ) -> None:
+    """Manufacture a minimal failed-run report if the worker never wrote one, then finalize."""
     if handle.meta_path is None or not handle.meta_path.is_file():
         return
     payload = _read_meta(handle.meta_path)
@@ -1137,6 +1189,7 @@ def _ensure_failed_report_artifact(
 
 
 def _maybe_extract_session_id(handle: SpawnHandle) -> str:
+    """Return the agent session id, reading meta first, else scraping the transcript."""
     meta = _read_meta(handle.meta_path)
     if meta.get("session_id"):
         return str(meta["session_id"])
@@ -1176,6 +1229,11 @@ class Supervisor:
         sandbox_policy: str | os.PathLike[str] | None = None,
         sandbox_config: dict[str, Any] | None = None,
     ) -> SpawnHandle:
+        """Launch *agent* (subprocess or sandbox), returning a live SpawnHandle.
+
+        Starts a background watcher thread that fills in exit_code/session_id
+        and emits spawn-* lifecycle events as the child completes.
+        """
         root_path = Path(normalize_run_root(os.fspath(root)))
         command_list = (
             list(command) if command is not None else _default_command(agent, prompt)
@@ -1293,6 +1351,7 @@ class Supervisor:
         sandbox_config: dict[str, Any],
         on_event: EventCallback | None,
     ) -> None:
+        """Background-thread target: run the sandbox adapter and emit its terminal event."""
         try:
             from .sandbox import SandboxAdapter, SandboxPolicy
 
@@ -1349,6 +1408,7 @@ class Supervisor:
         handle._done.set()
 
     def _wait_owner(self, handle: SpawnHandle, on_event: EventCallback | None) -> None:
+        """Background-thread target: block on subprocess exit, finalize state and events."""
         exit_code = handle.process.wait()
         handle.exit_code = exit_code
         handle.completed_at = _now_iso()
@@ -1390,6 +1450,7 @@ class Supervisor:
         payload: dict[str, Any],
         on_event: EventCallback | None,
     ) -> None:
+        """Append a durable lifecycle event and forward it to the caller's callback."""
         event = append_event(
             kind,
             handle.run_id,
@@ -1409,6 +1470,7 @@ class Supervisor:
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build the argparse CLI: write-meta/finalize-artifacts/prepare-report/finish-meta."""
     parser = argparse.ArgumentParser(description="Vibecrafted launcher helpers.")
     sub = parser.add_subparsers(dest="command", required=True)
     write = sub.add_parser(
@@ -1458,6 +1520,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry point dispatching to the launcher helper subcommands."""
     args = _build_parser().parse_args(argv)
     if args.command == "write-meta":
         write_meta(

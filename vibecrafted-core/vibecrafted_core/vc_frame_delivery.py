@@ -58,6 +58,8 @@ _CORE_VIEW_NAMES: tuple[str, ...] = ("config.kdl", "layouts", "themes")
 
 @dataclass
 class WireAction:
+    """One recorded step of a delivery plan (a symlink write, backup, or note)."""
+
     kind: str  # link | backup | skip | remove | stage | flip | note
     path: str
     detail: str = ""
@@ -65,6 +67,8 @@ class WireAction:
 
 @dataclass
 class DeliveryPlan:
+    """The full set of actions computed by :func:`plan_delivery` for one host."""
+
     source: Path
     version_dir: Path
     current_link: Path
@@ -76,6 +80,7 @@ class DeliveryPlan:
     clipboard_command: str | None = None
 
     def render(self) -> str:
+        """Render the plan (target paths + recorded actions) as human-readable text."""
         lines = [
             f"source: {self.source}",
             f"version_dir: {self.version_dir}",
@@ -96,6 +101,7 @@ class DeliveryPlan:
 
 
 def prefer_repo_vc_frame(env: dict[str, str] | None = None) -> bool:
+    """True when VIBECRAFTED_PREFER_REPO_VC_FRAME opts into the dev-checkout channel."""
     source = env if env is not None else os.environ
     raw = str(source.get("VIBECRAFTED_PREFER_REPO_VC_FRAME", "") or "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
@@ -113,6 +119,7 @@ def vc_frame_user_config_dir(home: Path | None = None) -> Path:
 
 
 def tools_current_path(tools_home: Path | None = None) -> Path:
+    """Path to the runtime-owned ``vibecrafted-current`` publish symlink."""
     base = tools_home if tools_home is not None else vibecrafted_tools_home()
     return base / "vibecrafted-current"
 
@@ -151,6 +158,7 @@ def classify_view_path(
 
 
 def _timestamp() -> str:
+    """UTC timestamp used to make backup filenames collision-resistant."""
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
 
@@ -182,6 +190,11 @@ def _complete_runtime_root(current: Path, *, dry_run: bool) -> Path:
 
 
 def _require_materialized_config(runtime_root: Path, *, dry_run: bool) -> Path:
+    """Return the published generation's pre-materialized vc-frame config dir.
+
+    Raises when the published runtime lacks a complete ``config.kdl``/``layouts``/
+    ``themes`` set — the store-current channel refuses to wire a partial config.
+    """
     generated = runtime_root / "runtime" / "generated" / "vc-frame"
     if dry_run and not runtime_root.exists():
         return generated
@@ -205,6 +218,7 @@ def _require_materialized_config(runtime_root: Path, *, dry_run: bool) -> Path:
 
 
 def _atomic_view_symlink(target: Path, view_path: Path) -> None:
+    """Point ``view_path`` at ``target`` via write-temp-then-rename (no partial state)."""
     view_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = view_path.parent / (
         f".{view_path.name}.vibecrafted-{os.getpid()}-{os.urandom(6).hex()}"
@@ -226,6 +240,7 @@ def _wire_one(
     store_current: Path,
     checkout: Path | None,
 ) -> None:
+    """Wire one view path to ``target``, backing up STALE-FILEs and skipping foreign links."""
     channel = (
         classify_view_path(view_path, store_current=store_current, checkout=checkout)
         if view_path.exists() or view_path.is_symlink()
@@ -283,6 +298,13 @@ def plan_delivery(
     prefer_repo: bool | None = None,
     path_env: str | None = None,
 ) -> DeliveryPlan:
+    """Compute (and, unless ``dry_run``, apply) the vc-frame config delivery plan.
+
+    Re-materializes host-adapted config from the package source into the published
+    generation's ``runtime/generated/vc-frame`` (never mutating the source itself
+    or the ``vibecrafted-current`` owner symlink), then wires both the legacy view
+    and frontier projections to point at that generation.
+    """
     source = vc_frame_config_source()
     tools = tools_home if tools_home is not None else vibecrafted_tools_home()
     # Isolate tools under sandbox when tools_home not overridden
@@ -538,6 +560,7 @@ def ensure_zshrc(home: Path | None = None, *, dry_run: bool = False) -> dict[str
 
 
 def frontier_root(home: Path | None = None) -> Path:
+    """Root of the frontier config projection (``VC_FRAME_CONFIG_DIR`` target)."""
     if home is not None:
         xdg = os.environ.get("XDG_CONFIG_HOME")
         if xdg:
@@ -547,6 +570,7 @@ def frontier_root(home: Path | None = None) -> Path:
 
 
 def list_dangling_frontier_links(root: Path | None = None) -> list[Path]:
+    """Recursively find symlinks under the frontier root whose target no longer exists."""
     base = root if root is not None else frontier_root()
     dangling: list[Path] = []
     if not base.exists():
@@ -563,6 +587,7 @@ def list_dangling_frontier_links(root: Path | None = None) -> list[Path]:
 def remove_dangling_frontier_links(
     root: Path | None = None, *, dry_run: bool = False
 ) -> list[Path]:
+    """Delete dangling frontier symlinks (or, if ``dry_run``, just report them)."""
     removed: list[Path] = []
     for path in list_dangling_frontier_links(root):
         removed.append(path)

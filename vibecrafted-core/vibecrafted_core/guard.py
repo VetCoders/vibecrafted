@@ -89,6 +89,8 @@ COVERAGE_GAPS: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class GuardDecision:
+    """Allow/refuse verdict returned by `enforce_continuation`, with remedium text."""
+
     allowed: bool
     reason: str
     remedium: str
@@ -97,6 +99,7 @@ class GuardDecision:
     journal: str = ""
 
     def to_payload(self) -> dict[str, Any]:
+        """Serialize this decision to a plain dict for JSON output."""
         return asdict(self)
 
 
@@ -113,6 +116,7 @@ class GuardianResumeAuthority:
     detail: str = ""
 
     def to_payload(self) -> dict[str, Any]:
+        """Serialize this authority decision to a plain dict for JSON output."""
         return asdict(self)
 
 
@@ -125,6 +129,7 @@ def _guardian_resume_decision(
     retryable: bool = False,
     detail: str = "",
 ) -> GuardianResumeAuthority:
+    """Build one `GuardianResumeAuthority`, deriving `terminal` from `retryable`."""
     return GuardianResumeAuthority(
         allowed=allowed,
         reason=reason,
@@ -137,6 +142,7 @@ def _guardian_resume_decision(
 
 
 def _canonical_root(value: Any) -> str:
+    """Resolve `value` to an absolute path string; empty string on any failure."""
     raw = str(value or "").strip()
     if not raw:
         return ""
@@ -150,6 +156,7 @@ def _latest_run_trust_record(
     records: Sequence[Mapping[str, Any]],
     run_id: str,
 ) -> Mapping[str, Any] | None:
+    """Return the last (most recent) trust journal record matching `run_id`."""
     latest: Mapping[str, Any] | None = None
     for record in records:
         if str(record.get("run_id") or "") == run_id:
@@ -160,6 +167,11 @@ def _latest_run_trust_record(
 def _journal_receipt(
     record: Mapping[str, Any],
 ) -> tuple[TrustReceiptV1 | None, str]:
+    """Extract and cross-validate a v2 trust receipt embedded in a journal record.
+
+    Returns (receipt, "") on success or (None, reason) fail-closed on any
+    schema/binding mismatch between the journal record and its embedded receipt.
+    """
     if record.get("schema") != trust.TRUST_JOURNAL_SCHEMA_V2:
         return None, "legacy_trust_record_not_resume_authority"
     raw = record.get("trust_receipt")
@@ -207,6 +219,11 @@ def _projection_receipt_mismatch(
     label: str,
     recorded_at: str,
 ) -> str:
+    """Return an empty string if `payload` field-for-field matches `receipt`.
+
+    Otherwise returns a `{label}_{field}_mismatch` reason string for the first
+    disagreement found (receipt copy, settlement fields, or nested settlement dict).
+    """
     raw = payload.get("trust_receipt")
     if not isinstance(raw, Mapping):
         return f"{label}_trust_receipt_missing"
@@ -260,6 +277,7 @@ def _projection_receipt_mismatch(
 
 
 def _outbox_has_receipt(run_id: str, receipt_id: str) -> bool:
+    """True when the run's trust outbox already carries the given receipt id."""
     outbox = control_plane._read_json(trust._trust_outbox_path(run_id))
     raw = outbox.get("trust_receipt")
     if not isinstance(raw, Mapping):
@@ -474,6 +492,7 @@ def authorize_guardian_resume(
 
 
 def inventory() -> dict[str, Any]:
+    """Return the static named-gates inventory and known coverage gaps as a dict."""
     return {
         "schema": "vibecrafted.guard-inventory.v1",
         "role": "enforcer",
@@ -494,10 +513,12 @@ def inventory() -> dict[str, Any]:
 
 
 def _repo_root(path: Path | None = None) -> Path:
+    """Delegate repo-root resolution to `trust._repo_root`."""
     return trust._repo_root(path)
 
 
 def _head_sha(repo: Path) -> str:
+    """Return the full HEAD sha for `repo`, raising ValueError on git failure."""
     proc = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=str(repo),
@@ -619,6 +640,7 @@ def enforce_continuation(
 
 
 def _parser() -> argparse.ArgumentParser:
+    """Build the `python -m vibecrafted_core.guard` CLI argument parser."""
     parser = argparse.ArgumentParser(
         prog="python -m vibecrafted_core.guard",
         description="vc-guard inventory and trust-block enforcement helper.",
@@ -637,6 +659,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entrypoint: dispatch `inventory`/`check`, print JSON, exit 0/1/2."""
     args = _parser().parse_args(argv)
     try:
         if args.command == "inventory":

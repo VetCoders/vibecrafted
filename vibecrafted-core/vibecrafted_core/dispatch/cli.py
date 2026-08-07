@@ -1,3 +1,5 @@
+"""CLI entrypoint for ``vibecrafted dispatch``: validate, dry-run, or execute a plan."""
+
 from __future__ import annotations
 
 import argparse
@@ -18,6 +20,7 @@ from .supervisor import DispatchResult, run_dispatch
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build the argument parser for the ``vibecrafted dispatch`` subcommand."""
     parser = argparse.ArgumentParser(
         prog="vibecrafted dispatch",
         description="Run or validate a vibecrafted.dispatch.v1 TOML plan.",
@@ -47,6 +50,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Parse argv and run doctor / dry-run / full dispatch; return the process exit code."""
     parser = _build_parser()
     args = parser.parse_args(argv)
     source = Path(args.dispatch_file).expanduser()
@@ -89,6 +93,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _print_doctor(report: Any, *, json_output: bool) -> int:
+    """Render a doctor report to stdout (JSON or human-readable) and return its exit code."""
     if json_output:
         print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
     elif report.ok:
@@ -100,6 +105,7 @@ def _print_doctor(report: Any, *, json_output: bool) -> int:
 
 
 def _with_runtime_baseline(dispatch: Dispatch) -> Dispatch:
+    """Stamp the dispatch's meta.baseline with the live repo's current branch/HEAD."""
     baseline = dict(dispatch.meta.baseline)
     baseline["branch"] = _git(dispatch.meta.repo, ["branch", "--show-current"])
     baseline["head"] = _git(dispatch.meta.repo, ["rev-parse", "HEAD"])
@@ -110,6 +116,7 @@ def _with_runtime_baseline(dispatch: Dispatch) -> Dispatch:
 def _dry_run(
     source: Path, dispatch: Dispatch, *, run_id: str | None = None
 ) -> dict[str, Any]:
+    """Render every cut's prompt without launching workers; write a dry-run bundle to disk."""
     dry_run_dir = _dry_run_dir(dispatch)
     prompts_dir = dry_run_dir / "prompts"
     prompts_dir.mkdir(parents=True, exist_ok=True)
@@ -146,6 +153,7 @@ def _dry_run(
 
 
 def _resume_dispatch(dispatch: Dispatch) -> Dispatch:
+    """Trim the cut list to resume from the first cut not verified in the tracker."""
     states = _tracker_states(Path(dispatch.meta.tracker).expanduser())
     if not states:
         return dispatch
@@ -160,6 +168,7 @@ def _resume_dispatch(dispatch: Dispatch) -> Dispatch:
 
 
 def _tracker_states(path: Path) -> dict[str, str]:
+    """Parse a tracker.md table into a cut_id -> state-cell mapping."""
     if not path.is_file():
         return {}
     states: dict[str, str] = {}
@@ -177,6 +186,7 @@ def _tracker_states(path: Path) -> dict[str, str]:
 def _write_dry_run_tracker(
     dispatch: Dispatch, dry_run_dir: Path, *, run_id: str | None = None
 ) -> None:
+    """Write a placeholder tracker.md for a dry-run (all cuts pending, no workers)."""
     tracker = dry_run_dir / "tracker.md"
     baseline = dispatch.meta.baseline
     lines = [
@@ -200,6 +210,7 @@ def _write_dry_run_tracker(
 
 
 def _copy_validated_source(source: Path, artifacts_dir: Path) -> Path:
+    """Copy the validated TOML source into the artifacts dir for provenance."""
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     target = artifacts_dir / "validated-dispatch.toml"
     shutil.copyfile(source, target)
@@ -207,12 +218,14 @@ def _copy_validated_source(source: Path, artifacts_dir: Path) -> Path:
 
 
 def _dry_run_dir(dispatch: Dispatch) -> Path:
+    """Resolve the directory a dry-run's artifacts are written into."""
     if dispatch.meta.reports_dir:
         return Path(dispatch.meta.reports_dir).expanduser() / "dry-run"
     return Path.cwd() / "dry-run"
 
 
 def _artifacts_dir(dispatch: Dispatch) -> Path:
+    """Resolve the directory a real dispatch run's artifacts are written into."""
     if dispatch.meta.tracker:
         return Path(dispatch.meta.tracker).expanduser().parent
     if dispatch.meta.reports_dir:
@@ -221,10 +234,12 @@ def _artifacts_dir(dispatch: Dispatch) -> Path:
 
 
 def _result_ok(result: DispatchResult) -> bool:
+    """True only when every cut in the result ended supervisor-verified."""
     return all(state == STATE_VERIFIED for state in result.states.values())
 
 
 def _git(repo: str, args: list[str]) -> str:
+    """Run a git command in ``repo``; return trimmed stdout, or "" on any failure."""
     try:
         proc = subprocess.run(
             ["git", *args],

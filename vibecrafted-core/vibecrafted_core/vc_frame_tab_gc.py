@@ -45,6 +45,7 @@ class LiveTab:
     tab_instance_id: str
 
     def matches(self, identity: TransferTabIdentity) -> bool:
+        """True when this live tab is the exact durable-proof identity."""
         return (
             self.session == identity.session
             and self.tab_id == identity.tab_id
@@ -76,6 +77,7 @@ Runner = Callable[..., subprocess.CompletedProcess[str]]
 def _default_runner(
     argv: Sequence[str], *, env: Mapping[str, str]
 ) -> subprocess.CompletedProcess[str]:
+    """Run one vc-frame CLI invocation with a 15s timeout, never raising."""
     try:
         return subprocess.run(
             list(argv),
@@ -100,10 +102,12 @@ def _run(
     *,
     env: Mapping[str, str],
 ) -> subprocess.CompletedProcess[str]:
+    """Thin indirection point so tests can inject a fake ``runner``."""
     return runner(list(argv), env=env)
 
 
 def _is_hex(value: Any, length: int) -> TypeGuard[str]:
+    """True when ``value`` is a lowercase/uppercase hex string of exact ``length``."""
     return (
         isinstance(value, str)
         and len(value) == length
@@ -112,6 +116,7 @@ def _is_hex(value: Any, length: int) -> TypeGuard[str]:
 
 
 def _parse_live_tab(session: str, raw: Any) -> LiveTab | None:
+    """Strictly validate and decode one ``list-tabs --json`` entry, or None."""
     if not isinstance(raw, Mapping):
         return None
     tab_id = raw.get("tab_id")
@@ -264,6 +269,7 @@ def _candidate(
     *,
     reason: str,
 ) -> TabRef:
+    """Project one durable proof + live tab pair into a cleanup candidate."""
     return TabRef(
         run_id=proof.run_id,
         settlement_revision=proof.settlement_revision,
@@ -359,6 +365,7 @@ def collect_cleanup(
     env: Mapping[str, str],
     runner: Runner = _default_runner,
 ) -> list[TabRef]:
+    """Enumerate live tabs for proof-relevant sessions and plan their cleanup."""
     proofs = durable_transfer_proofs(control_plane)
     if not proofs:
         return []
@@ -393,6 +400,7 @@ def _bound_identity(
     proof: DurableTransferProof,
     tab: TabRef,
 ) -> TransferTabIdentity | None:
+    """Return the proof-side identity for ``tab`` only if it still matches exactly."""
     if tab.reason == "redundant-origin":
         identity = proof.origin_identity
     elif tab.reason == "durable-bucket-view":
@@ -418,6 +426,7 @@ def _reload_bound_proof(
     control_plane: Path,
     tab: TabRef,
 ) -> DurableTransferProof | None:
+    """Re-read the proof for ``tab`` from disk and confirm it still binds this tab."""
     try:
         root = control_plane.resolve(strict=True)
         proof = load_durable_transfer_proof(
@@ -437,6 +446,7 @@ def _gc_result(
     detail: str = "",
     returncode: int | None = None,
 ) -> TriageGcResult:
+    """Build one typed GC outcome record for a tab, truncating overlong detail."""
     role = {
         "redundant-origin": "origin",
         "durable-bucket-view": "viewer",
@@ -465,6 +475,7 @@ def _persist_gc_result(
     control_plane: Path,
     result: TriageGcResult,
 ) -> TriageGcResult:
+    """Persist ``result`` to the control plane and stamp its ``persisted`` flag."""
     return replace(
         result,
         persisted=record_triage_gc_result(control_plane, result),
@@ -595,6 +606,7 @@ def close_tab(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entrypoint: plan (and, with ``--apply``, execute) bounded tab GC."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--vc-frame-bin", required=True)
     parser.add_argument("--control-plane", type=Path, required=True)

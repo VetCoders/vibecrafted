@@ -1,3 +1,5 @@
+"""Microsandbox-backed command execution adapter used by vc-frame's sandbox mode."""
+
 from __future__ import annotations
 
 import asyncio
@@ -19,6 +21,9 @@ EventCallback = Callable[[dict[str, Any]], None]
 
 @dataclass(frozen=True)
 class ExecResult:
+    """Outcome of one sandboxed command execution: exit code, captured
+    stdout/stderr, and the name of the sandbox instance that ran it."""
+
     exit_code: int
     stdout: str = ""
     stderr: str = ""
@@ -26,6 +31,9 @@ class ExecResult:
 
 
 class SandboxAdapter:
+    """Runs commands inside a microsandbox instance, auto-starting msbserver and
+    applying a `SandboxPolicy` for cpu/memory/network/mount constraints."""
+
     def __init__(
         self,
         *,
@@ -34,6 +42,9 @@ class SandboxAdapter:
         server_url: str | None = None,
         api_key_path: str | os.PathLike[str] | None = None,
     ) -> None:
+        """Wire the lifecycle manager, policy, and server URL, defaulting each
+        to sane instances when not supplied."""
+
         self.lifecycle = lifecycle or MsbserverLifecycle(server_url=server_url)
         self.policy = policy or SandboxPolicy.default()
         self.server_url = server_url or self.lifecycle.server_url
@@ -52,6 +63,8 @@ class SandboxAdapter:
         mode: str = "",
         on_event: EventCallback | None = None,
     ) -> ExecResult:
+        """Blocking wrapper around `execute()` for callers outside an event loop."""
+
         return asyncio.run(
             self.execute(
                 command,
@@ -79,6 +92,10 @@ class SandboxAdapter:
         mode: str = "",
         on_event: EventCallback | None = None,
     ) -> ExecResult:
+        """Ensure msbserver is up, spin a microsandbox instance, run `command`
+        inside it via a login shell, emit lifecycle events, and always stop the
+        sandbox and close its HTTP session on the way out."""
+
         command_list = [str(part) for part in command]
         self._emit("launching", run_id, agent, skill, mode, command_list, on_event)
         if not self.lifecycle.ensure_running(self.api_key_path):
@@ -135,6 +152,9 @@ class SandboxAdapter:
                 sandbox._session = None
 
     def _sandbox_class(self, command: Sequence[str]) -> Any:
+        """Pick `NodeSandbox` for node/npm/npx/pnpm/yarn commands, else
+        `PythonSandbox`; imports lazily after resolving the SDK path on sys.path."""
+
         _ensure_microsandbox_sdk_path()
         from microsandbox import NodeSandbox, PythonSandbox
 
@@ -144,6 +164,9 @@ class SandboxAdapter:
         return PythonSandbox
 
     def _api_key(self) -> str | None:
+        """Resolve the msbserver API key: env var `MSB_API_KEY` first, else the
+        `msb_`-prefixed value from `api_key_path`; None if neither is present."""
+
         if os.environ.get("MSB_API_KEY"):
             return os.environ["MSB_API_KEY"]
         if self.api_key_path and self.api_key_path.is_file():
@@ -162,6 +185,9 @@ class SandboxAdapter:
         on_event: EventCallback | None,
         extra: dict[str, Any] | None = None,
     ) -> None:
+        """Append a `spawn-update` event to the run log and forward it to
+        `on_event`, if supplied, for live progress reporting."""
+
         payload = {
             "state": state,
             "agent": agent,
@@ -189,6 +215,10 @@ def _shell_script(
     env: dict[str, str] | None,
     cwd: str | os.PathLike[str] | None,
 ) -> str:
+    """Render `command` (with optional `cd` and shell-quoted env exports) into a
+    single `sh -lc` script string; drops `BASH_FUNC_*` env entries since they
+    are function-export artifacts, not real variables."""
+
     parts: list[str] = []
     if cwd:
         parts.append(f"cd {shlex.quote(str(cwd))}")
@@ -204,6 +234,10 @@ def _shell_script(
 
 
 def _ensure_microsandbox_sdk_path() -> None:
+    """Add the microsandbox Python SDK directory to `sys.path` if not already
+    importable, checking `MICROSANDBOX_PYTHON_SDK` then the in-repo experimental
+    SDK location; silently no-ops if neither candidate exists."""
+
     configured = os.environ.get("MICROSANDBOX_PYTHON_SDK")
     candidates = []
     if configured:
@@ -224,6 +258,9 @@ def _ensure_microsandbox_sdk_path() -> None:
 
 
 async def _client_session() -> Any:
+    """Create a fresh `aiohttp.ClientSession`, imported lazily to keep aiohttp
+    an optional dependency for callers that never exercise sandbox execution."""
+
     import aiohttp
 
     return aiohttp.ClientSession()

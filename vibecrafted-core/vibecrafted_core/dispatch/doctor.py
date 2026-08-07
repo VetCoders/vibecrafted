@@ -1,3 +1,5 @@
+"""Standalone ``dispatch-doctor`` CLI: validate a dispatch TOML file, report structured errors."""
+
 from __future__ import annotations
 
 import argparse
@@ -13,20 +15,26 @@ from .schema import doctor_dispatch
 
 @dataclass(frozen=True)
 class DoctorError:
+    """One structured validation error: the offending path and a message."""
+
     path: str
     message: str
 
     def to_dict(self) -> dict[str, str]:
+        """Render this error as a JSON-safe mapping."""
         return {"path": self.path, "message": self.message}
 
 
 @dataclass(frozen=True)
 class DoctorReport:
+    """Outcome of validating one dispatch file: pass/fail plus structured errors."""
+
     ok: bool
     errors: tuple[DoctorError, ...]
     dispatch: Dispatch | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Render this report as a JSON-safe mapping (omits the parsed ``dispatch``)."""
         return {
             "ok": self.ok,
             "errors": [error.to_dict() for error in self.errors],
@@ -34,12 +42,14 @@ class DoctorReport:
 
 
 def diagnose_text(text: str, *, base_dir: str | Path | None = None) -> DoctorReport:
+    """Validate dispatch TOML text and convert raw error strings to structured errors."""
     result = doctor_dispatch(text, base_dir=base_dir)
     errors = tuple(_structured_error(error) for error in result.errors)
     return DoctorReport(ok=not errors, errors=errors, dispatch=result.dispatch)
 
 
 def diagnose_file(path: str | Path) -> DoctorReport:
+    """Validate a dispatch TOML file on disk; an unreadable file is reported as an error."""
     source = Path(path).expanduser()
     try:
         text = source.read_text(encoding="utf-8")
@@ -53,6 +63,7 @@ def diagnose_file(path: str | Path) -> DoctorReport:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entrypoint: validate a dispatch file, print the report, and return exit code."""
     parser = argparse.ArgumentParser(
         prog="dispatch-doctor",
         description="Validate a vibecrafted.dispatch.v1 TOML file.",
@@ -73,6 +84,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _structured_error(error: str) -> DoctorError:
+    """Split a "path: message" error string into a structured ``DoctorError``."""
     path, separator, message = error.partition(":")
     if not separator:
         return DoctorError(path="dispatch", message=error)

@@ -33,17 +33,20 @@ class RunMetaMutationError(ValueError):
 
 
 def _lock_path(root: Path, kind: str, value: str) -> Path:
+    """Deterministic lock-file path for one ``(kind, value)`` mutation key."""
     digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
     return root / "run_mutation_locks" / kind / f"{digest}.lock"
 
 
 def _local_lock(path: Path) -> threading.RLock:
+    """Process-local reentrant lock guarding one lock-file path, memoized by path."""
     key = str(path)
     with _LOCAL_LOCKS_GUARD:
         return _LOCAL_LOCKS.setdefault(key, threading.RLock())
 
 
 def _held_lock_counts() -> dict[str, int]:
+    """Thread-local reentrancy counters keyed by lock-file path."""
     counts = getattr(_LOCAL_HELD_LOCKS, "counts", None)
     if counts is None:
         counts = {}
@@ -141,6 +144,7 @@ def _canonical_meta_path(meta_path: Path, *, allow_missing: bool) -> Path:
 
 
 def _canonical_directory(path: Path) -> Path:
+    """Resolve ``path`` and reject anything not a canonical, non-symlink directory."""
     absolute = Path(os.path.abspath(path.expanduser()))
     try:
         canonical = absolute.resolve(strict=True)
@@ -157,10 +161,18 @@ def _canonical_directory(path: Path) -> Path:
 
 
 def _same_file_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    """Whether two stat results refer to the same inode (device + inode number)."""
     return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
 
 
 def _read_regular_json(meta_path: Path) -> dict[str, Any]:
+    """Read a JSON object from ``meta_path``, refusing symlinks and TOCTOU swaps.
+
+    Opens with ``O_NOFOLLOW``, then verifies the open fd and the path's visible
+    entry agree on identity/size/mtime both before and after the read, raising
+    :class:`RunMetaMutationError` on any mismatch (concurrent replace, non-regular
+    file, or invalid JSON).
+    """
     flags = os.O_RDONLY
     flags |= getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
@@ -212,6 +224,7 @@ def read_run_meta(
 
 
 def _write_json_durable(meta_path: Path, payload: dict[str, Any]) -> None:
+    """Write JSON via temp-file + fsync + atomic rename, then fsync the directory."""
     serialized = (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode()
     temporary_path: str | None = None
     try:

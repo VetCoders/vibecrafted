@@ -1,3 +1,5 @@
+"""Traced operator verbs (approve/interrupt/force-audit/...) over lifecycle run state."""
+
 from __future__ import annotations
 
 import argparse
@@ -39,14 +41,17 @@ CONTROL_VERBS = frozenset(
 
 
 def lifecycle_runs_home() -> Path:
+    """Directory under the control-plane home where lifecycle run state.json files live."""
     return control_plane_home() / "lifecycle_runs"
 
 
 def _now_iso() -> str:
+    """Current local time as an ISO-8601 string with numeric UTC offset."""
     return time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
 def _load_state(state_path: Path) -> dict[str, Any]:
+    """Parse a lifecycle run's state.json from disk."""
     return json.loads(state_path.read_text(encoding="utf-8"))
 
 
@@ -80,6 +85,7 @@ def resolve_lifecycle_state_path(run_id: str = "", *, workflow_id: str = "") -> 
 def list_lifecycle_runs(
     *, workflow_id: str = "", limit: int = 0
 ) -> list[dict[str, Any]]:
+    """List lifecycle runs newest-first, optionally filtered by workflow and capped."""
     supervisor = LifecycleSupervisor()
     summaries: list[dict[str, Any]] = []
     home = lifecycle_runs_home()
@@ -102,6 +108,7 @@ def list_lifecycle_runs(
 
 
 def _require_control(state: dict[str, Any], action: str) -> None:
+    """Raise ValueError unless ``action`` is one of the run's declared human_controls."""
     allowed = [str(item) for item in (state.get("human_controls") or [])]
     if action not in allowed:
         raise ValueError(
@@ -139,6 +146,7 @@ def record_operator_action(
 
 
 def _baton_previous_reports(state: dict[str, Any]) -> tuple[str, ...]:
+    """Non-empty previous-report paths carried in the run's current baton."""
     baton = dict(state.get("baton") or {})
     return tuple(
         str(path).strip()
@@ -172,6 +180,7 @@ def _continuation_spec(
     start_stage: str,
     agent: str,
 ) -> LifecycleRunSpec:
+    """Build the LifecycleRunSpec for a parent-linked continuation run from saved state."""
     spec_data = dict(state.get("spec") or {})
     return LifecycleRunSpec(
         workflow_id=workflow_id,
@@ -192,6 +201,7 @@ def _continuation_spec(
 
 
 def _baton_agent(state: dict[str, Any], stage: str = "") -> str:
+    """Resolve the agent for ``stage``: mission-declared casting wins over baton default."""
     baton = dict(state.get("baton") or {})
     spec_data = dict(state.get("spec") or {})
     # Operator-declared casting (mission frontmatter stage_agents) wins for a
@@ -317,6 +327,7 @@ def interrupt_workflow(
     *,
     stop_run_fn: StopRun | None = None,
 ) -> dict[str, Any]:
+    """Stop the live stage's worker (if any), mark the run interrupted, and record it."""
     _require_control(state, "interrupt_workflow")
     stages = list(state.get("stages") or [])
     last_stage = stages[-1] if stages else {}
@@ -346,6 +357,7 @@ def interrupt_workflow(
 
 
 def _manifest_stages(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """The run's cached workflow manifest stage list."""
     manifest = dict(state.get("manifest") or {})
     return [dict(stage) for stage in manifest.get("stages") or []]
 
@@ -407,6 +419,7 @@ def force_audit(
 
 
 def accept_dou(state_path: Path, state: dict[str, Any], finding: str) -> dict[str, Any]:
+    """Record an operator's conscious acceptance of one open DoU finding."""
     _require_control(state, "accept_dou")
     text = str(finding or "").strip()
     if not text:
@@ -420,6 +433,7 @@ def accept_dou(state_path: Path, state: dict[str, Any], finding: str) -> dict[st
 def choose_fallback_stage(
     state_path: Path, state: dict[str, Any], stage_id: str
 ) -> dict[str, Any]:
+    """Steer the baton's next_stage to an operator-chosen (manifest-known) stage id."""
     _require_control(state, "choose_fallback_stage")
     target = str(stage_id or "").strip()
     known = [str(stage.get("id") or "") for stage in _manifest_stages(state)]
@@ -441,6 +455,7 @@ def choose_fallback_stage(
 
 
 def _print_payload(payload: Any, *, as_json: bool) -> None:
+    """Print a control-verb result either as pretty JSON or as sorted key: value lines."""
     if as_json:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         return
@@ -459,6 +474,7 @@ def _print_payload(payload: Any, *, as_json: bool) -> None:
 def lifecycle_control_main(
     argv: Sequence[str] | None = None, *, workflow_id: str = ""
 ) -> int:
+    """CLI entrypoint for the lifecycle control-verb subcommands (runs/status/await/...)."""
     parser = argparse.ArgumentParser(
         prog=f"{workflow_id or 'vc-lifecycle'} <control>",
         description=(
@@ -474,6 +490,7 @@ def lifecycle_control_main(
     runs_parser.add_argument("--json", action="store_true")
 
     def _run_parser(verb: str, help_text: str) -> argparse.ArgumentParser:
+        """Register a run_id-taking subcommand shared by most control verbs."""
         verb_parser = sub.add_parser(verb, help=help_text)
         verb_parser.add_argument("run_id", nargs="?", default="")
         verb_parser.add_argument("--json", action="store_true")

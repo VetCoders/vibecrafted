@@ -1,3 +1,5 @@
+"""CLI over the async lifecycle supervisor: spawn, await, and validate one worker run."""
+
 from __future__ import annotations
 
 import argparse
@@ -12,6 +14,7 @@ from .supervisor_async import AsyncSupervisor, transcript_human_path
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build the argument parser for ``python -m vibecrafted_core.dispatcher run``."""
     parser = argparse.ArgumentParser(
         prog="python -m vibecrafted_core.dispatcher",
         description="Run one command under the Vibecrafted async lifecycle supervisor.",
@@ -75,6 +78,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _normalize_worker(argv: Sequence[str]) -> list[str]:
+    """Strip a leading ``--`` separator from the worker argv; require a non-empty command."""
     worker = list(argv)
     if worker and worker[0] == "--":
         worker = worker[1:]
@@ -102,6 +106,7 @@ def _maybe_record_lifecycle_worker_exit(
 
 
 async def _run(args: argparse.Namespace) -> int:
+    """Run one worker under ``AsyncSupervisor``, then triage/summarize/report the outcome."""
     worker = _normalize_worker(args.worker)
     handle = await AsyncSupervisor().run(
         run_id=args.run_id,
@@ -179,6 +184,7 @@ async def _run(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entrypoint: parse argv, run the ``run`` subcommand, return the process exit code."""
     parser = _build_parser()
     args = parser.parse_args(argv)
     if args.command != "run":

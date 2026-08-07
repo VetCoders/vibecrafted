@@ -1,3 +1,9 @@
+"""Filesystem layout for vibecrafted's runtime homes, staged tools, and launchers.
+
+Every path here is env-overridable (``VIBECRAFTED_HOME`` / ``XDG_*`` / etc.) so
+callers never hardcode a user's layout; ``resolve_env_path`` is the shared knob.
+"""
+
 from __future__ import annotations
 
 import os
@@ -5,6 +11,7 @@ from pathlib import Path
 
 
 def read_version_file(root: str | Path) -> str:
+    """Read ``<root>/VERSION`` verbatim, or ``"unknown"`` when it is absent."""
     version_file = Path(root) / "VERSION"
     if version_file.exists():
         return version_file.read_text(encoding="utf-8").strip()
@@ -47,6 +54,7 @@ def read_staged_tools_version() -> str:
 
 
 def resolve_env_path(name: str, default: Path) -> Path:
+    """Return ``$name`` expanded to a ``Path`` if set, else the expanded default."""
     raw = os.environ.get(name)
     if raw:
         return Path(raw).expanduser()
@@ -54,28 +62,34 @@ def resolve_env_path(name: str, default: Path) -> Path:
 
 
 def xdg_config_home() -> Path:
+    """``$XDG_CONFIG_HOME`` or ``~/.config``."""
     return resolve_env_path("XDG_CONFIG_HOME", Path.home() / ".config")
 
 
 def xdg_data_home() -> Path:
+    """``$XDG_DATA_HOME`` or ``~/.local/share``."""
     return resolve_env_path("XDG_DATA_HOME", Path.home() / ".local" / "share")
 
 
 def vibecrafted_home() -> Path:
+    """``$VIBECRAFTED_HOME`` or ``~/.vibecrafted`` — the control-plane root."""
     if os.environ.get("VIBECRAFTED_HOME"):
         return Path(os.environ["VIBECRAFTED_HOME"]).expanduser()
     return Path.home() / ".vibecrafted"
 
 
 def vibecrafted_backups_home() -> Path:
+    """Where the installer stashes pre-install backups, under the home root."""
     return vibecrafted_home() / "backups" / "installer"
 
 
 def vibecrafted_runtime_home() -> Path:
+    """``$VIBECRAFTED_RUNTIME_HOME`` or ``<xdg_data_home>/vibecrafted``."""
     return resolve_env_path("VIBECRAFTED_RUNTIME_HOME", xdg_data_home() / "vibecrafted")
 
 
 def vibecrafted_tools_home() -> Path:
+    """``$VIBECRAFTED_TOOLS_HOME`` or ``<runtime_home>/tools`` — staged installs."""
     return resolve_env_path(
         "VIBECRAFTED_TOOLS_HOME",
         vibecrafted_runtime_home() / "tools",
@@ -83,10 +97,12 @@ def vibecrafted_tools_home() -> Path:
 
 
 def vibecrafted_runtime_bin() -> Path:
+    """``$VIBECRAFTED_RUNTIME_BIN`` or ``<runtime_home>/bin``."""
     return resolve_env_path(
         "VIBECRAFTED_RUNTIME_BIN", vibecrafted_runtime_home() / "bin"
     )
 
 
 def vibecrafted_launcher_bin() -> Path:
+    """``$VIBECRAFTED_LAUNCHER_BIN`` or ``~/.local/bin`` — where shims land on PATH."""
     return resolve_env_path("VIBECRAFTED_LAUNCHER_BIN", Path.home() / ".local" / "bin")

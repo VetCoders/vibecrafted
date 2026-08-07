@@ -1,3 +1,5 @@
+"""Package-API doctor: wraps the installer doctor and adds runtime health checks."""
+
 from __future__ import annotations
 
 import hashlib
@@ -38,6 +40,7 @@ class _Finding:
 
 
 def _uv_tool_shim() -> Path:
+    """Return the expected path of the uv-tool-installed `vibecrafted` shim."""
     data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
     return Path(data_home) / "uv" / "tools" / "vibecrafted" / "bin" / "vibecrafted"
 
@@ -273,6 +276,7 @@ def _server_supervision_findings(
 
 
 def _repo_root_from_source() -> Path | None:
+    """Return the monorepo root when this package is loaded from a checkout."""
     package_root = Path(__file__).resolve().parents[1]
     candidate = package_root.parent if package_root.name == "vibecrafted-core" else None
     if candidate and (candidate / "scripts" / "vetcoders_install.py").is_file():
@@ -281,6 +285,7 @@ def _repo_root_from_source() -> Path | None:
 
 
 def _installer_module() -> Any:
+    """Lazily load and cache the `vetcoders_install` module (checkout or import)."""
     global _INSTALLER_MODULE
     if _INSTALLER_MODULE is not None:
         return _INSTALLER_MODULE
@@ -314,6 +319,7 @@ def _installer_module() -> Any:
 
 
 def _packaged_asset_findings() -> list[_Finding]:
+    """Verify runtime/skills/deck package assets are present under the package dir."""
     checks = (
         (
             "runtime",
@@ -680,6 +686,7 @@ def _hash_config_tree(root: Path) -> dict[str, str]:
 
 
 def _diverged_files(left: dict[str, str], right: dict[str, str]) -> list[str]:
+    """Return sorted filenames whose hash differs (or is missing) between the two maps."""
     return sorted(
         name for name in left.keys() | right.keys() if left.get(name) != right.get(name)
     )
@@ -826,6 +833,7 @@ def doctor_run(
 
 
 def doctor_summary(findings: Sequence[Any]) -> dict[str, Any]:
+    """Reduce a findings sequence to ok/warn/fail counts plus a serialized list."""
     oks = sum(1 for finding in findings if finding.level == "ok")
     warnings = sum(1 for finding in findings if finding.level == "warn")
     failures = sum(1 for finding in findings if finding.level == "fail")

@@ -1,3 +1,5 @@
+"""Async supervisor: spawns agent processes, streams output, and settles run state."""
+
 from __future__ import annotations
 
 import asyncio
@@ -38,6 +40,7 @@ _HEARTBEAT_INTERVAL_SECONDS = 20.0
 
 
 def _utc_now() -> datetime:
+    """Current UTC-aware datetime."""
     return datetime.now(timezone.utc)
 
 
@@ -58,6 +61,7 @@ def transcript_human_path(transcript_path: Path | None) -> Path | None:
 
 
 def _infer_agent(command: Sequence[str]) -> str:
+    """Guess the agent name from argv[0] when VIBECRAFTED_AGENT is not set."""
     if not command:
         return "agent"
     name = Path(str(command[0])).name
@@ -69,6 +73,7 @@ def _infer_agent(command: Sequence[str]) -> str:
 
 
 def _json_text_fragment(event: dict[str, object]) -> str:
+    """Extract the display text (if any) from one parsed JSON stream event line."""
     event_type = str(event.get("type") or "")
     if event_type == "thought":
         return ""
@@ -88,6 +93,11 @@ def _json_text_fragment(event: dict[str, object]) -> str:
 
 
 def _fallback_report_body(transcript_text: str) -> str:
+    """Reconstruct a readable report body from raw JSON/plain transcript lines.
+
+    Used when a worker exits 0 without writing its own report; skips
+    grok transport-noise lines via ``is_grok_ignorable_transport_error``.
+    """
     text_fragments: list[str] = []
     plain_lines: list[str] = []
     for line in transcript_text.splitlines():
@@ -131,6 +141,7 @@ def _tokens_total(
 
 
 def _handle_tokens_total(handle: AsyncRunHandle) -> int:
+    """Total token usage for a run handle, deduplicating cache-shape overlap."""
     return _tokens_total(
         handle.tokens_input, handle.tokens_cached_input, handle.tokens_output
     )
@@ -141,6 +152,7 @@ def _origin_fields_from_env(env: Mapping[str, str] | None = None) -> dict[str, s
     source = env if env is not None else os.environ
 
     def _get(*names: str) -> str:
+        """Return the first non-empty stripped value found among *names* in the env source."""
         for name in names:
             value = str(source.get(name, "") or "").strip()
             if value:
@@ -191,10 +203,12 @@ def _accepted_operator_stop(run_id: str) -> dict[str, object] | None:
 
 
 def _cache_write_line(prefix: str, value: int | None) -> str:
+    """Render a `tokens_cache_write:` frontmatter/footer line, or "" when value is None."""
     return f"{prefix}tokens_cache_write: {value}\n" if value is not None else ""
 
 
 def _render_fallback_report(handle: AsyncRunHandle, transcript_text: str) -> str:
+    """Build a complete salvaged markdown report (frontmatter + body) for a silent worker."""
     body = _fallback_report_body(transcript_text)
     if not body:
         body = (
@@ -247,6 +261,7 @@ def _render_fallback_report(handle: AsyncRunHandle, transcript_text: str) -> str
 
 
 def _terminal_frontmatter(handle: AsyncRunHandle) -> str:
+    """Render the launching-state frontmatter block written to stdout when tee_output is on."""
     model_requested = (
         f"model_requested: {handle.model_requested}\n" if handle.model_requested else ""
     )
@@ -265,6 +280,7 @@ def _terminal_frontmatter(handle: AsyncRunHandle) -> str:
 
 
 def _terminal_footer(handle: AsyncRunHandle) -> str:
+    """Render the terminal-state summary footer written to stdout when tee_output is on."""
     model_requested = (
         f"model_requested: {handle.model_requested}\n" if handle.model_requested else ""
     )
@@ -299,12 +315,15 @@ def _terminal_footer(handle: AsyncRunHandle) -> str:
 
 
 def _write_terminal(text: str) -> None:
+    """Write *text* to stdout and flush immediately (used for tee_output)."""
     sys.stdout.write(text)
     sys.stdout.flush()
 
 
 @dataclass
 class AsyncRunHandle:
+    """Mutable state of one asynchronously supervised agent run, live or terminal."""
+
     run_id: str
     command: tuple[str, ...]
     root: Path
@@ -343,14 +362,19 @@ class AsyncRunHandle:
 
     @property
     def state(self) -> RunState:
+        """Current (most recent) lifecycle state."""
         return self.states[-1]
 
 
 class AsyncSupervisor:
+    """Async orchestrator: spawns one agent process per run, streams and settles it."""
+
     def __init__(self) -> None:
+        """Initialize an empty run-id -> AsyncRunHandle registry."""
         self._runs: dict[str, AsyncRunHandle] = {}
 
     def get(self, run_id: str) -> AsyncRunHandle | None:
+        """Look up a tracked run handle by id, or None if unknown to this instance."""
         return self._runs.get(run_id)
 
     async def spawn(
@@ -365,6 +389,12 @@ class AsyncSupervisor:
         transcript_path: str | Path | None = None,
         prompt_file_path: str | Path | None = None,
     ) -> AsyncRunHandle:
+        """Start one agent subprocess and register it as a live AsyncRunHandle.
+
+        Materializes the report template, merges the run's identity env vars,
+        seeds durable origin metadata into meta.json, and emits the
+        CREATED/PROCESS_SPAWNED lifecycle transitions before returning.
+        """
         if not command:
             raise ValueError("command must not be empty")
         cwd = Path(normalize_run_root(root))
@@ -583,6 +613,12 @@ class AsyncSupervisor:
         tee_output: bool = False,
         salvage_report_from_stream: bool = False,
     ) -> AsyncRunHandle:
+        """Spawn, watch to completion, validate artifacts, and settle a run end to end.
+
+        Honors an accepted operator-stop by skipping completion-report
+        manufacturing; otherwise writes a report fallback, meta summary, and
+        the terminal lifecycle transition (COMPLETED/FAILED/STALLED).
+        """
         handle = await self.spawn(
             run_id=run_id,
             command=command,
@@ -730,6 +766,11 @@ class AsyncSupervisor:
     async def _watch_process(
         self, handle: AsyncRunHandle, *, tee_output: bool = False
     ) -> None:
+        """Stream stdout lines to the transcript, parse usage, and emit heartbeats.
+
+        Emits a synthetic heartbeat every ``_HEARTBEAT_INTERVAL_SECONDS`` of
+        stdout silence so a long tool call is never mistaken for a dead worker.
+        """
         assert handle.process.stdout is not None
         parser = AgentStreamParser(handle.agent, default_model=handle.agent_model)
         human_path = transcript_human_path(handle.transcript_path)
@@ -843,6 +884,12 @@ class AsyncSupervisor:
         *,
         salvage_report_from_stream: bool = False,
     ) -> None:
+        """Ensure the report file exists and carries stamped launcher identity.
+
+        Salvages a report from the transcript when missing (grok, or when
+        opted in), and re-renders any launcher-template placeholder report
+        left behind by a worker that never overwrote it.
+        """
         report = handle.report_path
         if report is None:
             return
@@ -913,6 +960,7 @@ class AsyncSupervisor:
     def _sync_stream_summary(
         self, handle: AsyncRunHandle, parser: AgentStreamParser
     ) -> None:
+        """Copy the parser's latest session/model/token/cost readings onto the handle."""
         if parser.session_id:
             handle.agent_session_id = parser.session_id
         handle.agent_model = parser.model_id
@@ -925,6 +973,7 @@ class AsyncSupervisor:
         handle.resume_command = parser.resume_command(handle.root)
 
     def _write_meta_summary(self, handle: AsyncRunHandle) -> None:
+        """Merge a full run-state summary (status, tokens, cost, origin) into meta.json."""
         if handle.meta_path is None:
             return
         summary = {
@@ -983,6 +1032,7 @@ class AsyncSupervisor:
         handle.meta_path.parent.mkdir(parents=True, exist_ok=True)
 
         def _merge_summary(payload: dict[str, object]) -> dict[str, object]:
+            """Merge the computed summary onto the mutator's current meta payload."""
             if not str(payload.get("origin_session") or "").strip() and origin.get(
                 "origin_session"
             ):
@@ -1016,6 +1066,7 @@ class AsyncSupervisor:
         )
 
     async def _terminate(self, handle: AsyncRunHandle) -> None:
+        """SIGTERM the run's process group (or process), escalating to SIGKILL after 3s."""
         if handle.process.returncode is not None:
             return
         try:
@@ -1045,6 +1096,7 @@ class AsyncSupervisor:
         *,
         payload: dict[str, object] | None = None,
     ) -> None:
+        """Append *state* to the handle's history and emit the corresponding event."""
         handle.states.append(state)
         event_payload: dict[str, object] = {
             "root": str(handle.root),
@@ -1063,6 +1115,7 @@ class AsyncSupervisor:
         *,
         payload: dict[str, object] | None = None,
     ) -> None:
+        """Persist one lifecycle event to the durable event stream (off-thread)."""
         event_payload: dict[str, object] = {
             "event_kind": EventKind.LIFECYCLE.value,
             "state": state.value,

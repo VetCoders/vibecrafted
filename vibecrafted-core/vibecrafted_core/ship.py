@@ -1,3 +1,5 @@
+"""vc-ship CLI: lifecycle launcher, ship-prompt builder, and DeliverySeal issuer."""
+
 from __future__ import annotations
 
 import argparse
@@ -37,6 +39,8 @@ EventSink = Callable[[str, str, str, dict[str, Any]], Mapping[str, Any]]
 
 @dataclass(frozen=True)
 class ShipSealResult:
+    """Outcome of one seal-issuance attempt: either a sealed run or a refusal."""
+
     delivery_state: DeliveryState
     seal: DeliverySeal | None
     refusal_reasons: tuple[str, ...]
@@ -44,10 +48,12 @@ class ShipSealResult:
 
 
 def _digest_if_file(path: Path) -> str:
+    """Return the sha256 digest of *path*, or "" when it does not exist."""
     return seal.digest_file(path) if path.is_file() else ""
 
 
 def _execution_digest(store: DeliveryStore, role: str) -> str | None:
+    """Read one execution role's content digest, or None if it was never recorded."""
     try:
         return store.read_execution(role).content_digest()
     except DeliveryStoreError:
@@ -57,6 +63,7 @@ def _execution_digest(store: DeliveryStore, role: str) -> str | None:
 def _seal_components(
     store: DeliveryStore, *, run_id: str, lifecycle_id: str, cut_id: str
 ) -> seal.SealComponents:
+    """Assemble the full SealComponents evidence bundle from on-disk store artifacts."""
     envelope = store.read_execution_envelope()
     contract = store.read_proof_contract()
     proof = store.read_proof_result()
@@ -188,6 +195,7 @@ def seal_delivery_run(
 
 
 def build_ship_prompt(agent: str, checkpoint: str, prompt: str) -> str:
+    """Wrap a raw prompt in the vc-loop supervisor instructions for --loop-only mode."""
     return "\n".join(
         [
             "VC-SHIP interactive supervisor loop.",
@@ -208,6 +216,7 @@ def build_ship_prompt(agent: str, checkpoint: str, prompt: str) -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry point: route lifecycle control verbs, --loop-only, or launch a run."""
     args_list = list(sys.argv[1:] if argv is None else argv)
     if args_list and args_list[0] in _control_verbs():
         from .lifecycle_control import lifecycle_control_main

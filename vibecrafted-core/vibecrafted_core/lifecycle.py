@@ -1,9 +1,13 @@
+"""Lifecycle run state machine: states, event kinds, and allowed transitions."""
+
 from __future__ import annotations
 
 from enum import Enum
 
 
 class RunState(str, Enum):
+    """A lifecycle run's (or stage's) current position in the state machine."""
+
     CREATED = "created"
     BRIEF_RENDERED = "brief_rendered"
     PROCESS_SPAWNED = "process_spawned"
@@ -30,6 +34,8 @@ class RunState(str, Enum):
 
 
 class EventKind(str, Enum):
+    """Category tag for a lifecycle transcript event."""
+
     LIFECYCLE = "lifecycle"
     ARTIFACT = "artifact"
     SUPERVISOR = "supervisor"
@@ -154,20 +160,24 @@ ALLOWED_TRANSITIONS = {
 
 
 def coerce_state(value: RunState | str) -> RunState:
+    """Normalize a raw string or RunState into a RunState; raises ValueError if invalid."""
     if isinstance(value, RunState):
         return value
     return RunState(value)
 
 
 def is_final_state(value: RunState | str) -> bool:
+    """True when the state is terminal (run will not transition further)."""
     return coerce_state(value) in FINAL_STATES
 
 
 def is_negative_state(value: RunState | str) -> bool:
+    """True when the state signals a failure/stall/recovery condition."""
     return coerce_state(value) in NEGATIVE_STATES
 
 
 def transition_allowed(current: RunState | str, next_state: RunState | str) -> bool:
+    """True when moving from ``current`` to ``next_state`` is a valid edge (or a no-op)."""
     current_state = coerce_state(current)
     target_state = coerce_state(next_state)
     if current_state == target_state:

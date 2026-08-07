@@ -21,6 +21,9 @@ def runtime_transcript_manifest_path(transcript: Path) -> Path:
 
 
 def _canonical_regular_path(path: Path) -> Path | None:
+    """Resolve `path` to its canonical form, requiring a real regular file with
+    no unresolved symlink components; return None on any mismatch or OS error."""
+
     absolute = Path(os.path.abspath(path.expanduser()))
     try:
         canonical = absolute.resolve(strict=True)
@@ -33,6 +36,9 @@ def _canonical_regular_path(path: Path) -> Path | None:
 
 
 def _canonical_directory(path: Path) -> Path | None:
+    """Resolve `path` to its canonical form, requiring a real directory with no
+    unresolved symlink components; return None on any mismatch or OS error."""
+
     absolute = Path(os.path.abspath(path.expanduser()))
     try:
         canonical = absolute.resolve(strict=True)
@@ -45,10 +51,17 @@ def _canonical_directory(path: Path) -> Path | None:
 
 
 def _same_file_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    """Return whether two stat results identify the same underlying file
+    (device + inode), independent of the path used to reach them."""
+
     return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
 
 
 def _read_regular_bytes(path: Path, *, limit: int) -> bytes | None:
+    """Read up to `limit` bytes from a non-symlinked regular file, re-checking
+    identity, size, and mtime before and after the read to reject a TOCTOU swap
+    or truncation; return None on any anomaly or when content exceeds `limit`."""
+
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -85,6 +98,10 @@ def _read_regular_bytes(path: Path, *, limit: int) -> bytes | None:
 
 
 def _read_regular_file_digest(path: Path) -> tuple[int, str] | None:
+    """Compute (size, sha256-hex) for a non-symlinked regular file, re-checking
+    identity, size, and mtime before and after hashing; return None on any
+    anomaly, so a mutated-mid-read file never yields a false digest."""
+
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -122,6 +139,10 @@ def _read_regular_file_digest(path: Path) -> tuple[int, str] | None:
 
 
 def _atomic_write_manifest(path: Path, payload: dict[str, Any]) -> None:
+    """Atomically write `payload` as pretty JSON to `path` via a private
+    tempfile in the same directory, fsync it, rename over `path`, then fsync
+    the parent directory so the replace survives a crash."""
+
     serialized = (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode()
     temporary_path: str | None = None
     try:

@@ -18,6 +18,8 @@ AGENT_SELECTOR = "<claude|codex|agy|junie|grok>"
 
 @dataclass(frozen=True)
 class WorkflowHelp:
+    """One workflow's rendered help content: summary, flow steps, examples, notes."""
+
     summary: str
     flow: tuple[str, ...]
     examples: tuple[str, ...]
@@ -340,10 +342,12 @@ WORKFLOW_HELP: dict[str, WorkflowHelp] = {
 
 
 def has_workflow_help(topic: str) -> bool:
+    """Return True when ``topic`` (with an optional ``vc-`` prefix) has help content."""
     return topic.removeprefix("vc-") in WORKFLOW_HELP
 
 
 def _skill_version(topic: str) -> str:
+    """Read the ``version:`` frontmatter field from the topic's SKILL.md, or "" if absent."""
     try:
         path = skills_path() / f"vc-{topic}" / "SKILL.md"
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -358,6 +362,7 @@ def _skill_version(topic: str) -> str:
 
 
 def render_root_help(version: str) -> str:
+    """Render the top-level ``vibecrafted help`` banner, including the vc-ship stage cycle."""
     ship = workflow_manifest("vc-ship")
     cycle = " → ".join(stage.workflow for stage in ship.stages) if ship else ""
     return f"""
@@ -394,6 +399,7 @@ Examples:
 
 
 def render_resume_session_help() -> str:
+    """Render the fixed help text for ``vibecrafted resume-session``."""
     return """
 ⚒  resume-session
 ─────────────────────────────────────────
@@ -426,6 +432,7 @@ Example:
 
 
 def _usage_lines(topic: str) -> list[str]:
+    """Build the "Usage:" block lines for a topic, with per-topic overrides."""
     if topic == "research":
         return [
             "  vibecrafted research [agents...] [flags]",
@@ -449,6 +456,7 @@ def _usage_lines(topic: str) -> list[str]:
 
 
 def _option_lines(topic: str) -> list[str]:
+    """Build the "Options:" block lines for a topic, adding flags the workflow supports."""
     if topic == "paste":
         return [
             "  --skill <workflow>              Workflow to prepare (default: workflow)",
@@ -483,6 +491,7 @@ def _option_lines(topic: str) -> list[str]:
 
 
 def render_workflow_help(topic: str) -> str:
+    """Render the full help page for one workflow topic; raises ValueError if unknown."""
     requested = topic.removeprefix("vc-")
     spec = WORKFLOW_HELP.get(requested)
     if spec is None:

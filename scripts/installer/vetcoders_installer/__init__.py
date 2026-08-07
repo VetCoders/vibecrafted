@@ -80,6 +80,8 @@ TOOL_NAME = "vetcoders-installer"
 
 @dataclass
 class Phase:
+    """One install.toml `[[phase]]` entry: a consented, labeled subprocess step."""
+
     key: str
     label: str
     reason: str
@@ -89,15 +91,19 @@ class Phase:
 
     @property
     def reason_lines(self) -> list[str]:
+        """Return the reason block as trailing-whitespace-stripped lines."""
         return [ln.rstrip() for ln in self.reason.strip().splitlines()]
 
     def matches(self, name: str) -> bool:
+        """Case-insensitive match against this phase's key or label."""
         name = name.lower()
         return name == self.key.lower() or name == self.label.lower()
 
 
 @dataclass
 class Manifest:
+    """Parsed install.toml: title, version, phases, branding, and intro screens."""
+
     title: str
     version: str
     log_pattern: str | None
@@ -111,6 +117,7 @@ class Manifest:
 
     @classmethod
     def load(cls, path: Path) -> Manifest:
+        """Parse an install.toml file at path into a Manifest instance."""
         raw = path.read_text(encoding="utf-8")
         data = tomllib.loads(raw)
         repo_root = path.parent.resolve()
@@ -206,17 +213,20 @@ class _PlainConsole:
     """Minimal drop-in for rich.console.Console when rich is unavailable."""
 
     def print(self, *args: Any, **_kwargs: Any) -> None:
+        """Print args space-joined, stripping Rich-style [tag] markup first."""
         msg = " ".join(str(a) for a in args)
         msg = re.sub(r"\[/?[a-zA-Z0-9 #_]+\]", "", msg)
         print(msg)
 
     def rule(self, title: str = "", **_kwargs: Any) -> None:
+        """Print a plain-text horizontal rule with an optional centered title."""
         cleaned = re.sub(r"\[/?[a-zA-Z0-9 #_]+\]", "", title)
         bar = "─" * max(4, 60 - len(cleaned) - 2)
         print(f"\n── {cleaned} {bar}" if cleaned else "\n" + ("─" * 60))
 
 
 def _make_console() -> Any:
+    """Return a rich.Console when rich is installed, else the plain fallback."""
     return Console() if HAS_RICH else _PlainConsole()
 
 
@@ -712,6 +722,7 @@ def _show_intro_flow(
 
 
 def _print_title(console: Any, manifest: Manifest) -> None:
+    """Print the manifest title, appending the version when one is set."""
     if manifest.version:
         title = f"{manifest.title} v{manifest.version}"
     else:
@@ -722,6 +733,7 @@ def _print_title(console: Any, manifest: Manifest) -> None:
 
 
 def _print_reason_block(console: Any, phase: Phase) -> None:
+    """Print the phase label followed by its indented, dimmed reason lines."""
     console.print(f"[bold cyan]{phase.label}[/]")
     console.print()
     for line in phase.reason_lines:
@@ -737,6 +749,11 @@ def _print_summary(
     *,
     compact: bool = False,
 ) -> None:
+    """Print the final run summary: verdict headline, per-phase results, next steps.
+
+    ``compact`` renders a single status line (used for quiet+auto-yes runs)
+    instead of the full landing-page-style report.
+    """
     if not results:
         return
 
@@ -904,10 +921,12 @@ def _print_cleanup_notice(console: Any, manifest: Manifest, cleanup_flag: bool) 
 
 
 def _is_interactive() -> bool:
+    """True when both stdin and stdout are attached to a TTY."""
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
 def _open_log(manifest: Manifest) -> tuple[Path | None, Any | None]:
+    """Open a timestamped log file per manifest.log_pattern, or (None, None) if unset."""
     if not manifest.log_pattern:
         return None, None
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -922,6 +941,7 @@ def _filter_phases(
     only: list[str],
     skip: list[str],
 ) -> list[Phase]:
+    """Apply --only/--skip name filters (key or label match) to the phase list."""
     result = list(phases)
     if only:
         result = [p for p in result if any(p.matches(n) for n in only)]
@@ -940,6 +960,11 @@ def run(
     only: list[str],
     skip: list[str],
 ) -> int:
+    """Drive the full install run: intro flow, per-phase consent+execution, summary.
+
+    Returns the process exit code (0 on success, the failing phase's return
+    code otherwise).
+    """
     console = _make_console()
     compact_stdout = quiet and auto_yes and not dry_run
 
@@ -1092,10 +1117,14 @@ def run(
 
 
 class _NullContext:
+    """No-op context manager placeholder (never raises, never suppresses)."""
+
     def __enter__(self):
+        """Return self; enter is a no-op."""
         return self
 
     def __exit__(self, *_args):
+        """Never suppress an exception."""
         return False
 
 
@@ -1130,6 +1159,7 @@ def _self_uninstall_and_exit(rc: int) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build the vetcoders-installer CLI argument parser."""
     parser = argparse.ArgumentParser(
         prog=TOOL_NAME,
         description="Sequential trust-building installer runner (manifest-driven).",
@@ -1191,6 +1221,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """CLI entrypoint: parse args, load the manifest, run it, then self-uninstall/cleanup."""
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):

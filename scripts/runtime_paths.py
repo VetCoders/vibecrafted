@@ -1,3 +1,9 @@
+"""PEP 562 shim: re-export the canonical vibecrafted-core runtime_paths module.
+
+Loaded by absolute file path (not package import) so callers outside the
+vibecrafted-core package still get the one true implementation.
+"""
+
 from __future__ import annotations
 
 import importlib.util
@@ -24,4 +30,5 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
+    """List the canonical module's public names for tab-completion/introspection."""
     return sorted(set(dir(_runtime_paths)))

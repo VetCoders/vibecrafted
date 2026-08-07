@@ -99,6 +99,8 @@ _WAIVE_KEYS = ("settlement_waive", "operator_waive", "waive_settlement")
 
 
 class SettlementVerdict(str, Enum):
+    """The four settled terminals a finished run can land on."""
+
     FINALIZED = "finalized"
     FAILED = "failed"
     NEEDS_ATTENTION = "needs_attention"
@@ -144,9 +146,11 @@ class Settlement:
 
     @property
     def tui_key(self) -> str:
+        """Return this settlement's TUI f/x/n cell."""
         return tui_key_for(self.verdict)
 
     def to_payload(self) -> dict[str, Any]:
+        """Serialize to the flat field set merged onto a run projection/meta."""
         payload: dict[str, Any] = {
             "settlement_verdict": self.verdict.value,
             "settlement_reason": self.reason,
@@ -172,6 +176,7 @@ class SettlementEventStateV1:
     tui: str
 
     def to_payload(self) -> dict[str, str]:
+        """Serialize the verdict/tui pair for embedding in an event payload."""
         return {"verdict": self.verdict, "tui": self.tui}
 
 
@@ -190,6 +195,7 @@ class SettlementEventV1:
     revision: int
 
     def to_payload(self) -> dict[str, Any]:
+        """Serialize this v1 settlement revision for the event stream."""
         return {
             "schema": SETTLEMENT_EVENT_SCHEMA,
             "run_id": self.run_id,
@@ -205,6 +211,7 @@ class SettlementEventV1:
 
 
 def _canonical_json(payload: Mapping[str, Any]) -> bytes:
+    """Encode ``payload`` as sorted, compact UTF-8 JSON for stable hashing."""
     return json.dumps(
         dict(payload),
         sort_keys=True,
@@ -246,6 +253,11 @@ class TrustReceiptV1:
         settlement_revision: int,
         claim_digest: str,
     ) -> TrustReceiptV1:
+        """Build the receipt and derive its ``receipt_id`` from the claim fields.
+
+        The claim fields are hashed exactly as given — no normalization beyond
+        canonical JSON encoding, so callers must pass already-validated values.
+        """
         claims = {
             "schema": TRUST_RECEIPT_SCHEMA,
             "repo_root": repo_root,
@@ -273,6 +285,11 @@ class TrustReceiptV1:
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> TrustReceiptV1:
+        """Parse and fully re-verify a receipt, recomputing its hash to detect tampering.
+
+        Raises ``ValueError``/``TypeError`` on any field, shape, or hash mismatch —
+        this is the sole trusted decode path for a persisted receipt.
+        """
         expected_fields = {
             "schema",
             "receipt_id",
@@ -331,6 +348,7 @@ class TrustReceiptV1:
         return issued
 
     def to_payload(self) -> dict[str, Any]:
+        """Serialize the receipt's exact ten-field wire shape."""
         return {
             "schema": self.schema,
             "receipt_id": self.receipt_id,
@@ -362,9 +380,11 @@ class SettlementEventV2:
 
     @property
     def event_key(self) -> str:
+        """Return the unique idempotency key binding this event to one receipt."""
         return f"{self.run_id}:{self.revision}:{self.trust_receipt.receipt_id}"
 
     def to_payload(self) -> dict[str, Any]:
+        """Serialize this v2 settlement revision, including its trust receipt."""
         return {
             "schema": SETTLEMENT_EVENT_SCHEMA_V2,
             "event_key": self.event_key,
@@ -382,6 +402,11 @@ class SettlementEventV2:
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> SettlementEventV2:
+        """Parse and cross-verify a v2 event against its embedded trust receipt.
+
+        Raises ``ValueError``/``TypeError`` on any shape, revision, or
+        receipt-consistency mismatch.
+        """
         if payload.get("schema") != SETTLEMENT_EVENT_SCHEMA_V2:
             raise ValueError("settlement_event_schema_invalid")
         receipt_payload = payload.get("trust_receipt")
@@ -459,10 +484,12 @@ def build_trust_settlement_event(
 
 
 def _now_iso() -> str:
+    """Return the current UTC time as an ISO-8601 string."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def _as_bool(value: Any) -> bool:
+    """Coerce a payload value to bool, treating common truthy strings loosely."""
     if isinstance(value, bool):
         return value
     return str(value or "").strip().lower() in {"1", "true", "yes", "on", "waived"}
@@ -505,6 +532,7 @@ def claim_digest_from_payload(payload: Mapping[str, Any]) -> str:
 
 
 def _has_operator_waive(payload: Mapping[str, Any]) -> bool:
+    """True when the payload (top-level or nested ``settlement``) carries an explicit waive."""
     for key in _WAIVE_KEYS:
         if _as_bool(payload.get(key)):
             return True
@@ -513,6 +541,7 @@ def _has_operator_waive(payload: Mapping[str, Any]) -> bool:
 
 
 def _proof_passed(payload: Mapping[str, Any]) -> bool:
+    """True when the delivery-kernel proof passed or the delivery was sealed."""
     proof = str(payload.get("proof_state") or "").strip().lower()
     if proof == "passed":
         return True
@@ -521,6 +550,7 @@ def _proof_passed(payload: Mapping[str, Any]) -> bool:
 
 
 def _proof_failed(payload: Mapping[str, Any]) -> bool:
+    """True when the delivery-kernel proof failed/invalid or was invalidated."""
     proof = str(payload.get("proof_state") or "").strip().lower()
     if proof in {"failed", "invalid"}:
         return True
@@ -565,6 +595,7 @@ def _report_self_attestation(
 
 
 def _is_terminal(payload: Mapping[str, Any]) -> bool:
+    """True when the run projection has reached a finished (non-live) state."""
     state = str(payload.get("state") or payload.get("status") or "").strip().lower()
     if state in {
         "report_validated",
@@ -638,6 +669,7 @@ def settlement_from_payload(payload: Mapping[str, Any]) -> Settlement | None:
 
 
 def _settlement_fingerprint(settlement: Settlement) -> tuple[Any, ...]:
+    """Return the tuple of fields whose equality defines "the same resolution"."""
     return (
         settlement.verdict.value,
         settlement.tui_key,
@@ -650,6 +682,7 @@ def _settlement_fingerprint(settlement: Settlement) -> tuple[Any, ...]:
 
 
 def _settlement_event_state(settlement: Settlement) -> SettlementEventStateV1:
+    """Project a ``Settlement`` down to its compact verdict/tui event state."""
     return SettlementEventStateV1(
         verdict=settlement.verdict.value,
         tui=settlement.tui_key,
@@ -738,6 +771,7 @@ def emit_settlement_event(
 
 
 def _coerce_int(value: Any) -> int | None:
+    """Parse ``value`` as an int, returning None for empty/unparseable input."""
     if value is None or value == "":
         return None
     try:
@@ -794,6 +828,7 @@ def settle_payload(
     waived = _has_operator_waive(payload)
 
     def _stable(candidate: Settlement) -> Settlement:
+        """Return ``existing`` unchanged when ``candidate`` resolves identically."""
         # Recomputing with unchanged evidence must be a no-op: re-stamping
         # ``settled_at`` on every board sync made each pass rewrite every
         # terminal snapshot and emit a spurious "refreshed" event — the event
@@ -1127,6 +1162,7 @@ def persist_settlement_to_meta(
         return False
 
     def _merge(payload: dict[str, Any]) -> dict[str, Any] | None:
+        """Mutator for ``mutate_run_meta``: merge the settlement, or None to refuse the write."""
         current = settlement_from_payload(payload)
         current_revision = max(
             _coerce_int(payload.get("settlement_revision")) or 0,
@@ -1206,6 +1242,7 @@ def persist_await_verdict(
     if meta_path is not None:
 
         def _merge(payload: dict[str, Any]) -> dict[str, Any]:
+            """Mutator for ``mutate_run_meta``: merge the await-verdict fields in place."""
             payload.update(fields)
             return payload
 

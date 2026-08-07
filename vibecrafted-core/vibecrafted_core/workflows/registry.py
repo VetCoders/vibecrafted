@@ -1,3 +1,5 @@
+"""Canonical registry of every workflow definition, ship stage, and manifest."""
+
 from __future__ import annotations
 
 import os
@@ -15,6 +17,7 @@ def _direct(
     lifecycle_order: int,
     tooling: tuple[str, ...] = (),
 ) -> WorkflowDefinition:
+    """Build a plain ``direct_agent`` workflow definition (the common-case shape)."""
     return WorkflowDefinition(
         id=id,
         cadence=cadence,
@@ -194,6 +197,9 @@ def _stage(
     transition_conditions: tuple[str, ...] = (),
     allowed_artifacts: tuple[str, ...] = (),
 ) -> WorkflowStage:
+    """Build one ``WorkflowStage``, deriving phase/tooling from its workflow's
+    definition and defaulting transition conditions/allowed artifacts when unset.
+    """
     definition = WORKFLOW_DEFINITIONS[workflow]
     default_conditions = _transition_conditions(
         phase=definition.cadence,
@@ -220,6 +226,7 @@ def _stage(
 
 
 def _allowed_artifacts(cadence: WorkflowCadence) -> tuple[str, ...]:
+    """Default artifact kinds a stage may write: write-cadence adds code/docs/generated."""
     common = ("reports", "cache", "run_state", "transcripts")
     if cadence == "write":
         return ("code", "docs", "generated_files", *common)
@@ -233,6 +240,7 @@ def _transition_conditions(
     fallback_stage: str = "",
     audit_after: str = "",
 ) -> tuple[str, ...]:
+    """Derive default transition-condition labels for a stage from its shape."""
     conditions = ["launch_accepted", "stage_completed"]
     if phase == "read":
         conditions.append("no_code_mutation")
@@ -389,27 +397,35 @@ WORKFLOW_MANIFEST_ALIASES = {
 
 
 def workflow_definition(workflow_id: str) -> WorkflowDefinition | None:
+    """Resolve a workflow id or alias to its `WorkflowDefinition`, or `None` if unknown."""
     resolved = WORKFLOW_ALIASES.get(workflow_id, workflow_id)
     return WORKFLOW_DEFINITIONS.get(resolved)
 
 
 def workflow_runtime_kind(workflow_id: str) -> str:
+    """Look up a workflow's runtime kind, defaulting to ``direct_agent`` if unknown."""
     definition = workflow_definition(workflow_id)
     return definition.runtime_kind if definition is not None else "direct_agent"
 
 
 def workflow_lifecycle() -> tuple[WorkflowDefinition, ...]:
+    """All workflow definitions ordered by `lifecycle_order` (scaffold-first)."""
     return tuple(
         sorted(WORKFLOW_DEFINITIONS.values(), key=lambda item: item.lifecycle_order)
     )
 
 
 def workflow_manifest(manifest_id: str) -> WorkflowManifest | None:
+    """Resolve a manifest id or bare ``vc-`` alias to its `WorkflowManifest`."""
     key = WORKFLOW_MANIFEST_ALIASES.get(manifest_id, manifest_id)
     return WORKFLOW_MANIFESTS.get(key)
 
 
 def workflow_manifest_payload(manifest_id: str) -> dict[str, object]:
+    """Serialize a manifest and its stages into a JSON-ready dict.
+
+    Raises ``ValueError`` for an unknown manifest id.
+    """
     manifest = workflow_manifest(manifest_id)
     if manifest is None:
         raise ValueError(f"Unsupported lifecycle workflow: {manifest_id}")
@@ -443,6 +459,9 @@ def workflow_manifest_payload(manifest_id: str) -> dict[str, object]:
 
 
 def _workflow_dirs(workflow_id: str) -> list[Path]:
+    """Candidate directories that may hold a workflow's on-disk assets, in
+    precedence order: env override, runtime path, tools-home fallback, package dir.
+    """
     candidates: list[Path] = []
     override = str(os.environ.get("VIBECRAFTED_WORKFLOWS_DIR") or "").strip()
     if override:
@@ -462,6 +481,11 @@ def _workflow_dirs(workflow_id: str) -> list[Path]:
 
 
 def workflow_default_prompt(workflow_id: str) -> str:
+    """Read a workflow's `default_prompt_file` from the first dir where it exists.
+
+    Returns "" when the workflow has no default prompt or none of the
+    candidate directories hold the file.
+    """
     definition = workflow_definition(workflow_id)
     if definition is None or not definition.default_prompt_file:
         return ""

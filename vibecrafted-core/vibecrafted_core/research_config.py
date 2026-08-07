@@ -1,3 +1,7 @@
+"""Resolve which research agents/models/synthesizer a run uses, layered from
+legacy TOML, ``research.yaml``, environment variables, and explicit overrides.
+"""
+
 from __future__ import annotations
 
 import os
@@ -17,6 +21,8 @@ DEFAULT_RESEARCH_AGENTS = ("claude", "codex", "agy")
 
 @dataclass(frozen=True)
 class ResearchAgentSelection:
+    """Resolved research-agent roster plus per-lane/synthesizer model overrides."""
+
     agents: tuple[str, ...]
     source: str
     ignored: tuple[str, ...] = ()
@@ -26,15 +32,18 @@ class ResearchAgentSelection:
     synthesizer_source: str = ""
 
     def lane_model(self, agent: str, global_model: str = "") -> str:
+        """Model for one lane: ``global_model`` wins, else the lane's own model."""
         if global_model:
             return global_model
         return str((self.lane_models or {}).get(agent, "")).strip()
 
     def synthesis_model(self, global_model: str = "") -> str:
+        """Model for the synthesis step: ``global_model`` wins, else configured."""
         return global_model or self.synthesizer_model
 
 
 def research_yaml_path() -> Path:
+    """Resolve the ``research.yaml`` path: env override, else vibecrafted home."""
     raw = os.environ.get("VIBECRAFTED_RESEARCH_CONFIG", "").strip()
     if raw:
         return Path(raw).expanduser()
@@ -42,6 +51,7 @@ def research_yaml_path() -> Path:
 
 
 def _strip_comment(line: str) -> str:
+    """Strip a trailing ``#`` comment from one YAML-ish line, honoring quotes."""
     in_quote = ""
     for index, char in enumerate(line):
         if char in {"'", '"'}:
@@ -52,6 +62,7 @@ def _strip_comment(line: str) -> str:
 
 
 def _scalar(value: str) -> Any:
+    """Coerce a raw YAML-ish scalar string into str/bool/int/list."""
     value = value.strip()
     if not value:
         return ""
@@ -74,6 +85,12 @@ def _scalar(value: str) -> Any:
 
 
 def _read_runtime_yaml(path: Path) -> dict[str, Any]:
+    """Hand-rolled minimal YAML reader for ``research.yaml``'s known shape.
+
+    Parses only the ``lanes`` (list of agent/model rows), ``models``, and
+    ``synthesizer`` sections plus top-level scalars; not a general YAML parser.
+    Returns ``{}`` when the file is absent or unreadable.
+    """
     if not path.is_file():
         return {}
     result: dict[str, Any] = {"lanes": [], "models": {}, "synthesizer": {}}
@@ -125,6 +142,7 @@ def _read_runtime_yaml(path: Path) -> dict[str, Any]:
 
 
 def _split_agent_tokens(raw: object) -> list[str]:
+    """Split a comma/space-separated agent-list string, or an iterable, into tokens."""
     if isinstance(raw, str):
         return [
             token.strip() for token in raw.replace(",", " ").split() if token.strip()
@@ -137,6 +155,10 @@ def _split_agent_tokens(raw: object) -> list[str]:
 def _select_supported_agents(
     tokens: Iterable[str],
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Filter tokens to supported, deduplicated research agents.
+
+    Returns ``(agents, ignored)`` — unsupported tokens are reported, not raised.
+    """
     agents: list[str] = []
     ignored: list[str] = []
     seen: set[str] = set()
@@ -155,6 +177,7 @@ def _select_supported_agents(
 
 
 def _read_legacy_toml_agents(path: Path) -> tuple[str, ...]:
+    """Read ``runtime.picking.research.default_agents`` from a legacy TOML config."""
     if not path.is_file():
         return ()
     try:
@@ -173,6 +196,7 @@ def _read_legacy_toml_agents(path: Path) -> tuple[str, ...]:
 
 
 def _legacy_toml_paths() -> tuple[Path, ...]:
+    """Candidate legacy ``install.toml``/``config.toml`` paths, in lookup order."""
     config_home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
     paths: list[Path] = [config_home / "vibecrafted" / "config.toml"]
     for candidate in (
@@ -190,6 +214,12 @@ def _legacy_toml_paths() -> tuple[Path, ...]:
 def _yaml_lanes(
     data: Mapping[str, Any],
 ) -> tuple[tuple[str, ...], dict[str, str], tuple[str, ...]]:
+    """Derive (agents, per-agent models, ignored tokens) from parsed YAML data.
+
+    Prefers the ``lanes`` list form (each row an agent + optional model,
+    ``enabled: false`` rows skipped); falls back to a flat ``agents`` list.
+    ``lane_count`` truncates the final roster when present.
+    """
     models: dict[str, str] = {}
     ignored: list[str] = []
     agents: list[str] = []
@@ -230,6 +260,7 @@ def _yaml_lanes(
 
 
 def _yaml_synthesizer(data: Mapping[str, Any]) -> tuple[str, str]:
+    """Derive (synthesizer agent, synthesizer model) from parsed YAML data."""
     raw = data.get("synthesizer")
     if isinstance(raw, str):
         return raw.strip().lower(), ""
@@ -250,6 +281,13 @@ def resolve_research_runtime_config(
     synthesizer: str = "",
     synthesizer_model: str = "",
 ) -> ResearchAgentSelection:
+    """Resolve the full research runtime config, layering in precedence order:
+
+    built-in default -> legacy TOML -> ``research.yaml`` -> env vars ->
+    explicit ``override_agents``/``synthesizer``/``synthesizer_model`` args.
+    Each layer only applies when it has something to say; unsupported agent
+    tokens are collected into ``ignored`` rather than raising.
+    """
     agents: tuple[str, ...] = DEFAULT_RESEARCH_AGENTS
     models: dict[str, str] = {}
     ignored: tuple[str, ...] = ()

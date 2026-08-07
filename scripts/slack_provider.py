@@ -48,6 +48,7 @@ class ProviderError(RuntimeError):
 
 
 def runtime_home() -> Path:
+    """Resolve the Vibecrafted runtime data root (VIBECRAFTED_RUNTIME_HOME, else XDG)."""
     configured = os.environ.get("VIBECRAFTED_RUNTIME_HOME", "").strip()
     if configured:
         return Path(configured).expanduser()
@@ -58,12 +59,14 @@ def runtime_home() -> Path:
 
 
 def config_home() -> Path:
+    """Resolve the per-user Vibecrafted config directory (XDG_CONFIG_HOME or ~/.config)."""
     configured = os.environ.get("XDG_CONFIG_HOME", "").strip()
     root = Path(configured).expanduser() if configured else Path.home() / ".config"
     return root / "vibecrafted"
 
 
 def launcher_bin() -> Path:
+    """Resolve the directory where the public `vc-slack` launcher symlink is published."""
     configured = os.environ.get("VIBECRAFTED_LAUNCHER_BIN", "").strip()
     return (
         Path(configured).expanduser() if configured else Path.home() / ".local" / "bin"
@@ -73,6 +76,11 @@ def launcher_bin() -> Path:
 def discover_source(
     framework_source: Path, explicit: Path | None = None
 ) -> Path | None:
+    """Find a vc-slack-agent checkout via explicit path, env var, or sibling directory.
+
+    Returns the first resolved candidate that has every ``REQUIRED_FILES``
+    entry present, or None if no candidate qualifies.
+    """
     candidates = []
     env_source = os.environ.get("VIBECRAFTED_SLACK_AGENT_SOURCE", "").strip()
     if explicit is not None:
@@ -93,6 +101,11 @@ def discover_source(
 
 
 def _source_digest(source: Path) -> str:
+    """Hash the runtime-relevant files under source (path + content) to a content id.
+
+    Excludes symlinks and the local, machine-specific rendered plist so the
+    digest only reflects files that actually get copied and published.
+    """
     digest = hashlib.sha256()
     for relative_root in COPY_PATHS:
         root = source / relative_root
@@ -111,6 +124,11 @@ def _source_digest(source: Path) -> str:
 
 
 def _copy_runtime(source: Path, destination: Path) -> None:
+    """Copy the runtime COPY_PATHS into destination, excluding secrets/build artifacts.
+
+    Raises ProviderError if any REQUIRED_FILES entry is missing from the
+    copied payload (as a real, non-symlinked file).
+    """
     for relative in COPY_PATHS:
         src = source / relative
         if not src.exists():
@@ -139,6 +157,7 @@ def _copy_runtime(source: Path, destination: Path) -> None:
 
 
 def _atomic_symlink(target: Path, link: Path) -> None:
+    """Point link at target via a temp-symlink + rename so readers never see a partial state."""
     link.parent.mkdir(parents=True, exist_ok=True)
     temporary = link.parent / f".{link.name}.tmp-{os.getpid()}"
     try:
@@ -150,6 +169,12 @@ def _atomic_symlink(target: Path, link: Path) -> None:
 
 
 def _migrate_env(source: Path, destination: Path) -> bool:
+    """One-way migrate a legacy source-tree .env to destination/slack.env, then leave it.
+
+    Refuses foreign-owned or oversized (>256KiB) env files, and never
+    overwrites an existing destination secret. Returns True if a migration
+    was performed.
+    """
     source_env = source / ".env"
     target_env = destination / "slack.env"
     if target_env.exists():
@@ -187,6 +212,14 @@ def install(
     user_config_home: Path | None = None,
     npm: str | None = None,
 ) -> Path:
+    """Install source as an immutable, content-addressed Slack provider generation.
+
+    Content-addressed by ``_source_digest``: an existing generation for the
+    same digest is reused rather than rebuilt. Runs `npm ci` for production
+    deps, writes a provider manifest, publishes the `current` pointer and the
+    public `vc-slack` launcher symlink, and migrates any legacy `.env`.
+    Returns the generation directory.
+    """
     source = source.resolve(strict=True)
     for relative in REQUIRED_FILES:
         if not (source / relative).is_file():
@@ -248,6 +281,10 @@ def install(
 def doctor(
     *, provider_root: Path | None = None, bin_dir: Path | None = None
 ) -> tuple[bool, str]:
+    """Verify the published Slack provider is intact: pointer, launcher, and content digest.
+
+    Returns (healthy, detail message).
+    """
     root = provider_root or runtime_home() / "providers" / PROVIDER_NAME
     current = root / "current"
     public = (bin_dir or launcher_bin()) / "vc-slack"
@@ -282,6 +319,7 @@ def doctor(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint: `install` (discover+install, optionally required) or `doctor`."""
     parser = argparse.ArgumentParser(prog="vibecrafted-slack-provider")
     subparsers = parser.add_subparsers(dest="command", required=True)
     install_parser = subparsers.add_parser("install")

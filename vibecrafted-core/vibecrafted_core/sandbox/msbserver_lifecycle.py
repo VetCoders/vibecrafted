@@ -1,3 +1,5 @@
+"""Local msbserver process lifecycle: start, health-probe, and stop the daemon."""
+
 from __future__ import annotations
 
 import http.client
@@ -13,6 +15,9 @@ from vibecrafted_core.runtime_paths import vibecrafted_home
 
 
 class MsbserverLifecycle:
+    """Owns starting, health-checking, and stopping a local `msbserver`
+    background process, tracking it via a PID file under its home directory."""
+
     def __init__(
         self,
         *,
@@ -21,6 +26,9 @@ class MsbserverLifecycle:
         port: int = 5555,
         home: str | os.PathLike[str] | None = None,
     ) -> None:
+        """Resolve the server URL, host/port, and home/pid/log paths, defaulting
+        `home` to `<vibecrafted_home>/sandbox`."""
+
         self.host = host
         self.port = port
         self.server_url = (server_url or os.environ.get("MSB_SERVER_URL") or "").rstrip(
@@ -35,6 +43,11 @@ class MsbserverLifecycle:
     def ensure_running(
         self, api_key_path: str | os.PathLike[str] | None = None
     ) -> bool:
+        """Return True if msbserver is already healthy; otherwise locate the
+        `msbserver` binary (`MSBSERVER_EXE` env or PATH), spawn it detached with
+        a server key if one is on disk (else `--dev`), and wait for health.
+        Returns False if no binary is found or health never comes up."""
+
         if self.is_running():
             return True
         binary = os.environ.get("MSBSERVER_EXE") or shutil.which("msbserver")
@@ -64,12 +77,17 @@ class MsbserverLifecycle:
         return self._wait_for_health(timeout=10.0)
 
     def is_running(self) -> bool:
+        """Check server health, cleaning up a stale PID file when unhealthy."""
+
         if not self._health_ok():
             self._cleanup_stale_pid()
             return False
         return True
 
     def stop(self, timeout: float = 5.0) -> None:
+        """Send SIGTERM to the tracked PID, poll until it exits within
+        `timeout`, then escalate to SIGKILL and always clear the PID file."""
+
         pid = self._read_pid()
         if pid is None:
             self.pid_file.unlink(missing_ok=True)
@@ -92,6 +110,9 @@ class MsbserverLifecycle:
         self.pid_file.unlink(missing_ok=True)
 
     def _wait_for_health(self, timeout: float) -> bool:
+        """Poll the health endpoint until it responds or `timeout` elapses;
+        bail out early (return False) if the tracked PID has already died."""
+
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self._health_ok():
@@ -102,6 +123,9 @@ class MsbserverLifecycle:
         return False
 
     def _health_ok(self) -> bool:
+        """GET `/api/v1/health` against `self.server_url` with a 1s timeout;
+        return True only on a 2xx response, False on any parse or network error."""
+
         match = re.fullmatch(r"(https?)://([^/:]+)(?::([0-9]+))?", self.server_url)
         if not match:
             return False
@@ -123,12 +147,16 @@ class MsbserverLifecycle:
             connection.close()
 
     def _read_pid(self) -> int | None:
+        """Return the PID stored in the pid file, or None if missing/invalid."""
+
         try:
             return int(self.pid_file.read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
             return None
 
     def _cleanup_stale_pid(self) -> None:
+        """Remove the PID file when it names no PID or a dead process."""
+
         pid = self._read_pid()
         if pid is None or not _pid_alive(pid):
             self.pid_file.unlink(missing_ok=True)
@@ -136,6 +164,9 @@ class MsbserverLifecycle:
     def _read_server_key(
         self, api_key_path: str | os.PathLike[str] | None = None
     ) -> str:
+        """Read the msbserver API key from `api_key_path` (default
+        `<home>/msbserver.key`); return "" if missing or not `msb_`-prefixed."""
+
         candidate = (
             Path(api_key_path).expanduser()
             if api_key_path
@@ -148,6 +179,8 @@ class MsbserverLifecycle:
 
 
 def _pid_alive(pid: int) -> bool:
+    """Return whether `pid` names a live process, via a zero-signal probe."""
+
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

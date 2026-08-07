@@ -1,3 +1,5 @@
+"""Operator-owned `[server]` config.toml: load, validate, and seed-once semantics."""
+
 from __future__ import annotations
 
 import json
@@ -20,11 +22,16 @@ class ServerConfigError(ValueError):
 
 @dataclass(frozen=True)
 class ServerConfig:
+    """Validated bind host, port, and public URL for the vibecrafted server."""
+
     bind_host: str = DEFAULT_BIND_HOST
     port: int = DEFAULT_PORT
     public_url: str = ""
 
     def __post_init__(self) -> None:
+        """Validate and normalize all fields in place; raises `ServerConfigError`
+        on any invalid value, defaulting `public_url` from host/port when blank."""
+
         host = _validate_bind_host(self.bind_host)
         port = _validate_port(self.port)
         public_url = _validate_public_url(self.public_url or origin_for(host, port))
@@ -34,14 +41,21 @@ class ServerConfig:
 
     @property
     def bind_addr(self) -> str:
+        """`host:port` string suitable for logging/display."""
+
         return f"{self.bind_host}:{self.port}"
 
     @property
     def service_arguments(self) -> tuple[str, ...]:
+        """CLI `--host`/`--port` argument pair for launching the server process."""
+
         return ("--host", self.bind_host, "--port", str(self.port))
 
 
 def config_path(*, operator_home: Path | None = None) -> Path:
+    """Resolve `~/.config/vibecrafted/config.toml`, honoring `XDG_CONFIG_HOME`
+    and an explicit `operator_home` override."""
+
     if operator_home is None:
         configured = os.environ.get("XDG_CONFIG_HOME")
         if configured:
@@ -55,6 +69,11 @@ def load_server_config(
     *,
     operator_home: Path | None = None,
 ) -> ServerConfig:
+    """Load and validate the `[server]` table from the TOML config file at
+    `path` (or the resolved default); returns defaults when the file or table
+    is absent. Raises `ServerConfigError` on unreadable/invalid TOML or an
+    unsupported `[server]` key."""
+
     resolved = path or config_path(operator_home=operator_home)
     try:
         raw = resolved.read_bytes()
@@ -151,6 +170,9 @@ def seed_server_config(
 
 
 def _atomic_write(path: Path, contents: bytes, *, mode: int) -> None:
+    """Write `contents` to `path` via a sibling tempfile, fsync, and atomic
+    rename, cleaning up the tempfile if anything raises before the rename."""
+
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", dir=path.parent
@@ -172,6 +194,9 @@ def _atomic_write(path: Path, contents: bytes, *, mode: int) -> None:
 
 
 def _validate_bind_host(value: object) -> str:
+    """Reject non-string, empty, whitespace-containing, untrimmed, or
+    URL-syntax-bearing bind hosts; return the value unchanged otherwise."""
+
     if not isinstance(value, str):
         raise ServerConfigError("server.bind_host must be a string")
     host = value.strip()
@@ -183,6 +208,9 @@ def _validate_bind_host(value: object) -> str:
 
 
 def _validate_port(value: object) -> int:
+    """Require a real int (bool is rejected despite being an int subclass) in
+    the 1-65535 range."""
+
     if isinstance(value, bool) or not isinstance(value, int):
         raise ServerConfigError("server.port must be an integer")
     if not 1 <= value <= 65535:
@@ -191,6 +219,10 @@ def _validate_port(value: object) -> int:
 
 
 def _validate_public_url(value: object) -> str:
+    """Require an http(s) origin with no credentials, path (beyond `/`), query,
+    or fragment, and a parseable port; return it with any trailing slash
+    stripped."""
+
     if not isinstance(value, str):
         raise ServerConfigError("server.public_url must be a string")
     parsed = urlsplit(value)
@@ -216,5 +248,7 @@ def _validate_public_url(value: object) -> str:
 
 
 def origin_for(host: str, port: int) -> str:
+    """Build an `http://host:port` origin, bracketing a bare IPv6 host."""
+
     rendered_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
     return f"http://{rendered_host}:{port}"

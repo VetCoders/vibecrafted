@@ -21,10 +21,12 @@ from typing import Any
 
 
 def stamp() -> str:
+    """Local wall-clock ``HH:MM:SS`` used to timestamp every rendered line."""
     return time.strftime("%H:%M:%S", time.localtime())
 
 
 def stringish(value: Any) -> str:
+    """Coerce any JSON-decoded value to display text, recursing into dict/list."""
     if value is None:
         return ""
     if isinstance(value, str):
@@ -41,10 +43,12 @@ def stringish(value: Any) -> str:
 
 
 def tool_tag(name: str) -> str:
+    """Cyan ``[HH:MM:SS name]`` prefix used to open a tool-call rendering."""
     return f"\x1b[36m[{stamp()} {name}]\x1b[0m"
 
 
 def truncate_block(text: str) -> str:
+    """Dim-render ``text``, collapsing anything over 12 lines to a 5-line preview."""
     lines = text.splitlines()
     if len(lines) > 12:
         preview = "\n".join(lines[:5])
@@ -53,6 +57,11 @@ def truncate_block(text: str) -> str:
 
 
 def format_event(event: dict[str, Any]) -> str:
+    """Render one decoded Codex JSONL event to a human transcript fragment.
+
+    Returns ``""`` for event types/subtypes this bridge does not render — the
+    caller then appends nothing for that line.
+    """
     event_type = str(event.get("type") or "")
 
     if event_type == "thread.started":
@@ -123,6 +132,7 @@ def format_event(event: dict[str, Any]) -> str:
 
 
 def append(handle, text: str) -> None:
+    """Write and immediately flush ``text`` to ``handle``; no-op for empty text."""
     if not text:
         return
     handle.write(text)
@@ -130,6 +140,11 @@ def append(handle, text: str) -> None:
 
 
 def main() -> int:
+    """Stream stdin JSONL lines into the transcript file (and optional raw mirror).
+
+    Non-JSON lines pass through verbatim. A ``KeyboardInterrupt`` is recorded as
+    an abort line and returns 130 rather than propagating.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--transcript", required=True)
     parser.add_argument(

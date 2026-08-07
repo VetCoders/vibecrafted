@@ -403,6 +403,7 @@ def _validate_request(
     max_output_bytes: int,
     excerpt_bytes: int,
 ) -> str | None:
+    """Return a validation error message for malformed run_evidence arguments, or None."""
     if not role:
         return "role must not be empty"
     if not argv or not argv[0]:
@@ -421,6 +422,11 @@ def _validate_request(
 def _sanitize_env(
     supplied: Mapping[str, str] | None,
 ) -> tuple[dict[str, str], tuple[str, ...]]:
+    """Filter environment to `_SAFE_ENV_KEYS`, falling back to os.environ when unset.
+
+    Returns the sanitized env mapping plus the set of secret-looking values (by
+    key pattern) that must be redacted from captured stdout/stderr excerpts.
+    """
     source = os.environ if supplied is None else supplied
     manifest = {
         key: str(source[key]) for key in sorted(_SAFE_ENV_KEYS) if key in source
@@ -433,6 +439,11 @@ def _sanitize_env(
 
 
 def _resolve_executable(executable: str, env: Mapping[str, str]) -> str | None:
+    """Resolve an executable to an absolute, executable path, or None if not found.
+
+    A path containing ``os.sep`` is checked directly; a bare name is resolved
+    via ``shutil.which`` against the (possibly sanitized) PATH in ``env``.
+    """
     if os.sep in executable:
         candidate = Path(executable).expanduser().resolve()
         return (
@@ -447,6 +458,10 @@ def _resolve_executable(executable: str, env: Mapping[str, str]) -> str | None:
 def _canonical_paths(
     paths: Sequence[str | os.PathLike[str]], cwd: Path, roots: tuple[Path, ...]
 ) -> tuple[Path, ...]:
+    """Resolve each path relative to ``cwd`` and require it to fall under an allowed root.
+
+    Raises ValueError on the first path that escapes ``roots`` (containment check).
+    """
     canonical: list[Path] = []
     for item in paths:
         raw = Path(item).expanduser()
@@ -458,7 +473,14 @@ def _canonical_paths(
 
 
 def _repo_snapshot(cwd: Path, env: Mapping[str, str]) -> dict[str, object]:
+    """Capture git HEAD and a status digest for ``cwd`` before/after an execution.
+
+    Returns ``is_git: False`` (with a null head) when the directory is not a
+    git repo or the git calls fail, rather than raising.
+    """
+
     def git(*args: str) -> subprocess.CompletedProcess[bytes]:
+        """Run one git subcommand against ``cwd`` with a 5s timeout, capturing output."""
         return subprocess.run(
             ["git", "-C", str(cwd), *args],
             env=dict(env),
@@ -482,12 +504,14 @@ def _repo_snapshot(cwd: Path, env: Mapping[str, str]) -> dict[str, object]:
 
 
 def _path_digests(paths: Sequence[Path]) -> dict[str, str]:
+    """Return {path: sha256-or-"missing"} for each path, streamed to avoid full loads."""
     return {
         str(path): _sha256_path(path) if path.is_file() else "missing" for path in paths
     }
 
 
 def _sha256_path(path: Path) -> str:
+    """Return the ``sha256:<hex>`` digest of a file's contents, read in 1MB chunks."""
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
@@ -496,14 +520,17 @@ def _sha256_path(path: Path) -> str:
 
 
 def _sha256_bytes(payload: bytes) -> str:
+    """Return the ``sha256:<hex>`` digest of an in-memory byte string."""
     return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
 def _stream_size(stream: BinaryIO) -> int:
+    """Return the current byte size of an open file-like stream via fstat."""
     return os.fstat(stream.fileno()).st_size
 
 
 def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
+    """Send SIGTERM to the process group, escalating to SIGKILL after a 1s grace period."""
     try:
         os.killpg(process.pid, signal.SIGTERM)
         process.wait(timeout=1)
@@ -517,6 +544,11 @@ def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
 
 
 def _digest_and_excerpt(stream: BinaryIO, limit: int) -> tuple[str, str]:
+    """Digest a full stream and return a decoded head+tail excerpt bounded by ``limit``.
+
+    When the stream exceeds ``limit`` bytes, the excerpt keeps the first and last
+    halves and inserts an "N bytes omitted" marker between them.
+    """
     stream.flush()
     size = _stream_size(stream)
     digest = hashlib.sha256()
@@ -541,6 +573,7 @@ def _digest_and_excerpt(stream: BinaryIO, limit: int) -> tuple[str, str]:
 
 
 def _digest_path_and_excerpt(path: Path, limit: int) -> tuple[str, str]:
+    """Like _digest_and_excerpt but opens ``path``, treating a missing file as empty."""
     if not path.is_file():
         return _sha256_bytes(b""), ""
     with path.open("rb") as stream:
@@ -548,6 +581,7 @@ def _digest_path_and_excerpt(path: Path, limit: int) -> tuple[str, str]:
 
 
 def _redact(text: str, secret_values: Sequence[str]) -> str:
+    """Replace known secret values and secret-looking key=value assignments with [REDACTED]."""
     redacted = text
     for value in sorted(set(secret_values), key=len, reverse=True):
         if len(value) >= 4:
@@ -556,6 +590,10 @@ def _redact(text: str, secret_values: Sequence[str]) -> str:
 
 
 def _read_pipeline_status(path: Path, expected: int) -> tuple[int | None, ...]:
+    """Read the whitespace-separated PIPESTATUS integers written by run_pipeline.
+
+    Pads with None for any missing trailing entries; returns all-None on parse failure.
+    """
     try:
         values = tuple(int(item) for item in path.read_text(encoding="utf-8").split())
     except (OSError, ValueError):
@@ -590,6 +628,7 @@ def _build_evidence(
     run_identity_sha256: str | None,
     liveness_evidence_sha256: Sequence[str],
 ) -> ExecutionEvidence:
+    """Assemble an immutable ExecutionEvidence record from execution outcome fields."""
     return ExecutionEvidence(
         schema=ExecutionEvidence.SCHEMA,
         evidence_id=f"evidence-{uuid.uuid4()}",
@@ -621,4 +660,5 @@ def _build_evidence(
 
 
 def _now() -> str:
+    """Return the current UTC time as an ISO-8601 string with millisecond precision."""
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")

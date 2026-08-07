@@ -1,3 +1,5 @@
+"""Core workflow runtime: launch, stop, retry, block, and native-resume a run."""
+
 from __future__ import annotations
 
 import hashlib
@@ -78,6 +80,8 @@ TERMINAL_STATES = {
 
 @dataclass(frozen=True)
 class WorkflowLaunchSpec:
+    """Normalized, validated launch parameters passed to :func:`launch_workflow`."""
+
     agent: str
     mode: str
     skill: str
@@ -104,10 +108,12 @@ class WorkflowLaunchSpec:
     run_id: str = ""
 
     def to_payload(self) -> dict[str, Any]:
+        """Serialize the spec to a plain dict for launch logs and events."""
         return asdict(self)
 
 
 def vibecrafted_launcher(source_dir: str | Path) -> Path:
+    """Return the packaged vc-frame deck launcher path (``source_dir`` unused)."""
     return package_deck_path()
 
 
@@ -128,6 +134,7 @@ def _run_id(skill: str) -> str:
 
 
 def _artifact_org_repo(root: str | Path) -> tuple[str, str] | None:
+    """Derive (org, repo) from the git origin remote, falling back to dir name."""
     root_path = Path(root).expanduser()
     remote = _origin_remote_url(root_path)
     match = re.search(r"[:/]([^/]+)/([^/.]+)(?:\.git)?$", remote)
@@ -138,6 +145,7 @@ def _artifact_org_repo(root: str | Path) -> tuple[str, str] | None:
 
 
 def _git_config_path(root: Path) -> Path | None:
+    """Resolve the git config file for ``root``, following worktree gitdir/commondir."""
     git_entry = root / ".git"
     if git_entry.is_dir():
         return git_entry / "config"
@@ -168,6 +176,7 @@ def _git_config_path(root: Path) -> Path | None:
 
 
 def _origin_remote_url(root: Path) -> str:
+    """Read the ``[remote "origin"] url`` value from the resolved git config."""
     config_path = _git_config_path(root)
     if config_path is None or not config_path.is_file():
         return ""
@@ -190,6 +199,7 @@ def _origin_remote_url(root: Path) -> str:
 
 
 def _run_artifact_paths(run_id: str) -> dict[str, Path]:
+    """Create (if needed) and return the run's meta/prompt/transcript paths."""
     run_dir = control_plane_home() / "runtime_runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     return {
@@ -200,6 +210,7 @@ def _run_artifact_paths(run_id: str) -> dict[str, Path]:
 
 
 def _canonical_report_dir(root: str | Path, skill: str) -> Path:
+    """Resolve (and create) the canonical per-repo/day report dir for ``skill``."""
     org_repo = _artifact_org_repo(root)
     if org_repo is None:
         base = Path(root).expanduser() / ".vibecrafted"
@@ -218,6 +229,7 @@ def _canonical_report_dir(root: str | Path, skill: str) -> Path:
 
 
 def _artifact_slug(text: str, fallback: str) -> str:
+    """Derive a short filesystem-safe slug from frontmatter title/slug or text."""
     frontmatter = re.match(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", text, re.DOTALL)
     if frontmatter:
         for key in ("slug", "title"):
@@ -234,6 +246,7 @@ def _artifact_slug(text: str, fallback: str) -> str:
 
 
 def _slug_words(text: str) -> list[str]:
+    """Tokenize text into lowercase alnum words, dropping common boilerplate."""
     boilerplate = {
         "a",
         "an",
@@ -262,6 +275,7 @@ def _artifact_report_suffix(
     artifact_ts: str,
     artifact_slug: str,
 ) -> str:
+    """Find the first unused numeric suffix for a canonical report filename."""
     if canonical_report_dir is None:
         return ""
     for index in range(1, 100):
@@ -280,6 +294,7 @@ def _canonical_report_path(
     artifact_slug: str,
     artifact_suffix: str,
 ) -> Path:
+    """Assemble the canonical report filename from its slug/agent/suffix parts."""
     safe_agent = "-".join(_slug_words(agent)) or "agent"
     return (
         canonical_report_dir
@@ -288,10 +303,12 @@ def _canonical_report_path(
 
 
 def _core_package_root() -> Path:
+    """Return the vibecrafted-core package root (parent of this module's dir)."""
     return Path(__file__).resolve().parents[1]
 
 
 def _prepend_pythonpath(env: dict[str, str], path: Path) -> None:
+    """Prepend ``path`` to ``env``'s PYTHONPATH, deduplicating existing entries."""
     existing = env.get("PYTHONPATH", "")
     entries = [str(path)]
     entries.extend(item for item in existing.split(os.pathsep) if item)
@@ -313,6 +330,7 @@ def _dispatcher_command(
     lifecycle_state_path: str = "",
     salvage_report_from_stream: bool = False,
 ) -> list[str]:
+    """Build the ``vibecrafted_core.dispatcher run`` argv wrapping ``worker_command``."""
     command = [
         sys.executable,
         "-m",
@@ -354,6 +372,7 @@ def _dispatcher_command(
 def _write_command_script(
     path: Path, command: list[str], exports: dict[str, str] | None = None
 ) -> Path:
+    """Write an executable bash wrapper: export ``exports`` then ``exec command``."""
     path.parent.mkdir(parents=True, exist_ok=True)
     export_lines = "".join(
         f"export {key}={shlex.quote(value)}\n" for key, value in (exports or {}).items()
@@ -386,6 +405,7 @@ def _runtime_script_exports(
     claim_digest: str = "",
     worker_session: str = "",
 ) -> dict[str, str]:
+    """Build the env-var export map embedded in generated dispatcher/lane scripts."""
     pythonpath = os.pathsep.join(
         dict.fromkeys(
             [str(_core_package_root())]
@@ -433,6 +453,7 @@ def _runtime_script_exports(
 
 
 def _kdl_string(value: str | Path) -> str:
+    """Encode ``value`` as a KDL string literal (JSON quoting is a valid subset)."""
     return json.dumps(str(value), ensure_ascii=False)
 
 
@@ -454,6 +475,7 @@ def _write_research_lane_scripts(
     claim_digest: str = "",
     worker_session: str = "",
 ) -> dict[str, Path]:
+    """Write one executable launcher script per selected research-lane agent."""
     scripts: dict[str, Path] = {}
     for agent in research_selection.agents:
         path = launch_dir / f"{run_id}-research-{agent}.sh"
@@ -509,6 +531,7 @@ def _write_research_layout(
     synthesis_script: Path,
     lane_scripts: dict[str, Path],
 ) -> Path:
+    """Write the vc-frame KDL layout wiring the synthesis pane + lane panes."""
     path.parent.mkdir(parents=True, exist_ok=True)
     lane_panes = []
     for agent, script in lane_scripts.items():
@@ -610,6 +633,7 @@ def _vc_frame_tab_present(vc_frame: str, session: str, tab_name: str) -> bool:
         return f'"{tab_name}"' in raw or tab_name in raw
 
     def visit(node: Any) -> bool:
+        """Recursively search a decoded JSON node for a matching tab name."""
         if isinstance(node, dict):
             name = node.get("name")
             if name in (None, ""):
@@ -687,6 +711,8 @@ def _vc_frame_create_background(vc_frame: str, session: str) -> tuple[bool, str]
 
 @dataclass(frozen=True)
 class _HostActionResult:
+    """Outcome of one ``_vc_frame_run_host_action`` attempt, including recovery state."""
+
     ok: bool
     pid: int | None
     error: str
@@ -718,16 +744,19 @@ def _vc_frame_run_host_action(
     vc_frame_bin = command[0]
 
     def _run_once() -> subprocess.CompletedProcess[str]:
+        """Run the vc-frame host action subprocess once with the configured timeout."""
         return subprocess.run(
             command, capture_output=True, text=True, timeout=timeout, check=False
         )
 
     def _combined(result: subprocess.CompletedProcess[str]) -> str:
+        """Join stderr+stdout into one stripped diagnostic string."""
         return "\n".join(
             part for part in (result.stderr or "", result.stdout or "") if part
         ).strip()
 
     def _presence_ok() -> bool:
+        """After a short settle delay, confirm the target tab is actually present."""
         if not tab_name:
             return False
         time.sleep(1)
@@ -812,6 +841,12 @@ def _launch_transport_command(
     artifact_suffix: str,
     research_selection: ResearchAgentSelection | None = None,
 ) -> tuple[list[str], str, Path | None]:
+    """Build the transport-specific launch argv: headless dispatch or vc-frame host action.
+
+    Returns ``(command, transport, command_script)`` where ``transport`` is
+    ``"headless"`` (direct dispatch command, no script) or ``"vc-frame"``
+    (a ``new-tab`` action wrapping a generated command script).
+    """
     if spec.runtime not in {"terminal", "visible"}:
         return dispatch_command, "headless", None
 
@@ -954,6 +989,7 @@ def _effective_operator_session(*, root: str, run_id: str, env: dict[str, str]) 
 
 
 def _run_is_terminal(run: dict[str, Any]) -> bool:
+    """True when a run's projected state/liveness/exit_code marks it terminal."""
     if str(run.get("state") or "") in TERMINAL_STATES:
         return True
     if str(run.get("liveness") or "") == "terminal":
@@ -962,6 +998,7 @@ def _run_is_terminal(run: dict[str, Any]) -> bool:
 
 
 def _path_exists(path: str) -> bool:
+    """Safely check a string path exists as a file; False on any OSError."""
     if not path:
         return False
     try:
@@ -971,6 +1008,7 @@ def _path_exists(path: str) -> bool:
 
 
 def _report_frontmatter_value(report_path: str, key: str) -> str:
+    """Read one frontmatter key from a worker's report file, or '' if absent."""
     if not _path_exists(report_path):
         return ""
     values = parse_frontmatter(Path(report_path))
@@ -1019,6 +1057,7 @@ def report_dou_index(report_path: str) -> int | None:
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:
+    """Best-effort read of a JSON object file; {} on any failure or non-dict payload."""
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -1034,6 +1073,7 @@ def _terminal_meta_payload(
     transcript_path: str,
     meta_path: str,
 ) -> dict[str, Any]:
+    """Assemble the flat terminal-state summary merged into run meta on completion."""
     return {
         "run_id": run_id,
         "state": str(run.get("state") or ""),
@@ -1064,6 +1104,7 @@ def _write_terminal_meta(
     transcript_path: str,
     meta_path: str,
 ) -> dict[str, Any]:
+    """Merge the run's terminal state into its meta.json under mutation locking."""
     if not meta_path:
         return {}
     path = Path(meta_path)
@@ -1078,6 +1119,7 @@ def _write_terminal_meta(
     written: dict[str, Any] = {}
 
     def _merge(payload: dict[str, Any]) -> dict[str, Any]:
+        """Merge the computed terminal fields into the existing meta payload in place."""
         payload.update(terminal)
         written.update(payload)
         return payload
@@ -1195,6 +1237,7 @@ def await_launch_truth(
 
 
 def _stop_signal_target(run: dict[str, Any]) -> tuple[str, int] | None:
+    """Pick the best (kind, pid) to signal for stopping a run, or None if unknown."""
     # The dispatcher and worker deliberately live in separate process groups.
     # Stop the actual worker tree first; launcher_pid is only a pre-seed/legacy
     # fallback before the supervisor has published worker identity.
@@ -1209,6 +1252,8 @@ def _stop_signal_target(run: dict[str, Any]) -> tuple[str, int] | None:
 
 @dataclass(frozen=True)
 class _QualifiedStopSignal:
+    """A stop target whose process identity has just been verified against its receipt."""
+
     kind: str
     target_pid: int
     identity_pid: int
@@ -1216,6 +1261,7 @@ class _QualifiedStopSignal:
 
 
 def _pid_is_alive(pid: int) -> bool:
+    """True if ``pid`` responds to signal 0 (permission-denied counts as alive)."""
     if pid <= 0:
         return False
     try:
@@ -1230,6 +1276,7 @@ def _pid_is_alive(pid: int) -> bool:
 
 
 def _pgid_is_alive(pgid: int) -> bool:
+    """True if the process group ``pgid`` responds to signal 0."""
     if pgid <= 0:
         return False
     try:
@@ -1244,6 +1291,7 @@ def _pgid_is_alive(pgid: int) -> bool:
 
 
 def _stop_target_is_alive(target: _QualifiedStopSignal) -> bool:
+    """Liveness check for a qualified stop target, preferring its process group."""
     if target.target_pgid is not None:
         return _pgid_is_alive(target.target_pgid)
     return _pid_is_alive(target.identity_pid)
@@ -1252,6 +1300,7 @@ def _stop_target_is_alive(target: _QualifiedStopSignal) -> bool:
 def _wait_for_stop_target_exit(
     target: _QualifiedStopSignal, grace_seconds: float
 ) -> bool:
+    """Poll until the target exits or ``grace_seconds`` elapses; return still-alive."""
     deadline = time.monotonic() + max(float(grace_seconds), 0.0)
     while time.monotonic() < deadline:
         if not _stop_target_is_alive(target):
@@ -1261,6 +1310,7 @@ def _wait_for_stop_target_exit(
 
 
 def _legacy_stop_target_alive(target_kind: str, target_pid: int) -> bool:
+    """Liveness probe for a stop target with no identity receipt, by recorded kind."""
     # All dispatcher/worker groups created by this runtime are new sessions, so
     # their leader PID is also the PGID. A live legacy number is never enough
     # authority to signal; this probe only distinguishes a safely-gone target.
@@ -1342,10 +1392,12 @@ def _qualify_stop_signal(
 
 
 def _normalized_runtime(raw: str) -> str:
+    """Coerce a raw runtime string to a supported runtime, default "headless"."""
     return raw if raw in SUPPORTED_RUNTIMES else "headless"
 
 
 def _coerce_positive_int(value: Any, default: int | None = None) -> int | None:
+    """Parse ``value`` as a positive int, else ``default`` (empty/invalid/<=0)."""
     if value in (None, ""):
         return default
     try:
@@ -1356,6 +1408,7 @@ def _coerce_positive_int(value: Any, default: int | None = None) -> int | None:
 
 
 def _workflow_metadata(skill: str) -> dict[str, Any]:
+    """Project a workflow definition's phase/tooling metadata for event payloads."""
     definition = workflow_registry.workflow_definition(skill)
     if definition is None:
         return {}
@@ -1372,6 +1425,12 @@ def _workflow_metadata(skill: str) -> dict[str, Any]:
 def normalize_launch_spec(
     payload: dict[str, Any], source_dir: str | Path
 ) -> WorkflowLaunchSpec:
+    """Validate and normalize a raw launch payload into a :class:`WorkflowLaunchSpec`.
+
+    Resolves workflow/agent aliasing, research-agent selection, model overrides
+    (flag or brief frontmatter), and root/runtime defaults; raises ``ValueError``
+    on any unsupported workflow, agent, or missing required input.
+    """
     requested_skill = str(payload.get("skill") or "workflow").strip()
     skill = WORKFLOW_ALIASES.get(requested_skill, requested_skill)
     definition = workflow_registry.workflow_definition(skill)
@@ -1465,6 +1524,7 @@ def normalize_launch_spec(
 
 
 def _source_prompt(spec: WorkflowLaunchSpec) -> str:
+    """Resolve the operator's raw prompt text from ``spec.file`` or ``spec.prompt``."""
     if spec.file:
         try:
             return (
@@ -1478,6 +1538,7 @@ def _source_prompt(spec: WorkflowLaunchSpec) -> str:
 
 
 def _runtime_prompt(spec: WorkflowLaunchSpec) -> str:
+    """Wrap the source prompt in the runtime contract instructions given to the worker."""
     report_hint = "${VIBECRAFTED_REPORT_PATH}"
     transcript_hint = "${VIBECRAFTED_TRANSCRIPT_PATH}"
     source_prompt = _source_prompt(spec)
@@ -1523,6 +1584,7 @@ Operator prompt:
 
 
 def _write_prompt_file(path: Path, body: str) -> Path:
+    """Write the assembled prompt body to disk and return its path."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")
     return path
@@ -1534,6 +1596,7 @@ def build_launch_command(
     *,
     prompt_file: str | Path | None = None,
 ) -> list[str]:
+    """Build the worker argv for a launch spec, branching on the workflow's runtime kind."""
     prompt_path = str(prompt_file or spec.file or "")
     runtime_kind = workflow_registry.workflow_runtime_kind(spec.skill)
     if runtime_kind == "supervised_research":
@@ -1630,6 +1693,14 @@ def launch_workflow(
     worker_command_override: list[str] | None = None,
     launch_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Launch one workflow run end-to-end and return its launch acceptance receipt.
+
+    Sweeps stale runs, enforces vc-guard continuation, allocates a run id and
+    artifact paths, writes the prompt/dispatcher scripts, spawns the transport
+    (headless subprocess or a vc-frame host action tab), and records the launch
+    lifecycle events. Never blocks on the spawned run reaching a terminal state
+    — control-plane reconciliation is deliberately deferred to observe/await.
+    """
     # Opportunistic pre-flight: before adding a run to the machine, take the dead
     # ones' survivors off it. Every spawn is the natural sweep point — it needs no
     # daemon, and it is exactly when the residue starts costing the new run cores.
@@ -2130,6 +2201,7 @@ def stop_run(
     reason: str = "operator stop request",
     grace_seconds: float = 2.0,
 ) -> dict[str, Any]:
+    """Public locked entrypoint: stop a run by id under its run-mutation lock."""
     target = str(run_id or "").strip()
     if not target:
         raise ValueError("run_id is required")
@@ -2147,6 +2219,12 @@ def _stop_run_locked(
     reason: str,
     grace_seconds: float,
 ) -> dict[str, Any]:
+    """Stop implementation assuming the caller already holds the run's mutation lock.
+
+    Qualifies the signal target's live process identity before signaling, sends
+    SIGTERM to the process group when available, waits up to ``grace_seconds``,
+    and records the stop transition audit trail regardless of outcome.
+    """
     run = lookup_run(target)
     if run is None:
         record_stop_transition(
@@ -2279,6 +2357,13 @@ def retry_run(
     *,
     env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    """Public locked entrypoint: retry a terminal run under lineage-consistent locks.
+
+    Acquires the run's and its resume-lineage's mutation locks together (they
+    must serialize with Guardian-native resume), then rejects if the lineage
+    root changed between the preliminary and locked reads before delegating to
+    :func:`_retry_run_locked`.
+    """
     target = str(run_id or "").strip()
     if not target:
         raise ValueError("run_id is required")
@@ -2480,10 +2565,12 @@ _NATIVE_RESUME_TRANSIENT_REJECTIONS = {
 
 
 class _AutomaticResumeBudgetExhausted(ValueError):
-    pass
+    """Raised when a lineage's single automatic native-resume attempt is already claimed."""
 
 
 class _NativeResumeCommandRejected(ValueError):
+    """Raised when a provider's native resume command cannot be verified or built."""
+
     def __init__(
         self,
         reason: str,
@@ -2491,6 +2578,7 @@ class _NativeResumeCommandRejected(ValueError):
         detail: str = "",
         retryable: bool = False,
     ) -> None:
+        """Store rejection ``reason``/``detail``/``retryable`` alongside the message."""
         super().__init__(reason)
         self.reason = reason
         self.detail = detail
@@ -2506,6 +2594,7 @@ def _native_resume_rejection(
     idempotency_key: str = "",
     retryable: bool | None = None,
 ) -> dict[str, Any]:
+    """Record and return the standard rejected-native-resume payload shape."""
     if retryable is None:
         should_retry = (
             reason in _NATIVE_RESUME_TRANSIENT_REJECTIONS
@@ -2536,6 +2625,7 @@ def _native_resume_rejection(
 
 
 def _native_resume_meta(run_id: str, run: dict[str, Any]) -> dict[str, Any]:
+    """Load and merge the parent run's meta.json from resolved + announced paths."""
     candidates: list[Path] = []
     try:
         resolved = resolve_run(run_id)
@@ -2559,6 +2649,7 @@ def _native_resume_meta(run_id: str, run: dict[str, Any]) -> dict[str, Any]:
 
 
 def _manual_stop_or_cancel(run: dict[str, Any]) -> bool:
+    """True when a run's state/stop_reason indicates an operator-initiated stop."""
     state = str(run.get("state") or "").strip().lower()
     if state in {"stopped", "cancelled", "canceled"}:
         return True
@@ -2570,6 +2661,7 @@ def _manual_stop_or_cancel(run: dict[str, Any]) -> bool:
 
 
 def _native_resume_settlement(run: dict[str, Any]) -> tuple[str, str, str]:
+    """Read (tui, verdict, source) settlement fields from a run's flat or nested keys."""
     settlement = run.get("settlement")
     nested = settlement if isinstance(settlement, dict) else {}
     tui = (
@@ -2606,6 +2698,7 @@ def _native_resume_settlement(run: dict[str, Any]) -> tuple[str, str, str]:
 
 
 def _explicit_native_identity(value: Any) -> str:
+    """Normalize a raw identity value, treating placeholder tokens as empty."""
     candidate = str(value or "").strip()
     return "" if candidate.lower() in _MISSING_NATIVE_IDENTITIES else candidate
 
@@ -2615,6 +2708,7 @@ def _native_resume_root(
     parent_meta: dict[str, Any],
     parent_run: dict[str, Any],
 ) -> str:
+    """Resolve the resume-lineage root run id for a parent run."""
     return str(
         parent_meta.get("resume_root") or parent_run.get("resume_root") or parent_run_id
     ).strip()
@@ -2659,6 +2753,7 @@ def _native_resume_eligibility(
 
 
 def _native_resume_reservation_dir(resume_root: str) -> Path:
+    """Path to the per-lineage resume-attempt reservation directory, hash-keyed."""
     lineage_key = hashlib.sha256(resume_root.encode("utf-8")).hexdigest()[:24]
     return control_plane_home() / "resume_attempts" / lineage_key
 
@@ -2669,6 +2764,7 @@ def _next_native_resume_attempt(
     parent_meta: dict[str, Any],
     parent_run: dict[str, Any],
 ) -> int:
+    """Compute the next attempt number for a resume lineage from runs + reservation markers."""
     floor = max(
         _coerce_positive_int(parent_meta.get("attempt"), 1) or 1,
         _coerce_positive_int(parent_run.get("attempt"), 1) or 1,
@@ -2701,6 +2797,7 @@ def _write_native_resume_attempt(
     trust_receipt_id: str = "",
     idempotency_key: str = "",
 ) -> None:
+    """Atomically create the exclusive attempt-number reservation marker file."""
     reservation_dir = _native_resume_reservation_dir(resume_root)
     reservation_dir.mkdir(parents=True, exist_ok=True)
     marker = reservation_dir / f"{attempt}.json"
@@ -2769,6 +2866,7 @@ def _reserve_native_resume_attempt(
 
 
 def _normalize_native_resume_idempotency_key(value: str) -> str:
+    """Validate and trim an idempotency key (length + no control characters)."""
     key = str(value or "").strip()
     if not key:
         return ""
@@ -2782,12 +2880,14 @@ def _normalize_native_resume_idempotency_key(value: str) -> str:
 
 
 def _native_resume_idempotency_registry() -> Path:
+    """Path to (and ensure) the native-resume idempotency records directory."""
     registry = control_plane_home() / "native_resume_idempotency"
     registry.mkdir(parents=True, exist_ok=True)
     return registry
 
 
 def _native_resume_idempotency_path(registry: Path, key: str) -> Path:
+    """Compute the idempotency record file path from its content-hashed key."""
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
     return registry / f"{digest}.json"
 
@@ -2796,6 +2896,7 @@ def _read_native_resume_idempotency_record(
     path: Path,
     key: str,
 ) -> dict[str, Any] | None:
+    """Read and strictly validate one idempotency record, raising on any inconsistency."""
     if not path.exists():
         return None
     payload = _read_json_object(path)
@@ -2834,12 +2935,14 @@ def _lookup_native_resume_idempotency(key: str) -> dict[str, Any] | None:
 
 
 def _native_resume_automatic_budget_path(resume_root: str) -> Path:
+    """Path to the per-lineage automatic-resume budget ledger file."""
     directory = _native_resume_reservation_dir(resume_root)
     directory.mkdir(parents=True, exist_ok=True)
     return directory / "automatic.json"
 
 
 def _new_native_resume_lease() -> tuple[str, int]:
+    """Mint a fresh (session_id, pid) in-memory lease token pair."""
     return ensure_session_id(), os.getpid()
 
 
@@ -2859,11 +2962,13 @@ def _native_resume_owner_active_here(record: dict[str, Any]) -> bool:
 
 
 def _activate_native_resume_lease(token: str) -> None:
+    """Register a lease token as owned by this process."""
     with _ACTIVE_NATIVE_RESUME_LEASES_LOCK:
         _ACTIVE_NATIVE_RESUME_LEASES.add(token)
 
 
 def _release_native_resume_lease(token: str) -> None:
+    """Drop a lease token from this process's active-lease set."""
     with _ACTIVE_NATIVE_RESUME_LEASES_LOCK:
         _ACTIVE_NATIVE_RESUME_LEASES.discard(token)
 
@@ -3041,6 +3146,7 @@ def _update_native_resume_idempotency(
     owner_token: str = "",
     release_owner: bool = False,
 ) -> dict[str, Any]:
+    """Update an idempotency record's state/launch outcome and mirror it into the ledger."""
     if state not in NATIVE_RESUME_IDEMPOTENCY_STATES:
         raise ValueError(f"invalid idempotency record state: {state!r}")
     registry = _native_resume_idempotency_registry()
@@ -3078,6 +3184,7 @@ def _update_native_resume_idempotency(
 
 
 def _native_resume_child_was_dispatched(child: dict[str, Any] | None) -> bool:
+    """True when a resumed child run already reached a dispatched/terminal state."""
     if not child:
         return False
     state = str(child.get("state") or "").strip().lower()
@@ -3111,6 +3218,7 @@ def _native_resume_idempotency_result(
     record: dict[str, Any],
     run: dict[str, Any],
 ) -> dict[str, Any]:
+    """Build the replay result payload for an existing native-resume idempotency record."""
     recorded_parent = str(record.get("parent_run_id") or "")
     recorded_agent = str(record.get("agent") or "").lower()
     if (
@@ -3283,6 +3391,7 @@ def _manual_explicit_resume_rejection(
     retryable: bool = False,
     run_id: str = "",
 ) -> dict[str, Any]:
+    """Build the standard rejection payload for :func:`manual_resume_session`."""
     payload: dict[str, Any] = {
         "schema": "vibecrafted.manual_explicit_resume.v1",
         "accepted": False,
@@ -3992,6 +4101,7 @@ def _block_run_locked(
     reason: str,
     note: str,
 ) -> dict[str, Any]:
+    """Block implementation assuming the caller already holds the run's mutation lock."""
     run = lookup_run(target)
     if run is None:
         append_event(

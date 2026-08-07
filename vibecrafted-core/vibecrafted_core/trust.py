@@ -90,6 +90,7 @@ class TrustRecoveryReport:
 
     @property
     def ok(self) -> bool:
+        """True when every scanned outbox recovered cleanly and nothing was truncated."""
         return not self.errors and not self.truncated
 
 
@@ -131,10 +132,12 @@ _CLAIMED_PATH_RE = re.compile(
 
 
 def _now_iso() -> str:
+    """Current UTC timestamp in ISO 8601 form."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def _repo_root(path: Path | None = None) -> Path:
+    """Resolve the git repository toplevel containing *path* (default cwd)."""
     proc = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
         cwd=str(path or Path.cwd()),
@@ -148,6 +151,7 @@ def _repo_root(path: Path | None = None) -> Path:
 
 
 def default_journal_path() -> Path:
+    """Resolve the trust journal path: env override, else ~/.vibecrafted/trust/journal.jsonl."""
     override = str(os.environ.get("VIBECRAFTED_TRUST_JOURNAL") or "").strip()
     if override:
         return Path(override).expanduser()
@@ -158,6 +162,7 @@ def default_journal_path() -> Path:
 
 
 def _resolve_commit(repo: Path, sha: str) -> str:
+    """Resolve *sha* to a full commit hash; raise ValueError if it is not a commit."""
     proc = subprocess.run(
         ["git", "rev-parse", "--verify", f"{sha}^{{commit}}"],
         cwd=str(repo),
@@ -171,6 +176,7 @@ def _resolve_commit(repo: Path, sha: str) -> str:
 
 
 def _commit_record(repo: Path, sha: str) -> dict[str, str]:
+    """Read one commit's sha/author/email/authored_at/subject via `git show`."""
     full_sha = _resolve_commit(repo, sha)
     proc = subprocess.run(
         [
@@ -200,6 +206,7 @@ def _commit_record(repo: Path, sha: str) -> dict[str, str]:
 
 
 def _commit_message(repo: Path, sha: str) -> str:
+    """Return the full commit message body (`git log -1 --format=%B`) for *sha*."""
     full_sha = _resolve_commit(repo, sha)
     proc = subprocess.run(
         ["git", "log", "-1", "--format=%B", full_sha],
@@ -262,6 +269,11 @@ _NON_PATH_EXTS = frozenset(
 
 
 def _normalize_claimed_path(raw: str, *, backtick: bool) -> str | None:
+    """Filter/normalize one regex-matched token into a plausible repo path, or None.
+
+    Rejects URLs, emails, version strings, and prose fragments that merely
+    look path-ish (e.g. an agent/runtime subject fragment) unless backtick-quoted.
+    """
     token = raw.strip().strip("`\"'").rstrip(".,;:)")
     if not token or token in {".", ".."}:
         return None
@@ -335,6 +347,7 @@ def _envelope_path_mismatch(
     claimed_list = list(claimed)
 
     def _covers(claimed_path: str, actual: str) -> bool:
+        """True when *actual* satisfies *claimed_path* via exact, suffix, or basename match."""
         if claimed_path == actual:
             return True
         # Prefix-tolerant: body says trust.py, tree has vibecrafted_core/trust.py
@@ -358,6 +371,7 @@ def _envelope_path_mismatch(
 
 
 def _message_body_without_trailers(message: str) -> str:
+    """Return the commit message body, stripped of the subject line and known trailers."""
     lines = message.splitlines()
     if not lines:
         return ""
@@ -371,6 +385,7 @@ def _message_body_without_trailers(message: str) -> str:
 
 
 def parse_subject_agent(subject: str) -> str | None:
+    """Extract the ``[<agent>/<runtime>]`` agent name from a commit subject line."""
     match = _SUBJECT_RE.match(subject.strip())
     if not match:
         return None
@@ -378,6 +393,7 @@ def parse_subject_agent(subject: str) -> str | None:
 
 
 def parse_authored_by_agent(message: str) -> str | None:
+    """Extract the agent name from a canonical `Authored-By:` trailer, if present."""
     match = _AUTHORED_BY_RE.search(message)
     if not match:
         return None
@@ -637,6 +653,7 @@ def extract_fairness_and_completeness_claims(
 
 
 def recommend_verdict_from_inspect(inspect: Mapping[str, Any]) -> str:
+    """Read the recommended trust verdict out of an inspect() result, defaulting to block."""
     verdict = str(inspect.get("recommended_verdict") or "block")
     if verdict not in TRUST_VERDICTS:
         return "block"
@@ -649,6 +666,7 @@ def _parse_journal_bytes(
     *,
     partial_is_retryable: bool,
 ) -> list[dict[str, Any]]:
+    """Decode raw journal bytes into JSONL records, rejecting a torn/partial tail."""
     if raw_journal and not raw_journal.endswith(b"\n"):
         error = f"trust journal has a partial tail: {path}"
         if partial_is_retryable:
@@ -673,6 +691,11 @@ def _parse_journal_bytes(
 
 
 def _read_journal(path: Path) -> list[dict[str, Any]]:
+    """Read and parse the trust journal under a shared, non-blocking flock.
+
+    Raises TrustJournalRetryable if the file is exclusively locked by a
+    concurrent writer rather than blocking indefinitely.
+    """
     flags = os.O_RDONLY
     flags |= getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
@@ -723,6 +746,7 @@ def _journal_write(descriptor: int, data: bytes) -> int:
 
 
 def _write_all(descriptor: int, data: bytes) -> None:
+    """Write the full *data* buffer to *descriptor*, looping over short writes."""
     offset = 0
     while offset < len(data):
         try:
@@ -738,6 +762,7 @@ def _write_all(descriptor: int, data: bytes) -> None:
 
 
 def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
+    """Append one JSON line to *path* under an exclusive flock, fsynced and rollback-safe."""
     path.parent.mkdir(parents=True, exist_ok=True)
     encoded = (
         json.dumps(dict(payload), sort_keys=True, ensure_ascii=False) + "\n"
@@ -776,6 +801,10 @@ def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
 
 
 def _validate_owned_directory(path: Path, *, label: str) -> Path:
+    """Verify *path* is a canonical, current-user-owned, non-group/world-writable directory.
+
+    Raises PermissionError on any deviation (symlink, foreign owner, lax mode).
+    """
     absolute = Path(os.path.abspath(path.expanduser()))
     try:
         canonical = absolute.resolve(strict=True)
@@ -813,6 +842,7 @@ def _validate_owned_directory(path: Path, *, label: str) -> Path:
 
 
 def _read_descriptor_all(descriptor: int) -> bytes:
+    """Rewind *descriptor* to offset 0 and read its entire contents."""
     os.lseek(descriptor, 0, os.SEEK_SET)
     chunks: list[bytes] = []
     while True:
@@ -829,6 +859,7 @@ def _receipt_entries(
     records: Sequence[Mapping[str, Any]],
     receipt_id: str,
 ) -> list[dict[str, Any]]:
+    """Return every journal record whose nested trust_receipt.receipt_id matches."""
     matches: list[dict[str, Any]] = []
     for item in records:
         receipt = item.get("trust_receipt")
@@ -1032,6 +1063,11 @@ def enumerate_commits(
     limit: int = 100,
     include_noted: bool = False,
 ) -> list[dict[str, str]]:
+    """List candidate commits (newest-filtered by *since*/*author*) not yet journaled.
+
+    Excludes commits already noted in the journal for this repo unless
+    *include_noted* is set.
+    """
     command = [
         "git",
         "log",
@@ -1069,6 +1105,7 @@ def enumerate_commits(
 
 
 def _same_repo_root(stored: str, resolved: str) -> bool:
+    """True when a stored repo-root string resolves to the same path as *resolved*."""
     if not stored:
         return False
     try:
@@ -1078,6 +1115,7 @@ def _same_repo_root(stored: str, resolved: str) -> bool:
 
 
 def _claims_from_args(args: argparse.Namespace) -> list[dict[str, str]]:
+    """Zip the CLI's parallel --claim/--grade/--evidence lists into claim dicts."""
     claims = list(args.claim or [])
     grades = list(args.grade or [])
     evidence = list(args.evidence or [])
@@ -1092,6 +1130,7 @@ def _claims_from_args(args: argparse.Namespace) -> list[dict[str, str]]:
 
 
 def _claims_digest(claims: Sequence[Mapping[str, str]]) -> str:
+    """Deterministic sha256 digest of a claims list (canonical JSON encoding)."""
     raw = json.dumps(
         [dict(claim) for claim in claims],
         sort_keys=True,
@@ -1102,24 +1141,30 @@ def _claims_digest(claims: Sequence[Mapping[str, str]]) -> str:
 
 
 def _trust_outbox_dir() -> Path:
+    """Control-plane directory holding pending trust-settlement outbox files."""
     return control_plane.control_plane_home() / "trust_settlement_outbox"
 
 
 def _ensure_trust_outbox_directory() -> Path:
+    """Create (mode 0700) and validate ownership of the trust settlement outbox directory."""
     path = Path(os.path.abspath(_trust_outbox_dir().expanduser()))
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     return _validate_owned_directory(path, label="trust settlement outbox")
 
 
 def _trust_outbox_path(run_id: str) -> Path:
+    """Deterministic outbox file path for *run_id*, keyed by its sha256 digest."""
     digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()
     return _trust_outbox_dir() / f"{digest}.json"
 
 
 def _strict_json_object(encoded: bytes, *, label: str) -> dict[str, Any]:
+    """Decode *encoded* as a JSON object, rejecting duplicate keys and non-finite numbers."""
+
     def reject_duplicates(
         pairs: list[tuple[str, Any]],
     ) -> dict[str, Any]:
+        """object_pairs_hook that raises ValueError on any repeated JSON key."""
         payload: dict[str, Any] = {}
         for key, value in pairs:
             if key in payload:
@@ -1143,6 +1188,11 @@ def _strict_json_object(encoded: bytes, *, label: str) -> dict[str, Any]:
 
 
 def _read_trust_outbox(path: Path) -> dict[str, Any] | None:
+    """Read one trust settlement outbox file with full path/ownership/size validation.
+
+    Returns None if the outbox directory or file is absent; raises on any
+    security or consistency violation (escaped path, size, ownership, TOCTOU).
+    """
     expected_parent = Path(os.path.abspath(_trust_outbox_dir().expanduser()))
     absolute = Path(os.path.abspath(path.expanduser()))
     if absolute.parent != expected_parent:
@@ -1221,6 +1271,7 @@ def _read_trust_outbox(path: Path) -> dict[str, Any] | None:
 
 
 def _nested_settlement(settlement: Settlement) -> dict[str, Any]:
+    """Render a Settlement as the nested "settlement" dict stored in run projections."""
     return {
         "verdict": settlement.verdict.value,
         "reason": settlement.reason,
@@ -1238,6 +1289,7 @@ def _trust_projection_fields(
     settlement: Settlement,
     receipt: TrustReceiptV1,
 ) -> dict[str, Any]:
+    """Build the flat field set written onto run meta/snapshot to project a trust settlement."""
     return {
         **settlement.to_payload(),
         "run_id": receipt.run_id,
@@ -1258,6 +1310,7 @@ def _validate_projection_identity(
     run_id: str,
     commit_sha: str,
 ) -> None:
+    """Raise ValueError if payload's run_id/root/repo_root/commit_sha diverge from expected."""
     projected_run_id = str(payload.get("run_id") or "").strip()
     if projected_run_id and projected_run_id != run_id:
         raise ValueError(f"trust settlement {label} run_id mismatch")
@@ -1279,6 +1332,7 @@ def _validate_projection_identity(
 
 
 def _remove_durable(path: Path) -> None:
+    """Unlink *path* and fsync its parent directory so the removal is durable."""
     path.unlink()
     control_plane._fsync_directory_durable(path.parent)
 
@@ -1287,6 +1341,7 @@ def _journal_entry_for_receipt(
     journal: Path,
     receipt_id: str,
 ) -> dict[str, Any] | None:
+    """Return the last (most recent) journal record for *receipt_id*, or None."""
     latest: dict[str, Any] | None = None
     for item in _read_journal(journal):
         receipt = item.get("trust_receipt")
@@ -1302,6 +1357,7 @@ def _projection_matches_receipt(
     payload: Mapping[str, Any],
     receipt: TrustReceiptV1,
 ) -> bool:
+    """True when a meta/snapshot projection payload exactly matches *receipt*'s settlement."""
     raw = payload.get("trust_receipt")
     if not isinstance(raw, Mapping):
         return False
@@ -1365,6 +1421,7 @@ def _projection_matches_plan(
     receipt: TrustReceiptV1,
     fields: Mapping[str, Any],
 ) -> bool:
+    """True when a projection matches the receipt AND every explicit plan field."""
     return _projection_matches_receipt(payload, receipt) and all(
         payload.get(key) == value for key, value in fields.items()
     )
@@ -1392,6 +1449,11 @@ def _can_complete_projection(
     previous_revision: int,
     fields: Mapping[str, Any] | None = None,
 ) -> bool:
+    """True when it is safe to (idempotently) complete this projection write.
+
+    Accepts an exact match to the planned outcome, or a strictly earlier
+    settlement revision than *previous_revision* (never a later/foreign one).
+    """
     if fields is not None and _projection_matches_plan(
         payload,
         receipt=receipt,
@@ -1670,6 +1732,7 @@ def _trust_recovery_error(
     run_id: str,
     error: BaseException,
 ) -> TrustRecoveryError:
+    """Wrap a caught exception as a TrustRecoveryError, marking retryable failures."""
     return TrustRecoveryError(
         outbox_path=str(path),
         run_id=run_id,
@@ -1807,6 +1870,12 @@ def _persist_trust_settlement(
     claims: Sequence[Mapping[str, str]],
     stamp: str,
 ) -> dict[str, Any]:
+    """Durably settle a run's trust verdict: journal + meta/snapshot projection + event.
+
+    Prepares an outbox (crash-safe two-phase commit) before any irreversible
+    side effect, and short-circuits to the already-recovered entry when a
+    prior attempt for this exact plan already landed.
+    """
     if not run_id or Path(run_id).name != run_id or run_id in {".", ".."}:
         raise ValueError(f"invalid run id: {run_id!r}")
     journal = journal.expanduser()
@@ -1936,6 +2005,11 @@ def note_verdict(
     claims: Sequence[Mapping[str, str]],
     run_id: str = "",
 ) -> dict[str, Any]:
+    """Record one falsification verdict for a commit: journal-only, or full run settlement.
+
+    With *run_id* set, delegates to `_persist_trust_settlement` under the run
+    mutation lock; otherwise appends a bare v1 journal entry (no run projection).
+    """
     if verdict not in TRUST_VERDICTS:
         raise ValueError(f"unsupported trust verdict: {verdict}")
     # Always persist the git toplevel path so macOS /var vs /private/var and
@@ -1977,6 +2051,7 @@ def note_verdict(
 def triage_records(
     records: Sequence[Mapping[str, Any]], *, run_id: str = ""
 ) -> dict[str, Any]:
+    """Tally the latest verdict per (repo_root, sha), counting pass/gaps/block cells."""
     latest: dict[tuple[str, str], Mapping[str, Any]] = {}
     for record in records:
         if run_id and str(record.get("run_id") or "") != run_id:
@@ -1998,6 +2073,7 @@ def triage_records(
 
 
 def _read_run_meta(run_id: str) -> dict[str, Any]:
+    """Read a run's meta.json via control_plane, returning {} if missing/unreadable."""
     resolved = control_plane.resolve_run(run_id)
     if resolved.meta is None:
         return {}
@@ -2009,6 +2085,7 @@ def _read_run_meta(run_id: str) -> dict[str, Any]:
 
 
 def _run_start(payload: Mapping[str, Any]) -> str:
+    """Return the first present run-start timestamp field from run meta, or ""."""
     for key in ("started_at", "created_at", "launched_at", "timestamp"):
         value = str(payload.get(key) or "").strip()
         if value:
@@ -2026,6 +2103,10 @@ def await_primary(
     interval: float = 5.0,
     timeout: float = 0.0,
 ) -> dict[str, Any]:
+    """Block until *run_id* completes, then list not-yet-noted commits since it started.
+
+    Raises TimeoutError if *timeout* elapses first (0 means wait indefinitely).
+    """
     started = time.monotonic()
     initial_meta = _read_run_meta(run_id)
     while True:
@@ -2065,6 +2146,7 @@ def await_primary(
 
 
 def _parser() -> argparse.ArgumentParser:
+    """Build the vc-trust CLI: enumerate/inspect/note/triage/await-primary subcommands."""
     parser = argparse.ArgumentParser(
         prog="python -m vibecrafted_core.trust",
         description="Append-only vc-trust journal and settlement helper.",
@@ -2111,6 +2193,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry point dispatching to the vc-trust journal/settlement subcommands."""
     args = _parser().parse_args(argv)
     try:
         repo = _repo_root(args.repo)

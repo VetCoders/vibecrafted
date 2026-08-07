@@ -63,6 +63,7 @@ class RuntimeProbe:
     destructive: bool = False
 
     def to_payload(self) -> dict[str, Any]:
+        """Return the JSON-serializable representation of this probe."""
         return {
             "probe_id": self.probe_id,
             "target": self.target,
@@ -84,6 +85,7 @@ class InstalledEvidence:
     smoke: RuntimeProbe | None = None
 
     def to_payload(self) -> dict[str, Any]:
+        """Return the JSON-serializable representation of this installed-evidence record."""
         return {
             "resolved_path": self.resolved_path,
             "provenance_marker": self.provenance_marker,
@@ -257,6 +259,7 @@ def _proof_refusals(proof_result: ProofResult | None) -> list[str]:
 
 
 def _relevant_paths_drifted(proof_result: ProofResult) -> bool:
+    """Return whether the proof's relevant_path_digests assertion result was marked unstable."""
     for item in proof_result.assertion_results:
         if item.get("kind") == "relevant_path_digests" and item.get("stable") is False:
             return True
@@ -282,6 +285,7 @@ def _checkout_base_ok(evidence: ScopeEvidence, refusals: list[str]) -> bool:
 
 
 def _scope_refusals(scope: DeliveryScope, evidence: ScopeEvidence) -> list[str]:
+    """Dispatch to the per-scope refusal checker for the declared DeliveryScope."""
     if scope is DeliveryScope.CHECKOUT:
         return []
     if scope is DeliveryScope.BRANCH:
@@ -433,6 +437,7 @@ def _live_refusals(evidence: ScopeEvidence) -> list[str]:
 
 
 def _all_probes(evidence: ScopeEvidence) -> tuple[RuntimeProbe, ...]:
+    """Return declared runtime_probes plus the installed-evidence smoke probe, if any."""
     probes = list(evidence.runtime_probes)
     if evidence.installed is not None and evidence.installed.smoke is not None:
         probes.append(evidence.installed.smoke)
@@ -440,6 +445,7 @@ def _all_probes(evidence: ScopeEvidence) -> tuple[RuntimeProbe, ...]:
 
 
 def _target_identity(declared: str, evidence: ScopeEvidence) -> dict[str, Any]:
+    """Assemble the DeliveryRecord.target_identity payload from scope evidence."""
     identity: dict[str, Any] = {
         "repo": evidence.repo,
         "root": evidence.repo_root,
@@ -459,6 +465,7 @@ def _target_identity(declared: str, evidence: ScopeEvidence) -> dict[str, Any]:
 def _commit_provenance(
     evidence: ScopeEvidence, proof_result: ProofResult | None
 ) -> dict[str, Any]:
+    """Assemble the DeliveryRecord.commit_provenance payload from scope and proof evidence."""
     return {
         "baseline_head": evidence.baseline_head,
         "final_head": evidence.final_head,
@@ -479,6 +486,7 @@ def _derive_record_id(
     target_identity: Mapping[str, Any],
     commit_provenance: Mapping[str, Any],
 ) -> str:
+    """Derive a deterministic sha256 record id from proof digest, scope, and identity."""
     payload = {
         "proof": proof_result.content_digest() if proof_result is not None else None,
         "declared_scope": declared,
@@ -497,6 +505,7 @@ def _derive_record_id(
 
 
 def _jsonable(value: Any) -> Any:
+    """Recursively convert mappings/sequences/enums into JSON-plain values."""
     if isinstance(value, Mapping):
         return {str(key): _jsonable(item) for key, item in value.items()}
     if isinstance(value, (tuple, list)):
@@ -512,6 +521,7 @@ def _jsonable(value: Any) -> Any:
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run one git subcommand against ``root`` with a bounded timeout, capturing output."""
     return subprocess.run(
         ["git", "-C", str(root), *args],
         capture_output=True,
@@ -522,6 +532,7 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def _commit_reachable(root: Path, commit: str, ref: str) -> bool:
+    """Return whether ``commit`` resolves to a real commit that is an ancestor of ``ref``."""
     if not commit.strip() or not ref.strip():
         return False
     resolved = _git(root, "rev-parse", "--verify", "--quiet", f"{commit}^{{commit}}")
