@@ -166,7 +166,10 @@ def test_run_doctor_smokes_helper_and_launcher_runtime(
     assert "vibecrafted init claude" in guide_text
     assert "vibecrafted dou claude" in guide_text
     assert "vibecrafted decorate codex" in guide_text
-    assert "Dashboard is optional" in guide_text
+    # 5d39e4da (backyard product spine) replaced the "Dashboard is optional"
+    # paragraph with the "Optional surfaces" section — assert the new contract.
+    assert "## Optional surfaces" in guide_text
+    assert "vibecrafted dashboard" in guide_text
 
 
 def test_run_doctor_flags_dark_standard_decks(tmp_path: Path, monkeypatch) -> None:

@@ -205,14 +205,70 @@ _vetcoders_is_help_flag() {
   [[ "$candidate" == "help" || "$candidate" == "-h" || "$candidate" == "--help" ]]
 }
 
+# Single deck-resolution gate. Every path that reaches for the installed
+# `vibecrafted` deck MUST go through this: an explicitly set
+# VIBECRAFTED_DECK_BIN (even empty) wins verbatim, VIBECRAFTED_TEST_MODE=1
+# refuses PATH discovery outright (a test stub losing to the operator's live
+# launcher has already dispatched real workers), otherwise PATH decides.
+# Prints the deck path (empty = no deck available).
+_vetcoders_resolve_deck_bin() {
+  if [ -n "${VIBECRAFTED_DECK_BIN+x}" ]; then
+    printf '%s\n' "${VIBECRAFTED_DECK_BIN}"
+    return 0
+  fi
+  if [ "${VIBECRAFTED_TEST_MODE:-0}" = "1" ]; then
+    return 0
+  fi
+  command -v vibecrafted 2>/dev/null || true
+}
+
+_vetcoders_no_deck_report() {
+  printf 'vc-%s: vibecrafted helper layer is not loaded and no "vibecrafted" deck is on PATH.\n' "$1" >&2
+  printf 'Run scripts/install-foundations.sh or add the repo bin/ to PATH.\n' >&2
+  return 127
+}
+
 # Thin public `vc-*` contract: never reimplement help/flags; never shadow the
-# installed deck with a second parser. `command vibecrafted` skips any shell
-# function named vibecrafted and uses PATH (typically ~/.local/bin).
+# installed deck with a second parser. Deck resolution goes through
+# _vetcoders_resolve_deck_bin so test mode and DECK_BIN overrides hold.
 # Prefer this for every mappable `vc-foo` ↔ `vibecrafted foo` pair.
 _vetcoders_vc_passthrough() {
   local verb="$1"
   shift || true
-  command vibecrafted "$verb" "$@"
+  local deck_bin
+  deck_bin="$(_vetcoders_resolve_deck_bin)"
+  if [ -n "$deck_bin" ] && [ -x "$deck_bin" ]; then
+    "$deck_bin" "$verb" "$@"
+    return
+  fi
+  # No deck (bare host or test mode): agent-first skills still have a full
+  # in-shell path through the wrapper layer — spawn launchers, marbles
+  # control routing, usage help. Only verbs the wrapper actually understands
+  # may fall back; deck-owned verbs (research, ship, loop, ...) keep the
+  # clean 127 so a partial load never resurrects a diverged legacy surface.
+  case "$verb" in
+    audit|decorate|delegate|dou|followup|hydrate|init|justdo|implement|marbles|ownership|partner|polarize|prune|release|review|scaffold|workflow)
+      if typeset -f _vetcoders_skill_wrapper >/dev/null 2>&1; then
+        _vetcoders_skill_wrapper "$verb" "$@"
+        return
+      fi
+      ;;
+  esac
+  _vetcoders_no_deck_report "$verb"
+}
+
+# Deck-owned skill help with local usage fallback; never launches anything.
+_vetcoders_deck_help() {
+  local skill="$1"
+  local deck_bin
+  deck_bin="$(_vetcoders_resolve_deck_bin)"
+  if [ -n "$deck_bin" ] && [ -x "$deck_bin" ] \
+    && "$deck_bin" "$skill" --help >/dev/null 2>&1; then
+    "$deck_bin" "$skill" --help
+    return 0
+  fi
+  _vetcoders_skill_wrapper_usage "$skill"
+  return 1
 }
 
 _vetcoders_skill_wrapper() {
@@ -224,11 +280,7 @@ _vetcoders_skill_wrapper() {
   if _vetcoders_is_help_flag "${1:-}"; then
     # Prefer deck skill help only when the verb is a real deck/LAUNCHERS topic.
     # Redirect both streams so "not in the command deck" never leaks into help.
-    if command vibecrafted "$skill" --help >/dev/null 2>&1; then
-      command vibecrafted "$skill" --help
-      return 0
-    fi
-    _vetcoders_skill_wrapper_usage "$skill"
+    _vetcoders_deck_help "$skill"
     return 0
   fi
 
@@ -244,30 +296,20 @@ _vetcoders_skill_wrapper() {
   fi
 
   [[ -n "$tool" ]] || {
-    if command vibecrafted "$skill" --help >/dev/null 2>&1; then
-      command vibecrafted "$skill" --help
+    if _vetcoders_deck_help "$skill"; then
       return 0
     fi
-    _vetcoders_skill_wrapper_usage "$skill"
     return 1
   }
   _vetcoders_has_agent "$tool" || {
     printf 'vc-%s expects claude|codex|agy|junie|grok as the first argument (not a placeholder with angle brackets).\n' "$skill" >&2
-    if command vibecrafted "$skill" --help >/dev/null 2>&1; then
-      command vibecrafted "$skill" --help
-      return 1
-    fi
-    _vetcoders_skill_wrapper_usage "$skill"
+    _vetcoders_deck_help "$skill"
     return 1
   }
   shift || true
 
   if _vetcoders_is_help_flag "${1:-}"; then
-    if command vibecrafted "$skill" --help >/dev/null 2>&1; then
-      command vibecrafted "$skill" --help
-      return 0
-    fi
-    _vetcoders_skill_wrapper_usage "$skill"
+    _vetcoders_deck_help "$skill"
     return 0
   fi
 
@@ -291,42 +333,26 @@ _vetcoders_skill_dispatch() {
     _vetcoders_skill_wrapper "$skill" "$@"
     return
   fi
-  local deck_bin="${VIBECRAFTED_DECK_BIN-}"
-  if [ -z "${VIBECRAFTED_DECK_BIN+x}" ]; then
-    if [ "${VIBECRAFTED_TEST_MODE:-0}" = "1" ]; then
-      deck_bin=""
-    else
-      deck_bin="$(command -v vibecrafted 2>/dev/null || true)"
-    fi
-  fi
+  local deck_bin
+  deck_bin="$(_vetcoders_resolve_deck_bin)"
   if [ -n "$deck_bin" ] && [ -x "$deck_bin" ]; then
     "$deck_bin" "$skill" "$@"
     return
   fi
-  printf 'vc-%s: vibecrafted helper layer is not loaded and no "vibecrafted" deck is on PATH.\n' "$skill" >&2
-  printf 'Run scripts/install-foundations.sh or add the repo bin/ to PATH.\n' >&2
-  return 127
+  _vetcoders_no_deck_report "$skill"
 }
 
 _vetcoders_command_dispatch() {
   local command_name="$1"
   local deck_command="$2"
   shift 2 || true
-  local deck_bin="${VIBECRAFTED_DECK_BIN-}"
-  if [ -z "${VIBECRAFTED_DECK_BIN+x}" ]; then
-    if [ "${VIBECRAFTED_TEST_MODE:-0}" = "1" ]; then
-      deck_bin=""
-    else
-      deck_bin="$(command -v vibecrafted 2>/dev/null || true)"
-    fi
-  fi
+  local deck_bin
+  deck_bin="$(_vetcoders_resolve_deck_bin)"
   if [ -n "$deck_bin" ] && [ -x "$deck_bin" ]; then
     "$deck_bin" "$deck_command" "$@"
     return
   fi
-  printf 'vc-%s: vibecrafted helper layer is not loaded and no "vibecrafted" deck is on PATH.\n' "$command_name" >&2
-  printf 'Run scripts/install-foundations.sh or add the repo bin/ to PATH.\n' >&2
-  return 127
+  _vetcoders_no_deck_report "$command_name"
 }
 
 # Shell dotfiles commonly alias vc/vc-* (old container templates did); zsh
@@ -361,7 +387,15 @@ vc-ship() { _vetcoders_vc_passthrough ship "$@"; }
 vc-marbles() { _vetcoders_vc_passthrough marbles "$@"; }
 vc-ownership() { _vetcoders_vc_passthrough ownership "$@"; }
 vc-partner() { _vetcoders_vc_passthrough partner "$@"; }
-vc-polarize() { _vetcoders_vc_passthrough polarize "$@"; }
+# --task owns the prism band gate (abort/memo/pass/doctrine) — shell-only
+# logic not yet ported to core (docs/RC_RUNTIME_POLARIZE.md port-debt); the
+# python deck rejects --task, so that flag must route through the wrapper.
+vc-polarize() {
+  case " $* " in
+    *" --task "*|*" --task="*) _vetcoders_skill_dispatch polarize "$@" ;;
+    *) _vetcoders_vc_passthrough polarize "$@" ;;
+  esac
+}
 vc-prune() { _vetcoders_vc_passthrough prune "$@"; }
 vc-release() { _vetcoders_vc_passthrough release "$@"; }
 vc-review() { _vetcoders_vc_passthrough review "$@"; }
@@ -763,7 +797,7 @@ repo-full() {
 # helpers/config projection/server eye run on the real backyard ride.
 vc-start() {
   if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    command vibecrafted start --help
+    _vetcoders_vc_passthrough start --help
     return $?
   fi
   # Product lifecycle: pin config, project Super/scripts, poke CP eye.
@@ -792,7 +826,7 @@ vc-start() {
 
 vc-dashboard() {
   if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    command vibecrafted dashboard --help
+    _vetcoders_vc_passthrough dashboard --help
     return $?
   fi
   _vetcoders_launch_dashboard "$@"

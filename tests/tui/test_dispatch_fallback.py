@@ -60,7 +60,9 @@ def test_vc_wrapper_falls_back_to_deck_when_wrapper_missing(
     )
     result = _run_shell(shell, script, _fallback_env(bin_dir))
     assert result.returncode == 0, result.stderr
-    assert "deck:implement codex --prompt hi" in result.stdout
+    # ADR-0001: justdo is its own skill id — the deck receives "justdo"
+    # verbatim, never the old implement alias.
+    assert "deck:justdo codex --prompt hi" in result.stdout
 
 
 @pytest.mark.parametrize("shell", ["bash", "zsh"])

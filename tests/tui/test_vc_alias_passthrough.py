@@ -58,9 +58,12 @@ def test_dispatch_defines_passthrough_helper() -> None:
     )
     start_body = text.split("vc-start()")[1].split("vc-frontier-paths")[0]
     # Only --help may call into the deck; bare start must launch dashboard.
+    # The help touch goes through the guarded passthrough so DECK_BIN/test-mode
+    # resolution holds even here — never a bare `command vibecrafted`.
     assert "_vetcoders_launch_dashboard operator" in start_body
-    assert "command vibecrafted start --help" in start_body
+    assert "_vetcoders_vc_passthrough start --help" in start_body
     assert re.search(r"command vibecrafted start\s+\"\$@\"", start_body) is None
+    assert re.search(r"_vetcoders_vc_passthrough start\s+\"\$@\"", start_body) is None
 
 
 def test_resume_is_local_helper_not_deck_reentry() -> None:

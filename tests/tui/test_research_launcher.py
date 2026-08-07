@@ -29,6 +29,10 @@ def _env(tmp_path: Path, *, crafted_home: Path | None = None) -> dict[str, str]:
     env["VETCODERS_SPAWN_RUNTIME"] = "headless"
     # Prefer headless / no terminal transport in CI.
     env.pop("VIBECRAFTED_FORCE_TERMINAL", None)
+    # VIBECRAFTED_TEST_MODE=1 (conftest autouse) forbids PATH deck discovery;
+    # tests that want the deck must name it explicitly — use the repo deck,
+    # never the operator's installed launcher.
+    env["VIBECRAFTED_DECK_BIN"] = str(REPO_ROOT / "scripts" / "vibecrafted")
     return env
 
 
@@ -54,8 +58,10 @@ def _run_vc_research(
 def _run_deck_research(
     root: Path, env: dict[str, str], *args: str
 ) -> subprocess.CompletedProcess[str]:
+    # Exec the repo deck directly — argv[0] "command" is a shell builtin, not
+    # a binary, and PATH discovery would silently hit the operator's deck.
     return subprocess.run(
-        ["command", "vibecrafted", "research", *args],
+        [str(REPO_ROOT / "scripts" / "vibecrafted"), "research", *args],
         cwd=root,
         env=env,
         capture_output=True,
@@ -103,9 +109,13 @@ def _parse_receipt(stdout: str) -> dict[str, str]:
 
 def test_vc_research_help_is_pure_help() -> None:
     """Public vc-research --help must match the deck (not legacy shell help)."""
+    env = os.environ.copy()
+    # Test mode blocks PATH deck discovery — name the repo deck explicitly.
+    env["VIBECRAFTED_DECK_BIN"] = str(REPO_ROOT / "scripts" / "vibecrafted")
     result = subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-research --help'],
         cwd=REPO_ROOT,
+        env=env,
         capture_output=True,
         text=True,
         check=False,
@@ -137,9 +147,13 @@ def test_vc_research_help_is_pure_help() -> None:
 
 
 def test_vc_research_shell_matches_deck_help_text() -> None:
+    env = os.environ.copy()
+    # Test mode blocks PATH deck discovery — name the repo deck explicitly.
+    env["VIBECRAFTED_DECK_BIN"] = str(REPO_ROOT / "scripts" / "vibecrafted")
     shell = subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-research --help'],
         cwd=REPO_ROOT,
+        env=env,
         capture_output=True,
         text=True,
         check=False,

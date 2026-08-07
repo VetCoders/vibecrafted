@@ -4699,7 +4699,10 @@ cmd_dashboard() {
         printf '%b✗%b vc-frame is required.\n' "$_red" "$_reset" >&2; return 1
       }
       [[ -n "${1:-}" ]] || { printf '%b✗%b Session name required.\n' "$_red" "$_reset" >&2; return 1; }
-      if [[ -n "${VC_FRAME+set}" ]]; then
+      # Trusted attached-context signal (pane id + session name): stale
+      # VC_FRAME/ZELLIJ leaks in a parent shell must not pick switch-session,
+      # which has no live client to act on outside a real pane.
+      if [[ -n "${VC_FRAME_PANE_ID:-}" && -n "${VC_FRAME_SESSION_NAME:-}" ]]; then
         "$vc_frame_bin" action switch-session "$1"
       else
         "$vc_frame_bin" attach "$1"
@@ -4713,7 +4716,10 @@ cmd_dashboard() {
         printf '%b✗%b vc-frame is required.\n' "$_red" "$_reset" >&2; return 1
       }
       [[ -n "${1:-}" ]] || { printf '%b✗%b Session name required.\n' "$_red" "$_reset" >&2; return 1; }
-      if [[ -n "${VC_FRAME+set}" ]]; then
+      # Trusted attached-context signal (pane id + session name): stale
+      # VC_FRAME/ZELLIJ leaks in a parent shell must not pick switch-session,
+      # which has no live client to act on outside a real pane.
+      if [[ -n "${VC_FRAME_PANE_ID:-}" && -n "${VC_FRAME_SESSION_NAME:-}" ]]; then
         "$vc_frame_bin" action switch-session "$1"
       else
         "$vc_frame_bin" attach "$1"

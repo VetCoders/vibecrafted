@@ -18,14 +18,6 @@ WRAPPER = REPO / "scripts" / "vc-frame-product-entry.sh"
 HELPER = REPO / "runtime" / "shell" / "vetcoders.sh"
 DASHBOARD = REPO / "runtime" / "shell" / "lib" / "dashboard.sh"
 DISPATCH = REPO / "runtime" / "shell" / "lib" / "dispatch.sh"
-SCRATCH = Path(
-    "/var/folders/k2/gcr84s3x0z7dgzfspkq1klt80000gn/T/grok-goal-2158121b574a/implementer"
-)
-
-
-def _ensure_scratch() -> Path:
-    SCRATCH.mkdir(parents=True, exist_ok=True)
-    return SCRATCH
 
 
 def _write_fake_bin(bin_dir: Path, name: str, body: str) -> Path:
@@ -277,11 +269,6 @@ def test_vc_start_probe_pins_product_config(tmp_path: Path) -> None:
         check=False,
     )
     out = proc.stdout + proc.stderr
-    scratch = _ensure_scratch()
-    (scratch / "vc-start-entry.log").write_text(
-        f"returncode={proc.returncode}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}\n",
-        encoding="utf-8",
-    )
 
     assert proc.returncode == 0, out
     assert "VIBECRAFTED_PRODUCT_ENTRY=1" in proc.stdout
