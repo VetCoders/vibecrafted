@@ -147,6 +147,7 @@ def test_run_doctor_smokes_helper_and_launcher_runtime(
     _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
     monkeypatch.setattr(installer, "FOUNDATIONS", [])
+    monkeypatch.setattr(installer, "_slack_provider_contract_findings", list)
     _real_which = shutil.which
     monkeypatch.setattr(
         installer.shutil,
@@ -165,7 +166,10 @@ def test_run_doctor_smokes_helper_and_launcher_runtime(
     assert "vibecrafted init claude" in guide_text
     assert "vibecrafted dou claude" in guide_text
     assert "vibecrafted decorate codex" in guide_text
-    assert "Dashboard is optional" in guide_text
+    # 5d39e4da (backyard product spine) replaced the "Dashboard is optional"
+    # paragraph with the "Optional surfaces" section — assert the new contract.
+    assert "## Optional surfaces" in guide_text
+    assert "vibecrafted dashboard" in guide_text
 
 
 def test_run_doctor_flags_dark_standard_decks(tmp_path: Path, monkeypatch) -> None:
@@ -491,6 +495,7 @@ def test_cmd_doctor_fix_launchers_repairs_missing_wrappers(
     _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
     monkeypatch.setattr(installer, "FOUNDATIONS", [])
+    monkeypatch.setattr(installer, "_slack_provider_contract_findings", list)
 
     exit_code = installer.cmd_doctor(Namespace(fix_rc=False, fix_launchers=True))
 
@@ -745,6 +750,20 @@ def test_install_launcher_does_not_overwrite_unmanaged_dev_wrapper(
     )
 
     _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+    installed_deck = (
+        runtime_home
+        / "tools"
+        / "vibecrafted-current"
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "deck"
+        / "vibecrafted"
+    )
+    installed_deck.parent.mkdir(parents=True, exist_ok=True)
+    _write_executable(
+        installed_deck,
+        (REPO_ROOT / "scripts" / "vibecrafted").read_text(encoding="utf-8"),
+    )
 
     installer._install_launcher(source_root, dry_run=False, update_rc=False)
 
@@ -990,8 +1009,15 @@ def test_cmd_doctor_fix_rc_repairs_compat_shell_lines(
         "#!/usr/bin/env bash\nprintf '𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. help ok\\n'\n",
     )
     zshrc.write_text(
-        f'# existing user config\n{installer._old_zshrc_source_line()}\n{installer._shell_source_line()}\nexport VIBECRAFTED_HOME="$HOME/.vibecrafted"\n{installer._launcher_path_line()}'
-        + "\n",
+        f"# existing user config\n{installer._old_zshrc_source_line()}\n"
+        "# >>> vibecrafted >>>\n"
+        'export VETCODERS_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders"\n'
+        'if [ -f "$VETCODERS_CONFIG_DIR/vc-skills.sh" ]; then\n'
+        f"  {installer._shell_source_line()}\n"
+        "fi\n"
+        "# <<< vibecrafted <<<\n"
+        'export VIBECRAFTED_HOME="$HOME/.vibecrafted"\n'
+        f"{installer._launcher_path_line()}\n" + "\n",
         encoding="utf-8",
     )
 
@@ -1006,10 +1032,219 @@ def test_cmd_doctor_fix_rc_repairs_compat_shell_lines(
     repaired = zshrc.read_text(encoding="utf-8")
     assert installer._old_zshrc_source_line() not in repaired
     assert 'export VIBECRAFTED_HOME="$HOME/.vibecrafted"' not in repaired
-    assert repaired.count(installer._shell_source_line()) == 1
+    assert installer._shell_source_line() not in repaired
+    assert "VETCODERS_CONFIG_DIR" not in repaired
+    assert "# >>> vibecrafted >>>" not in repaired
+    assert "# <<< vibecrafted <<<" not in repaired
     assert repaired.count(installer._launcher_path_line()) == 1
-    assert "# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers" in repaired
+    assert "# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers" not in repaired
     assert "# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher" in repaired
+    assert (home / ".zshrc.vibecrafted-rc-bak").read_text(encoding="utf-8") == (
+        f"# existing user config\n{installer._old_zshrc_source_line()}\n"
+        "# >>> vibecrafted >>>\n"
+        'export VETCODERS_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders"\n'
+        'if [ -f "$VETCODERS_CONFIG_DIR/vc-skills.sh" ]; then\n'
+        f"  {installer._shell_source_line()}\n"
+        "fi\n"
+        "# <<< vibecrafted <<<\n"
+        'export VIBECRAFTED_HOME="$HOME/.vibecrafted"\n'
+        f"{installer._launcher_path_line()}\n\n"
+    )
+
+
+def test_cmd_doctor_fix_rc_repairs_login_startup_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    launcher_bin = home / ".local" / "bin"
+    zprofile = home / ".zprofile"
+    launcher_bin.mkdir(parents=True)
+    _write_executable(launcher_bin / "vibecrafted", "#!/bin/sh\nexit 0\n")
+    original = (
+        f"# user login config\n{installer._shell_source_line()}\nexport KEEP_ME=1\n"
+    )
+    zprofile.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+
+    findings = installer._doctor_fix_rc_files()
+
+    repaired = zprofile.read_text(encoding="utf-8")
+    assert installer._shell_source_line() not in repaired
+    assert "export KEEP_ME=1" in repaired
+    assert repaired.count(installer._launcher_path_line()) == 1
+    assert (home / ".zprofile.vibecrafted-rc-bak").read_text(
+        encoding="utf-8"
+    ) == original
+    assert any(
+        finding.component == "rc-fix:.zprofile"
+        and finding.level == "ok"
+        and ".zprofile.vibecrafted-rc-bak" in finding.message
+        for finding in findings
+    )
+
+
+def test_cmd_doctor_fix_rc_preserves_unclosed_managed_block(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    launcher_bin = home / ".local" / "bin"
+    zshrc = home / ".zshrc"
+    launcher_bin.mkdir(parents=True)
+    _write_executable(launcher_bin / "vibecrafted", "#!/bin/sh\nexit 0\n")
+    original = (
+        "# user config\n"
+        "# >>> vibecrafted >>>\n"
+        f"{installer._shell_source_line()}\n"
+        "export KEEP_ME=1\n"
+        "alias keep-me=true\n"
+    )
+    zshrc.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+
+    findings = installer._doctor_fix_rc_files()
+
+    assert zshrc.read_text(encoding="utf-8") == original
+    assert any(
+        finding.component == "rc-fix:.zshrc"
+        and finding.level == "warn"
+        and "unclosed" in finding.message
+        for finding in findings
+    )
+    assert installer._clean_legacy_rc_entries(original) == (original, 0)
+
+
+def test_host_shell_contract_rejects_active_helper_sourcing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    (home / ".zshrc").write_text(
+        f"{installer._shell_source_line()}\n", encoding="utf-8"
+    )
+
+    [finding] = installer._host_shell_contract_findings()
+
+    assert finding.level == "fail"
+    assert finding.component == "host-shell"
+    assert "--fix-rc" in finding.message
+
+
+def test_host_shell_contract_checks_every_login_and_interactive_startup_file(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    for rcname in installer._SHELL_STARTUP_FILES:
+        rcfile = home / rcname
+        rcfile.write_text(f"{installer._shell_source_line()}\n", encoding="utf-8")
+
+        [finding] = installer._host_shell_contract_findings()
+
+        assert finding.level == "fail"
+        assert rcname in finding.message
+        rcfile.unlink()
+
+
+def test_frontier_contract_rejects_checkout_link(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    config_home = home / ".config"
+    frontier = config_home / "vetcoders" / "frontier"
+    checkout = tmp_path / "checkout"
+    frontier.mkdir(parents=True)
+    checkout.mkdir()
+    (frontier / "legacy.bak.1").symlink_to(checkout)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+
+    [finding] = installer._managed_frontier_contract_findings()
+
+    assert finding.level == "fail"
+    assert finding.component == "frontier-links"
+    assert "legacy.bak.1" in finding.message
+
+
+def test_frontier_contract_accepts_installed_generation_link(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    config_home = home / ".config"
+    runtime_home = home / ".local" / "share" / "vibecrafted"
+    frontier = config_home / "vetcoders" / "frontier"
+    installed = runtime_home / "tools" / "vibecrafted-current" / "config"
+    frontier.mkdir(parents=True)
+    installed.mkdir(parents=True)
+    (installed / "starship.toml").write_text("format = ''\n", encoding="utf-8")
+    (frontier / "starship.toml").symlink_to(installed / "starship.toml")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
+
+    [finding] = installer._managed_frontier_contract_findings()
+
+    assert finding.level == "ok"
+    assert finding.component == "frontier-links"
+
+
+def test_public_launcher_contract_rejects_checkout_link(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    launcher_bin = home / ".local" / "bin"
+    checkout_bin = tmp_path / "checkout" / "bin"
+    launcher_bin.mkdir(parents=True)
+    checkout_bin.mkdir(parents=True)
+    (checkout_bin.parent / ".git").mkdir()
+    _write_executable(checkout_bin / "vc-slack", "#!/bin/sh\nexit 0\n")
+    (launcher_bin / "vc-slack").symlink_to(checkout_bin / "vc-slack")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LAUNCHER_BIN", str(launcher_bin))
+
+    [finding] = installer._public_launcher_contract_findings()
+
+    assert finding.level == "fail"
+    assert finding.component == "public-launchers"
+    assert "vc-slack" in finding.message
+
+
+def test_public_launcher_contract_accepts_packaged_provider(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    launcher_bin = home / ".local" / "bin"
+    provider_bin = home / ".local" / "share" / "uv" / "tools" / "provider" / "bin"
+    launcher_bin.mkdir(parents=True)
+    provider_bin.mkdir(parents=True)
+    _write_executable(provider_bin / "vc-slack", "#!/bin/sh\nexit 0\n")
+    (launcher_bin / "vc-slack").symlink_to(provider_bin / "vc-slack")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LAUNCHER_BIN", str(launcher_bin))
+
+    [finding] = installer._public_launcher_contract_findings()
+
+    assert finding.level == "ok"
+    assert finding.component == "public-launchers"
+
+
+def test_slack_provider_contract_defers_when_provider_was_never_published(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # vc-slack-agent is an external sibling repo: a host that never published
+    # the provider (CI runners, fresh installs) is legal and must DEFER with
+    # a warn. Only a broken existing publication is a failure.
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
+    monkeypatch.setenv("VIBECRAFTED_LAUNCHER_BIN", str(home / ".local" / "bin"))
+
+    [finding] = installer._slack_provider_contract_findings()
+
+    assert finding.level == "warn"
+    assert finding.component == "slack-provider"
+    assert "not published" in finding.message
+    assert "optional" in finding.message
 
 
 def test_run_doctor_fail_fast_on_runtime_root_drift(

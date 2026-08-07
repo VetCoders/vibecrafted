@@ -155,4 +155,4 @@ round, do not ask — orient, act, deliver, prove.
 
 _"Stop talking. Do the work. Prove it is not undone."_
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 The LibraxisAI Team_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 The LibraxisAI Team_

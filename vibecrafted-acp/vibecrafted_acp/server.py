@@ -1,3 +1,5 @@
+"""ACP v1 stdio JSON-RPC server: session lifecycle, prompt dispatch, hard-stop gating."""
+
 from __future__ import annotations
 
 import argparse
@@ -29,11 +31,15 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class JsonWriter:
+    """Thread-safe newline-delimited JSON writer for the ACP stdout stream."""
+
     def __init__(self, stream: TextIO) -> None:
+        """Wrap ``stream`` for line-delimited JSON writes."""
         self.stream = stream
         self._lock = threading.Lock()
 
     def send(self, payload: dict[str, Any]) -> None:
+        """Serialize ``payload`` as one compact JSON line and flush it to the stream."""
         line = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         with self._lock:
             self.stream.write(line + "\n")
@@ -44,6 +50,7 @@ class ClientRequests:
     """Route agent→client JSON-RPC requests while stdin stays responsive."""
 
     def __init__(self, writer: JsonWriter) -> None:
+        """Set up request bookkeeping over ``writer``."""
         self.writer = writer
         self._condition = threading.Condition()
         self._counter = 0
@@ -51,6 +58,7 @@ class ClientRequests:
         self._closed = False
 
     def resolve(self, message: dict[str, Any]) -> None:
+        """Deliver a client JSON-RPC response to whichever ``request()`` call is waiting."""
         request_id = str(message.get("id"))
         with self._condition:
             self._responses[request_id] = message
@@ -64,6 +72,11 @@ class ClientRequests:
         timeout_seconds: float,
         cancel_event: threading.Event | None = None,
     ) -> Any:
+        """Send a JSON-RPC request to the client and block for its result.
+
+        Returns None on timeout, cancellation, closed connection, or an
+        error response — callers treat all of those as "not granted".
+        """
         with self._condition:
             self._counter += 1
             request_id = f"vibecrafted-permission-{self._counter}"
@@ -92,17 +105,21 @@ class ClientRequests:
         return message.get("result")
 
     def close(self) -> None:
+        """Mark the client channel closed and wake any pending ``request()`` waiters."""
         with self._condition:
             self._closed = True
             self._condition.notify_all()
 
     def wake(self) -> None:
+        """Wake pending ``request()`` waiters (e.g. after a cancel_event was set)."""
         with self._condition:
             self._condition.notify_all()
 
 
 @dataclass
 class Session:
+    """Mutable per-connection ACP session state: agent, run tracking, stream buffers."""
+
     session_id: str
     cwd: str
     agent: str
@@ -126,7 +143,10 @@ class Session:
 
 
 class ACPServer:
+    """Dispatches ACP JSON-RPC methods to session/RuntimeBridge operations."""
+
     def __init__(self, *, bridge: RuntimeBridge, output: TextIO) -> None:
+        """Bind the server to ``bridge`` for runtime calls and ``output`` for responses."""
         self.bridge = bridge
         self.writer = JsonWriter(output)
         self.client = ClientRequests(self.writer)
@@ -135,9 +155,11 @@ class ACPServer:
         self._threads: list[threading.Thread] = []
 
     def _response(self, request_id: Any, result: dict[str, Any]) -> None:
+        """Send a successful JSON-RPC result for ``request_id``."""
         self.writer.send({"jsonrpc": "2.0", "id": request_id, "result": result})
 
     def _error(self, request_id: Any, code: int, message: str) -> None:
+        """Send a JSON-RPC error response for ``request_id``."""
         self.writer.send(
             {
                 "jsonrpc": "2.0",
@@ -147,6 +169,7 @@ class ACPServer:
         )
 
     def _update(self, session_id: str, update: dict[str, Any]) -> None:
+        """Send a ``session/update`` notification, tagging it with session vibecrafted meta."""
         payload = dict(update)
         session = self.sessions.get(session_id)
         if session is not None:
@@ -160,6 +183,7 @@ class ACPServer:
         )
 
     def handle_message(self, message: dict[str, Any]) -> None:
+        """Route one incoming JSON-RPC line: client response, request, or malformed input."""
         if "method" not in message and "id" in message:
             self.client.resolve(message)
             return
@@ -190,6 +214,7 @@ class ACPServer:
             self._error(request_id, -32601, f"Method not found: {method}")
 
     def _initialize(self, request_id: Any) -> None:
+        """Handle ``initialize``: mark ready and advertise protocol/agent capabilities."""
         self.initialized = True
         self._response(
             request_id,
@@ -217,6 +242,7 @@ class ACPServer:
         )
 
     def _new_session(self, request_id: Any, params: dict[str, Any]) -> None:
+        """Handle ``session/new``: validate params, create a Session, emit its command catalog."""
         if not self.initialized:
             self._error(request_id, -32002, "initialize must be called first")
             return
@@ -272,6 +298,7 @@ class ACPServer:
 
     @staticmethod
     def _session_meta(session: Session) -> dict[str, Any]:
+        """Build the ``_meta.vibecrafted`` envelope (parent/child run ids, stage) for a session."""
         return {
             "vibecrafted": {
                 "parent_run_id": session.session_id,
@@ -282,6 +309,7 @@ class ACPServer:
 
     @staticmethod
     def _available_commands() -> list[dict[str, Any]]:
+        """Build the slash-command catalog: ``/ship`` plus one per registered workflow."""
         ship = WORKFLOW_MANIFESTS["vc-ship"]
         commands: list[dict[str, Any]] = [
             {
@@ -317,6 +345,7 @@ class ACPServer:
         return commands
 
     def _emit_catalog(self, session: Session) -> None:
+        """Send the available_commands_update for ``session``."""
         self._update(
             session.session_id,
             {
@@ -326,6 +355,7 @@ class ACPServer:
         )
 
     def _emit_plan(self, session: Session) -> None:
+        """Send a ``plan`` update listing every vc-ship stage and its current status."""
         entries: list[dict[str, str]] = []
         for stage in SHIP_STAGES:
             status = session.plan_statuses.get(stage.id, "pending")
@@ -348,6 +378,11 @@ class ACPServer:
         *,
         replay: bool,
     ) -> None:
+        """Handle ``session/load`` and ``session/resume``: restore a Session from artifacts.
+
+        ``replay=True`` (load) also replays the saved transcript as a chunk;
+        ``replay=False`` (resume) restores state without replaying output.
+        """
         if not self.initialized:
             self._error(request_id, -32002, "initialize must be called first")
             return
@@ -436,6 +471,7 @@ class ACPServer:
 
     @staticmethod
     def _prompt_text(params: dict[str, Any]) -> str:
+        """Flatten an ACP prompt content-block list into plain text."""
         prompt = params.get("prompt")
         if not isinstance(prompt, list):
             return ""
@@ -454,6 +490,7 @@ class ACPServer:
         return "\n".join(part for part in parts if part).strip()
 
     def _start_prompt(self, request_id: Any, params: dict[str, Any]) -> None:
+        """Handle ``session/prompt``: validate, then run the prompt worker on a background thread."""
         session_id = str(params.get("sessionId") or "")
         session = self.sessions.get(session_id)
         if session is None:
@@ -478,6 +515,11 @@ class ACPServer:
 
     @classmethod
     def _command_prompt(cls, session: Session, prompt: str) -> tuple[str, str, bool]:
+        """Parse a ``/command remainder`` prompt into ``(skill, remainder, was_command)``.
+
+        Returns ``("", remainder, True)`` for an unrecognized slash command so
+        the caller can report it without guessing a skill.
+        """
         if not prompt.startswith("/"):
             return session.skill, prompt, False
         command, separator, remainder = prompt[1:].partition(" ")
@@ -487,6 +529,7 @@ class ACPServer:
         return command, remainder if separator else "", True
 
     def _prompt_worker(self, request_id: Any, session: Session, prompt: str) -> None:
+        """Background-thread body of session/prompt: hard-stop gate, dispatch, respond."""
         permission_tool_id = ""
         try:
             skill, runtime_prompt, was_command = self._command_prompt(session, prompt)
@@ -656,6 +699,10 @@ class ACPServer:
         *,
         skill: str,
     ) -> str:
+        """Launch ``skill`` as a single run, pump its stream, and await completion.
+
+        Returns the ACP stop reason: ``end_turn``, ``refusal``, or ``cancelled``.
+        """
         continuation = session.restored or session.prompt_count > 0
         run_id = (
             self.bridge.reserve_run_id(skill) if continuation else session.session_id
@@ -697,6 +744,7 @@ class ACPServer:
         return "end_turn" if result.get("completed") else "refusal"
 
     def _run_lifecycle_prompt(self, session: Session, prompt: str) -> str:
+        """Run the full vc-ship lifecycle for ``prompt``, streaming per-stage plan updates."""
         session.skill = "ship"
         session.transcript_offset = 0
         session.pending_stream = b""
@@ -739,6 +787,7 @@ class ACPServer:
         run_id: str = "",
         final: bool = False,
     ) -> None:
+        """Fetch new transcript bytes for the active run and forward them to ``_emit_stream``."""
         observed = self.bridge.observe(
             run_id or session.active_run_id or session.session_id,
             offset=session.transcript_offset,
@@ -759,6 +808,11 @@ class ACPServer:
         *,
         final: bool = False,
     ) -> None:
+        """Line-buffer raw transcript bytes, parse each complete line, emit rendered chunks.
+
+        Incomplete trailing lines are held in ``session.pending_stream`` until
+        more data arrives or ``final=True`` flushes them anyway.
+        """
         data = session.pending_stream + data
         lines = data.splitlines(keepends=True)
         session.pending_stream = b""
@@ -780,6 +834,7 @@ class ACPServer:
                 )
 
     def _cancel(self, request_id: Any, params: dict[str, Any]) -> None:
+        """Handle ``session/cancel``: mark the session cancelled and stop its active run."""
         session_id = str(params.get("sessionId") or "")
         session = self.sessions.get(session_id)
         if session is None:
@@ -798,10 +853,12 @@ class ACPServer:
             self._response(request_id, {})
 
     def wait(self) -> None:
+        """Block until every spawned prompt-worker thread has finished."""
         for thread in list(self._threads):
             thread.join()
 
     def close(self) -> None:
+        """Close the client request channel."""
         self.client.close()
 
 
@@ -811,6 +868,7 @@ def serve(
     *,
     bridge: RuntimeBridge,
 ) -> int:
+    """Run the ACP server loop: read JSON-RPC lines from ``input_stream`` until EOF."""
     server = ACPServer(bridge=bridge, output=output_stream)
     for raw_line in input_stream:
         line = raw_line.strip()
@@ -831,6 +889,7 @@ def serve(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI entry point: parse args and run the ACP stdio server over stdin/stdout."""
     parser = argparse.ArgumentParser(
         prog="vibecrafted acp",
         description=(

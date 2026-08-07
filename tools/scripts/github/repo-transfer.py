@@ -55,6 +55,8 @@ from typing import ClassVar
 
 
 class C:
+    """ANSI color/style codes used for CLI output."""
+
     RESET = "\033[0m"
     BOLD = "\033[1m"
     DIM = "\033[2m"
@@ -67,18 +69,22 @@ class C:
 
 
 def success(msg: str):
+    """Print ``msg`` prefixed with a green checkmark."""
     print(f"  {C.GREEN}✔{C.RESET} {msg}")
 
 
 def error(msg: str):
+    """Print ``msg`` prefixed with a red cross."""
     print(f"  {C.RED}✖{C.RESET} {msg}")
 
 
 def warning(msg: str):
+    """Print ``msg`` prefixed with a yellow warning glyph."""
     print(f"  {C.YELLOW}⚠{C.RESET} {msg}")
 
 
 def info(msg: str):
+    """Print ``msg`` prefixed with a blue info glyph."""
     print(f"  {C.BLUE}ℹ{C.RESET} {msg}")
 
 
@@ -89,6 +95,8 @@ def info(msg: str):
 
 @dataclass
 class Repository:
+    """A GitHub repository record as fetched from ``gh repo list``."""
+
     name: str
     full_name: str
     owner: str
@@ -101,6 +109,7 @@ class Repository:
     pushed_at: str = ""
 
     def to_dict(self) -> dict:
+        """Serialize to the camelCase JSON shape consumed by the HTML form's JS."""
         return {
             "name": self.name,
             "full_name": self.full_name,
@@ -121,6 +130,11 @@ class Repository:
 
 
 def run_gh(args: list[str]) -> tuple[int, str, str]:
+    """Run the ``gh`` CLI with ``args``; returns ``(returncode, stdout, stderr)``.
+
+    Returns ``(1, "", "gh CLI not found")`` when ``gh`` is not on PATH instead
+    of raising.
+    """
     try:
         result = subprocess.run(
             ["gh"] + args, capture_output=True, text=True, check=False
@@ -131,6 +145,7 @@ def run_gh(args: list[str]) -> tuple[int, str, str]:
 
 
 def check_gh_auth() -> bool:
+    """Return True when ``gh auth status`` succeeds (CLI authenticated)."""
     code, _, _ = run_gh(["auth", "status"])
     return code == 0
 
@@ -174,11 +189,13 @@ def fetch_repos(owner: str) -> list[Repository]:
 
 
 def check_repo_exists(repo: str) -> bool:
+    """Return True when ``gh repo view`` resolves ``repo`` (``owner/name``)."""
     code, _, _ = run_gh(["repo", "view", repo])
     return code == 0
 
 
 def delete_repo(repo: str) -> tuple[bool, str]:
+    """Delete ``repo`` via ``gh repo delete --yes``; returns ``(ok, message)``."""
     code, _out, err = run_gh(["repo", "delete", repo, "--yes"])
     return code == 0, err.strip() if code != 0 else "Deleted"
 
@@ -186,6 +203,7 @@ def delete_repo(repo: str) -> tuple[bool, str]:
 def transfer_repo(
     source: str, target_owner: str, new_name: str | None = None
 ) -> tuple[bool, str]:
+    """Transfer ``source`` to ``target_owner`` via the GitHub API, keeping fork lineage."""
     args = [
         "api",
         f"repos/{source}/transfer",
@@ -201,6 +219,7 @@ def transfer_repo(
 
 
 def set_repo_visibility(repo: str, private: bool) -> tuple[bool, str]:
+    """Set ``repo`` visibility to private or public via ``gh repo edit``."""
     visibility = "private" if private else "public"
     code, _, err = run_gh(["repo", "edit", repo, f"--visibility={visibility}"])
     return code == 0, err.strip() if code != 0 else f"Set to {visibility}"
@@ -274,6 +293,7 @@ def clean_transfer(
 
 
 def filter_repos(repos: list[Repository], pattern: str) -> list[Repository]:
+    """Filter ``repos`` by name: ``~regex``, glob (``*``/``?``), or plain substring."""
     if not pattern:
         return repos
     pattern = pattern.strip()
@@ -296,6 +316,11 @@ def filter_repos(repos: list[Repository], pattern: str) -> list[Repository]:
 def generate_html(
     repos: list[Repository], orgs: list[str], timestamp: str, port: int | None = None
 ) -> str:
+    """Render the self-contained interactive HTML form embedding ``repos`` as JSON.
+
+    When ``port`` is set, the page polls ``/api/repos`` on that port for a
+    live refresh button; otherwise it is a static snapshot.
+    """
     repos_json = json.dumps([r.to_dict() for r in repos])
     orgs_options = "".join(f"<option>{o}</option>" for o in orgs)
 
@@ -600,10 +625,13 @@ init();
 
 
 class RepoHandler(http.server.SimpleHTTPRequestHandler):
+    """Minimal local HTTP handler serving the generated form and a JSON repo API."""
+
     repos_data: ClassVar[list[dict]] = []
     html_content: ClassVar[str] = ""
 
     def do_GET(self):
+        """Serve the HTML form at ``/`` and repo JSON at ``/api/repos``; 404 otherwise."""
         if self.path == "/":
             self.send_response(200)
             self.send_header("Content-type", "text/html")
@@ -619,10 +647,12 @@ class RepoHandler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404)
 
     def log_message(self, format, *args):
-        pass  # Suppress logs
+        """Suppress the default per-request access log line."""
+        # Suppress logs
 
 
 def serve_form(html: str, repos: list[dict], port: int = 8765):
+    """Serve ``html``/``repos`` on ``port``, open the browser, and block until Ctrl+C."""
     RepoHandler.html_content = html
     RepoHandler.repos_data = repos
 
@@ -644,6 +674,11 @@ def serve_form(html: str, repos: list[dict], port: int = 8765):
 
 
 def execute_operations(json_path: str, dry_run: bool = False) -> int:
+    """Run the delete/transfer/clean actions from a generated JSON plan file.
+
+    Returns 0 if every operation succeeded, 1 if any failed. ``dry_run``
+    only prints what would happen without calling ``gh``/``git``.
+    """
     with open(json_path) as f:
         data = json.load(f)
 
@@ -723,6 +758,7 @@ def execute_operations(json_path: str, dry_run: bool = False) -> int:
 
 
 def main():
+    """CLI entry point: dispatch to execute/list/delete/transfer or form-generation mode."""
     parser = argparse.ArgumentParser(
         description="GitHub Repository Transfer Tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,

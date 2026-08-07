@@ -241,6 +241,7 @@ class TransferTabIdentity:
     tab_instance_id: str
 
     def projection(self) -> dict[str, Any]:
+        """JSON-serializable form of this tab identity."""
         return {
             "session": self.session,
             "name": self.name,
@@ -362,6 +363,7 @@ class TriageGcResult:
 
 
 def _is_hex(value: Any, length: int) -> TypeGuard[str]:
+    """Whether ``value`` is a lowercase/uppercase hex string of exact ``length``."""
     return (
         isinstance(value, str)
         and len(value) == length
@@ -370,6 +372,12 @@ def _is_hex(value: Any, length: int) -> TypeGuard[str]:
 
 
 def _safe_run_id(value: Any) -> str:
+    """Validate a run id is a bare path-segment string; raise otherwise.
+
+    Rejects ``.``/``..``, any path separator, and anything that would resolve
+    to a different name once wrapped in ``Path`` — a run id is used to build
+    filesystem paths under the control plane, so it must never traverse.
+    """
     if not isinstance(value, str):
         raise TransferProofError(f"invalid run id type: {type(value).__name__}")
     run_id = value.strip()
@@ -385,6 +393,7 @@ def _safe_run_id(value: Any) -> str:
 
 
 def _canonical_root(control_plane: Path) -> Path:
+    """Resolve ``control_plane`` to its real directory; raise if it is unusable."""
     try:
         root = control_plane.resolve(strict=True)
     except OSError as error:
@@ -428,6 +437,7 @@ def _read_bound_file(path: Path, root: Path, label: str) -> bytes:
 
 
 def _json_object(data: bytes, label: str) -> dict[str, Any]:
+    """Parse ``data`` as a non-empty JSON object, or raise ``TransferProofError``."""
     try:
         payload = json.loads(data)
     except (UnicodeError, json.JSONDecodeError) as error:
@@ -444,6 +454,11 @@ def _tab_identity(
     expected_session: str,
     expected_name: str,
 ) -> TransferTabIdentity:
+    """Parse and validate one tab identity block against its expected session/name.
+
+    Raises ``TransferProofError`` on any missing, mistyped, or mismatched field —
+    the caller never receives a partially-trusted identity.
+    """
     if not isinstance(raw, Mapping):
         raise TransferProofError(f"{label} identity is missing")
     tab_id = raw.get("id")
@@ -471,6 +486,7 @@ def _tab_identity(
 
 
 def _runtime_origin(payload: Mapping[str, Any]) -> tuple[str, str]:
+    """Extract non-empty ``(origin_session, origin_tab)`` from runtime meta."""
     raw_session = payload.get("origin_session")
     raw_tab = payload.get("origin_tab")
     if not isinstance(raw_session, str) or not isinstance(raw_tab, str):
@@ -494,6 +510,7 @@ def _normalized_command(payload: Mapping[str, Any]) -> tuple[str, ...]:
 
 
 def _normalized_meta_string(payload: Mapping[str, Any], *names: str) -> str:
+    """First non-blank stripped string found in ``payload`` across ``names``."""
     for name in names:
         value = payload.get(name)
         if isinstance(value, str) and value.strip():
@@ -809,6 +826,12 @@ def _vc_frame_transfer_lock_path(
     *,
     create_parents: bool,
 ) -> tuple[Path, Path]:
+    """Resolve ``(root, transfer.lock path)`` for this run, verifying canonical dirs.
+
+    With ``create_parents=True``, missing ``finished_runs``/``finished_runs/<run>``
+    directories are created (mode 0o700); otherwise a missing directory is
+    tolerated and only checked when present.
+    """
     root = _canonical_root(control_plane)
     run_id = _safe_run_id(runtime_payload.get("run_id"))
     finished_root = root / "finished_runs"
@@ -837,6 +860,11 @@ def _vc_frame_transfer_lock_path(
 
 
 def _validate_open_transfer_lock(path: Path, root: Path, descriptor: int) -> None:
+    """Raise unless the already-open ``descriptor`` is exactly ``path``'s regular file.
+
+    Guards the classic TOCTOU: the path may have been swapped for a symlink or a
+    different inode between resolution and the ``open`` call this validates.
+    """
     opened = os.fstat(descriptor)
     resolved = path.resolve(strict=True)
     resolved.relative_to(root)
@@ -1028,6 +1056,7 @@ class RunClassification:
 
 
 def _attention(reason: str) -> RunClassification:
+    """Shorthand for a ``needs_attention`` verdict carrying its evidence string."""
     return RunClassification(VERDICT_NEEDS_ATTENTION, reason)
 
 
@@ -1069,6 +1098,12 @@ def _normalize_axis_value(raw: Any) -> str | None:
 
 
 def _kernel_axes_from_mapping(source: Mapping[str, Any]) -> KernelAxes:
+    """Read the three kernel axes off a mapping, patching a legacy status field.
+
+    A launched/running ``execution_state`` paired with top-level ``status ==
+    "failed"`` is corrected to ``execution_state == "failed"`` — older receipts
+    predate the execution axis being written accurately at failure time.
+    """
     execution = _normalize_axis_value(source.get("execution_state"))
     if (
         execution in ("launched", "running")
@@ -1313,6 +1348,7 @@ class RunSignals:
     report_frontmatter_ok: bool | None = None
 
     def classify(self) -> RunClassification:
+        """Classify this signal bundle via :func:`classify_run`."""
         return classify_run(
             self.exit_code,
             self.run_state,
@@ -1495,6 +1531,7 @@ class TriageOutcome:
     verdict_degraded: str = ""
 
     def receipt(self) -> dict[str, Any]:
+        """Field set to merge into meta.json to durably record this outcome."""
         payload: dict[str, Any] = {
             "triage": self.outcome,
             "triage_pending": self.pending,
@@ -1531,12 +1568,18 @@ class TriageSweepReport:
 
     @property
     def ok(self) -> bool:
+        """Whether the sweep ran clean: no errors and the full page was scanned."""
         return not self.errors and not self.truncated
 
 
 def _settlement_identity(
     payload: Mapping[str, Any],
 ) -> tuple[int, str, str] | None:
+    """Extract ``(revision, verdict, tui)`` from the runtime's own settlement fields.
+
+    Returns ``None`` unless the top-level fields are exactly typed and, when a
+    nested ``settlement`` block is also present, agree with it field-for-field.
+    """
     revision = payload.get("settlement_revision")
     verdict = payload.get("settlement_verdict")
     tui = payload.get("settlement_tui")
@@ -1571,6 +1614,11 @@ def _has_settlement_material(payload: Mapping[str, Any]) -> bool:
 def _triage_settlement_identity(
     payload: Mapping[str, Any],
 ) -> tuple[int, str, str] | None:
+    """Extract the settlement ``(revision, verdict, tui)`` triage last recorded.
+
+    Sibling of :func:`_settlement_identity` but reads the ``triage_settlement_*``
+    mirror fields written by this module, not the runtime's own settlement.
+    """
     revision = payload.get("triage_settlement_revision")
     verdict = payload.get("triage_settlement_verdict")
     tui = payload.get("triage_settlement_tui")
@@ -1753,6 +1801,7 @@ def plan_triage(
     env = os.environ if env is None else env
 
     def _env(*names: str) -> str:
+        """First non-blank stripped value found in ``env`` across ``names``."""
         for name in names:
             value = str(env.get(name, "") or "").strip()
             if value:
@@ -1769,6 +1818,7 @@ def plan_triage(
         return TriagePlan(should_run=False, skip_reason="no_run_id")
 
     def _meta_str(*names: str) -> str:
+        """First non-blank stripped value found in ``meta`` across ``names``."""
         for name in names:
             value = str(meta.get(name, "") or "").strip()
             if value:
@@ -1888,6 +1938,11 @@ def plan_triage(
 
 
 def _resolve_binary(env: Mapping[str, str]) -> str:
+    """Find the vc-frame binary: explicit env override, else PATH lookup.
+
+    Returns ``""`` when neither resolves, so callers treat it as "not available"
+    rather than raising.
+    """
     from shutil import which
 
     explicit = str(env.get("VIBECRAFTED_VC_FRAME_BIN", "") or "").strip()
@@ -1939,6 +1994,12 @@ def _default_runner(
     inherited_lock_fd: int | None = None,
     control_plane: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    """Default ``vc-frame triage-run`` invoker: a 120s subprocess with captured output.
+
+    When ``inherited_lock_fd`` is given, passes it through to the child via
+    ``pass_fds`` and injects ``--transfer-lock-fd``/``VIBECRAFTED_CONTROL_PLANE``
+    so vc-frame inherits the already-held transfer lock instead of re-acquiring it.
+    """
     child_env: dict[str, str] | None = None
     pass_fds: tuple[int, ...] = ()
     if inherited_lock_fd is not None:
@@ -2047,6 +2108,7 @@ def _canonical_runtime_meta(
     control_plane: Path,
     run_id: str,
 ) -> Path:
+    """The one canonical ``runtime_runs/<run_id>/meta.json`` path for this run."""
     return control_plane / "runtime_runs" / run_id / "meta.json"
 
 
@@ -2070,12 +2132,16 @@ def _runtime_meta_identity_is_exact(
 
 
 class _TriageCallable(Protocol):
+    """Call signature shared by :func:`triage_finished_run` and its wrapper."""
+
     def __call__(
         self,
         meta_path: str | os.PathLike[str],
         env: Mapping[str, str] | None = None,
         runner: Callable[..., Any] | None = None,
-    ) -> TriageOutcome: ...
+    ) -> TriageOutcome:
+        """Triage the run named by ``meta_path``, returning its recorded outcome."""
+        ...
 
 
 def _serialized_triage_call(
@@ -2096,6 +2162,7 @@ def _serialized_triage_call(
         env: Mapping[str, str] | None = None,
         runner: Callable[..., Any] | None = None,
     ) -> TriageOutcome:
+        """Acquire the run lock, then delegate to the wrapped triage function."""
         effective_env = os.environ if env is None else env
         meta = Path(meta_path)
         try:
@@ -2557,7 +2624,14 @@ def _run_triage(
     inherited_lock_fd: int | None = None,
     control_plane: Path | None = None,
 ) -> TriageOutcome:
+    """Invoke ``vc-frame triage-run`` for one already-decided destination.
+
+    Assumes the caller has already persisted the pending intent; this only runs
+    the external process and turns its result into a :class:`TriageOutcome`.
+    """
+
     def _error(reason: str) -> TriageOutcome:
+        """Build an ``error`` outcome carrying the classifier's verdict as context."""
         return TriageOutcome(
             OUTCOME_ERROR,
             reason=reason,
@@ -2607,6 +2681,7 @@ def _record_retryable_triage_error(
     """Keep the pre-transfer intent pending while recording the last failure."""
 
     def _merge(current: dict[str, Any]) -> dict[str, Any] | None:
+        """Attach the last error to a still-pending intent; abort if it moved on."""
         if (
             current.get("run_id") != run_id
             or current.get("triage_pending") is not True
@@ -2644,6 +2719,11 @@ def _record_receipt(
     transfer_keys = {"triage_transfer_receipt", "triage_transfer"}
 
     def _merge(current: dict[str, Any]) -> dict[str, Any] | None:
+        """Fold the outcome, settlement, and proof-linkage fields into ``current``.
+
+        Returns ``None`` (abort the mutation) if the current settlement is
+        unreadable or disagrees with the proof/outcome being recorded.
+        """
         updates = dict(receipt_updates)
         settlement = _settlement_identity(current)
         has_settlement = _has_settlement_material(current)
@@ -2789,6 +2869,7 @@ def record_triage_gc_result(
     projection = result.projection()
 
     def _merge(current: dict[str, Any]) -> dict[str, Any] | None:
+        """Record the GC attempt only if it still targets the bound transfer identity."""
         transfer = current.get("triage_transfer")
         if (
             current.get("run_id") != run_id
@@ -2883,6 +2964,7 @@ def _rotating_sweep_candidates(
     cursor_path = root / _TRIAGE_SWEEP_CURSOR_FILE
 
     def _rotate(current: dict[str, Any]) -> dict[str, Any]:
+        """Advance the durable cursor past the reserved page and record it."""
         cursor = current.get("cursor")
         if not isinstance(cursor, str):
             cursor = ""
@@ -3017,6 +3099,11 @@ def reconcile_untriaged_runs(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry point: triage one run's meta.json, or sweep a control plane.
+
+    Always returns 0 — triage failures are recorded in the receipt, never
+    surfaced as a nonzero process exit.
+    """
     parser = argparse.ArgumentParser(
         prog="vibecrafted_core.run_triage",
         description="Transfer a finished run's tab into its vc-frame status bucket.",

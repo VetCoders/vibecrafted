@@ -66,11 +66,14 @@ class SettlementHistoryError(RuntimeError):
 
 @dataclass(frozen=True)
 class SettlementCounts:
+    """Immutable f/x/n bucket counts, validated to stay within the u64 contract."""
+
     f: int = 0
     x: int = 0
     n: int = 0
 
     def __post_init__(self) -> None:
+        """Refuse negative, non-int, or u64-overflowing bucket values."""
         values = (self.f, self.x, self.n)
         if any(type(value) is not int or not 0 <= value <= MAX_U64 for value in values):
             raise SettlementHistoryError("settlement counts exceed the u64 contract")
@@ -79,9 +82,11 @@ class SettlementCounts:
 
     @property
     def total(self) -> int:
+        """Return the sum of all three buckets."""
         return self.f + self.x + self.n
 
     def increment(self, tui: str) -> SettlementCounts:
+        """Return a new ``SettlementCounts`` with one tui bucket incremented by one."""
         if tui not in _TUI_KEYS:
             raise SettlementHistoryError(f"invalid settlement tui {tui!r}")
         return SettlementCounts(
@@ -91,10 +96,12 @@ class SettlementCounts:
         )
 
     def to_payload(self) -> dict[str, int]:
+        """Serialize the four-field f/x/n/total wire shape."""
         return {"f": self.f, "x": self.x, "n": self.n, "total": self.total}
 
     @classmethod
     def from_payload(cls, payload: object) -> SettlementCounts:
+        """Parse and validate a payload's f/x/n/total shape, checking total agrees."""
         if not isinstance(payload, Mapping) or set(payload) != {
             "f",
             "x",
@@ -123,6 +130,8 @@ class SettlementCounts:
 
 @dataclass(frozen=True)
 class SettlementHistorySnapshot:
+    """A verified projection of the settlement ledger, generation-scoped and monotonic."""
+
     generation: str
     sequence: int
     historical_transitions: SettlementCounts
@@ -134,6 +143,7 @@ class SettlementHistorySnapshot:
     history_gaps: tuple[dict[str, object], ...]
 
     def to_payload(self) -> dict[str, object]:
+        """Serialize the full rich document, including gap evidence and semantics."""
         return {
             "schema": SETTLEMENT_HISTORY_SCHEMA,
             "authority": SETTLEMENT_HISTORY_AUTHORITY,
@@ -149,6 +159,7 @@ class SettlementHistorySnapshot:
         }
 
     def to_json(self) -> str:
+        """Serialize ``to_payload`` as canonical (sorted, compact) JSON."""
         return json.dumps(
             self.to_payload(),
             ensure_ascii=False,
@@ -170,6 +181,7 @@ class SettlementHistorySnapshot:
         }
 
     def to_wire_json(self) -> str:
+        """Serialize ``to_wire_payload`` as canonical (sorted, compact) JSON."""
         return json.dumps(
             self.to_wire_payload(),
             ensure_ascii=False,
@@ -179,6 +191,12 @@ class SettlementHistorySnapshot:
 
     @classmethod
     def from_payload(cls, payload: object) -> SettlementHistorySnapshot:
+        """Parse and fully re-verify a rich document's shape and internal invariants.
+
+        Raises ``SettlementHistoryError`` on any structural, semantic, or
+        cross-field inconsistency (e.g. gap counts, completeness flags, bucket
+        sums) — this is the sole trusted decode path for a persisted snapshot.
+        """
         if not isinstance(payload, Mapping) or set(payload) != {
             "schema",
             "authority",
@@ -286,6 +304,8 @@ class SettlementHistorySnapshot:
 
 @dataclass(frozen=True)
 class DeliveryReport:
+    """Outcome of one publisher flush attempt against vc-frame plugin sessions."""
+
     attempted_sessions: tuple[str, ...] = ()
     delivered_sessions: tuple[str, ...] = ()
     failed_sessions: tuple[str, ...] = ()
@@ -296,11 +316,14 @@ class DeliveryReport:
 
 @dataclass(frozen=True)
 class _GenerationState:
+    """Tracks which projection lineage (generation) is currently authoritative."""
+
     generation: str
     continuity_gaps: int
     legacy: bool = False
 
     def to_payload(self) -> dict[str, object]:
+        """Serialize the generation marker written to disk."""
         return {
             "schema": SETTLEMENT_HISTORY_GENERATION_SCHEMA,
             "authority": SETTLEMENT_HISTORY_AUTHORITY,
@@ -312,6 +335,11 @@ class _GenerationState:
 def _canonical_history_gaps(
     payload: object,
 ) -> tuple[dict[str, object], ...]:
+    """Validate and canonicalize a history-gap-evidence list, one kind per entry.
+
+    Raises ``SettlementHistoryError`` if the shape or any known gap kind's
+    required fields are missing or malformed, or the kind is unrecognized.
+    """
     if not isinstance(payload, Sequence) or isinstance(payload, (str, bytes)):
         raise SettlementHistoryError("settlement history gap evidence is invalid")
     canonical: list[dict[str, object]] = []
@@ -370,6 +398,7 @@ def _canonical_history_gaps(
 
 
 def _history_gap_units(history_gaps: Sequence[Mapping[str, object]]) -> int:
+    """Sum the per-gap ``count`` fields (defaulting to 1) into a total gap unit count."""
     units = 0
     for gap in history_gaps:
         count = gap.get("count")
@@ -384,6 +413,12 @@ def _ledger_projection(
     *,
     generation: str,
 ) -> SettlementHistorySnapshot:
+    """Verify a raw ledger snapshot and project it into a ``SettlementHistorySnapshot``.
+
+    Cross-checks declared counts against the actual transition/latest-run
+    records before trusting them; raises ``SettlementHistoryError`` on any
+    shape or bucket-total mismatch.
+    """
     if not isinstance(ledger, Mapping) or set(ledger) != {
         "schema",
         "ledger_schema",
@@ -508,18 +543,22 @@ def _is_replaced_snapshot_projection(payload: Mapping[str, Any]) -> bool:
 
 
 def default_settlement_history_path() -> Path:
+    """Return the canonical on-disk path for the settlement history projection."""
     return vibecrafted_home() / "control_plane" / "settlement_history.json"
 
 
 def default_delivery_outbox_path() -> Path:
+    """Return the canonical on-disk path for the pending vc-frame delivery outbox."""
     return vibecrafted_home() / "control_plane" / "settlement_history_delivery.json"
 
 
 def default_generation_path() -> Path:
+    """Return the canonical on-disk path for the projection generation marker."""
     return vibecrafted_home() / "control_plane" / "settlement_history_generation.json"
 
 
 def _read_json(path: Path) -> dict[str, Any]:
+    """Read a JSON object file, returning {} if missing; raise on invalid content."""
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -532,6 +571,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _fsync_directory(path: Path) -> None:
+    """Fsync a directory so a preceding rename/create is durable across a crash."""
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     descriptor = os.open(path, flags)
     try:
@@ -541,6 +581,7 @@ def _fsync_directory(path: Path) -> None:
 
 
 def _write_json_durable(path: Path, payload: Mapping[str, object]) -> None:
+    """Atomically write JSON via temp-file + fsync + rename + directory fsync."""
     path.parent.mkdir(parents=True, exist_ok=True)
     encoded = (
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -568,6 +609,7 @@ def _write_json_durable(path: Path, payload: Mapping[str, object]) -> None:
 
 @contextlib.contextmanager
 def _history_lock(root: Path):
+    """Hold an exclusive, ownership-validated flock guarding history/generation writes."""
     root.mkdir(parents=True, exist_ok=True)
     path = root / ".settlement-history.lock"
     flags = os.O_RDWR | os.O_CREAT
@@ -590,6 +632,7 @@ def _history_lock(root: Path):
 
 
 def _load_generation_locked(root: Path) -> _GenerationState | None:
+    """Read and validate the generation marker; caller must hold ``_history_lock``."""
     path = root / "settlement_history_generation.json"
     payload = _read_json(path)
     if not payload:
@@ -643,6 +686,7 @@ def _load_generation_locked(root: Path) -> _GenerationState | None:
 
 
 def _write_generation_locked(root: Path, state: _GenerationState) -> None:
+    """Durably persist the generation marker; caller must hold ``_history_lock``."""
     _write_json_durable(
         root / "settlement_history_generation.json",
         state.to_payload(),
@@ -652,6 +696,7 @@ def _write_generation_locked(root: Path, state: _GenerationState) -> None:
 def _load_or_create_generation_locked(
     root: Path,
 ) -> _GenerationState:
+    """Return the existing generation marker, minting and persisting a fresh one if absent."""
     state = _load_generation_locked(root)
     if state is None:
         state = _GenerationState(
@@ -666,6 +711,7 @@ def _rotate_generation_locked(
     root: Path,
     prior: _GenerationState,
 ) -> _GenerationState:
+    """Mint a new generation, incrementing the continuity-gap counter it replaces."""
     if prior.continuity_gaps >= MAX_U64:
         raise SettlementHistoryError(
             "settlement history generation continuity exceeds u64"
@@ -734,6 +780,7 @@ Clock = Callable[[], float]
 def _default_runner(
     argv: Sequence[str], *, timeout: float
 ) -> subprocess.CompletedProcess[str]:
+    """Run ``argv`` capturing output as text; the publisher's default ``Runner``."""
     return subprocess.run(
         list(argv),
         capture_output=True,
@@ -744,6 +791,7 @@ def _default_runner(
 
 
 def _resolve_vc_frame_binary(env: Mapping[str, str]) -> str:
+    """Return the vc-frame binary path from env override or PATH, else "" if unresolvable."""
     explicit = str(env.get("VIBECRAFTED_VC_FRAME_BIN") or "").strip()
     if explicit:
         return explicit if Path(explicit).is_file() else ""
@@ -751,6 +799,11 @@ def _resolve_vc_frame_binary(env: Mapping[str, str]) -> str:
 
 
 def _running_session_names(output: str) -> tuple[str, ...]:
+    """Parse ``vc-frame list-sessions`` output into distinct live session names.
+
+    Skips lines flagged ``(EXITED - attach to resurrect)`` — those sessions are
+    not running and cannot receive a pipe delivery.
+    """
     sessions: list[str] = []
     for raw_line in output.splitlines():
         line = raw_line.strip()
@@ -777,6 +830,7 @@ class SettlementHistoryPublisher:
         retry_backoff: float = 300.0,
         clock: Clock = time.monotonic,
     ) -> None:
+        """Configure paths, runner, and retry/backoff policy for this publisher."""
         if retry_backoff <= 0:
             raise ValueError("settlement delivery retry backoff must be positive")
         self.root = (
@@ -808,6 +862,11 @@ class SettlementHistoryPublisher:
         self._periodic_thread: threading.Thread | None = None
 
     def stage(self, snapshot: SettlementHistorySnapshot) -> None:
+        """Durably queue a snapshot for delivery, refusing a stale/regressed sequence.
+
+        Raises ``SettlementHistoryError`` if the generation is stale or the
+        outbox diverges from this snapshot at the same sequence.
+        """
         snapshot = SettlementHistorySnapshot.from_payload(snapshot.to_payload())
         document = {
             "schema": DELIVERY_OUTBOX_SCHEMA,
@@ -857,6 +916,11 @@ class SettlementHistoryPublisher:
                 _write_json_durable(self.outbox_path, document)
 
     def flush(self) -> DeliveryReport:
+        """Deliver the staged outbox snapshot to every running vc-frame plugin session.
+
+        Clears the outbox only once every eligible session accepted delivery;
+        failed/deferred sessions get a per-session retry backoff.
+        """
         with _history_lock(self.root):
             document = _read_json(self.outbox_path)
             if not document:
@@ -970,6 +1034,7 @@ class SettlementHistoryPublisher:
         )
 
     def refresh_and_flush(self) -> DeliveryReport:
+        """Recompute the ledger projection, stage it, and flush it to vc-frame."""
         snapshot = reconcile_settlement_history(
             control_plane_root=self.root,
             output_path=self.history_path,
@@ -1024,6 +1089,7 @@ class SettlementHistoryPublisher:
         stop: threading.Event,
         interval: float,
     ) -> None:
+        """Background loop: request a refresh every ``interval`` until ``stop`` is set."""
         try:
             while not stop.wait(interval):
                 self.request_refresh()
@@ -1044,6 +1110,7 @@ class SettlementHistoryPublisher:
         return not thread.is_alive()
 
     def _drain_refresh_requests(self) -> None:
+        """Background worker: coalesce pending refresh requests into one pass at a time."""
         while True:
             with self._refresh_lock:
                 if not self._refresh_requested:

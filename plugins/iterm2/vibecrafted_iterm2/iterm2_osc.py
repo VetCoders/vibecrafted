@@ -31,6 +31,7 @@ ST = BEL  # OSC string terminator; ESC \ also valid
 
 
 def _b64(value: str) -> str:
+    """Base64-encode `value` as UTF-8 for OSC payload embedding."""
     return base64.b64encode(value.encode("utf-8")).decode("ascii")
 
 
@@ -268,6 +269,7 @@ _ALL_BUILDERS: dict[str, tuple[Callable[..., str], list[str]]] = {
 
 
 def _cli(argv: list[str]) -> int:
+    """Dispatch a single OSC builder by name and print its escape sequence."""
     if not argv or argv[0] in ("-h", "--help"):
         print("Usage: python -m vibecrafted_iterm2.iterm2_osc <op> [args...]\n")
         print("Available ops:")

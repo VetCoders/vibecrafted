@@ -204,6 +204,32 @@ when `terminal` / `visible` was explicitly selected:
   Python terminal transport. Hosting session name is never hardcoded —
   it is the resolved `operator_session` already written to the launch log.
 
+### Launch-time variant — ambiguous NewTab ACK (G3b)
+
+Class 2 / G3 cover death of the **host**. This variant covers a **live**
+host where `action new-tab` applies the mutation but the oneshot completion
+channel times out under load (cold wasm plugin load on layout activation):
+
+- **Symptom**: `vc-frame --session <host> action new-tab ...` prints
+  `action 'NewTab' did not acknowledge completion within 25s` (or
+  `completion channel closed before acknowledgement` / outer `timed out
+after`). Observed first on `agy` terminal launches under a busy cockpit;
+  the same path is shared by `claude` / `codex` / `junie` / `grok`.
+- **Mechanism**: vc-frame server `CRITICAL_ACTION_COMPLETION_TIMEOUT` is
+  25s. The tab often _did_ open; the client still exits non-zero. A blind
+  retry would spawn a **second** worker tab for the same run.
+- **Caller-side contract** (central launcher — not agent-specific):
+  1. Detect ambiguous-ACK diagnostics on stderr (same predicates as
+     vc-frame triage `is_ambiguous_new_tab_failure`).
+  2. If the action carried `--name NAME`: `list-tabs` probe; if present →
+     treat as **success** (no second new-tab).
+  3. Else (or absent): brief backoff, **one** retry of the same argv.
+  4. After a second ACK failure: probe `--name` again before failing
+     loud into `SPAWN_VC_FRAME_LAST_ERROR` / control-plane `failed`.
+- **Surfaces**: `spawn_vc_frame_session_action` (bash scripts/lib + shell
+  twin), `_vc_frame_run_host_action` (Python). All `*_spawn.sh` agents
+  funnel through `spawn_launch` → this helper — no per-agent fork.
+
 ### Explicit terminal hosting — per-project worker sessions (G7)
 
 Ordinary workers have no host tab: they launch headless in their own process

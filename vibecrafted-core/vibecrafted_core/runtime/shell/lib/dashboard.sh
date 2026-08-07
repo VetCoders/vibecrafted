@@ -33,6 +33,72 @@ _vetcoders_dashboard_session_name() {
   printf '%s\n' "$base_session"
 }
 
+# Product lifecycle choke shared by shell `vc-start` and deck `cmd_start`.
+# Pins product config, projects Super/scripts when available, pokes control-plane
+# eye (best-effort). Never loads into ordinary PATH-only shells unless called.
+_vetcoders_product_entry_prepare() {
+  # Normalize ambient context first so frontier resolution is stable.
+  if declare -F _vetcoders_normalize_ambient_context >/dev/null 2>&1; then
+    _vetcoders_normalize_ambient_context || true
+  fi
+
+  # Sidecars include pin of VC_FRAME_CONFIG_DIR away from stock ~/.config/vc-frame.
+  if declare -F _vetcoders_load_frontier_sidecars >/dev/null 2>&1; then
+    _vetcoders_load_frontier_sidecars || true
+  elif declare -F _vetcoders_pin_vc_frame_config_dir >/dev/null 2>&1; then
+    _vetcoders_pin_vc_frame_config_dir || true
+  fi
+
+  # Explicit product roots if pin still empty/stale (bare shells, partial installs).
+  if [[ -z "${VC_FRAME_CONFIG_DIR:-}" || ! -f "${VC_FRAME_CONFIG_DIR%/}/config.kdl" ]]; then
+    local frontier="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier/vc-frame"
+    local view="${XDG_CONFIG_HOME:-$HOME/.config}/vc-frame"
+    if [[ -f "$frontier/config.kdl" ]]; then
+      export VC_FRAME_CONFIG_DIR="$frontier"
+    elif [[ -f "$view/config.kdl" ]]; then
+      export VC_FRAME_CONFIG_DIR="$view"
+    fi
+  fi
+
+  # Config projection (Super binds + operator scripts) — best effort.
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config; stage_vc_frame_config()" \
+      >/dev/null 2>&1 || true
+  fi
+
+  # Control-plane eye — best effort; never block cockpit if server is down.
+  if command -v vibecrafted >/dev/null 2>&1; then
+    vibecrafted server status >/dev/null 2>&1 || true
+  fi
+
+  export VIBECRAFTED_PRODUCT_ENTRY=1
+  return 0
+}
+
+# Probe printer for tests / doctor: env effects without attach/create.
+_vetcoders_product_entry_probe_print() {
+  local layout=""
+  if declare -F _vetcoders_dashboard_layout_file >/dev/null 2>&1; then
+    layout="$(_vetcoders_dashboard_layout_file operator 2>/dev/null || true)"
+  fi
+  if [[ -z "$layout" && -n "${VC_FRAME_CONFIG_DIR:-}" ]]; then
+    layout="${VC_FRAME_CONFIG_DIR%/}/layouts/operator.kdl"
+  fi
+  printf 'VIBECRAFTED_PRODUCT_ENTRY=%s\n' "${VIBECRAFTED_PRODUCT_ENTRY:-0}"
+  printf 'VC_FRAME_CONFIG_DIR=%s\n' "${VC_FRAME_CONFIG_DIR:-}"
+  if [[ -n "${VC_FRAME_CONFIG_DIR:-}" && -f "${VC_FRAME_CONFIG_DIR%/}/config.kdl" ]]; then
+    printf 'VC_FRAME_CONFIG_KDL=present\n'
+  else
+    printf 'VC_FRAME_CONFIG_KDL=missing\n'
+  fi
+  printf 'OPERATOR_LAYOUT=%s\n' "${layout:-}"
+  if [[ -n "$layout" && -f "$layout" ]]; then
+    printf 'OPERATOR_LAYOUT_PRESENT=1\n'
+  else
+    printf 'OPERATOR_LAYOUT_PRESENT=0\n'
+  fi
+}
+
 _vetcoders_launch_dashboard() {
   local PATH="${PATH:-}"
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
@@ -56,7 +122,7 @@ _vetcoders_launch_dashboard() {
       vc_frame_bin="$(_vetcoders_vc_frame_bin)" || {
         echo "vc-frame is required." >&2; return 1
       }
-      if [[ -n "${VC_FRAME+set}" ]]; then
+      if _vetcoders_in_vc_frame; then
         "$vc_frame_bin" action switch-session "${1:?session name required}"
       else
         "$vc_frame_bin" attach "${1:?session name required}"
@@ -69,7 +135,7 @@ _vetcoders_launch_dashboard() {
       vc_frame_bin="$(_vetcoders_vc_frame_bin)" || {
         echo "vc-frame is required." >&2; return 1
       }
-      if [[ -n "${VC_FRAME+set}" ]]; then
+      if _vetcoders_in_vc_frame; then
         "$vc_frame_bin" action switch-session "${1:?session name required}"
       else
         "$vc_frame_bin" attach "${1:?session name required}"
@@ -131,7 +197,10 @@ _vetcoders_launch_dashboard() {
 
   session_name="$(_vetcoders_dashboard_session_name "$layout_name")"
   state="$(_vetcoders_vc_frame_session_state "$session_name")"
-  [[ -n "${VC_FRAME_PANE_ID:-${ZELLIJ_PANE_ID:-}}" || -n "${VC_FRAME+set}" || -n "${ZELLIJ+set}" ]] && inside_vc_frame=1 || inside_vc_frame=0
+  # Trusted attached-context signal only: stale VC_FRAME/ZELLIJ leaks in a
+  # parent shell must not route new-tab/switch-session at a session this
+  # terminal is not actually attached to.
+  _vetcoders_in_vc_frame && inside_vc_frame=1 || inside_vc_frame=0
   current_session="${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
 
   if [[ "$layout_name" != "operator" && "$layout_name" != "dashboard" && "$state" == "live" ]]; then

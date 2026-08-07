@@ -1,7 +1,7 @@
 {
-    "mcpServers": {
-        "vibecrafted-mcp": {
-            "command": "/Users/tester/.local/share/vibecrafted/tools/vibecrafted-local/.venv/bin/vibecrafted-mcp"
-        }
+  "mcpServers": {
+    "vibecrafted-mcp": {
+      "command": "/Users/tester/.local/share/vibecrafted/tools/vibecrafted-local/.venv/bin/vibecrafted-mcp"
     }
+  }
 }

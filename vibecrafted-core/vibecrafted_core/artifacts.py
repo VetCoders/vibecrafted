@@ -1,3 +1,5 @@
+"""Validate a run's meta/report/transcript artifact triple, including report frontmatter."""
+
 from __future__ import annotations
 
 import json
@@ -8,6 +10,8 @@ from typing import Any
 
 @dataclass(frozen=True)
 class ArtifactValidation:
+    """Outcome of validating a run's meta/report/transcript artifacts on disk."""
+
     meta_path: Path | None
     report_path: Path | None
     transcript_path: Path | None
@@ -22,9 +26,11 @@ class ArtifactValidation:
 
     @property
     def ok(self) -> bool:
+        """True when validation produced no errors."""
         return not self.errors
 
     def as_payload(self) -> dict[str, Any]:
+        """Serialize the validation result to a plain JSON-able dict."""
         return {
             "meta": str(self.meta_path) if self.meta_path else None,
             "report": str(self.report_path) if self.report_path else None,
@@ -40,12 +46,14 @@ class ArtifactValidation:
 
 
 def _as_path(value: str | Path | None) -> Path | None:
+    """Coerce a str/Path/None into a Path, passing None through unchanged."""
     if value is None:
         return None
     return value if isinstance(value, Path) else Path(value)
 
 
 def _read_meta(path: Path | None) -> tuple[dict[str, Any], list[str], list[str]]:
+    """Read a meta.json file; returns ``(payload, errors, warnings)``, never raises."""
     if path is None:
         return {}, [], []
     if not path.exists():
@@ -60,6 +68,7 @@ def _read_meta(path: Path | None) -> tuple[dict[str, Any], list[str], list[str]]
 
 
 def _first_meta_path(meta: dict[str, Any], names: tuple[str, ...]) -> Path | None:
+    """Find the first path-valued field in ``meta`` (or its ``artifacts`` sub-dict) by ``names``."""
     for name in names:
         value = meta.get(name)
         if isinstance(value, str) and value:
@@ -74,6 +83,7 @@ def _first_meta_path(meta: dict[str, Any], names: tuple[str, ...]) -> Path | Non
 
 
 def _is_non_empty_file(path: Path | None) -> bool:
+    """True when ``path`` exists, is a regular file, and has non-zero size."""
     if path is None or not path.exists() or not path.is_file():
         return False
     try:
@@ -90,6 +100,12 @@ def validate_artifacts(
     require_report: bool = True,
     require_transcript_output: bool = False,
 ) -> ArtifactValidation:
+    """Validate a run's meta/report/transcript triple, including report frontmatter.
+
+    Report/transcript paths fall back to the ones declared in ``meta.json``
+    when not passed explicitly. A frontmatter contract failure invalidates
+    an otherwise non-empty report for board purposes.
+    """
     meta = _as_path(meta_path)
     meta_payload, errors, warnings = _read_meta(meta)
 

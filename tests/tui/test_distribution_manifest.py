@@ -86,6 +86,7 @@ def test_manifest_names_complete_runtime_and_forbidden_junk() -> None:
         ".backup",
         "tests",
         ".github",
+        ".env",
     } <= manifest.FORBIDDEN_COMPONENTS
 
 
@@ -120,6 +121,51 @@ def test_forbidden_artifact_filter_is_safe_for_runtime_subtrees() -> None:
 
     assert not manifest.path_is_included("SKILL.md")
     assert manifest.path_is_included("skills/vc-init/SKILL.md")
+
+
+def test_secret_env_files_are_forbidden_everywhere() -> None:
+    assert manifest.path_is_forbidden(".env")
+    assert manifest.path_is_forbidden("vibecrafted-vm/.env")
+    assert manifest.path_is_forbidden("vibecrafted-vm/.env.local")
+    assert manifest.path_is_forbidden("config/.env.production")
+    assert manifest.path_is_forbidden(".env/nested.txt")
+
+    assert not manifest.path_is_forbidden("vibecrafted-vm/.env.example")
+    assert not manifest.path_is_forbidden("templates/hooks/config/template.husky.env")
+
+    assert not manifest.path_is_included("vibecrafted-vm/.env")
+    assert manifest.path_is_included("vibecrafted-vm/.env.example")
+
+
+def test_validate_payload_rejects_ignored_env_secret(tmp_path: Path) -> None:
+    payload = tmp_path / "payload"
+    _minimal_payload(payload)
+    (payload / "vibecrafted-vm" / ".env").write_text(
+        "TAILSCALE_AUTHKEY=tskey-auth-FAKEFAKEFAKE\n", encoding="utf-8"
+    )
+
+    with pytest.raises(manifest.ManifestError) as exc_info:
+        manifest.validate_payload(payload)
+
+    assert "forbidden path: vibecrafted-vm/.env" in str(exc_info.value)
+
+
+def test_stage_payload_never_copies_env_secret(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "payload"
+    _minimal_payload(source)
+    (source / "vibecrafted-vm" / ".env").write_text(
+        "TAILSCALE_AUTHKEY=tskey-auth-FAKEFAKEFAKE\n", encoding="utf-8"
+    )
+    (source / "vibecrafted-vm" / ".env.example").write_text(
+        "TAILSCALE_AUTHKEY=\n", encoding="utf-8"
+    )
+
+    manifest.stage_payload(source, destination, mirror=True)
+
+    manifest.validate_payload(destination)
+    assert not (destination / "vibecrafted-vm" / ".env").exists()
+    assert (destination / "vibecrafted-vm" / ".env.example").is_file()
 
 
 def test_stage_payload_filters_junk_and_mirrors_destination(tmp_path: Path) -> None:

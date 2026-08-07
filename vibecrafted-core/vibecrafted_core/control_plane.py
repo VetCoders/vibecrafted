@@ -1,3 +1,7 @@
+"""Vibecrafted control plane: projects on-disk run artifacts (agent meta, locks,
+marbles state, event stream) into durable per-run snapshots, and provides the
+sync/lookup/await/liveness surface every dispatch verb reads and writes through."""
+
 from __future__ import annotations
 
 import argparse
@@ -5,9 +9,11 @@ import contextlib
 import datetime as dt
 import errno
 import fcntl
+import gzip
 import json
 import os
 import re
+import shutil
 import stat
 import time
 import uuid
@@ -138,6 +144,14 @@ EVENTS_ARCHIVE_MAX_FILES = 64
 EVENTS_ARCHIVE_MAX_FILES_ENV = "VIBECRAFTED_EVENTS_ARCHIVE_MAX_FILES"
 EVENTS_ARCHIVE_MAX_BYTES = 512 * 1024 * 1024
 EVENTS_ARCHIVE_MAX_BYTES_ENV = "VIBECRAFTED_EVENTS_ARCHIVE_MAX_BYTES"
+RUNTIME_TRANSCRIPT_MAX_BYTES = 16 * 1024 * 1024
+RUNTIME_TRANSCRIPT_MAX_BYTES_ENV = "VIBECRAFTED_RUNTIME_TRANSCRIPT_MAX_BYTES"
+RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES = 64 * 1024
+RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES_ENV = (
+    "VIBECRAFTED_RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES"
+)
+RUNTIME_TMP_MAX_AGE_SECONDS = 60 * 60
+CONTROL_PLANE_WRITE_RESERVE_BYTES = 1024 * 1024
 EVENT_SEGMENT_SCHEMA = "vibecrafted.event-stream-segment.v1"
 EVENT_MAX_LINE_BYTES = 256 * 1024
 RECENT_RUN_LIMIT = 12
@@ -146,6 +160,9 @@ MISSING_SESSION_IDS = {"", "pending", "none", "null", "unknown"}
 
 @dataclass(frozen=True)
 class RunStatus:
+    """Normalized view of one run, merged from whichever on-disk source (agent
+    meta, lock file, marbles state, event stream) currently describes it."""
+
     run_id: str
     state: str
     agent: str
@@ -173,6 +190,8 @@ class RunStatus:
 
 @dataclass(frozen=True)
 class Event:
+    """One control-plane event as returned to :func:`subscribe_events` callers."""
+
     ts: str
     run_id: str
     kind: str
@@ -183,6 +202,8 @@ class Event:
 
 @dataclass(frozen=True)
 class _EventSegment:
+    """One event-stream generation (active or archived) and its read cursor math."""
+
     path: Path
     epoch: str
     generation: int
@@ -192,6 +213,7 @@ class _EventSegment:
     modified_ns: int
 
     def cursor(self, offset: int) -> str:
+        """Build the opaque ``v2:<epoch>:<generation>:<offset>`` resume cursor."""
         return f"v2:{self.epoch}:{self.generation}:{max(offset, 0)}"
 
 
@@ -204,6 +226,7 @@ class DeliveryAxes:
     delivery_state: DeliveryState
 
     def to_payload(self) -> dict[str, str]:
+        """Flatten the three axes to their string values for snapshot storage."""
         return {
             "execution_state": self.execution_state.value,
             "proof_state": self.proof_state.value,
@@ -212,22 +235,27 @@ class DeliveryAxes:
 
 
 def control_plane_home() -> Path:
+    """Root directory of the control plane under VIBECRAFTED_HOME."""
     return vibecrafted_home() / "control_plane"
 
 
 def run_snapshot_dir() -> Path:
+    """Directory holding one JSON snapshot per run id."""
     return control_plane_home() / "runs"
 
 
 def event_stream_path() -> Path:
+    """Path to the active (current-generation) event stream file."""
     return control_plane_home() / "events.jsonl"
 
 
 def _event_lock_path() -> Path:
+    """Path to the lock file coordinating event-stream appends and rotation."""
     return control_plane_home() / ".events.lock"
 
 
 def _sync_lock_path() -> Path:
+    """Path to the lock file guarding the global (unscoped) board rebuild."""
     return control_plane_home() / ".sync.lock"
 
 
@@ -248,6 +276,7 @@ _DEFAULT_SYNC_LOCK_TIMEOUT_SECONDS = 15.0
 
 
 def _sync_lock_timeout_seconds() -> float:
+    """Configured budget for acquiring the global sync lock (env-overridable)."""
     raw = os.environ.get("VIBECRAFTED_SYNC_LOCK_TIMEOUT_S")
     if raw:
         try:
@@ -255,6 +284,28 @@ def _sync_lock_timeout_seconds() -> float:
         except ValueError:
             pass
     return _DEFAULT_SYNC_LOCK_TIMEOUT_SECONDS
+
+
+class ControlPlaneStorageError(RuntimeError):
+    """A control-plane write cannot be made safely with available storage."""
+
+
+def _storage_free_bytes(path: Path) -> int:
+    return int(shutil.disk_usage(path).free)
+
+
+def _ensure_storage_capacity(path: Path, required_bytes: int) -> None:
+    required = max(int(required_bytes), 0) + CONTROL_PLANE_WRITE_RESERVE_BYTES
+    try:
+        free = _storage_free_bytes(path.parent)
+    except OSError:
+        return
+    if free < required:
+        raise ControlPlaneStorageError(
+            "control-plane degraded: insufficient disk space for atomic write "
+            f"at {path} (need {required} bytes including reserve, {free} free). "
+            "Free disk space, then run `vibecrafted control-plane sync`."
+        )
 
 
 @contextlib.contextmanager
@@ -341,6 +392,7 @@ def _sync_lock(
 
 
 def _read_json(path: Path) -> dict[str, Any]:
+    """Load a JSON object from disk; {} on any read/parse failure."""
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -348,8 +400,10 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    """Write ``payload`` as JSON via a tmp-file + atomic rename (crash-safe)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     data = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    _ensure_storage_capacity(path, len(data.encode("utf-8")))
     # Atomic write (tmp + os.replace) so a crash mid-write or a concurrent
     # reader never sees a half-written, unparseable snapshot — _read_json would
     # silently degrade a truncated file to {} and lose the run's metadata.
@@ -357,6 +411,13 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     try:
         tmp.write_text(data, encoding="utf-8")
         os.replace(tmp, path)
+    except OSError as exc:
+        if exc.errno == errno.ENOSPC:
+            raise ControlPlaneStorageError(
+                "control-plane degraded: disk became full while atomically writing "
+                f"{path}. Free disk space, then run `vibecrafted control-plane sync`."
+            ) from exc
+        raise
     finally:
         with contextlib.suppress(OSError):
             tmp.unlink()
@@ -367,6 +428,7 @@ def _write_json_durable(path: Path, payload: dict[str, Any]) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     data = (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    _ensure_storage_capacity(path, len(data))
     tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
     descriptor = -1
     mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
@@ -380,6 +442,13 @@ def _write_json_durable(path: Path, payload: dict[str, Any]) -> None:
         descriptor = -1
         os.replace(tmp, path)
         _fsync_directory_durable(path.parent)
+    except OSError as exc:
+        if exc.errno == errno.ENOSPC:
+            raise ControlPlaneStorageError(
+                "control-plane degraded: disk became full while durably writing "
+                f"{path}. Free disk space, then run `vibecrafted control-plane sync`."
+            ) from exc
+        raise
     finally:
         if descriptor >= 0:
             os.close(descriptor)
@@ -457,6 +526,7 @@ def _write_run_snapshot(
 
 
 def _read_lines(path: Path) -> list[str]:
+    """Read a text file as a list of lines; [] on any OSError."""
     try:
         return path.read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -464,6 +534,7 @@ def _read_lines(path: Path) -> list[str]:
 
 
 def _parse_kv_file(path: Path) -> dict[str, str]:
+    """Parse a flat ``key=value`` per-line lock file into a dict."""
     payload: dict[str, str] = {}
     for line in _read_lines(path):
         if "=" not in line:
@@ -474,10 +545,12 @@ def _parse_kv_file(path: Path) -> dict[str, str]:
 
 
 def _safe_iso(raw: str | None) -> str:
+    """Normalize a possibly-None ISO timestamp to a plain string (never None)."""
     return raw or ""
 
 
 def _parse_iso(raw: str | None) -> dt.datetime | None:
+    """Parse an ISO 8601 (``Z``-suffixed or offset) timestamp; None if invalid/empty."""
     if not raw:
         return None
     try:
@@ -487,6 +560,7 @@ def _parse_iso(raw: str | None) -> dt.datetime | None:
 
 
 def _coerce_int(value: Any) -> int | None:
+    """Best-effort int coercion; rejects bools and non-numeric strings (returns None)."""
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
@@ -501,6 +575,7 @@ def _coerce_int(value: Any) -> int | None:
 def normalize_run_root(
     root: str | Path | None, fallback: str | Path | None = None
 ) -> str:
+    """Resolve a run's declared root (or ``fallback``) to a canonical absolute path."""
     raw = str(root or fallback or "").strip()
     if not raw:
         return ""
@@ -508,6 +583,7 @@ def normalize_run_root(
 
 
 def _is_pytest_temp_path(raw: Any) -> bool:
+    """True when a path lives under a pytest ``tmp_path`` fixture directory."""
     value = str(raw or "").strip()
     if not value:
         return False
@@ -535,6 +611,7 @@ def _event_has_test_provenance(event: dict[str, Any]) -> bool:
 
 
 def ensure_session_id(session_id: Any = "") -> str:
+    """Return ``session_id`` if it looks real, else mint a fresh uuid4 string."""
     raw = str(session_id or "").strip()
     if raw.lower() not in MISSING_SESSION_IDS:
         return raw
@@ -542,48 +619,170 @@ def ensure_session_id(session_id: Any = "") -> str:
 
 
 def _now() -> dt.datetime:
+    """Current UTC time (single point of truth for control-plane "now")."""
     return dt.datetime.now(dt.timezone.utc)
 
 
 def _configured_stale_heartbeat_seconds() -> int:
+    """Idle-heartbeat threshold before a run is considered stalled/dead."""
     return _configured_nonnegative_int(
         LIVENESS_STALE_HEARTBEAT_ENV, LIVENESS_STALE_HEARTBEAT_SECONDS
     )
 
 
 def _configured_run_gc_grace_seconds() -> int:
+    """Grace period past staleness before a dead run is eligible for gc."""
     return _configured_nonnegative_int(RUN_GC_GRACE_ENV, RUN_GC_GRACE_SECONDS)
 
 
 def _configured_snapshot_retention_seconds() -> int:
+    """Max age of a terminal snapshot before it is archived."""
     return _configured_nonnegative_int(
         RUN_SNAPSHOT_RETENTION_SECONDS_ENV, RUN_SNAPSHOT_RETENTION_SECONDS
     )
 
 
 def _configured_snapshot_retention_count() -> int:
+    """Max count of retained terminal snapshots before the oldest are archived."""
     return _configured_nonnegative_int(
         RUN_SNAPSHOT_RETENTION_COUNT_ENV, RUN_SNAPSHOT_RETENTION_COUNT
     )
 
 
 def _configured_events_rotate_bytes() -> int:
+    """Byte size threshold at which the active event stream rotates."""
     return _configured_nonnegative_int(EVENTS_ROTATE_BYTES_ENV, EVENTS_ROTATE_BYTES)
 
 
 def _configured_events_archive_max_files() -> int:
+    """Max retained archived event-stream generations."""
     return _configured_nonnegative_int(
         EVENTS_ARCHIVE_MAX_FILES_ENV, EVENTS_ARCHIVE_MAX_FILES
     )
 
 
 def _configured_events_archive_max_bytes() -> int:
+    """Max total bytes retained across archived event-stream generations."""
     return _configured_nonnegative_int(
         EVENTS_ARCHIVE_MAX_BYTES_ENV, EVENTS_ARCHIVE_MAX_BYTES
     )
 
 
+def _configured_runtime_transcript_max_bytes() -> int:
+    return _configured_nonnegative_int(
+        RUNTIME_TRANSCRIPT_MAX_BYTES_ENV, RUNTIME_TRANSCRIPT_MAX_BYTES
+    )
+
+
+def _configured_runtime_transcript_cold_tail_bytes() -> int:
+    return _configured_nonnegative_int(
+        RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES_ENV,
+        RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES,
+    )
+
+
+def _runtime_runs_dir() -> Path:
+    return control_plane_home() / "runtime_runs"
+
+
+def _runtime_run_is_terminal(run_dir: Path) -> bool:
+    payload = _read_json(run_dir / "meta.json")
+    state = str(payload.get("state") or payload.get("status") or "")
+    return state in FINAL_STATES or _coerce_int(payload.get("exit_code")) is not None
+
+
+def _maintain_runtime_run_storage() -> dict[str, int]:
+    """Bound terminal transcripts and remove stale interrupted-write debris.
+
+    Live transcripts are never replaced under an open writer. Once a run is
+    terminal, oversized transcripts keep the configured tail. Terminal logs
+    older than the snapshot retention window keep only a small readable cold
+    tail even when each file is individually below the size cap. Removed
+    prefixes are gzip-archived; archives age out after another retention window.
+    """
+
+    root = _runtime_runs_dir()
+    counts = {
+        "orphan_temps_removed": 0,
+        "transcripts_rotated": 0,
+        "archives_removed": 0,
+    }
+    if not root.is_dir():
+        return counts
+
+    now = time.time()
+    for temp in root.rglob("*.tmp.*"):
+        try:
+            if (
+                temp.is_file()
+                and now - temp.stat().st_mtime >= RUNTIME_TMP_MAX_AGE_SECONDS
+            ):
+                temp.unlink()
+                counts["orphan_temps_removed"] += 1
+        except OSError:
+            continue
+    for temp in run_snapshot_dir().glob("*.tmp.*"):
+        try:
+            if (
+                temp.is_file()
+                and now - temp.stat().st_mtime >= RUNTIME_TMP_MAX_AGE_SECONDS
+            ):
+                temp.unlink()
+                counts["orphan_temps_removed"] += 1
+        except OSError:
+            continue
+
+    max_bytes = _configured_runtime_transcript_max_bytes()
+    cold_tail_bytes = _configured_runtime_transcript_cold_tail_bytes()
+    retention = _configured_snapshot_retention_seconds()
+    for run_dir in root.iterdir():
+        if not run_dir.is_dir() or run_dir.name == "archive":
+            continue
+        archive = run_dir / "transcript.log.archive.gz"
+        try:
+            if archive.is_file() and now - archive.stat().st_mtime >= retention:
+                archive.unlink()
+                counts["archives_removed"] += 1
+        except OSError:
+            pass
+        transcript = run_dir / "transcript.log"
+        try:
+            if not transcript.is_file() or not _runtime_run_is_terminal(run_dir):
+                continue
+            transcript_stat = transcript.stat()
+            size = transcript_stat.st_size
+            target_bytes = max_bytes
+            if retention <= 0 or now - transcript_stat.st_mtime >= retention:
+                target_bytes = min(target_bytes, cold_tail_bytes)
+            if target_bytes <= 0 or size <= target_bytes:
+                continue
+            prefix_bytes = size - target_bytes
+            with transcript.open("rb") as source:
+                prefix = source.read(prefix_bytes)
+                tail = source.read()
+            _ensure_storage_capacity(archive, len(prefix) + len(tail))
+            with gzip.open(archive, "ab") as compressed:
+                compressed.write(prefix)
+            replacement = transcript.with_name(
+                f"{transcript.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
+            )
+            try:
+                replacement.write_bytes(tail)
+                os.replace(replacement, transcript)
+            finally:
+                with contextlib.suppress(OSError):
+                    replacement.unlink()
+            counts["transcripts_rotated"] += 1
+        except (OSError, ControlPlaneStorageError):
+            # Maintenance must not block projection; the next explicit write
+            # still fails with an actionable degraded-mode error if disk is full.
+            continue
+    return counts
+
+
 def _configured_nonnegative_int(env_name: str, default: int) -> int:
+    """Read a non-negative int from an env var, falling back to ``default`` on
+    a missing or unparsable value."""
     raw = os.environ.get(env_name)
     if not raw:
         return default
@@ -594,6 +793,8 @@ def _configured_nonnegative_int(env_name: str, default: int) -> int:
 
 
 def _state_health(state: str, updated_at: str) -> str:
+    """Derive a coarse health label ("final"/"stalled"/"unknown"/"active") from
+    lifecycle state and last-update recency."""
     updated_dt = _parse_iso(updated_at)
     if state in FINAL_STATES:
         return "final"
@@ -607,6 +808,8 @@ def _state_health(state: str, updated_at: str) -> str:
 
 
 def _operator_state(run: dict[str, Any]) -> str:
+    """Coarse operator-facing verdict ("stopped"/"blocked"/"failed"/"completed"/
+    "running") derived from state, artifact gate, and exit code."""
     state = str(run.get("state") or "")
     artifact_ok = run.get("artifact_ok")
     artifact_errors = list(run.get("artifact_errors") or [])
@@ -630,6 +833,7 @@ def _operator_state(run: dict[str, Any]) -> str:
 
 
 def _accepted_operator_stop_payload(run: dict[str, Any] | None) -> bool:
+    """True when a run's own record is an operator-accepted stop, not just any 'stopped'."""
     return bool(
         isinstance(run, dict)
         and str(run.get("state") or "") == "stopped"
@@ -640,6 +844,9 @@ def _accepted_operator_stop_payload(run: dict[str, Any] | None) -> bool:
 def _artifact_projection(
     run: dict[str, Any], previous: dict[str, Any] | None = None
 ) -> dict[str, Any]:
+    """Derive the artifact contract fields (ok/errors/gate, transcript growth,
+    heartbeat) for one run, honoring an accepted operator stop as evidence-exempt
+    and deferring the report gate while a run is still actively identity-bound."""
     report = str(run.get("latest_report") or "")
     transcript = str(run.get("latest_transcript") or "")
     state = str(run.get("state") or "")
@@ -648,8 +855,15 @@ def _artifact_projection(
     artifact_ok = run.get("artifact_ok")
     terminal_state = state in {"report_validated", "completed", "closed"}
     operator_stopped = _accepted_operator_stop_payload(run)
-    has_live_identity = bool(str(run.get("session_id") or "").strip())
-    defer_report_gate = state in ACTIVE_STATES and has_live_identity
+    # Report absence is not a failure while execution has fresh proof of life.
+    # Session identity may legitimately arrive after the first lifecycle/meta
+    # write, but a stale/dead `pid_alive` string must not defer the gate forever.
+    activity_age = _activity_age_seconds(run, _now())
+    defer_report_gate = (
+        state in ACTIVE_STATES
+        and activity_age is not None
+        and activity_age < _configured_stale_heartbeat_seconds()
+    )
 
     if operator_stopped:
         # Completion evidence is intentionally not owed after an operator stop.
@@ -725,6 +939,7 @@ def _artifact_projection(
 
 
 def _pid_is_alive(pid: int) -> bool:
+    """Signal-0 liveness probe for a pid; ``EPERM`` counts as alive, ``ESRCH`` as dead."""
     if pid <= 0:
         return False
     try:
@@ -743,6 +958,7 @@ def _pid_is_alive(pid: int) -> bool:
 
 
 def _heartbeat_age_seconds(run: dict[str, Any], now: dt.datetime) -> float | None:
+    """Seconds since the run's heartbeat (or updated_at fallback) stamp; None if unparsable."""
     heartbeat_at = _parse_iso(
         str(run.get("heartbeat_at") or run.get("updated_at") or "")
     )
@@ -843,6 +1059,13 @@ def _append_last_error(previous: str, explanation: str, *, limit: int = 4) -> st
 
 
 def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
+    """Settle a run whose launcher/worker evidence disagrees with its recorded state.
+
+    Prefers live worker process evidence over the ephemeral launcher pid; only
+    transitions to stalled/failed/gc/report_missing/report_invalid once the
+    worker is demonstrably gone and stale past the configured thresholds. See
+    the inline P0 comment below for why a dead launcher pid alone is never proof.
+    """
     result = dict(run)
     state = str(result.get("state") or "")
     launcher_pid = _coerce_int(result.get("launcher_pid"))
@@ -1002,6 +1225,8 @@ def _report_attests_completion(run: dict[str, Any]) -> bool:
 
 
 def _has_success_evidence(run: dict[str, Any]) -> bool:
+    """True when any independent signal (state, exit 0, completed_at, terminal
+    liveness, or a self-attesting report) proves the run finished successfully."""
     if run.get("artifact_ok") is False or run.get("artifact_errors"):
         return False
     exit_code = _coerce_int(run.get("exit_code"))
@@ -1091,6 +1316,8 @@ def _reconcile_repaired_report_terminal(run: dict[str, Any]) -> dict[str, Any]:
 
 
 def _failure_card(run: dict[str, Any]) -> dict[str, Any] | None:
+    """Build an operator-facing failure summary when the run has artifact errors
+    or sits in a blocked state; None when there is nothing to report."""
     errors = [str(item) for item in (run.get("artifact_errors") or []) if str(item)]
     state = str(run.get("state") or "")
     if not errors and state not in BLOCKED_STATES:
@@ -1114,6 +1341,7 @@ def _failure_card(run: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _has_signal_target(run: dict[str, Any]) -> bool:
+    """True when the run carries any pid/pgid value a stop/cancel could signal."""
     for key in ("worker_pgid", "worker_pid", "launcher_pid"):
         raw = run.get(key)
         if _coerce_int(raw):
@@ -1151,6 +1379,7 @@ def _await_process_is_alive(run: dict[str, Any]) -> bool:
 
 
 def _has_retry_spec(run: dict[str, Any]) -> bool:
+    """True when the run carries enough state (marbles skill, or prompt/file) to resume."""
     skill = str(run.get("skill") or "")
     if skill == "marbles":
         return True
@@ -1160,6 +1389,8 @@ def _has_retry_spec(run: dict[str, Any]) -> bool:
 
 
 def _lifecycle_controls(run: dict[str, Any]) -> dict[str, bool]:
+    """Compute the operator action-availability flags (await/inspect/stop/cancel/
+    resume/recovery_required) for one run's current projection."""
     terminal = _run_is_terminal(run)
     liveness = str(run.get("liveness") or "")
     signalable = (
@@ -1183,21 +1414,25 @@ def _lifecycle_controls(run: dict[str, Any]) -> dict[str, bool]:
 
 
 def _session_base_name(root: str) -> str:
+    """Slugify a repo root's basename into a safe vc-frame session-name stem."""
     base = Path(root or "vibecrafted").name.lower()
     cleaned = "".join(ch if ch.isalnum() else "-" for ch in base).strip("-")
     return cleaned or "vibecrafted"
 
 
 def operator_session_name(root: str, run_id: str) -> str:
+    """Deterministic vc-frame session name for a run: ``<root-slug>-<run_id>``."""
     base = _session_base_name(root)
     return f"{base}-{run_id}" if run_id else base
 
 
 def _skill_from_code(skill_code: str) -> str:
+    """Expand a 4-letter launcher skill code to its full skill name."""
     return SKILL_CODE_MAP.get(skill_code, skill_code or "unknown")
 
 
 def _segment_header(epoch: str, generation: int) -> dict[str, Any]:
+    """Build the JSON header record written at the start of every event segment."""
     return {
         "ts": _now().isoformat(),
         "run_id": "",
@@ -1212,6 +1447,7 @@ def _segment_header(epoch: str, generation: int) -> dict[str, Any]:
 
 
 def _parse_segment_header(raw: bytes) -> tuple[str, int] | None:
+    """Validate and parse one raw line as a segment header; None if malformed."""
     if not raw.endswith(b"\n") or len(raw) > EVENT_MAX_LINE_BYTES:
         return None
     try:
@@ -1233,6 +1469,7 @@ def _parse_segment_header(raw: bytes) -> tuple[str, int] | None:
 
 
 def _read_segment_header(path: Path) -> tuple[str, int] | None:
+    """Read and parse the first line of an event-stream file as its segment header."""
     try:
         with path.open("rb") as handle:
             raw = handle.readline(EVENT_MAX_LINE_BYTES + 1)
@@ -1267,6 +1504,8 @@ def _read_event_segment(path: Path, *, active: bool) -> _EventSegment | None:
 def _parse_event_cursor(
     raw: str | int | None,
 ) -> tuple[str | None, int | None, int] | None:
+    """Parse a cursor into (epoch, generation, offset); epoch/generation are
+    None for legacy numeric cursors. None return means the cursor is invalid."""
     value = "0" if raw is None else str(raw).strip()
     if value.isdigit():
         return None, None, int(value)
@@ -1287,6 +1526,8 @@ def _parse_event_cursor(
 
 
 def _last_complete_event_offset(path: Path, minimum: int) -> int:
+    """Byte offset of the end of the last complete (newline-terminated) record,
+    never below ``minimum``."""
     try:
         with path.open("rb") as handle:
             size = os.fstat(handle.fileno()).st_size
@@ -1310,6 +1551,7 @@ def _last_complete_event_offset(path: Path, minimum: int) -> int:
 
 
 def _event_segments() -> list[_EventSegment]:
+    """All readable event-stream segments (archived + active), oldest first."""
     segments: list[_EventSegment] = []
     archive_dir = _events_archive_dir()
     if archive_dir.is_dir():
@@ -1332,6 +1574,7 @@ def _event_segments() -> list[_EventSegment]:
 
 
 def _active_event_resume_cursor() -> str:
+    """Cursor pointing at the end of the currently active event segment."""
     stream = event_stream_path()
     segment = _read_event_segment(stream, active=True)
     if segment is not None:
@@ -1340,6 +1583,7 @@ def _active_event_resume_cursor() -> str:
 
 
 def _fsync_directory(path: Path) -> None:
+    """Best-effort fsync of a directory's metadata (silently no-ops on failure)."""
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     try:
         fd = os.open(path, flags)
@@ -1377,6 +1621,7 @@ def _write_new_event_segment_locked(path: Path, epoch: str, generation: int) -> 
 
 
 def _latest_archived_segment_header() -> tuple[str, int] | None:
+    """(epoch, generation) of the most recently modified archived segment, if any."""
     candidates: list[tuple[int, str, int]] = []
     archive_dir = _events_archive_dir()
     if not archive_dir.is_dir():
@@ -1397,6 +1642,7 @@ def _latest_archived_segment_header() -> tuple[str, int] | None:
 
 
 def _legacy_archive_target() -> Path:
+    """Timestamped archive path for a headerless legacy event stream being moved aside."""
     archive_dir = _events_archive_dir()
     stamp = _now().strftime("%Y%m%dT%H%M%S%fZ")
     return archive_dir / f"events-legacy-{stamp}-{uuid.uuid4().hex}.jsonl"
@@ -1498,6 +1744,7 @@ def _append_event(event: dict[str, Any]) -> None:
 
 
 def _iter_meta_files() -> Iterator[Path]:
+    """All ``*.meta.json`` launcher artifact files under artifacts/."""
     artifacts_root = vibecrafted_home() / "artifacts"
     if not artifacts_root.is_dir():
         return iter(())
@@ -1505,6 +1752,7 @@ def _iter_meta_files() -> Iterator[Path]:
 
 
 def _iter_lock_files() -> Iterator[Path]:
+    """All ``*.lock`` run lock files under locks/."""
     lock_root = vibecrafted_home() / "locks"
     if not lock_root.is_dir():
         return iter(())
@@ -1512,6 +1760,7 @@ def _iter_lock_files() -> Iterator[Path]:
 
 
 def _iter_marbles_state_files() -> Iterator[Path]:
+    """All marbles ``state.json`` files under marbles/."""
     marbles_root = vibecrafted_home() / "marbles"
     if not marbles_root.is_dir():
         return iter(())
@@ -1519,6 +1768,7 @@ def _iter_marbles_state_files() -> Iterator[Path]:
 
 
 def _normalize_agent_meta(path: Path) -> RunStatus | None:
+    """Parse one launcher ``*.meta.json`` file into a :class:`RunStatus`; None if no run_id."""
     payload = _read_json(path)
     run_id = str(payload.get("run_id") or "").strip()
     if not run_id:
@@ -1596,6 +1846,7 @@ def _normalize_agent_meta(path: Path) -> RunStatus | None:
 
 
 def _normalize_lock(path: Path) -> RunStatus | None:
+    """Parse one ``*.lock`` file into a :class:`RunStatus`; None if no run_id."""
     payload = _parse_kv_file(path)
     run_id = payload.get("run_id", "").strip()
     if not run_id:
@@ -1625,6 +1876,7 @@ def _normalize_lock(path: Path) -> RunStatus | None:
 
 
 def _normalize_marbles_state(path: Path) -> RunStatus | None:
+    """Parse one marbles ``state.json`` file into a :class:`RunStatus`; None if no run_id."""
     payload = _read_json(path)
     run_id = str(payload.get("run_id") or "").strip()
     if not run_id:
@@ -1666,6 +1918,8 @@ def _normalize_marbles_state(path: Path) -> RunStatus | None:
 def _merge_event_stream(
     merged: dict[str, RunStatus], *, only_run_id: str | None = None
 ) -> dict[str, RunStatus]:
+    """Fold the durable event stream's per-run state into ``merged``, optionally
+    scoped to one run id and its ``<run_id>-...`` child rounds."""
     stream = event_stream_path()
     if not stream.exists():
         return merged
@@ -1884,6 +2138,9 @@ def _merge_event_stream(
 
 
 def _merge_status(existing: RunStatus | None, incoming: RunStatus) -> RunStatus:
+    """Merge two RunStatus records for the same run: newer-timestamp fields win,
+    fields fall back to the other side when blank, and an accepted operator
+    stop from either side is sticky and overrides the merged result."""
     if existing is None:
         return incoming
     existing_dt = _parse_iso(existing.updated_at)
@@ -1964,10 +2221,12 @@ def _merge_status(existing: RunStatus | None, incoming: RunStatus) -> RunStatus:
 
 
 def _snapshot_path(run_id: str) -> Path:
+    """Path to one run's live snapshot file."""
     return run_snapshot_dir() / f"{run_id}.json"
 
 
 def _snapshot_archive_dir() -> Path:
+    """Directory holding archived (settled + retired) run snapshots."""
     return run_snapshot_dir() / "archive"
 
 
@@ -1986,6 +2245,7 @@ def _archived_run_ids() -> set[str]:
 
 
 def _events_archive_dir() -> Path:
+    """Directory holding archived (rotated) event-stream generations."""
     return control_plane_home() / "events_archive"
 
 
@@ -2102,6 +2362,7 @@ def _rotate_event_stream_locked() -> Path | None:
 
 
 def _load_existing_snapshots() -> dict[str, dict[str, Any]]:
+    """Load every retained run snapshot from disk, keyed by run_id."""
     snapshots: dict[str, dict[str, Any]] = {}
     for path in run_snapshot_dir().glob("*.json"):
         payload = _read_json(path)
@@ -2112,6 +2373,7 @@ def _load_existing_snapshots() -> dict[str, dict[str, Any]]:
 
 
 def _status_to_payload(status: RunStatus) -> dict[str, Any]:
+    """Flatten a RunStatus (and its ``extra`` dict) into one JSON-ready payload."""
     payload = asdict(status)
     extra = payload.pop("extra", {})
     if isinstance(extra, dict):
@@ -2120,6 +2382,7 @@ def _status_to_payload(status: RunStatus) -> dict[str, Any]:
 
 
 def _run_is_terminal(run: dict[str, Any]) -> bool:
+    """True when a run payload's state, liveness, or exit code marks it finished."""
     if str(run.get("state") or "") in FINAL_STATES:
         return True
     if str(run.get("liveness") or "") == "terminal":
@@ -2128,6 +2391,7 @@ def _run_is_terminal(run: dict[str, Any]) -> bool:
 
 
 def _snapshot_age_seconds(payload: dict[str, Any], now: dt.datetime) -> float | None:
+    """Seconds since the snapshot's completed_at/updated_at/started_at (first found)."""
     timestamp = _parse_iso(
         str(
             payload.get("completed_at")
@@ -2144,12 +2408,19 @@ def _snapshot_age_seconds(payload: dict[str, Any], now: dt.datetime) -> float | 
 
 
 def _archive_snapshot(path: Path) -> None:
+    """Move one snapshot file into the archive directory (rename, not copy)."""
     archive_dir = _snapshot_archive_dir()
     archive_dir.mkdir(parents=True, exist_ok=True)
     path.replace(archive_dir / path.name)
 
 
 def _archive_expired_snapshots() -> None:
+    """Settle-then-archive terminal snapshots past the retention age/count caps.
+
+    Called at the end of a full board rebuild. Never archives a snapshot that
+    is not yet settled (:func:`can_archive`) — it settles it first via
+    :func:`settle_payload`, defaulting to ``needs_attention``.
+    """
     now = _now()
     retention_seconds = _configured_snapshot_retention_seconds()
     retention_count = _configured_snapshot_retention_count()
@@ -2268,6 +2539,8 @@ def drain_settled_snapshots(
 
 
 def _select_run(snapshot: dict[str, Any], run_id: str) -> dict[str, Any] | None:
+    """Find one run by id in a sync_state snapshot, falling back to the live
+    and then archived on-disk snapshot files if it's not in the in-memory lists."""
     target = str(run_id or "").strip()
     if not target:
         return None
@@ -2301,6 +2574,7 @@ _VOLATILE_TRANSITION_KEYS = frozenset(
 
 
 def _stable_transition_view(run: dict[str, Any] | None) -> dict[str, Any]:
+    """Run payload with volatile/re-derived fields stripped, for transition-change comparison."""
     if not run:
         return {}
     return {
@@ -2311,6 +2585,8 @@ def _stable_transition_view(run: dict[str, Any] | None) -> dict[str, Any]:
 def _record_transition(
     previous: dict[str, Any] | None, current: dict[str, Any]
 ) -> None:
+    """Emit a "state" event when a projection meaningfully changed, suppressing
+    no-op re-syncs that would otherwise flood the event stream."""
     previous_state = str(previous.get("state") or "") if previous else ""
     current_state = str(current.get("state") or "")
     if previous_state == current_state and _stable_transition_view(
@@ -2445,6 +2721,8 @@ def record_stop_transition(
 
 
 def _warnings_for_runs(runs: list[dict[str, Any]]) -> list[str]:
+    """Short human-readable warning strings (stalled, lock-without-report,
+    contract-failure) for a board of runs, capped to the first 6."""
     warnings: list[str] = []
     for run in runs:
         if run.get("health") == "stalled":
@@ -2466,6 +2744,8 @@ def _warnings_for_runs(runs: list[dict[str, Any]]) -> list[str]:
 
 
 def read_event_tail(limit: int = EVENT_TAIL_LIMIT) -> list[dict[str, Any]]:
+    """Most recent ``limit`` events (newest scanned first, across active + archived
+    segments), skipping segment headers and pytest-provenance events."""
     stream = event_stream_path()
     if limit <= 0:
         return []
@@ -2477,6 +2757,7 @@ def read_event_tail(limit: int = EVENT_TAIL_LIMIT) -> list[dict[str, Any]]:
         archived = list(archive_dir.glob("events-*.jsonl"))
 
         def _mtime_ns(path: Path) -> int:
+            """Sort key: file mtime in nanoseconds, 0 if the file vanished mid-scan."""
             try:
                 return path.stat().st_mtime_ns
             except OSError:
@@ -2509,6 +2790,8 @@ def _stream_control_event(
     from_cursor: str = "",
     reason: str,
 ) -> Event:
+    """Build a synthetic ``stream.gap``/``stream.boundary`` control :class:`Event`
+    for subscribe_events callers when the raw event data can't be drained cleanly."""
     payload: dict[str, Any] = {"reason": reason}
     if kind == "stream.boundary":
         payload.update({"from": from_cursor, "to": cursor})
@@ -2537,6 +2820,12 @@ def _drain_event_segment(
     offset: int,
     kinds_filter: set[str],
 ) -> tuple[list[Event], int, str | None]:
+    """Read every complete record from ``offset`` to EOF of one segment.
+
+    Returns (events, new_offset, failure_reason). A failure reason is set when
+    the segment's header no longer matches what the caller expected (rotated
+    out from under the reader) or the cursor falls outside the segment.
+    """
     events: list[Event] = []
     try:
         with segment.path.open("rb") as handle:
@@ -2622,6 +2911,9 @@ def _drain_event_segment(
 def _drain_legacy_events(
     offset: int, kinds_filter: set[str]
 ) -> tuple[list[Event], int, str | None]:
+    """Read every complete record from ``offset`` to EOF of a headerless legacy
+    (pre-v2) event stream. Same (events, new_offset, failure_reason) contract
+    as :func:`_drain_event_segment`."""
     stream = event_stream_path()
     events: list[Event] = []
     try:
@@ -2684,6 +2976,9 @@ def _drain_legacy_events(
 def _read_event_delta(
     requested: str | int | None, kinds_filter: set[str]
 ) -> tuple[list[Event], str]:
+    """Resolve one cursor to its event delta, handling legacy-numeric cursors,
+    generation boundaries, and gaps by emitting synthetic control events and
+    resuming at the active stream's current position."""
     raw_requested = "0" if requested is None else str(requested).strip()
     parsed = _parse_event_cursor(requested)
     if parsed is None:
@@ -3048,8 +3343,14 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
     scope = str(only_run_id or "").strip()
     scoped = bool(scope)
     child_prefix = f"{scope}-" if scope else ""
+    storage_maintenance = (
+        {"orphan_temps_removed": 0, "transcripts_rotated": 0, "archives_removed": 0}
+        if scoped
+        else _maintain_runtime_run_storage()
+    )
 
     def _in_scope(run_id: str) -> bool:
+        """True when the pass is unscoped, or ``run_id`` is the target run or its child round."""
         return not scoped or run_id == scope or run_id.startswith(child_prefix)
 
     lock_ctx = contextlib.nullcontext() if scoped else _sync_lock(purpose="board-sync")
@@ -3163,6 +3464,7 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
     fxn = board_fxn_counts(payload_runs)
     return {
         "generated_at": _now().isoformat(),
+        "storage_maintenance": storage_maintenance,
         "active_runs": active_runs,
         "stalled_runs": stalled_runs,
         "recent_runs": recent_runs,
@@ -3204,6 +3506,7 @@ class RunNotResolved(Exception):
     """
 
     def __init__(self, run_id: str) -> None:
+        """Store the unresolved run id and format the actionable error message."""
         self.run_id = run_id
         super().__init__(
             f"run {run_id!r} not found in runtime_runs/ or artifacts/ — it may "
@@ -3229,10 +3532,12 @@ class ResolvedRun:
 
 
 def _runtime_run_dir(run_id: str) -> Path:
+    """Path to the runtime-owned run directory (where the core runtime writes)."""
     return control_plane_home() / "runtime_runs" / run_id
 
 
 def _report_from_meta(meta: Path) -> Path | None:
+    """Resolve the report path recorded in a meta.json, if it still exists on disk."""
     try:
         payload = json.loads(meta.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -3247,6 +3552,8 @@ def _report_from_meta(meta: Path) -> Path | None:
 
 
 def _resolve_run_in_artifacts(run_id: str) -> ResolvedRun | None:
+    """Legacy fallback resolver: locate a run's meta/transcript/report under
+    artifacts/ when it has no runtime_runs/ directory."""
     artifacts_root = vibecrafted_home() / "artifacts"
     if not artifacts_root.is_dir():
         return None
@@ -3321,6 +3628,8 @@ def _delivery_axes_from_run_dir(
     legacy_state: str,
     exit_code: int | None,
 ) -> DeliveryAxes:
+    """Read the proof/delivery axes from a run's on-disk proof artifacts,
+    deriving execution state from legacy state/exit_code as the third axis."""
     execution_state = _legacy_execution_state(legacy_state, exit_code)
     proof_state = ProofState.UNDECLARED
     delivery_state = DeliveryState.UNVERIFIED
@@ -3373,6 +3682,7 @@ def _kernel_claim_digest_from_run_dir(run_dir: Path | None) -> str:
 
 
 def _legacy_execution_state(state: str, exit_code: int | None) -> ExecutionState:
+    """Map a legacy lifecycle state (+ exit code) onto the ExecutionState axis."""
     normalized = str(state or "").strip().lower()
     if normalized == "timed_out":
         return ExecutionState.TIMED_OUT
@@ -3763,6 +4073,8 @@ def run_liveness(run_id: str) -> dict[str, Any]:
 
 
 def cli(argv: list[str] | None = None) -> int:
+    """Standalone ``python -m vibecrafted_core.control_plane`` entrypoint:
+    sync/status/drain the control-plane board and print JSON."""
     parser = argparse.ArgumentParser(
         description="Sync and inspect Vibecrafted control-plane state."
     )
@@ -3789,12 +4101,15 @@ def cli(argv: list[str] | None = None) -> int:
         help="drain: snapshots per lock acquisition (lock released between batches).",
     )
     args = parser.parse_args(argv)
-    if args.command == "drain":
-        payload: dict[str, Any] = drain_settled_snapshots(
-            keep_hours=args.keep_hours, batch_size=args.batch_size
-        )
-    else:
-        payload = sync_state()
+    try:
+        if args.command == "drain":
+            payload: dict[str, Any] = drain_settled_snapshots(
+                keep_hours=args.keep_hours, batch_size=args.batch_size
+            )
+        else:
+            payload = sync_state()
+    except ControlPlaneStorageError as exc:
+        parser.exit(2, f"{exc}\n")
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     return 0
 

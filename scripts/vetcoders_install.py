@@ -83,30 +83,37 @@ _IS_TTY = sys.stdout.isatty()
 
 
 def _c(code: str, text: str) -> str:
+    """ANSI-wrap text with SGR code `code`; no-op (plain text) when stdout is not a TTY."""
     return f"\033[{code}m{text}\033[0m" if _IS_TTY else text
 
 
 def bold(t: str) -> str:
+    """Bold ANSI-wrap, honoring TTY detection."""
     return _c("1", t)
 
 
 def green(t: str) -> str:
+    """Green ANSI-wrap, honoring TTY detection."""
     return _c("32", t)
 
 
 def yellow(t: str) -> str:
+    """Yellow ANSI-wrap, honoring TTY detection."""
     return _c("33", t)
 
 
 def red(t: str) -> str:
+    """Red ANSI-wrap, honoring TTY detection."""
     return _c("31", t)
 
 
 def dim(t: str) -> str:
+    """Dim/gray ANSI-wrap, honoring TTY detection."""
     return _c("2", t)
 
 
 def cyan(t: str) -> str:
+    """Cyan ANSI-wrap, honoring TTY detection."""
     return _c("36", t)
 
 
@@ -141,23 +148,27 @@ class TeeLogger:
     """Captures print output to a log file while optionally suppressing stdout."""
 
     def __init__(self, log_path: Path, quiet: bool = False):
+        """Open the log file for writing and remember the real stdout to tee onto."""
         # Long-lived tee: open for the logger lifetime; closed in close().
         self.log = log_path.open("w", encoding="utf-8")
         self.quiet = quiet
         self._real_stdout = sys.__stdout__ if sys.__stdout__ is not None else sys.stdout
 
     def write(self, text: str) -> int:
+        """Write text to the log file, and to real stdout unless quiet."""
         self.log.write(text)
         if not self.quiet:
             self._real_stdout.write(text)
         return len(text)
 
     def flush(self) -> None:
+        """Flush the log file and, unless quiet, real stdout."""
         self.log.flush()
         if not self.quiet:
             self._real_stdout.flush()
 
     def close(self) -> None:
+        """Close the underlying log file handle."""
         self.log.close()
 
 
@@ -186,6 +197,7 @@ def _compact_line(out, icon: str, label: str, value: str) -> None:
 
 
 def _compact_status_is_live(out) -> bool:
+    """True when `out` is a live TTY (drives \r-overwrite vs newline-per-line rendering)."""
     isatty = getattr(out, "isatty", None)
     return bool(callable(isatty) and isatty())
 
@@ -261,6 +273,9 @@ class Foundation:
         return None
 
     def install_hint(self) -> str:
+        """One-liner install hint per configured channel
+        (canonical/crates/brew/npm/github/pip/source).
+        """
         hints = []
         for ch in self.channels:
             pkg = self.packages.get(ch, self.name)
@@ -291,6 +306,9 @@ VENDORED_FOUNDATION_BINARIES = {
 
 
 def detect_vendor_platform() -> str | None:
+    """Return this host's `<os>-<arch>` platform slug (darwin/linux, arm64/x64), or None if
+    unknown.
+    """
     try:
         uname = os.uname()
     except AttributeError:
@@ -306,6 +324,9 @@ def detect_vendor_platform() -> str | None:
 
 
 def vendored_foundation_dir(repo_root: Path) -> Path | None:
+    """Path to this platform's vendored foundation binaries under the repo, or None if
+    undetected.
+    """
     platform = detect_vendor_platform()
     if not platform:
         return None
@@ -318,6 +339,11 @@ def install_foundation_from_bundle(
     bin_dir: Path | None = None,
     dry_run: bool = False,
 ) -> Path | None:
+    """Copy a vendored foundation binary from the repo's bin/vendor payload into `bin_dir`.
+
+    Returns the installed path, or None when no vendored binary exists for this
+    foundation/platform (falls back to PATH discovery in the caller).
+    """
     vendor_name = VENDORED_FOUNDATION_BINARIES.get(foundation.name)
     if not vendor_name:
         return None
@@ -355,6 +381,11 @@ def install_foundation_from_bundle(
 def install_or_find_foundation(
     foundation: Foundation, repo_root: Path, dry_run: bool = False
 ) -> tuple[str, str]:
+    """Install `foundation` from the bundled vendor payload, else fall back to an
+    existing PATH install.
+
+    Returns `(path, source)` where source is 'bundled', 'pre-existing', or 'not-installed'.
+    """
     bundled = install_foundation_from_bundle(foundation, repo_root, dry_run=dry_run)
     if bundled:
         return str(bundled), "bundled"
@@ -494,7 +525,11 @@ FOUNDATIONS: list[Foundation] = [
         description="VC Frame multi-agent terminal workspace surface",
         channels=["canonical"],
         packages={
-            "canonical": "curl -fsSL https://vibecrafted.io/install.sh | bash",
+            # Frame binary installer — not the framework orchestrator.
+            "canonical": (
+                "curl -fsSL https://github.com/vetcoders/vc-frame"
+                "/releases/latest/download/install.sh | sh"
+            ),
         },
         verify_cmd="vc-frame --version",
         required=True,
@@ -510,10 +545,14 @@ RUNTIME_COMMANDS = {
 
 
 def runtime_status_path() -> Path:
+    """Path to the persisted runtime-selection status JSON under the store home."""
     return vibecrafted_home() / "runtime" / "runtime.json"
 
 
 def read_runtime_status() -> dict:
+    """Read and parse the runtime status file; empty dict if missing, error dict if
+    unreadable/corrupt.
+    """
     status_file = runtime_status_path()
     if not status_file.is_file():
         return {}
@@ -529,6 +568,7 @@ def read_runtime_status() -> dict:
 
 
 def doctor_runtime_finding() -> DoctorFinding:
+    """Turn the persisted runtime status into a single doctor finding (ok/warn/fail)."""
     status = read_runtime_status()
     runtime = str(status.get("runtime") or "none")
     if runtime == "none":
@@ -636,6 +676,9 @@ class InstallState:
 
     @classmethod
     def load(cls, store_path: Path) -> InstallState:
+        """Load persisted install state from `store_path`, tolerating a missing or corrupt state
+        file.
+        """
         state_file = store_path / STATE_FILE
         if state_file.exists():
             try:
@@ -650,16 +693,19 @@ class InstallState:
         return cls()
 
     def save(self, store_path: Path) -> None:
+        """Serialize this state to the store's STATE_FILE as indented JSON."""
         state_file = store_path / STATE_FILE
         state_file.parent.mkdir(parents=True, exist_ok=True)
         state_file.write_text(json.dumps(asdict(self), indent=2) + "\n")
 
 
 def start_here_path() -> Path:
+    """Path to the generated START_HERE.md guide under the store home."""
     return vibecrafted_home() / START_HERE_FILE
 
 
 def _doctor_totals(findings: Sequence[DoctorFinding]) -> tuple[int, int, int]:
+    """Count findings by level: `(ok_count, warn_count, fail_count)`."""
     oks = sum(1 for finding in findings if finding.level == "ok")
     warns = sum(1 for finding in findings if finding.level == "warn")
     fails = sum(1 for finding in findings if finding.level == "fail")
@@ -710,6 +756,9 @@ def _doctor_action_items(findings: Sequence[DoctorFinding]) -> list[str]:
 def write_start_here_guide(
     store_path: Path, state: InstallState, findings: Sequence[DoctorFinding]
 ) -> Path:
+    """Render and write the START_HERE.md onboarding guide summarizing install health, current
+    state, and the next fix actions from `findings`.
+    """
     guide_path = start_here_path()
     guide_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -757,10 +806,11 @@ def write_start_here_guide(
         "- Foundations still missing: "
         + (", ".join(missing_required) if missing_required else "none required"),
         "",
-        "## Simplest path",
-        "1. `vibecrafted init claude`",
-        '2. `vibecrafted workflow claude --prompt "Plan and implement <task>"`',
-        '3. `vibecrafted implement codex --prompt "Ship <task>"`',
+        "## Simplest path (backyard ride)",
+        "1. `vc-start` — open the operator session (tab **Start here** = map of the workspace)",
+        "2. `vibecrafted doctor` — health of foundations + install truth",
+        "3. `vibecrafted init claude` — orient an agent in a real repo",
+        '4. `vibecrafted implement codex --prompt "Ship <task>"` — first cut',
         "",
         "## Ship-ready path",
         '1. `vibecrafted dou claude --prompt "Audit launch readiness"`',
@@ -768,9 +818,15 @@ def write_start_here_guide(
         '3. `vibecrafted hydrate codex --prompt "Package the product"`',
         '4. `vibecrafted release codex --prompt "Prepare release steps"`',
         "",
-        "## Optional operator surface",
-        "- `vibecrafted dashboard`",
-        "- Dashboard is optional. You can ignore it and stay in plain terminal commands.",
+        "## Detach / restore (honest)",
+        "- Closing the terminal **detaches** the vc-frame session; reattach with `vc-start`.",
+        "- Layout resurrection is frame-level. Live agent processes and mid-flight tool calls",
+        "  are **not** frozen RAM — see `docs/installer/RESTORE_CONTRACT.md`.",
+        "- Control-plane runs keep `run_id` + report + transcript on disk.",
+        "",
+        "## Optional surfaces",
+        "- `vibecrafted dashboard` — mission-control layouts",
+        "- `vibecrafted server status` — local control-plane eye",
         "",
         "## What to fix next",
     ]
@@ -819,22 +875,29 @@ def detect_agent_runtimes() -> dict[str, str | None]:
 
 
 def runtime_skills_dir(runtime: str) -> Path:
+    """Path to `<runtime>`'s skills directory under the user's home."""
     return Path.home() / f".{runtime}" / "skills"
 
 
 def runtime_commands_dir(runtime: str) -> Path:
+    """Path to `<runtime>`'s slash-command directory under the user's home."""
     return Path.home() / f".{runtime}" / "commands"
 
 
 def detect_osascript() -> str | None:
+    """Path to `osascript` on PATH, or None if unavailable (non-macOS or missing)."""
     return shutil.which("osascript")
 
 
 def detect_cargo() -> str | None:
+    """Path to `cargo` on PATH, or None if unavailable."""
     return shutil.which("cargo")
 
 
 def source_skills_root(repo_root: Path) -> Path:
+    """Locate the skills source directory: the repo's `skills/`, or the packaged
+    vibecrafted_core/skills fallback, or the repo root itself if neither exists.
+    """
     skills_dir = repo_root / "skills"
     if skills_dir.is_dir():
         return skills_dir
@@ -852,6 +915,12 @@ def get_framework_version(repo_root: Path) -> str:
 
 
 def get_repo_commit(repo_root: Path) -> str:
+    """Short (8-char) git commit SHA for `repo_root`, honoring VIBECRAFTED_SOURCE_REVISION
+    override.
+    """
+    configured = os.environ.get("VIBECRAFTED_SOURCE_REVISION", "").strip()
+    if re.fullmatch(r"[0-9a-fA-F]{40}", configured):
+        return configured[:8].lower()
     try:
         return subprocess.check_output(
             ["git", "-C", str(repo_root), "rev-parse", "--short", "HEAD"],
@@ -860,6 +929,24 @@ def get_repo_commit(repo_root: Path) -> str:
         ).strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         return "unknown"
+
+
+def get_repo_full_commit(repo_root: Path) -> str:
+    """Full 40-char git commit SHA for `repo_root`, honoring VIBECRAFTED_SOURCE_REVISION
+    override.
+    """
+    configured = os.environ.get("VIBECRAFTED_SOURCE_REVISION", "").strip()
+    if re.fullmatch(r"[0-9a-fA-F]{40}", configured):
+        return configured.lower()
+    try:
+        revision = subprocess.check_output(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
+    return revision.lower() if re.fullmatch(r"[0-9a-fA-F]{40}", revision) else "unknown"
 
 
 def get_install_version(repo_root: Path) -> str:
@@ -935,6 +1022,7 @@ def stamp_install_version(root: Path, version: str) -> list[Path]:
 
 
 def get_repo_url(repo_root: Path) -> str:
+    """`git remote get-url origin` for `repo_root`, or empty string if unavailable."""
     try:
         return subprocess.check_output(
             ["git", "-C", str(repo_root), "remote", "get-url", "origin"],
@@ -943,6 +1031,23 @@ def get_repo_url(repo_root: Path) -> str:
         ).strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         return ""
+
+
+def get_repo_owner(repo_root: Path) -> str:
+    """`owner/repo` slug for `repo_root`, from VIBECRAFTED_SOURCE_OWNER_REPO or parsed out of
+    the origin remote URL; 'unknown' if neither resolves.
+    """
+    configured = os.environ.get("VIBECRAFTED_SOURCE_OWNER_REPO", "").strip()
+    if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", configured):
+        return configured
+    url = get_repo_url(repo_root).rstrip("/").removesuffix(".git")
+    if not url:
+        return "unknown"
+    path = url.split(":", 1)[-1] if ":" in url and not url.startswith("http") else url
+    parts = [part for part in path.replace("\\", "/").split("/") if part]
+    if len(parts) < 2:
+        return "unknown"
+    return f"{parts[-2]}/{parts[-1]}"
 
 
 # ---------------------------------------------------------------------------
@@ -972,6 +1077,9 @@ def discover_skills(repo_root: Path) -> list[Path]:
 
 
 def iter_skill_root_rule_files(skills_root: Path) -> list[tuple[Path, Path]]:
+    """Locate SKILL_ROOT_RULE_FILES (and their localized copies) under `skills_root`, returning
+    `(source_path, relative_target)` pairs for syncing into the store.
+    """
     rule_files: list[tuple[Path, Path]] = []
 
     for filename in SKILL_ROOT_RULE_FILES:
@@ -1018,6 +1126,7 @@ def categorize_skill(name: str) -> str:
 
 
 def categorize_all(skills: list[Path]) -> dict[str, list[str]]:
+    """Bucket every discovered skill name into pipeline/foundations/specialist categories."""
     cats: dict[str, list[str]] = {"pipeline": [], "foundations": [], "specialist": []}
     for s in skills:
         cat = categorize_skill(s.name)
@@ -1119,6 +1228,7 @@ def ask_choice(prompt: str, options: list[str], default: int = 0) -> int:
         print()
 
     def render():
+        """Redraw the `ask_choice` option list in place, highlighting the current selection."""
         sys.stdout.write(f"\033[{len(options)}A")
         for i, opt in enumerate(options):
             marker = cyan(">") if i == current_idx else " "
@@ -1225,6 +1335,9 @@ def ask_multi(prompt: str, options: list[str], defaults: list[bool]) -> list[boo
         print()
 
     def render():
+        """Redraw the `ask_multi` option list in place, showing checkbox state and current
+        cursor.
+        """
         sys.stdout.write(f"\033[{len(options)}A")
         for i, opt in enumerate(options):
             marker = green("[x]") if selected[i] else dim("[ ]")
@@ -1274,14 +1387,26 @@ def ask_multi(prompt: str, options: list[str], defaults: list[bool]) -> list[boo
 # ---------------------------------------------------------------------------
 
 BACKUP_DIR = "backups/installer"
+_SHELL_STARTUP_FILES = (
+    ".zshenv",
+    ".zprofile",
+    ".zshrc",
+    ".zlogin",
+    ".bash_profile",
+    ".bash_login",
+    ".profile",
+    ".bashrc",
+)
 
 
 def _backup_root(store_path: Path) -> Path:
+    """Root directory under which per-install teardown backups are stored."""
     _ = store_path
     return vibecrafted_backups_home()
 
 
 def _copy_path_to_backup(src: Path, dst: Path) -> None:
+    """Copy `src` (symlink, dir, or file) into the backup tree at `dst`, preserving symlinks."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     if src.is_symlink():
         dst.symlink_to(os.readlink(src))
@@ -1292,6 +1417,7 @@ def _copy_path_to_backup(src: Path, dst: Path) -> None:
 
 
 def _restore_path_from_backup(src: Path, dst: Path) -> None:
+    """Restore `dst` from a backed-up `src`, replacing whatever currently occupies `dst`."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists() or dst.is_symlink():
         if dst.is_symlink() or dst.is_file():
@@ -1309,6 +1435,8 @@ def _restore_path_from_backup(src: Path, dst: Path) -> None:
 
 @dataclass(frozen=True)
 class ManagedPath:
+    """One managed filesystem path slated for teardown, with the action to take and why."""
+
     kind: str
     path: Path
     action: str = "remove"
@@ -1360,10 +1488,14 @@ print(f"Restored {restored} managed paths from {backup_dir}")
 
 
 def _path_present(path: Path) -> bool:
+    """True if `path` exists as a real file/dir or as a (possibly dangling) symlink."""
     return path.exists() or path.is_symlink()
 
 
 def _teardown_backup_records(inventory: Sequence[ManagedPath]) -> list[ManagedPath]:
+    """Select the remove/edit records worth backing up before teardown, deduping nested paths so
+    a parent directory backup isn't shadowed by its children.
+    """
     candidates = [
         record
         for record in inventory
@@ -1386,6 +1518,11 @@ def _teardown_backup_records(inventory: Sequence[ManagedPath]) -> list[ManagedPa
 def create_teardown_backup(
     inventory: Sequence[ManagedPath], *, dry_run: bool = False
 ) -> str | None:
+    """Snapshot every path slated for removal/edit into a fresh timestamped backup
+    directory with a manifest and a self-contained restore script.
+
+    Returns the backup timestamp, or None when there was nothing to back up.
+    """
     records = _teardown_backup_records(inventory)
     if not records:
         return None
@@ -1427,6 +1564,7 @@ def create_teardown_backup(
 
 
 def _restore_command(backup_timestamp: str) -> str:
+    """Shell command string that re-runs the given backup's self-contained restore script."""
     script = vibecrafted_backups_home() / backup_timestamp / RESTORE_SCRIPT_FILE
     return f"python3 {shlex_quote(str(script))}"
 
@@ -1560,7 +1698,7 @@ def create_backup(
         anything_backed = True
 
     # Back up RC files
-    for rcname in (".zshrc", ".bashrc"):
+    for rcname in _SHELL_STARTUP_FILES:
         rcfile = Path.home() / rcname
         if rcfile.exists():
             dst = backup_dir / "helpers" / rcname
@@ -1582,11 +1720,13 @@ def create_backup(
 
 
 def _helper_target_path() -> Path:
+    """Canonical shell-helper shim path under XDG config (vetcoders/vc-skills.sh)."""
     config_dir = xdg_config_home() / "vetcoders"
     return config_dir / "vc-skills.sh"
 
 
 def _helper_legacy_path() -> Path:
+    """Legacy compat shell-helper path under XDG config (zsh/vc-skills.zsh)."""
     config_dir = xdg_config_home() / "zsh"
     return config_dir / "vc-skills.zsh"
 
@@ -1597,10 +1737,12 @@ def _shell_source_line() -> str:
 
 
 def _old_zshrc_source_line() -> str:
+    """Old .zshrc-only source line for the legacy compat helper path."""
     return '[[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh" ]] && source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh"'
 
 
 def _helper_surface_label(*, zsh_available: bool | None = None) -> str:
+    """Human label describing which shell-helper surface (if any) is currently installed."""
     helper_file = _helper_target_path()
     legacy_file = _helper_legacy_path()
     if zsh_available is None:
@@ -1614,22 +1756,26 @@ def _helper_surface_label(*, zsh_available: bool | None = None) -> str:
 
 
 def _launcher_path_line() -> str:
+    """Canonical PATH-guard line ensuring ~/.local/bin is on PATH."""
     return 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
 
 
 def _legacy_launcher_path_lines() -> list[str]:
+    """Older unconditional PATH-export lines kept only for rc-file cleanup matching."""
     return ['export PATH="$HOME/.local/bin:$PATH"']
 
 
 def _doctor_repair_rc_content(
     content: str, *, ensure_helper: bool, ensure_path: bool
 ) -> str:
+    """Rebuild rc-file content with legacy Vibecrafted blocks stripped and (if `ensure_path`)
+    the canonical launcher PATH guard appended.
+    """
+    _ = ensure_helper  # legacy API: host-shell helper sourcing is intentionally retired
     repaired, _removed = _clean_legacy_rc_entries(content)
     for line, comment in _uninstall_rc_entries():
         repaired, _ = _strip_rc_entry(repaired, line, comment)
     blocks: list[tuple[str, str]] = []
-    if ensure_helper:
-        blocks.append(("𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers", _shell_source_line()))
     if ensure_path:
         blocks.append(("𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher", _launcher_path_line()))
 
@@ -1646,11 +1792,13 @@ def _doctor_repair_rc_content(
 
 
 def _doctor_fix_rc_files() -> list[DoctorFinding]:
+    """Repair every present shell startup file: strip legacy helper-sourcing blocks, restore the
+    PATH-only launcher hint, backing up each changed file first.
+    """
     findings: list[DoctorFinding] = []
-    ensure_helper = _helper_target_path().exists() or _helper_legacy_path().exists()
     ensure_path = _find_launcher_wrapper("vibecrafted") is not None
 
-    for rcname in (".zshrc", ".bashrc"):
+    for rcname in _SHELL_STARTUP_FILES:
         rcfile = Path.home() / rcname
         if not rcfile.exists():
             continue
@@ -1659,6 +1807,16 @@ def _doctor_fix_rc_files() -> list[DoctorFinding]:
         except OSError as exc:
             findings.append(
                 DoctorFinding("warn", f"rc-fix:{rcname}", f"could not read: {exc}")
+            )
+            continue
+        if _rc_has_unclosed_vibecrafted_block(content):
+            findings.append(
+                DoctorFinding(
+                    "warn",
+                    f"rc-fix:{rcname}",
+                    "unclosed Vibecrafted block; left the entire file unchanged "
+                    "for manual repair",
+                )
             )
             continue
         if not _is_writable(rcfile):
@@ -1672,18 +1830,33 @@ def _doctor_fix_rc_files() -> list[DoctorFinding]:
             continue
 
         repaired = _doctor_repair_rc_content(
-            content, ensure_helper=ensure_helper, ensure_path=ensure_path
+            content, ensure_helper=False, ensure_path=ensure_path
         )
         if repaired == content:
             findings.append(DoctorFinding("ok", f"rc-fix:{rcname}", "already default"))
             continue
 
-        rcfile.write_text(repaired, encoding="utf-8")
+        backup = rcfile.with_name(rcfile.name + ".vibecrafted-rc-bak")
+        try:
+            if not backup.exists():
+                shutil.copy2(rcfile, backup)
+            mode = stat.S_IMODE(rcfile.stat().st_mode)
+            _atomic_bytes_file(rcfile, repaired.encode("utf-8"), mode=mode)
+        except OSError as exc:
+            findings.append(
+                DoctorFinding(
+                    "warn",
+                    f"rc-fix:{rcname}",
+                    f"could not repair safely: {exc}",
+                )
+            )
+            continue
         findings.append(
             DoctorFinding(
                 "ok",
                 f"rc-fix:{rcname}",
-                "repaired compat rc entries and restored default launcher/helper hints",
+                "removed product helper sourcing and restored the PATH-only "
+                f"launcher hint (backup: {backup.name})",
             )
         )
 
@@ -1851,6 +2024,9 @@ def _doctor_fix_legacy_bootstrap() -> list[DoctorFinding]:
 
 
 def _doctor_launcher_source_root(store_path: Path) -> Path | None:
+    """Find a source checkout usable to refresh launchers: the repo containing this script, or
+    the resolved vibecrafted-current link, whichever has scripts/vibecrafted.
+    """
     current_link = vibecrafted_tools_home() / "vibecrafted-current"
     candidates: list[Path] = [Path(__file__).resolve().parent.parent]
 
@@ -1870,6 +2046,9 @@ def _doctor_launcher_source_root(store_path: Path) -> Path | None:
 
 
 def _doctor_fix_launchers(store_path: Path, state: InstallState) -> list[DoctorFinding]:
+    """Refresh launcher commands from a discoverable source root and persist the updated
+    launcher manifest into `state`.
+    """
     source_root = _doctor_launcher_source_root(store_path)
     if source_root is None:
         return [
@@ -1881,6 +2060,14 @@ def _doctor_fix_launchers(store_path: Path, state: InstallState) -> list[DoctorF
         ]
 
     try:
+        current_link = vibecrafted_tools_home() / "vibecrafted-current"
+        if not (current_link / _RUNTIME_GENERATION_ENTRYPOINT).is_file():
+            source_root = sync_control_plane_tree(
+                source_root,
+                current_link,
+                mirror=True,
+                install_version=read_version_file(source_root).strip(),
+            )
         _install_launcher(source_root, dry_run=False, update_rc=False)
         state.launcher_entries = _snapshot_launcher_entries()
         state.save(store_path)
@@ -1929,12 +2116,46 @@ def _run_smoke_command(
     return True, detail
 
 
+def _rc_has_unclosed_vibecrafted_block(content: str) -> bool:
+    """Refuse automatic repair when a managed rc block has no closing marker."""
+    expected_end: re.Pattern[str] | None = None
+    for line in content.splitlines():
+        stripped = line.strip()
+        if expected_end is not None:
+            if expected_end.match(stripped):
+                expected_end = None
+            continue
+        if re.match(
+            r"^#\s*>>>\s*vibecrafted(?:\.\s*framework)?\s*>>>$",
+            stripped,
+            re.IGNORECASE,
+        ):
+            expected_end = re.compile(
+                r"^#\s*<<<\s*vibecrafted(?:\.\s*framework)?\s*<<<$",
+                re.IGNORECASE,
+            )
+        elif stripped.startswith(("# >>> VibeCraft", "# >>> 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝")):
+            end_marker = (
+                r"^#\s*<<<.*VibeCraft.*<<<$"
+                if "VibeCraft" in stripped
+                else r"^#\s*<<<.*𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝.*<<<$"
+            )
+            expected_end = re.compile(end_marker)
+    return expected_end is not None
+
+
 def _clean_legacy_rc_entries(content: str) -> tuple[str, int]:
+    """Strip legacy Vibecrafted-managed blocks/lines (helper sourcing, PATH exports, marker
+    comments) from rc-file `content`; refuses to touch an unclosed block.
+    """
     import re
+
+    if _rc_has_unclosed_vibecrafted_block(content):
+        return content, 0
 
     lines = content.splitlines()
     kept = []
-    skip_until = None
+    skip_until: re.Pattern[str] | None = None
     removed = 0
 
     for cl in lines:
@@ -1943,15 +2164,29 @@ def _clean_legacy_rc_entries(content: str) -> tuple[str, int]:
         # 1. Block cleanup
         if skip_until:
             removed += 1
-            if skip_until in stripped:
+            if skip_until.match(stripped):
                 skip_until = None
+            continue
+
+        if re.match(
+            r"^#\s*>>>\s*vibecrafted(?:\.\s*framework)?\s*>>>$", stripped, re.IGNORECASE
+        ):
+            removed += 1
+            skip_until = re.compile(
+                r"^#\s*<<<\s*vibecrafted(?:\.\s*framework)?\s*<<<$", re.IGNORECASE
+            )
             continue
 
         if stripped.startswith(
             ("# >>> VibeCraft", "# <<< VibeCraft", "# >>> 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝", "# <<< 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝")
         ):
             removed += 1
-            skip_until = "VibeCraft" if "VibeCraft" in stripped else "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝"
+            end_marker = (
+                r"^#\s*<<<.*VibeCraft.*<<<$"
+                if "VibeCraft" in stripped
+                else r"^#\s*<<<.*𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝.*<<<$"
+            )
+            skip_until = re.compile(end_marker)
             continue
 
         # 2. Known source lines
@@ -2024,6 +2259,9 @@ def _clean_legacy_rc_entries(content: str) -> tuple[str, int]:
 def _strip_rc_entry(
     content: str, line: str, comment: str | None = None
 ) -> tuple[str, int]:
+    """Remove every occurrence of `line` (with its optional preceding `comment` line) from
+    `content`; returns the rebuilt text and how many lines were removed.
+    """
     raw_lines = content.splitlines()
     kept: list[str] = []
     removed = 0
@@ -2055,6 +2293,7 @@ def _strip_rc_entry(
 
 
 def _installer_managed_launcher_names() -> list[str]:
+    """Every launcher basename this installer considers itself the owner of."""
     return [
         "vibecrafted",
         "vibecraft",
@@ -2065,6 +2304,7 @@ def _installer_managed_launcher_names() -> list[str]:
 
 
 def _snapshot_helper_file(path: Path) -> bool:
+    """True if `path` is a real (non-symlink) file carrying the helper shim marker comment."""
     if not path.exists():
         return False
     if path.is_symlink():
@@ -2077,6 +2317,7 @@ def _snapshot_helper_file(path: Path) -> bool:
 
 
 def _snapshot_legacy_helper_link(path: Path) -> bool:
+    """True if `path` is a symlink pointing at the canonical helper shim target."""
     if not path.is_symlink():
         return False
     try:
@@ -2089,6 +2330,7 @@ def _snapshot_legacy_helper_link(path: Path) -> bool:
 
 
 def _snapshot_helper_files() -> list[str]:
+    """Snapshot the helper file paths (canonical and/or legacy) currently installed."""
     helper_files: list[str] = []
     helper_file = _helper_target_path()
     legacy_file = _helper_legacy_path()
@@ -2107,6 +2349,7 @@ def _snapshot_helper_files() -> list[str]:
 
 
 def _snapshot_launcher_entries() -> list[str]:
+    """Snapshot every framework-managed launcher as `<dir-key>/<name>` manifest entries."""
     launcher_entries: list[str] = []
     seen: set[tuple[str, str]] = set()
     for launcher_bin_dir in _launcher_bin_dirs():
@@ -2154,6 +2397,9 @@ def snapshot_product_tool_state() -> dict[str, dict[str, str]]:
 def _parse_manifest_launchers(
     raw_entries: Sequence[str],
 ) -> list[tuple[Path, Path]]:
+    """Parse `<dir-key>/<name>` manifest entries back into `(launcher_bin_dir, entry)` pairs,
+    skipping unknown dir keys or malformed entries.
+    """
     launcher_entries: list[tuple[Path, Path]] = []
     seen: set[tuple[str, str]] = set()
 
@@ -2177,6 +2423,7 @@ def _parse_manifest_launchers(
 
 
 def _rc_has_vibecrafted_bin_path(content: str) -> bool:
+    """True if rc-file `content` already references a .local/bin or vibecrafted bin PATH entry."""
     return (
         ".local/bin" in content
         or "vibecrafted/bin" in content
@@ -2271,10 +2518,14 @@ FRAMEWORK_LAUNCHER_MARKERS = (
 
 
 def _launcher_bin_dirs() -> list[Path]:
+    """The launcher bin directories this installer manages (currently just the one canonical
+    dir).
+    """
     return [vibecrafted_launcher_bin()]
 
 
 def _find_launcher_wrapper(name: str) -> Path | None:
+    """Find `name` under any managed launcher bin dir; None if not present anywhere."""
     for launcher_bin_dir in _launcher_bin_dirs():
         candidate = launcher_bin_dir / name
         if candidate.exists() or candidate.is_symlink():
@@ -2283,6 +2534,7 @@ def _find_launcher_wrapper(name: str) -> Path | None:
 
 
 def _uninstall_rc_entries() -> list[tuple[str, str]]:
+    """The `(line, comment)` pairs this installer strips from rc files during cleanup/uninstall."""
     entries = [
         (_shell_source_line(), "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers"),
         (_shell_source_line(), "Vetcoders shell helpers"),
@@ -2298,6 +2550,7 @@ def _uninstall_rc_entries() -> list[tuple[str, str]]:
 
 
 def _rc_has_framework_install_hints(rcfile: Path) -> bool:
+    """True if `rcfile` still contains any framework install-hint line or comment marker."""
     if not rcfile.exists():
         return False
     try:
@@ -2311,6 +2564,7 @@ def _rc_has_framework_install_hints(rcfile: Path) -> bool:
 
 
 def _launcher_dir_key(launcher_bin_dir: Path) -> str:
+    """Stable string key identifying a launcher bin directory (currently always 'local-bin')."""
     if launcher_bin_dir == Path.home() / ".local" / "bin":
         return "local-bin"
     if launcher_bin_dir == vibecrafted_launcher_bin():
@@ -2322,6 +2576,7 @@ def _launcher_dir_key(launcher_bin_dir: Path) -> str:
 
 
 def _launcher_dir_from_key(key: str) -> Path | None:
+    """Resolve a launcher-dir key back to its Path, or None if unknown."""
     mapping = {
         "local-bin": vibecrafted_launcher_bin(),
     }
@@ -2329,6 +2584,7 @@ def _launcher_dir_from_key(key: str) -> Path | None:
 
 
 def _launcher_file_contains_framework_markers(path: Path) -> bool:
+    """True if the first 8KB of `path` mentions any known framework launcher marker string."""
     if not path.exists() or not path.is_file():
         return False
     try:
@@ -2339,6 +2595,9 @@ def _launcher_file_contains_framework_markers(path: Path) -> bool:
 
 
 def _is_framework_managed_launcher(entry: Path) -> bool:
+    """True if `entry` is a launcher this installer owns: an explicit wrapper name, a symlink
+    into vibecrafted/vibecraft, or a vc-*/vibecraft*-named file with framework markers.
+    """
     name = entry.name.lower()
     explicit_names = {
         "vibecrafted",
@@ -2372,6 +2631,9 @@ def _is_framework_managed_launcher(entry: Path) -> bool:
 
 
 def _is_replaceable_framework_launcher(entry: Path) -> bool:
+    """True if `entry` is missing, or is a symlink/file this installer is safe to overwrite
+    without clobbering unmanaged operator content.
+    """
     if not (entry.exists() or entry.is_symlink()):
         return True
     if entry.is_symlink():
@@ -2391,6 +2653,7 @@ def _is_replaceable_framework_launcher(entry: Path) -> bool:
 
 
 def collect_installed_launchers() -> list[tuple[Path, Path]]:
+    """Every currently installed launcher this installer considers itself the owner of."""
     launchers: list[tuple[Path, Path]] = []
     for launcher_bin_dir in _launcher_bin_dirs():
         if not launcher_bin_dir.exists():
@@ -2447,6 +2710,8 @@ KNOWN_HELPER_FUNCTIONS = [
 
 @dataclass
 class HelperConflict:
+    """One detected shell-function name collision with a Vibecrafted-managed helper, and where."""
+
     file: Path
     function: str
     line_num: int
@@ -2617,6 +2882,7 @@ def rsync_skill(
 
 
 def _remove_path(path: Path) -> None:
+    """Delete `path`, whether it is a symlink, regular file, or directory tree."""
     if path.is_symlink() or path.is_file():
         path.unlink()
     elif path.is_dir():
@@ -2624,6 +2890,28 @@ def _remove_path(path: Path) -> None:
 
 
 _TOOLS_HANDOFF_SCHEMA = "vibecrafted.tools-handoff.v1"
+_RUNTIME_GENERATION_MANIFEST = "runtime-manifest.json"
+_RUNTIME_GENERATION_MANIFEST_SCHEMA = "vibecrafted.runtime-generation.v1"
+_RUNTIME_GENERATION_ENTRYPOINT = Path(
+    "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
+)
+_RUNTIME_GENERATION_REQUIRED_HASHES = frozenset(
+    {
+        Path("VERSION"),
+        Path("scripts/vibecrafted"),
+        Path("runtime/generated/vc-frame/config.kdl"),
+        _RUNTIME_GENERATION_ENTRYPOINT,
+    }
+)
+_RUNTIME_ACTIVE_TEXT_ROOTS = (
+    Path("config/vc-frame"),
+    Path("runtime/generated"),
+    Path("vibecrafted-core/vibecrafted_core/runtime"),
+)
+_RUNTIME_ACTIVE_TEXT_SUFFIXES = frozenset(
+    {".bash", ".json", ".kdl", ".py", ".sh", ".toml", ".zsh"}
+)
+_ABSOLUTE_PATH_TOKEN = re.compile(r"/[^\s\"'`;,)>\]}]+")
 _TOOLS_INSTALL_LEASE_ENV = "VIBECRAFTED_INSTALL_LEASE_FD"
 _TOOLS_INSTALL_LEASE_TIMEOUT_ENV = "VIBECRAFTED_INSTALL_LOCK_TIMEOUT"
 _TOOLS_INSTALL_LEASE_DEFAULT_SECONDS = 180.0
@@ -2650,6 +2938,8 @@ class _RuntimeServiceTransition(OSError):
 
 @dataclass(frozen=True)
 class _RuntimeServiceStatus:
+    """Point-in-time read of the launchd-managed runtime service's supervisor/pair health."""
+
     installed: bool
     loaded: bool
     supervisor_live: bool
@@ -2661,6 +2951,9 @@ class _RuntimeServiceStatus:
 
     @property
     def healthy(self) -> bool:
+        """True when every observed signal (installed, loaded, supervisor live/verified/managed,
+        build current, pair healthy, live PID) agrees the service is fully up.
+        """
         return (
             self.installed
             and self.loaded
@@ -2675,6 +2968,7 @@ class _RuntimeServiceStatus:
 
     @property
     def quiescent(self) -> bool:
+        """True when every observed signal agrees the service is fully torn down."""
         return (
             not self.loaded
             and not self.supervisor_live
@@ -2685,17 +2979,106 @@ class _RuntimeServiceStatus:
             and self.supervisor_pid is None
         )
 
+    @property
+    def reclaimable(self) -> bool:
+        """Owned launchd supervisor is proven, but the managed pair is not.
+
+        This is the stable degraded shape install must drain (supervisor live
+        in backoff, pair_healthy false, often with an orphaned listener). It is
+        not a pure mid-start race: identity is known enough to call service stop.
+        """
+        if self.healthy or self.quiescent:
+            return False
+        return (
+            self.installed
+            and self.loaded
+            and self.supervisor_live
+            and self.supervisor_verified
+            and self.supervisor_service_managed
+            and self.supervisor_pid is not None
+            and self.supervisor_pid > 0
+            and not self.pair_healthy
+        )
+
+    @property
+    def needs_drain(self) -> bool:
+        """Install must stop this service before publication fences close."""
+        return self.healthy or self.reclaimable
+
 
 @dataclass(frozen=True)
 class _RuntimeLaunchAgentBackup:
+    """Exact bytes/mode/service-args snapshot of the runtime LaunchAgent plist, for rollback."""
+
     path: Path
     contents: bytes | None
     mode: int | None
     service_arguments: tuple[str, ...]
 
 
+_SERVER_CONFIG_MODULE: Any | None = None
+
+
+def _server_config_module() -> Any:
+    """Load (and cache) the installed runtime's server_config module by absolute path, since it
+    lives outside this script's own package.
+    """
+    global _SERVER_CONFIG_MODULE
+    if _SERVER_CONFIG_MODULE is not None:
+        return _SERVER_CONFIG_MODULE
+    module_path = (
+        Path(__file__).resolve().parent.parent
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "server_config.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "vibecrafted_installer_server_config", module_path
+    )
+    if spec is None or spec.loader is None:
+        raise OSError(f"cannot load server config owner from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(spec.name, None)
+        raise
+    _SERVER_CONFIG_MODULE = module
+    return module
+
+
+def _runtime_service_arguments_from_config(
+    backup: _RuntimeLaunchAgentBackup,
+) -> tuple[str, ...]:
+    """Seed config from a verified legacy plist, then let config own activation."""
+    module = _server_config_module()
+    captured = dict(zip(backup.service_arguments[::2], backup.service_arguments[1::2]))
+    host = captured.get("--host", module.DEFAULT_BIND_HOST)
+    try:
+        port = int(captured.get("--port", str(module.DEFAULT_PORT)))
+    except ValueError as exc:
+        raise OSError("verified runtime LaunchAgent has a non-integer port") from exc
+    seed = module.ServerConfig(
+        bind_host=host,
+        port=port,
+        public_url=module.origin_for(host, port),
+    )
+    settings, _created = module.seed_server_config(
+        seed,
+        operator_home=_canonical_operator_home(),
+    )
+    arguments = list(settings.service_arguments)
+    interval = captured.get("--interval")
+    if interval:
+        arguments.extend(("--interval", interval))
+    return tuple(arguments)
+
+
 @dataclass(frozen=True)
 class _RuntimePayloadEntryBackup:
+    """One backed-up runtime-payload entry: its path, backup location, kind, and content digest."""
+
     path: Path
     backup: Path | None
     kind: str
@@ -2704,6 +3087,8 @@ class _RuntimePayloadEntryBackup:
 
 @dataclass(frozen=True)
 class _RuntimePayloadBackup:
+    """A complete runtime-payload transaction backup: root dir, entries, and root identity."""
+
     root: Path
     entries: tuple[_RuntimePayloadEntryBackup, ...]
     root_identity: tuple[int, int]
@@ -2711,6 +3096,10 @@ class _RuntimePayloadBackup:
 
 @dataclass
 class _RuntimePayloadRestoreOperation:
+    """In-flight bookkeeping for restoring one payload entry (staged/precall/displaced
+    names+fds).
+    """
+
     entry: _RuntimePayloadEntryBackup
     parent_fd: int
     staged_name: str | None
@@ -2728,6 +3117,8 @@ class _RuntimePayloadRestoreOperation:
 
 @dataclass(frozen=True)
 class _RuntimePayloadCaptureSource:
+    """One captured source (parent fd, opened fd, kind, digest) feeding a payload backup."""
+
     path: Path
     parent_fd: int | None
     source_fd: int | None
@@ -2737,18 +3128,25 @@ class _RuntimePayloadCaptureSource:
 
 
 def _tools_handoff_path(current_link: Path) -> Path:
+    """Path to the tools-handoff receipt JSON alongside the given `current_link` symlink."""
     return current_link.parent / ".vibecrafted-current-handoff.json"
 
 
 def _tools_install_lease_path(current_link: Path) -> Path:
+    """Path to the cross-process install lease lockfile alongside `current_link`."""
     return current_link.parent / ".vibecrafted-install.lock"
 
 
 def _tools_handoff_file(shared_home: Path) -> Path:
+    """Path to the tools-handoff receipt for the shared home's current-tools link."""
     return _tools_handoff_path(_current_tools_link(shared_home))
 
 
 def _tools_install_timeout(timeout_seconds: float | None) -> float:
+    """Resolve the tools-install lease timeout: explicit value, else
+    VIBECRAFTED_INSTALL_LOCK_TIMEOUT env, else the built-in default; validates it is
+    finite/non-negative.
+    """
     if timeout_seconds is None:
         raw = os.environ.get(
             _TOOLS_INSTALL_LEASE_TIMEOUT_ENV,
@@ -2769,6 +3167,9 @@ def _tools_install_timeout(timeout_seconds: float | None) -> float:
 
 
 def _validate_tools_lease_descriptor(descriptor: int, lock_path: Path) -> None:
+    """Verify `descriptor` still owns the exact regular file at `lock_path` (no swap/replace
+    raced in).
+    """
     try:
         opened = os.fstat(descriptor)
         named = os.stat(lock_path, follow_symlinks=False)
@@ -2788,6 +3189,9 @@ def _validate_tools_lease_descriptor(descriptor: int, lock_path: Path) -> None:
 
 
 def _tools_lease_owner(descriptor: int) -> str:
+    """Human-readable owner info (pid/operation/started_at) decoded from the lease file, or a
+    placeholder.
+    """
     try:
         raw = os.pread(descriptor, 4096, 0).decode("utf-8", errors="replace").strip()
         payload = json.loads(raw)
@@ -2802,6 +3206,7 @@ def _tools_lease_owner(descriptor: int) -> str:
 
 
 def _write_tools_lease_owner(descriptor: int, operation: str) -> None:
+    """Write this process's pid/operation/timestamp as the lease file's owner metadata."""
     encoded = (
         json.dumps(
             {
@@ -2893,6 +3298,9 @@ def _tools_install_lease(
 
 
 def _require_inherited_tools_install_lease(shared_home: Path) -> int:
+    """Validate and flock-verify an installer lease descriptor inherited via env var; raises
+    OSError if none was inherited or it is not actually held.
+    """
     raw_descriptor = os.environ.get(_TOOLS_INSTALL_LEASE_ENV)
     if not raw_descriptor:
         raise OSError(
@@ -2923,6 +3331,9 @@ def _require_inherited_tools_install_lease(shared_home: Path) -> int:
 def _runtime_launchctl_job_is_absent(
     result: subprocess.CompletedProcess[str],
 ) -> bool:
+    """True if launchctl reports the fixed-label service job is simply absent; raises OSError
+    for any other non-zero/ambiguous result.
+    """
     if result.returncode == 0:
         return False
     detail = result.stderr.strip() or result.stdout.strip()
@@ -2938,6 +3349,9 @@ def _runtime_launchctl_job_is_absent(
 
 
 def _runtime_loaded_service_home() -> Path | None:
+    """VIBECRAFTED_HOME of the currently loaded fixed-label launchd service, or None if not
+    loaded.
+    """
     if sys.platform != "darwin":
         return None
     result = _runtime_launchctl("print", _runtime_launch_target())
@@ -2957,6 +3371,7 @@ def _runtime_loaded_service_home() -> Path | None:
 
 
 def _canonical_operator_home() -> Path:
+    """The real, non-overridden HOME directory for the current effective UID."""
     if sys.platform != "darwin":
         return Path.home().resolve(strict=False)
     import pwd
@@ -2965,6 +3380,7 @@ def _canonical_operator_home() -> Path:
 
 
 def _assert_runtime_loaded_service_owner(shared_home: Path) -> Path | None:
+    """Raise OSError if a loaded fixed-label service belongs to a different VIBECRAFTED_HOME."""
     loaded_home = _runtime_loaded_service_home()
     if loaded_home is not None and loaded_home != shared_home.resolve(strict=False):
         raise OSError(
@@ -2975,6 +3391,9 @@ def _assert_runtime_loaded_service_owner(shared_home: Path) -> Path | None:
 
 
 def _runtime_service_has_evidence(shared_home: Path) -> bool:
+    """True if any on-disk or launchd evidence suggests the runtime service is (or was)
+    installed.
+    """
     runtime_dir = shared_home / "server"
     evidence = (
         Path.home() / "Library" / "LaunchAgents" / f"{_RUNTIME_SERVICE_LABEL}.plist",
@@ -2993,6 +3412,9 @@ def _runtime_service_has_evidence(shared_home: Path) -> bool:
 def _runtime_launchctl(
     *arguments: str,
 ) -> subprocess.CompletedProcess[str]:
+    """Run `launchctl <arguments>` with a minimal, deterministic environment; never raises on
+    non-zero exit.
+    """
     launchctl = Path("/bin/launchctl")
     if not launchctl.is_file():
         raise OSError("macOS runtime handoff requires /bin/launchctl")
@@ -3010,18 +3432,22 @@ def _runtime_launchctl(
 
 
 def _runtime_launch_target() -> str:
+    """launchctl gui-domain target string for the fixed runtime service label."""
     return f"gui/{os.getuid()}/{_RUNTIME_SERVICE_LABEL}"
 
 
 def _runtime_launch_domain() -> str:
+    """launchctl gui-domain string for the current user."""
     return f"gui/{os.getuid()}"
 
 
 def _runtime_launch_agent_path() -> Path:
+    """Path to the runtime service's LaunchAgent plist under ~/Library/LaunchAgents."""
     return Path.home() / "Library" / "LaunchAgents" / f"{_RUNTIME_SERVICE_LABEL}.plist"
 
 
 def _runtime_launchd_disabled_state() -> bool:
+    """Query launchd whether the fixed runtime service label is currently disabled."""
     result = _runtime_launchctl("print-disabled", _runtime_launch_domain())
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or result.returncode
@@ -3041,6 +3467,9 @@ def _runtime_launchd_disabled_state() -> bool:
 
 
 def _set_runtime_launchd_disabled(disabled: bool) -> None:
+    """Enable or disable the fixed runtime service label via launchctl, verifying the resulting
+    state.
+    """
     action = "disable" if disabled else "enable"
     result = _runtime_launchctl(action, _runtime_launch_target())
     if result.returncode != 0:
@@ -3060,12 +3489,16 @@ class _RuntimeLaunchdMutationGate:
     """
 
     def __init__(self, *, required: bool) -> None:
+        """Compute whether launchd mutation gating is required (macOS + caller-requested)."""
         self.required = sys.platform == "darwin" and required
         self.originally_disabled = False
         self.disabled = False
         self._retain_disabled = False
 
     def __enter__(self) -> _RuntimeLaunchdMutationGate:  # noqa: PYI034
+        """Disable the service label on entry if gating is required and it was not already
+        disabled.
+        """
         if not self.required:
             return self
         self.originally_disabled = _runtime_launchd_disabled_state()
@@ -3075,23 +3508,31 @@ class _RuntimeLaunchdMutationGate:
         return self
 
     def disable(self) -> None:
+        """Disable the service label if required and not already disabled by this gate."""
         if not self.required or self.disabled:
             return
         _set_runtime_launchd_disabled(True)
         self.disabled = True
 
     def enable_for_activation(self) -> None:
+        """Re-enable the service label if it was disabled by this gate, for a bounded activation
+        window.
+        """
         if not self.required or not self.disabled:
             return
         _set_runtime_launchd_disabled(False)
         self.disabled = False
 
     def retain_disabled(self) -> None:
+        """Force the service label disabled and mark it to stay disabled through `__exit__`."""
         if self.required:
             self._retain_disabled = True
             self.disable()
 
     def allow_original_state_restore(self) -> None:
+        """Clear the retain-disabled flag so `__exit__` restores the original enabled/disabled
+        state.
+        """
         self._retain_disabled = False
 
     def commit_enabled_state(self) -> None:
@@ -3104,9 +3545,11 @@ class _RuntimeLaunchdMutationGate:
 
     @property
     def retention_required(self) -> bool:
+        """True if this gate must leave the service label disabled on exit."""
         return self._retain_disabled
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        """Restore (or keep) the disabled state on exit per retain_disabled/originally_disabled."""
         if not self.required:
             return
         if self._retain_disabled:
@@ -3125,6 +3568,9 @@ def _runtime_launchctl_print_value(
     separator: str,
     section: str | None = None,
 ) -> str | None:
+    """Extract one `key <separator> value` line from launchctl `print` output, optionally scoped
+    to a named `{ ... }` section.
+    """
     prefix = f"{key} {separator} "
     in_section = section is None
     for raw_line in payload.splitlines():
@@ -3142,6 +3588,9 @@ def _runtime_launchctl_print_value(
 
 
 def _runtime_launch_agent_contract(shared_home: Path) -> dict[str, Path]:
+    """Read, verify, and decode the owned runtime LaunchAgent plist into its expected
+    path/program/supervisor/home contract; raises OSError on any inconsistency.
+    """
     plist_path = _runtime_launch_agent_path()
     try:
         visible = plist_path.lstat()
@@ -3187,6 +3636,9 @@ def _runtime_launch_agent_contract(shared_home: Path) -> dict[str, Path]:
         raise OSError("loaded runtime LaunchAgent plist has an invalid schema")
 
     def required_argument(flag: str) -> str:
+        """Look up a required `--flag value` pair in the plist's ProgramArguments; raises
+        OSError if absent/empty.
+        """
         try:
             value = arguments[arguments.index(flag) + 1]
         except (ValueError, IndexError) as exc:
@@ -3198,6 +3650,9 @@ def _runtime_launch_agent_contract(shared_home: Path) -> dict[str, Path]:
         return value
 
     def optional_argument(flag: str) -> str | None:
+        """Look up an optional `--flag value` pair in the plist's ProgramArguments; None if the
+        flag is absent.
+        """
         try:
             value = arguments[arguments.index(flag) + 1]
         except ValueError:
@@ -3248,6 +3703,9 @@ def _assert_runtime_launchd_job_owned(
     *,
     result: subprocess.CompletedProcess[str] | None = None,
 ) -> bool:
+    """True if the currently loaded launchd job's observed paths exactly match the owned
+    LaunchAgent contract for `shared_home`; False if nothing is loaded.
+    """
     observed = result or _runtime_launchctl("print", _runtime_launch_target())
     if observed.returncode != 0:
         return False
@@ -3305,6 +3763,9 @@ def _assert_runtime_launchd_job_owned(
 
 
 def _bootout_owned_runtime_launchd_job(shared_home: Path) -> bool:
+    """Unload (bootout) the owned fixed-label launchd job after verifying it is ours; returns
+    False if nothing was loaded.
+    """
     observed = _runtime_launchctl("print", _runtime_launch_target())
     if _runtime_launchctl_job_is_absent(observed):
         return False
@@ -3327,6 +3788,9 @@ def _bootout_owned_runtime_launchd_job(shared_home: Path) -> bool:
 def _capture_runtime_launch_agent_backup(
     shared_home: Path,
 ) -> _RuntimeLaunchAgentBackup:
+    """Snapshot the current runtime LaunchAgent plist's exact bytes/mode/service-args, verifying
+    ownership.
+    """
     path = _runtime_launch_agent_path()
     if not path.exists() and not path.is_symlink():
         return _RuntimeLaunchAgentBackup(path, None, None, ())
@@ -3413,6 +3877,9 @@ def _restore_runtime_launch_agent_backup(
     shared_home: Path,
     backup: _RuntimeLaunchAgentBackup,
 ) -> None:
+    """Restore a previously captured LaunchAgent plist backup (including exact absence) via
+    atomic write.
+    """
     if backup.path != _runtime_launch_agent_path():
         raise OSError("runtime LaunchAgent backup targets an unexpected path")
     current_exists = backup.path.exists() or backup.path.is_symlink()
@@ -3441,6 +3908,9 @@ def _activate_runtime_service_from_backup(
     shared_home: Path,
     backup: _RuntimeLaunchAgentBackup,
 ) -> None:
+    """Reload and start the runtime service from a captured LaunchAgent backup, verifying it
+    comes up healthy.
+    """
     if backup.contents is None:
         raise OSError("active legacy service has no LaunchAgent definition to restore")
     _restore_runtime_launch_agent_backup(shared_home, backup)
@@ -3472,6 +3942,9 @@ def _activate_runtime_service_from_backup(
 
 
 def _runtime_service_launcher(shared_home: Path) -> Path | None:
+    """Resolve the current, user-owned, executable `vibecrafted` launcher used to drive the old
+    service CLI.
+    """
     candidate = vibecrafted_launcher_bin() / "vibecrafted"
     try:
         resolved = candidate.resolve(strict=True)
@@ -3502,6 +3975,7 @@ def _runtime_service_environment(
     launcher: Path,
     shared_home: Path,
 ) -> dict[str, str]:
+    """Build the subprocess environment for invoking the old launcher's `server` subcommands."""
     environment = os.environ.copy()
     existing_path = environment.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
     environment["PATH"] = f"{launcher.parent}:{existing_path}"
@@ -3523,6 +3997,9 @@ def _run_runtime_service_command(
     shared_home: Path,
     *arguments: str,
 ) -> subprocess.CompletedProcess[str]:
+    """Run `<launcher> server <arguments>` under the inherited install lease, with a bounded
+    timeout.
+    """
     descriptor = _require_inherited_tools_install_lease(shared_home)
     timeout_seconds = _RUNTIME_SERVICE_COMMAND_TIMEOUT_SECONDS
     deadline = _RUNTIME_SERVICE_COMMAND_DEADLINE.get()
@@ -3545,6 +4022,9 @@ def _run_runtime_service_command(
 def _decode_runtime_service_status(
     result: subprocess.CompletedProcess[str],
 ) -> _RuntimeServiceStatus:
+    """Parse the old launcher's `service status --json` output into a `_RuntimeServiceStatus`,
+    enforcing the expected exit code for its observed state.
+    """
     lines = [line for line in result.stdout.splitlines() if line.strip()]
     if len(lines) != 1:
         raise OSError(
@@ -3584,8 +4064,17 @@ def _decode_runtime_service_status(
         pair_healthy=payload["pair_healthy"],
         supervisor_pid=supervisor_pid,
     )
-    expected_returncode = 0 if status.healthy else 1 if status.quiescent else None
-    if expected_returncode is None:
+    # Known terminal shapes for handoff:
+    # - healthy: exit 0
+    # - quiescent: exit 1
+    # - reclaimable (owned supervisor, pair down): exit 1 — stable degrade,
+    #   not a mid-start race. Install drains it via service stop.
+    # Anything else is a transition (or corruption) and stays fail-closed.
+    if status.healthy:
+        expected_returncode = 0
+    elif status.quiescent or status.reclaimable:
+        expected_returncode = 1
+    else:
         detail = result.stderr.strip() or f"exit={result.returncode}"
         raise _RuntimeServiceTransition(
             "runtime service identity is uncertain while transition is in progress "
@@ -3604,6 +4093,7 @@ def _runtime_service_pair_state(
     launcher: Path,
     shared_home: Path,
 ) -> str:
+    """Determine 'running'/'stopped' from the old launcher's plain-text `service status` output."""
     result = _run_runtime_service_command(launcher, shared_home, "status")
     running = (
         result.returncode == 0
@@ -3631,6 +4121,9 @@ def _runtime_service_pair_state(
 def _runtime_service_snapshot(
     shared_home: Path,
 ) -> tuple[Path, _RuntimeServiceStatus, str] | None:
+    """Take one consistent snapshot of the runtime service: launcher, status, and pair state,
+    cross-checking the two observations for agreement.
+    """
     launcher = _runtime_service_launcher(shared_home)
     if launcher is None:
         return None
@@ -3651,6 +4144,13 @@ def _runtime_service_snapshot(
         return launcher, status, "running"
     pair_state = _runtime_service_pair_state(launcher, shared_home)
     if pair_state != "stopped":
+        # Reclaimable supervisors still report Server/Guardian STOPPED while
+        # an orphan may hold the port; only true RUNNING disagreement is fatal.
+        if status.reclaimable and pair_state == "running":
+            raise OSError(
+                "runtime service reports a non-healthy running pair; "
+                "refusing install handoff until the pair is stopped or healthy"
+            )
         raise OSError(
             "runtime service and server/guardian observations disagree; "
             "refusing install handoff"
@@ -3666,7 +4166,7 @@ def runtime_service_active_for_install(shared_home: Path) -> bool:
     snapshot = _runtime_service_snapshot(shared_home)
     if snapshot is None:
         return False
-    return snapshot[1].healthy
+    return snapshot[1].needs_drain
 
 
 def prepare_runtime_service_for_install(
@@ -3674,7 +4174,7 @@ def prepare_runtime_service_for_install(
     *,
     launch_agent_backup: _RuntimeLaunchAgentBackup | None = None,
 ) -> bool:
-    """Drain a verified legacy service before the runtime pointer can move."""
+    """Drain a verified legacy or reclaimable degraded service before publish."""
     if sys.platform != "darwin":
         return False
     _require_inherited_tools_install_lease(shared_home)
@@ -3684,13 +4184,16 @@ def prepare_runtime_service_for_install(
     launcher, status, _ = snapshot
     if status.quiescent:
         return False
+    if not status.needs_drain:
+        raise OSError(
+            "runtime service is neither quiescent nor reclaimable; refusing drain"
+        )
     backup = launch_agent_backup or _capture_runtime_launch_agent_backup(shared_home)
     if backup.contents is None:
-        raise OSError("healthy runtime service has no LaunchAgent snapshot")
+        raise OSError("runtime service marked for drain has no LaunchAgent snapshot")
     if not _assert_runtime_launchd_job_owned(shared_home):
         raise OSError(
-            "healthy runtime service disappeared before its owned launchd paths "
-            "could be proved"
+            "runtime service disappeared before its owned launchd paths could be proved"
         )
     try:
         result = _run_runtime_service_command(
@@ -4078,6 +4581,9 @@ def _runtime_supervisor_handoff_fence(
 
 
 def _runtime_lifecycle_deck_for_generation(generation: Path) -> Path:
+    """Resolve and verify the legacy `scripts/vibecrafted` lifecycle deck for a specific runtime
+    generation directory.
+    """
     try:
         generation = generation.resolve(strict=True)
     except OSError as exc:
@@ -4105,6 +4611,9 @@ def _runtime_lifecycle_deck_for_generation(generation: Path) -> Path:
 
 
 def _runtime_deck_has_service_lifecycle_lock(deck: Path) -> bool:
+    """True if the given lifecycle deck script contains the service-lifecycle-lock contract
+    marker.
+    """
     try:
         metadata = deck.stat()
         if metadata.st_size > 4 * 1024 * 1024:
@@ -4119,6 +4628,10 @@ def _runtime_deck_has_service_lifecycle_lock(deck: Path) -> bool:
 
 @dataclass(frozen=True)
 class _LegacyServiceMutator:
+    """One process observed to be mutating the legacy service (pid, argv, and stable birth
+    identity).
+    """
+
     pid: int
     start_token: str
     started_at: datetime
@@ -4126,6 +4639,10 @@ class _LegacyServiceMutator:
 
 
 class _DarwinProcBSDInfo(ctypes.Structure):
+    """ctypes mirror of Darwin's `struct proc_bsdinfo`, used for cheap per-PID process identity
+    checks.
+    """
+
     _fields_ = [
         ("pbi_flags", ctypes.c_uint32),
         ("pbi_status", ctypes.c_uint32),
@@ -4166,6 +4683,9 @@ _DARWIN_LIBC: ctypes.CDLL | None = None
 
 
 def _darwin_process_libraries() -> tuple[ctypes.CDLL, ctypes.CDLL]:
+    """Load (and cache) the libproc/libc handles with the ctypes signatures needed for process
+    census.
+    """
     global _DARWIN_LIBPROC, _DARWIN_LIBC
     if sys.platform != "darwin":
         raise OSError("Darwin process census requested on a non-Darwin host")
@@ -4206,6 +4726,9 @@ def _darwin_process_libraries() -> tuple[ctypes.CDLL, ctypes.CDLL]:
 
 
 def _darwin_process_ids() -> tuple[int, ...]:
+    """Enumerate this user's live PIDs on Darwin via `proc_listpids`, retrying with a larger
+    buffer as needed.
+    """
     libproc, _ = _darwin_process_libraries()
     ctypes.set_errno(0)
     effective_uid = os.geteuid()
@@ -4243,6 +4766,9 @@ def _darwin_process_ids() -> tuple[int, ...]:
 
 
 def _darwin_process_birth(pid: int) -> tuple[str, int, int]:
+    """Fetch a PID's birth identity (start-time token, uid, pointer size) via `proc_pidinfo`;
+    raises ProcessLookupError if it has exited or is unstable.
+    """
     libproc, _ = _darwin_process_libraries()
     info = _DarwinProcBSDInfo()
     if ctypes.sizeof(info) != _DARWIN_PROC_BSDINFO_SIZE:
@@ -4279,6 +4805,9 @@ def _darwin_process_birth(pid: int) -> tuple[str, int, int]:
 
 
 def _darwin_process_arguments(pid: int, *, pointer_size: int) -> tuple[str, ...]:
+    """Fetch a PID's argv via `sysctl KERN_PROCARGS2`, parsing past the exec path and alignment
+    padding; raises ProcessLookupError if the process is gone.
+    """
     if pointer_size not in {4, 8}:
         raise OSError(f"invalid Darwin process pointer size for {pid}")
     _, libc = _darwin_process_libraries()
@@ -4368,6 +4897,9 @@ def _darwin_process_arguments(pid: int, *, pointer_size: int) -> tuple[str, ...]
 
 
 def _argv_is_legacy_service_action_mutator(argv: Sequence[str]) -> bool:
+    """True if `argv` looks like `vibecrafted server service <action>` or the raw
+    server_supervisor equivalent.
+    """
     actions = {"install", "reconcile", "restart", "start", "stop", "uninstall"}
     for index in range(len(argv) - 3):
         if (
@@ -4391,6 +4923,9 @@ def _argv_is_legacy_service_action_mutator(argv: Sequence[str]) -> bool:
 
 
 def _argv_is_legacy_manual_server_mutator(argv: Sequence[str]) -> bool:
+    """True if `argv` looks like `vibecrafted server start/stop` or the raw server_supervisor
+    manual-stop form.
+    """
     if any(
         Path(argv[index]).name == "vibecrafted"
         and argv[index + 1] == "server"
@@ -4408,12 +4943,16 @@ def _argv_is_legacy_manual_server_mutator(argv: Sequence[str]) -> bool:
 
 
 def _argv_is_service_mutator(argv: Sequence[str]) -> bool:
+    """True if `argv` matches either legacy service-action or legacy manual-server mutator shape."""
     return _argv_is_legacy_service_action_mutator(
         argv
     ) or _argv_is_legacy_manual_server_mutator(argv)
 
 
 def _legacy_service_mutator_census() -> tuple[_LegacyServiceMutator, ...]:
+    """Census every live process whose argv matches a legacy service mutator shape, re-verifying
+    birth identity and argv did not change mid-read.
+    """
     records: list[_LegacyServiceMutator] = []
     for pid in _darwin_process_ids():
         if pid == os.getpid():
@@ -4457,6 +4996,9 @@ def _wait_for_legacy_service_mutator_quiescence(
     classifier: Callable[[Sequence[str]], bool] = _argv_is_service_mutator,
     timeout_seconds: float = 15.0,
 ) -> None:
+    """Poll the legacy-service-mutator census until none pre-date `published_at` remain, raising
+    OSError on timeout.
+    """
     if published_at.tzinfo is None:
         raise OSError("runtime publication boundary has no timezone")
     published_at = published_at.astimezone(timezone.utc)
@@ -4489,6 +5031,9 @@ def _wait_for_legacy_service_mutator_quiescence(
 
 
 def _runtime_lifecycle_deck(shared_home: Path) -> Path:
+    """Resolve the legacy lifecycle deck for the shared home's currently published runtime
+    generation.
+    """
     current = _current_tools_link(shared_home)
     try:
         generation = current.resolve(strict=True)
@@ -4502,12 +5047,17 @@ def _runtime_lifecycle_deck(shared_home: Path) -> Path:
 
 @dataclass(frozen=True)
 class _RuntimeLifecycleFenceGuard:
+    """Handle to a subprocess holding the legacy `scripts/vibecrafted` lifecycle.lock across a
+    mutation.
+    """
+
     process: subprocess.Popen[str] | None
     owner_pid: int | None = None
     owner_nonce: str | None = None
     lock_dir: Path | None = None
 
     def assert_owned(self) -> None:
+        """Raise OSError if the fence-holding subprocess has already exited."""
         if self.process is not None and self.process.poll() is not None:
             raise OSError(
                 "legacy lifecycle fence exited before the protected mutation "
@@ -4515,6 +5065,9 @@ class _RuntimeLifecycleFenceGuard:
             )
 
     def inherited_environment(self) -> dict[str, str]:
+        """Environment variables a child process needs to prove it inherited this exact
+        lifecycle-lock ownership; empty when no fence process is held.
+        """
         self.assert_owned()
         if self.process is None:
             return {}
@@ -4537,6 +5090,9 @@ class _RuntimeLifecycleFenceGuard:
 def _inherited_runtime_lifecycle_fence(
     guard: _RuntimeLifecycleFenceGuard,
 ) -> Iterator[None]:
+    """Context manager: expose `guard`'s inherited lifecycle-lock env vars via the module
+    ContextVar.
+    """
     environment = guard.inherited_environment()
     token = _RUNTIME_LIFECYCLE_ENV.set(environment or None)
     try:
@@ -4694,6 +5250,9 @@ IFS= read -r _release_request || true
 def _inherited_tools_install_lease(
     descriptor: int,
 ) -> Iterator[None]:
+    """Context manager: temporarily export `descriptor` as the inherited tools-install lease env
+    var.
+    """
     previous = os.environ.get(_TOOLS_INSTALL_LEASE_ENV)
     os.environ[_TOOLS_INSTALL_LEASE_ENV] = str(descriptor)
     try:
@@ -4723,6 +5282,7 @@ def _terminate_installer_child_process_group(
                 )
 
     def group_exists() -> bool:
+        """True if the installer child's process group still has any live member."""
         try:
             os.killpg(process_group, 0)
         except ProcessLookupError:
@@ -4736,6 +5296,7 @@ def _terminate_installer_child_process_group(
         return True
 
     def wait_for_group_exit(timeout_seconds: float) -> bool:
+        """Poll until the installer child's process group fully exits, or the timeout elapses."""
         deadline = time.monotonic() + timeout_seconds
         while True:
             process.poll()
@@ -4768,6 +5329,9 @@ def _run_install_child_with_lifecycle_guard(
     environment: dict[str, str],
     lifecycle_guard: _RuntimeLifecycleFenceGuard,
 ) -> int:
+    """Run the install child in its own process group under the lifecycle fence, polling fence
+    ownership while it runs and containing the group if the fence is lost.
+    """
     process = subprocess.Popen(
         list(argv),
         pass_fds=(descriptor,),
@@ -4844,6 +5408,7 @@ def run_with_tools_install_lease(
                 fence_required = False
                 lifecycle_deck: Path | None = None
                 launch_agent_backup: _RuntimeLaunchAgentBackup | None = None
+                service_activation_arguments: tuple[str, ...] = ()
                 payload_backup = _capture_runtime_payload_backup(
                     shared_home,
                     runtime_payload_paths,
@@ -4897,6 +5462,9 @@ def run_with_tools_install_lease(
                         launch_agent_backup = _capture_runtime_launch_agent_backup(
                             shared_home
                         )
+                        service_activation_arguments = (
+                            _runtime_service_arguments_from_config(launch_agent_backup)
+                        )
                         snapshot = _runtime_service_snapshot(shared_home)
                         if not gate.required and (
                             snapshot is not None
@@ -4912,14 +5480,23 @@ def run_with_tools_install_lease(
                                     "runtime service exists without an exact current "
                                     "lifecycle generation"
                                 )
-                            service_was_active = snapshot[1].healthy
+                            # Healthy managed pairs and reclaimable degraded
+                            # supervisors (live/owned, pair down) both must drain
+                            # before publication. Pure mid-start races still raise
+                            # _RuntimeServiceTransition at decode time.
+                            service_was_active = snapshot[1].needs_drain
                         # A quiescent old launcher can still receive a
                         # concurrent `service install`; fence every validated
                         # launcher, not only one with current service evidence.
                         fence_required = lifecycle_deck is not None
                         if service_was_active:
+                            reason = (
+                                "reclaimable degraded runtime"
+                                if snapshot is not None and snapshot[1].reclaimable
+                                else "verified legacy runtime"
+                            )
                             print(
-                                "[install-tools] draining verified legacy runtime "
+                                f"[install-tools] draining {reason} "
                                 "before publication..."
                             )
                             try:
@@ -5169,11 +5746,7 @@ def run_with_tools_install_lease(
                                     ):
                                         activate_runtime_service_after_install(
                                             shared_home,
-                                            service_arguments=(
-                                                launch_agent_backup.service_arguments
-                                                if launch_agent_backup is not None
-                                                else ()
-                                            ),
+                                            service_arguments=service_activation_arguments,
                                         )
                                     if not _assert_runtime_launchd_job_owned(
                                         shared_home
@@ -5309,6 +5882,7 @@ def run_with_tools_install_lease(
 
 
 def _symlink_target(path: Path) -> Path | None:
+    """Resolve a symlink's absolute target, or None if `path` is not a symlink."""
     if not path.is_symlink():
         return None
     raw_target = Path(os.readlink(path))
@@ -5326,7 +5900,10 @@ def _atomic_symlink(target: Path, link: Path) -> None:
             f"cannot atomically publish over non-symlink runtime root: {link}"
         )
     temporary = link.parent / (f".{link.name}.tmp-{os.getpid()}-{os.urandom(6).hex()}")
-    relative_target = os.path.relpath(canonical_target, link.parent)
+    relative_target = os.path.relpath(
+        canonical_target,
+        link.parent.resolve(strict=True),
+    )
     try:
         temporary.symlink_to(relative_target, target_is_directory=True)
         os.replace(temporary, link)
@@ -5336,6 +5913,9 @@ def _atomic_symlink(target: Path, link: Path) -> None:
 
 
 def _atomic_json_file(path: Path, payload: dict[str, Any]) -> None:
+    """Write `payload` as pretty JSON to `path` via a temp file + atomic rename + directory
+    fsync.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.parent / (f".{path.name}.tmp-{os.getpid()}-{os.urandom(6).hex()}")
     encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2) + "\n"
@@ -5372,6 +5952,9 @@ def _atomic_json_file(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _atomic_bytes_file(path: Path, contents: bytes, *, mode: int) -> None:
+    """Write `contents` to `path` via temp file + atomic rename, refusing to write through a
+    foreign (non-owned) parent directory or over a foreign existing path.
+    """
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     parent = path.parent.lstat()
     if (
@@ -5424,6 +6007,9 @@ def _atomic_bytes_file(path: Path, contents: bytes, *, mode: int) -> None:
 
 
 def _validate_runtime_payload_tree(path: Path) -> str:
+    """Verify `path` is a stable, user-owned, non-symlinked file or directory tree (rejecting
+    symlinks, foreign owners, and multi-hard-linked files) and return its kind.
+    """
     metadata = path.lstat()
     if path.is_symlink() or metadata.st_uid != os.geteuid():
         raise OSError(f"runtime payload path is not user-owned and stable: {path}")
@@ -5453,6 +6039,9 @@ def _validate_runtime_payload_tree(path: Path) -> str:
 
 
 def _runtime_payload_directory_flags() -> int:
+    """Compute the O_DIRECTORY|O_NOFOLLOW open flags, raising OSError if the platform lacks
+    openat support.
+    """
     directory = getattr(os, "O_DIRECTORY", 0)
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     if not directory or not nofollow or os.open not in os.supports_dir_fd:
@@ -5507,6 +6096,9 @@ def _runtime_payload_open_absolute_directory(
 
 
 def _runtime_payload_directory_matches_fd(path: Path, descriptor: int) -> bool:
+    """True if opening `path` fresh yields the same (dev, ino) identity as the already-open
+    `descriptor`.
+    """
     try:
         current = _runtime_payload_open_absolute_directory(path, create=False)
     except OSError:
@@ -5523,11 +6115,17 @@ def _runtime_payload_assert_directory_current(
     path: Path,
     descriptor: int,
 ) -> None:
+    """Raise OSError if `path`'s current identity no longer matches the already-open
+    `descriptor`.
+    """
     if not _runtime_payload_directory_matches_fd(path, descriptor):
         raise OSError(f"runtime payload parent identity changed: {path}")
 
 
 def _runtime_payload_kind(metadata: os.stat_result, *, label: str) -> str:
+    """Classify a stat result as 'file' or 'directory', rejecting symlinks, foreign owners, and
+    (for files) multiple hard links.
+    """
     if metadata.st_uid != os.geteuid():
         raise OSError(f"runtime payload path is not user-owned: {label}")
     if stat.S_ISLNK(metadata.st_mode):
@@ -5542,6 +6140,9 @@ def _runtime_payload_kind(metadata: os.stat_result, *, label: str) -> str:
 
 
 def _runtime_payload_safe_name(name: str) -> str:
+    """Validate `name` as a safe single path component (no '', '.', '..', or separator); return
+    it unchanged.
+    """
     if name in {"", ".", ".."} or os.sep in name:
         raise OSError(f"unsafe runtime payload entry name: {name!r}")
     return name
@@ -5551,6 +6152,9 @@ def _runtime_payload_open_entry_at(
     parent_fd: int,
     name: str,
 ) -> tuple[int, str, os.stat_result]:
+    """Open one directory entry by name via `dir_fd`, re-verifying its kind and identity did not
+    change between the pre-open stat and the open itself.
+    """
     name = _runtime_payload_safe_name(name)
     before = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     kind = _runtime_payload_kind(before, label=name)
@@ -5574,6 +6178,7 @@ def _runtime_payload_open_entry_at(
 
 
 def _runtime_payload_name_exists_at(parent_fd: int, name: str) -> bool:
+    """True if `name` exists under `parent_fd` (without following a trailing symlink)."""
     try:
         os.stat(
             _runtime_payload_safe_name(name),
@@ -5588,6 +6193,9 @@ def _runtime_payload_name_exists_at(parent_fd: int, name: str) -> bool:
 def _runtime_payload_stat_signature(
     metadata: os.stat_result,
 ) -> tuple[int, int, int, int, int, int, int, int]:
+    """Tuple of stat fields (dev, ino, mode, uid, nlink, size, mtime_ns, ctime_ns) used to
+    detect any change.
+    """
     return (
         metadata.st_dev,
         metadata.st_ino,
@@ -5601,6 +6209,9 @@ def _runtime_payload_stat_signature(
 
 
 def _runtime_payload_hash_blob(digest: Any, value: bytes) -> None:
+    """Feed a length-prefixed `value` into a running hash `digest`, so field boundaries can't be
+    confused.
+    """
     digest.update(struct.pack("!Q", len(value)))
     digest.update(value)
 
@@ -5611,6 +6222,9 @@ def _runtime_payload_digest_node(
     name: bytes,
     digest: Any,
 ) -> None:
+    """Recursively hash one payload node (file bytes or directory listing+children) into
+    `digest`, re-verifying the node's identity was stable across the walk.
+    """
     before = os.fstat(descriptor)
     if _runtime_payload_kind(before, label=os.fsdecode(name) or "<root>") != kind:
         raise OSError("runtime payload node changed type while hashing")
@@ -5664,6 +6278,7 @@ def _runtime_payload_digest_node(
 
 
 def _runtime_payload_digest_fd(descriptor: int, kind: str) -> str:
+    """Compute the full content digest of an open file/directory descriptor."""
     digest = hashlib.sha256()
     _runtime_payload_hash_blob(digest, b"vibecrafted-runtime-payload-v1")
     _runtime_payload_digest_node(descriptor, kind, b"", digest)
@@ -5676,6 +6291,9 @@ def _runtime_payload_remove_at(
     *,
     expected_identity: tuple[int, int] | None = None,
 ) -> None:
+    """Recursively delete the entry named `name` under `parent_fd`, verifying its identity first
+    if `expected_identity` is given.
+    """
     name = _runtime_payload_safe_name(name)
     try:
         descriptor, kind, metadata = _runtime_payload_open_entry_at(parent_fd, name)
@@ -5702,6 +6320,7 @@ def _runtime_payload_remove_at(
 
 
 def _runtime_payload_write_all(descriptor: int, data: bytes) -> None:
+    """Write all of `data` to `descriptor`, looping until every byte is written."""
     view = memoryview(data)
     while view:
         written = os.write(descriptor, view)
@@ -5716,6 +6335,10 @@ def _runtime_payload_copy_node(
     destination_parent_fd: int,
     destination_name: str,
 ) -> None:
+    """Recursively copy one payload node (file or directory) from `source_fd` to a new entry
+    `destination_name` under `destination_parent_fd`, preserving mode/mtime and cleaning up on
+    any failure.
+    """
     destination_name = _runtime_payload_safe_name(destination_name)
     source_before = os.fstat(source_fd)
     if _runtime_payload_kind(source_before, label=destination_name) != kind:
@@ -5794,6 +6417,9 @@ def _runtime_payload_copy_node(
 
 
 def _runtime_payload_validate_at(parent_fd: int, name: str) -> str:
+    """Open and hash-verify one payload entry by name, returning its kind (raises on any
+    inconsistency).
+    """
     descriptor, kind, _ = _runtime_payload_open_entry_at(parent_fd, name)
     try:
         _runtime_payload_digest_fd(descriptor, kind)
@@ -5809,6 +6435,9 @@ def _runtime_payload_assert_retained_entry(
     kind: str,
     expected_digest: str,
 ) -> None:
+    """Raise OSError unless the on-disk entry at `parent_fd`/`name` still matches
+    `retained_fd`'s identity, kind, and digest — used to seal a just-published rename.
+    """
     retained = os.fstat(retained_fd)
     if _runtime_payload_kind(retained, label=name) != kind:
         raise OSError(f"retained runtime payload changed type: {name}")
@@ -5834,6 +6463,7 @@ def _runtime_payload_assert_retained_entry(
 def _runtime_payload_open_backup_root(
     backup: _RuntimePayloadBackup,
 ) -> int:
+    """Open the runtime-payload backup transaction root, verifying its identity has not changed."""
     descriptor = _runtime_payload_open_absolute_directory(
         backup.root,
         create=False,
@@ -5846,6 +6476,9 @@ def _runtime_payload_open_backup_root(
 
 
 def _validate_runtime_payload_backup(backup: _RuntimePayloadBackup) -> None:
+    """Re-verify every entry in a captured payload backup still matches its recorded digest
+    before use.
+    """
     root_fd = _runtime_payload_open_backup_root(backup)
     try:
         for entry in backup.entries:
@@ -5883,6 +6516,9 @@ def _stage_runtime_payload_restore(
     backup_root_fd: int,
     destination_parent_fd: int,
 ) -> tuple[str | None, int | None, str | None]:
+    """Copy one backup entry into a freshly staged name under the destination parent,
+    re-verifying its digest, ready for the final publishing rename.
+    """
     if entry.kind == "absent":
         if entry.backup is not None or entry.digest is not None:
             raise OSError(f"absent runtime payload has backup state: {entry.path}")
@@ -5924,6 +6560,9 @@ def _stage_runtime_payload_restore(
 def _runtime_payload_validate_capture_sources(
     sources: Sequence[_RuntimePayloadCaptureSource],
 ) -> None:
+    """Re-verify every captured payload source (or proven absence) is still exactly as it was
+    when first observed, right before the backup copy begins.
+    """
     for source in sources:
         if source.kind == "absent":
             if source.parent_fd is not None:
@@ -5987,6 +6626,9 @@ def _capture_runtime_payload_backup(
     shared_home: Path,
     paths: Sequence[Path],
 ) -> _RuntimePayloadBackup | None:
+    """Capture an atomic, digest-verified backup of every path in `paths` into a fresh
+    transaction directory under the shared home, for later restore/discard.
+    """
     if not paths:
         return None
     expanded = tuple(
@@ -6147,6 +6789,10 @@ def _restore_runtime_payload_backup_open(
     backup_root_fd: int,
     descriptors: ExitStack,
 ) -> None:
+    """Perform the full payload-backup restore transaction: stage each entry, snapshot and
+    displace the current occupant, publish the staged replacement, and roll every step back if
+    any later step fails.
+    """
     operations: list[_RuntimePayloadRestoreOperation] = []
     try:
         for entry in backup.entries:
@@ -6585,6 +7231,9 @@ def _restore_runtime_payload_backup_open(
 
 
 def _restore_runtime_payload_backup(backup: _RuntimePayloadBackup | None) -> None:
+    """Restore a runtime-payload backup (no-op if `backup` is None) after re-verifying its
+    digests.
+    """
     if backup is None:
         return
     _validate_runtime_payload_backup(backup)
@@ -6599,6 +7248,9 @@ def _restore_runtime_payload_backup(backup: _RuntimePayloadBackup | None) -> Non
 
 
 def _discard_runtime_payload_backup(backup: _RuntimePayloadBackup | None) -> None:
+    """Permanently delete a runtime-payload backup transaction directory, quarantining it first
+    so a mid-delete failure can be recovered.
+    """
     if backup is None:
         return
     _validate_runtime_payload_backup(backup)
@@ -6691,6 +7343,7 @@ def _discard_runtime_payload_backup(backup: _RuntimePayloadBackup | None) -> Non
 
 
 def _read_tools_handoff_path(path: Path) -> dict[str, Any] | None:
+    """Read and schema-validate a tools-handoff receipt JSON at `path`; None if missing/invalid."""
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -6707,10 +7360,14 @@ def _read_tools_handoff_path(path: Path) -> dict[str, Any] | None:
 
 
 def _read_tools_handoff(shared_home: Path) -> dict[str, Any] | None:
+    """Read the tools-handoff receipt for the shared home's current-tools link."""
     return _read_tools_handoff_path(_tools_handoff_file(shared_home))
 
 
 def _tools_handoff_publication_boundary(shared_home: Path) -> datetime:
+    """The exact publication timestamp of the currently prepared runtime generation, verified
+    against the live current-tools symlink target.
+    """
     payload = _read_tools_handoff(shared_home)
     if payload is None or payload["state"] != "prepared":
         raise OSError("runtime publication has no prepared handoff receipt")
@@ -6735,6 +7392,9 @@ def _tools_handoff_is_complete_current(
     *,
     expected_target: Path,
 ) -> bool:
+    """True if the tools-handoff receipt is 'complete' and its recorded target matches both the
+    live current-tools symlink and `expected_target`.
+    """
     payload = _read_tools_handoff(shared_home)
     if payload is None or payload["state"] != "complete":
         return False
@@ -6812,6 +7472,116 @@ def _materialize_vc_frame_generation(runtime_root: Path) -> None:
         )
 
 
+def _runtime_active_text_files(runtime_root: Path) -> Iterator[Path]:
+    """Yield every active (non-symlink) text config/script file under the runtime's watched
+    roots.
+    """
+    for relative_root in _RUNTIME_ACTIVE_TEXT_ROOTS:
+        root = runtime_root / relative_root
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if (
+                path.is_file()
+                and not path.is_symlink()
+                and path.suffix in _RUNTIME_ACTIVE_TEXT_SUFFIXES
+            ):
+                yield path
+    for relative in (
+        Path("scripts/vibecrafted"),
+        Path("vibecrafted-core/vibecrafted_core/deck/vibecrafted"),
+    ):
+        path = runtime_root / relative
+        if path.is_file() and not path.is_symlink():
+            yield path
+
+
+def _path_fingerprint(path: Path) -> str:
+    """SHA-256 hex fingerprint of a resolved path's string form, used to detect stray checkout
+    references.
+    """
+    return hashlib.sha256(str(path.resolve(strict=False)).encode("utf-8")).hexdigest()
+
+
+def _text_references_path_fingerprint(text: str, fingerprint: str) -> bool:
+    """True if any absolute-path-looking token in `text` (or one of its parent directories)
+    hashes to `fingerprint`.
+    """
+    for raw_token in _ABSOLUTE_PATH_TOKEN.findall(text):
+        candidate = Path(raw_token)
+        for ancestor in (candidate, *candidate.parents):
+            if _path_fingerprint(ancestor) == fingerprint:
+                return True
+    return False
+
+
+def _runtime_generation_audit_errors(
+    runtime_root: Path,
+    *,
+    source_root: Path | None = None,
+    source_fingerprint: str | None = None,
+) -> list[str]:
+    """Audit a candidate runtime generation for symlinks escaping the generation root and active
+    files that still reference the source checkout path.
+    """
+    root = runtime_root.resolve(strict=False)
+    errors: list[str] = []
+    for path in sorted(runtime_root.rglob("*")):
+        if not path.is_symlink():
+            continue
+        relative = path.relative_to(runtime_root)
+        try:
+            resolved = path.resolve(strict=True)
+        except (OSError, RuntimeError):
+            errors.append(f"broken installed symlink: {relative}")
+            continue
+        if not _is_subpath(resolved, root):
+            errors.append(f"installed symlink escapes generation: {relative}")
+
+    source_text = str(source_root.resolve(strict=False)) if source_root else None
+    for path in _runtime_active_text_files(runtime_root):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        relative = path.relative_to(runtime_root)
+        if (
+            source_text
+            and source_text in text
+            or source_fingerprint
+            and _text_references_path_fingerprint(text, source_fingerprint)
+        ):
+            errors.append(f"active runtime file references source checkout: {relative}")
+    return sorted(set(errors))
+
+
+def _write_runtime_generation_manifest(
+    runtime_root: Path,
+    *,
+    source_root: Path,
+    install_version: str | None,
+) -> None:
+    """Write the runtime generation manifest: hashes of the required entrypoint files, source
+    fingerprint/owner/revision, and install version.
+    """
+    hashes: dict[str, str] = {}
+    for relative in sorted(_RUNTIME_GENERATION_REQUIRED_HASHES):
+        path = runtime_root / relative
+        if not path.is_file():
+            raise OSError(f"candidate runtime is missing manifest input: {relative}")
+        hashes[relative.as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    payload = {
+        "schema": _RUNTIME_GENERATION_MANIFEST_SCHEMA,
+        "version": (install_version or read_version_file(runtime_root)).strip(),
+        "source_fingerprint": _path_fingerprint(source_root),
+        "owner_repo": get_repo_owner(source_root),
+        "source_revision": get_repo_full_commit(source_root),
+        "entrypoint": _RUNTIME_GENERATION_ENTRYPOINT.as_posix(),
+        "hashes": hashes,
+    }
+    _atomic_json_file(runtime_root / _RUNTIME_GENERATION_MANIFEST, payload)
+
+
 def _sync_control_plane_tree_locked(
     src: Path,
     dst: Path,
@@ -6819,6 +7589,10 @@ def _sync_control_plane_tree_locked(
     mirror: bool,
     install_version: str | None,
 ) -> Path:
+    """Stage, materialize, audit, manifest, and atomically publish a new runtime generation
+    under the tools-install lease; rolls back the staging/generation directories on any failure
+    before the pointer swap.
+    """
     _ = mirror  # staged runtime is always an exact distribution payload
     if dst.exists() and not dst.is_symlink():
         raise OSError(
@@ -6862,6 +7636,14 @@ def _sync_control_plane_tree_locked(
         if install_version:
             stamp_install_version(staging, install_version)
         _materialize_vc_frame_generation(staging)
+        audit_errors = _runtime_generation_audit_errors(staging, source_root=src)
+        if audit_errors:
+            raise OSError("\n".join(audit_errors))
+        _write_runtime_generation_manifest(
+            staging,
+            source_root=src,
+            install_version=install_version,
+        )
         staging.rename(generation)
         handoff = {
             "schema": _TOOLS_HANDOFF_SCHEMA,
@@ -6889,6 +7671,9 @@ def _prune_tools_generations_locked(
     *,
     keep: int = _TOOLS_GENERATIONS_TO_KEEP,
 ) -> list[Path]:
+    """Delete old runtime generation directories beyond the retention window, protecting the
+    current, previous, and any in-flight handoff target.
+    """
     if keep < 1:
         raise ValueError("tools generation retention must keep at least one generation")
     current_link = _current_tools_link(shared_home)
@@ -6949,6 +7734,9 @@ def prune_tools_generations(
 
 
 def _rollback_current_tools_locked(shared_home: Path) -> bool:
+    """Roll the current-tools pointer back to the prior generation recorded in a 'prepared'
+    handoff receipt; no-op if there is nothing pending to roll back.
+    """
     payload = _read_tools_handoff(shared_home)
     if payload is None or payload["state"] != "prepared":
         return False
@@ -7020,6 +7808,9 @@ def rollback_current_tools(shared_home: Path) -> bool:
 
 
 def _complete_current_tools_handoff_locked(shared_home: Path) -> bool:
+    """Mark a 'prepared' tools-handoff receipt 'complete' once the current-tools pointer is
+    verified to match it, then prune old generations.
+    """
     payload = _read_tools_handoff(shared_home)
     if payload is None or payload["state"] != "prepared":
         return False
@@ -7060,6 +7851,9 @@ def _staged_sync_failure_detail(exc: Exception) -> str:
 
 
 def _is_framework_source_root(repo_root: Path) -> bool:
+    """True if `repo_root` looks like a complete Vibecrafted framework source checkout (VERSION,
+    launcher, skills, and runtime present).
+    """
     skills_dir = repo_root / "skills"
     packaged_skills_dir = repo_root / "vibecrafted-core" / "vibecrafted_core" / "skills"
     runtime_dir = repo_root / "runtime"
@@ -7075,11 +7869,15 @@ def _is_framework_source_root(repo_root: Path) -> bool:
 
 
 def _current_tools_link(shared_home: Path) -> Path:
+    """Path to the shared home's `vibecrafted-current` staged-tools symlink."""
     _ = shared_home
     return vibecrafted_tools_home() / "vibecrafted-current"
 
 
 def _ensure_current_tools_target(shared_home: Path) -> Path:
+    """Ensure the current-tools symlink exists and points at a real directory, bootstrapping an
+    empty generation directory if none exists yet.
+    """
     _ = shared_home
     tools_dir = vibecrafted_tools_home()
     current_link = _current_tools_link(shared_home)
@@ -7147,10 +7945,12 @@ def refresh_current_tools(
 
 
 def _legacy_agents_layout_root(store_path: Path) -> Path:
+    """Legacy vc-agents layout root under the (old) skill store path."""
     return store_path / "vc-agents"
 
 
 def _current_agents_layout_root(store_path: Path, *, create: bool = False) -> Path:
+    """Current-generation agents layout root under the staged current-tools link."""
     current_link = _current_tools_link(store_path)
     if create:
         _ensure_current_tools_target(store_path)
@@ -7158,6 +7958,9 @@ def _current_agents_layout_root(store_path: Path, *, create: bool = False) -> Pa
 
 
 def _transfer_relative_files(root: Path) -> list[Path]:
+    """List every file/symlink under `root` (relative paths), skipping distribution-forbidden
+    entries.
+    """
     if not root.exists():
         return []
     files: list[Path] = []
@@ -7170,6 +7973,7 @@ def _transfer_relative_files(root: Path) -> list[Path]:
 
 
 def _same_file_payload(src: Path, dst: Path) -> bool:
+    """True if `src` and `dst` are byte-identical (or point at the same symlink target)."""
     if src.is_symlink() or dst.is_symlink():
         try:
             return os.readlink(src) == os.readlink(dst)
@@ -7182,6 +7986,7 @@ def _same_file_payload(src: Path, dst: Path) -> bool:
 
 
 def _layout_transfer_conflicts(src: Path, dst: Path) -> list[Path]:
+    """Relative paths under `src` whose `dst` counterpart exists with different content."""
     conflicts: list[Path] = []
     for rel in _transfer_relative_files(src):
         target = dst / rel
@@ -7194,6 +7999,7 @@ def _layout_transfer_conflicts(src: Path, dst: Path) -> list[Path]:
 
 
 def _copy_layout_payload(src: Path, dst: Path) -> list[str]:
+    """Copy every file/symlink under `src` into `dst`, overwriting any existing target entries."""
     copied: list[str] = []
     dst.mkdir(parents=True, exist_ok=True)
     for rel in _transfer_relative_files(src):
@@ -7220,6 +8026,7 @@ def _append_layout_transfer(
     copied: Sequence[str] = (),
     conflicts: Sequence[Path] = (),
 ) -> None:
+    """Append one layout-transfer attempt record (direction/status/paths/counts) to `state`."""
     state.layout_transfers.append(
         {
             "direction": direction,
@@ -7311,6 +8118,7 @@ def transfer_agents_layout(
 
 
 def layout_status(store_path: Path) -> dict[str, Any]:
+    """Snapshot of the legacy/current agents-layout roots and the most recent transfer record."""
     legacy = _legacy_agents_layout_root(store_path)
     current = _current_agents_layout_root(store_path, create=False)
     state = InstallState.load(store_path)
@@ -7528,6 +8336,9 @@ def prune_shadowed_skill_views(
 
 
 def _copy_managed_launcher(src: Path, dst: Path) -> bool:
+    """Copy `src` over `dst` as a managed launcher, refusing to clobber an unmanaged existing
+    file.
+    """
     if dst.exists() or dst.is_symlink():
         if not _is_replaceable_framework_launcher(dst):
             print(f"  {WARN} Keeping existing unmanaged launcher: {dst}")
@@ -7554,6 +8365,7 @@ def _canonical_store_path(shared_home: Path, *, create: bool = False) -> Path:
 
 
 def _load_install_state(store_path: Path) -> InstallState:
+    """Load install state from `store_path`, falling back to the legacy store's state if newer."""
     state = InstallState.load(store_path)
     if (store_path / STATE_FILE).exists():
         return state
@@ -7565,14 +8377,17 @@ def _load_install_state(store_path: Path) -> InstallState:
 
 
 def _runtime_venv_dir(current_tools: Path) -> Path:
+    """Path to the runtime venv directory under a given current-tools generation."""
     return current_tools / ".venv"
 
 
 def _runtime_venv_python(current_tools: Path) -> Path:
+    """Path to the runtime venv's python3 interpreter under a given current-tools generation."""
     return _runtime_venv_dir(current_tools) / "bin" / "python3"
 
 
 def _ensure_runtime_pip(python_bin: Path) -> None:
+    """Ensure `python_bin` has a working pip, bootstrapping it via `ensurepip` if missing."""
     pip_check = subprocess.run(
         [str(python_bin), "-m", "pip", "--version"],
         stdout=subprocess.DEVNULL,
@@ -7656,10 +8471,12 @@ def _install_python_entrypoint_launchers(
 
 
 def _state_agency_quarantine(current_tools: Path) -> Path:
+    """Path to the quarantine directory used to relocate legacy state-home agency payload."""
     return current_tools / ".legacy-state-agency"
 
 
 def _clear_immutable_flags(path: Path) -> None:
+    """Clear macOS `uchg` immutable flags recursively under `path` (no-op off Darwin)."""
     if sys.platform != "darwin":
         return
     subprocess.run(
@@ -7671,6 +8488,9 @@ def _clear_immutable_flags(path: Path) -> None:
 
 
 def _available_quarantine_path(dst: Path) -> Path:
+    """Find an unused quarantine destination path for `dst`, appending a timestamp/pid suffix on
+    collision.
+    """
     if not (dst.exists() or dst.is_symlink()):
         return dst
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -7683,6 +8503,9 @@ def _available_quarantine_path(dst: Path) -> Path:
 
 
 def _move_state_agency_path(src: Path, dst: Path, dry_run: bool = False) -> bool:
+    """Move `src` into a fresh quarantine slot under `dst`'s parent, clearing immutable flags
+    first.
+    """
     if not (src.exists() or src.is_symlink()):
         return False
     if dry_run:
@@ -7727,6 +8550,7 @@ MARBLES_COMMANDS_BY_RUNTIME: dict[str, tuple[str, ...]] = {
 
 
 def _managed_agent_command(path: Path) -> bool:
+    """True if `path` is a file carrying the managed-agent-command marker comment."""
     if not path.exists() or not path.is_file():
         return False
     try:
@@ -7738,6 +8562,9 @@ def _managed_agent_command(path: Path) -> bool:
 def _write_managed_agent_command(
     path: Path, content: str, dry_run: bool = False
 ) -> bool:
+    """Write `content` to `path` as a managed agent command file, refusing to overwrite an
+    existing unmanaged file.
+    """
     if dry_run:
         print(f"  {dim('write')} {path}")
         return True
@@ -7750,6 +8577,9 @@ def _write_managed_agent_command(
 
 
 def _marbles_orchestrator_expr() -> str:
+    """Shell expression resolving the vc-marbles orchestrator directory from env, with a default
+    fallback.
+    """
     return (
         '"${VIBECRAFTED_MARBLES_ORCHESTRATOR:-'
         "${VIBECRAFTED_TOOLS_HOME:-$HOME/.local/share/vibecrafted/tools}"
@@ -7758,6 +8588,7 @@ def _marbles_orchestrator_expr() -> str:
 
 
 def _codex_marbles_command(alias: str) -> str:
+    """Render the Codex Marbles slash-command markdown body for the given command `alias`."""
     orchestrator = _marbles_orchestrator_expr()
     return f"""---
 description: "Start Codex interactive Marbles loop"
@@ -7794,6 +8625,7 @@ Command alias installed as `{alias}`.
 
 
 def _cancel_codex_marbles_command() -> str:
+    """Render the Codex cancel-marbles slash-command markdown body."""
     orchestrator = _marbles_orchestrator_expr()
     return f"""---
 description: "Cancel active Codex Marbles loop"
@@ -7812,6 +8644,7 @@ bash "$orchestrator/scripts/codex-loop-step.sh" cancel
 
 
 def _claude_marbles_command() -> str:
+    """Render the Claude Marbles slash-command markdown body."""
     orchestrator = _marbles_orchestrator_expr()
     return f"""---
 description: "Start Marbles in current Claude session"
@@ -7838,6 +8671,7 @@ $orchestrator/hooks/stop-hook.sh
 
 
 def _cancel_claude_marbles_command() -> str:
+    """Render the Claude cancel-marbles slash-command markdown body."""
     return f"""---
 description: "Cancel active Claude Marbles loop"
 ---
@@ -7859,6 +8693,7 @@ fi
 
 
 def _agent_command_payloads(runtime: str) -> dict[str, str]:
+    """The filename->content map of agent slash-commands to install for a given `runtime`."""
     if runtime == "codex":
         return {
             "marbles.md": _codex_marbles_command("/marbles"),
@@ -7874,6 +8709,7 @@ def _agent_command_payloads(runtime: str) -> dict[str, str]:
 
 
 def install_agent_commands(runtimes: Sequence[str], dry_run: bool = False) -> None:
+    """Write every runtime's agent slash-command payloads into its commands directory."""
     for runtime in runtimes:
         payloads = _agent_command_payloads(runtime)
         if not payloads:
@@ -7931,6 +8767,8 @@ def _configure_gemini_plans(dry_run: bool = False) -> None:
 
 @dataclass
 class DoctorFinding:
+    """One doctor check result: level (ok/warn/fail), component id, and human message."""
+
     level: str  # ok, warn, fail
     component: str
     message: str
@@ -7991,18 +8829,22 @@ def describe_dumb_terminal_noise(stdout: str, stderr: str) -> str:
 
 
 def _canonical_store_root() -> Path:
+    """Canonical `~/.vibecrafted` store root, independent of any env override."""
     return (Path.home() / ".vibecrafted").expanduser()
 
 
 def _canonical_runtime_root() -> Path:
+    """Canonical `~/.local/share/vibecrafted` runtime root, independent of any env override."""
     return (Path.home() / ".local" / "share" / "vibecrafted").expanduser()
 
 
 def _canonical_launcher_root() -> Path:
+    """Canonical `~/.local/bin` launcher root, independent of any env override."""
     return (Path.home() / ".local" / "bin").expanduser()
 
 
 def _path_with_tilde(path: Path) -> str:
+    """Render `path` with the home directory prefix collapsed to `~`."""
     path_text = str(path.expanduser())
     home_text = str(Path.home())
     if path_text == home_text:
@@ -8013,6 +8855,7 @@ def _path_with_tilde(path: Path) -> str:
 
 
 def _is_subpath(path: Path, root: Path) -> bool:
+    """True if `path` is `root` or lives under it."""
     try:
         path.relative_to(root)
         return True
@@ -8021,6 +8864,9 @@ def _is_subpath(path: Path, root: Path) -> bool:
 
 
 def _runtime_root_contract_findings() -> list[DoctorFinding]:
+    """Verify the launcher-bin/runtime/store roots each resolve to their canonical location,
+    flagging drift (e.g. stale VIBECRAFTED_* overrides) as failures.
+    """
     checks = [
         (
             "launcher-bin",
@@ -8068,9 +8914,316 @@ def _runtime_root_contract_findings() -> list[DoctorFinding]:
     return findings
 
 
+def _runtime_generation_contract_findings() -> list[DoctorFinding]:
+    """Verify the current runtime generation is manifest-bound: symlink resolves under the
+    canonical runtime root, its generation manifest is well-formed, every manifest-hashed file
+    matches, and the launcher resolves to its entrypoint.
+    """
+    current = vibecrafted_tools_home() / "vibecrafted-current"
+    if not current.is_symlink():
+        return [
+            DoctorFinding(
+                "fail",
+                "runtime-generation",
+                f"{_path_with_tilde(current)} is not an atomic generation pointer",
+            )
+        ]
+    try:
+        generation = current.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        return [
+            DoctorFinding(
+                "fail",
+                "runtime-generation",
+                f"cannot resolve current runtime generation: {exc}",
+            )
+        ]
+    canonical_runtime = _canonical_runtime_root().resolve(strict=False)
+    if not _is_subpath(generation, canonical_runtime):
+        return [
+            DoctorFinding(
+                "fail",
+                "runtime-generation",
+                f"current runtime resolves outside {_path_with_tilde(canonical_runtime)}",
+            )
+        ]
+
+    manifest_path = generation / _RUNTIME_GENERATION_MANIFEST
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [
+            DoctorFinding(
+                "fail",
+                "runtime-generation",
+                f"installed generation manifest is missing or invalid: {exc}",
+            )
+        ]
+    source_fingerprint = manifest.get("source_fingerprint")
+    owner_repo = manifest.get("owner_repo")
+    source_revision = manifest.get("source_revision")
+    hashes = manifest.get("hashes")
+    if (
+        manifest.get("schema") != _RUNTIME_GENERATION_MANIFEST_SCHEMA
+        or not isinstance(source_fingerprint, str)
+        or len(source_fingerprint) != 64
+        or not re.fullmatch(r"[0-9a-f]{64}", source_fingerprint)
+        or not isinstance(owner_repo, str)
+        or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", owner_repo)
+        or not isinstance(source_revision, str)
+        or not re.fullmatch(r"[0-9a-f]{40}", source_revision)
+        or manifest.get("entrypoint") != _RUNTIME_GENERATION_ENTRYPOINT.as_posix()
+        or not isinstance(hashes, dict)
+        or set(hashes)
+        != {path.as_posix() for path in _RUNTIME_GENERATION_REQUIRED_HASHES}
+    ):
+        return [
+            DoctorFinding(
+                "fail",
+                "runtime-generation",
+                "installed generation manifest does not satisfy the runtime schema",
+            )
+        ]
+
+    errors: list[str] = []
+    for relative_text, expected_digest in hashes.items():
+        if (
+            not isinstance(relative_text, str)
+            or not isinstance(expected_digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_digest)
+        ):
+            errors.append("installed generation manifest has an invalid hash entry")
+            continue
+        relative = Path(relative_text)
+        if relative.is_absolute() or ".." in relative.parts:
+            errors.append("installed generation manifest has an unsafe hash path")
+            continue
+        installed_file = generation / relative
+        if not installed_file.is_file():
+            errors.append(f"manifest-bound file is missing: {relative_text}")
+            continue
+        actual_digest = hashlib.sha256(installed_file.read_bytes()).hexdigest()
+        if actual_digest != expected_digest:
+            errors.append(f"manifest-bound file drifted: {relative_text}")
+
+    errors.extend(
+        _runtime_generation_audit_errors(
+            generation,
+            source_fingerprint=source_fingerprint,
+        )
+    )
+    launcher = _canonical_launcher_root() / "vibecrafted"
+    try:
+        launcher_target = launcher.resolve(strict=True)
+        expected_launcher = (generation / _RUNTIME_GENERATION_ENTRYPOINT).resolve(
+            strict=True
+        )
+    except (OSError, RuntimeError):
+        errors.append(
+            "canonical vibecrafted launcher or current generation entrypoint "
+            "is missing or broken"
+        )
+    else:
+        if launcher_target != expected_launcher:
+            errors.append(
+                "canonical vibecrafted launcher does not resolve to the current "
+                "generation entrypoint"
+            )
+    if errors:
+        return [
+            DoctorFinding(
+                "fail",
+                "runtime-generation",
+                "; ".join(sorted(set(errors))),
+            )
+        ]
+    return [
+        DoctorFinding(
+            "ok",
+            "runtime-generation",
+            f"{generation.name} is manifest-bound and checkout-free",
+        )
+    ]
+
+
+def _host_shell_contract_findings() -> list[DoctorFinding]:
+    """Fail if any shell startup file still sources the retired product helper shim instead of
+    staying PATH-only.
+    """
+    offenders: list[str] = []
+    for rcname in _SHELL_STARTUP_FILES:
+        rcfile = Path.home() / rcname
+        if not rcfile.is_file():
+            continue
+        try:
+            lines = rcfile.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if (
+                "vc-skills.sh" in stripped
+                or "vc-skills.zsh" in stripped
+                or (stripped.startswith(("source ", ". ")) and "vetcoders" in stripped)
+            ):
+                offenders.append(rcname)
+                break
+    if offenders:
+        return [
+            DoctorFinding(
+                "fail",
+                "host-shell",
+                "product helper sourcing remains active in "
+                + ", ".join(offenders)
+                + "; run `vibecrafted doctor --fix-rc` to keep only the PATH helper",
+            )
+        ]
+    return [
+        DoctorFinding(
+            "ok",
+            "host-shell",
+            "ordinary shell startup is PATH-only; vc-start owns product helpers",
+        )
+    ]
+
+
+def _managed_frontier_contract_findings() -> list[DoctorFinding]:
+    """Fail if any symlink under the XDG 'frontier' config directory resolves outside the
+    installed runtime root.
+    """
+    frontier = xdg_config_home() / "vetcoders" / "frontier"
+    installed_root = vibecrafted_runtime_home().resolve(strict=False)
+    unsafe: list[str] = []
+    if frontier.is_dir():
+        for path in sorted(frontier.rglob("*")):
+            if not path.is_symlink():
+                continue
+            try:
+                target = path.resolve(strict=True)
+            except (OSError, RuntimeError):
+                unsafe.append(str(path.relative_to(frontier)))
+                continue
+            if not _is_subpath(target, installed_root):
+                unsafe.append(str(path.relative_to(frontier)))
+    if unsafe:
+        return [
+            DoctorFinding(
+                "fail",
+                "frontier-links",
+                f"{len(unsafe)} frontier link(s) escape the installed runtime: "
+                + ", ".join(unsafe[:5])
+                + (" ..." if len(unsafe) > 5 else ""),
+            )
+        ]
+    return [
+        DoctorFinding(
+            "ok",
+            "frontier-links",
+            "all managed frontier links resolve inside the installed runtime",
+        )
+    ]
+
+
+def _public_launcher_contract_findings() -> list[DoctorFinding]:
+    """Reject operator-visible launchers that resolve into a Git checkout.
+
+    Packaged providers may legitimately live outside the immutable runtime
+    generation (for example uv or Cargo tools). A repository checkout is the
+    forbidden boundary: exposing one through ``~/.local/bin`` creates a second
+    runtime identity with no installed provenance.
+    """
+    unsafe: list[str] = []
+    for launcher_bin_dir in _launcher_bin_dirs():
+        if not launcher_bin_dir.is_dir():
+            continue
+        for entry in sorted(launcher_bin_dir.iterdir()):
+            if not entry.is_symlink():
+                continue
+            name = entry.name.lower()
+            if not (
+                name.startswith(("vc-", "vibecraft"))
+                or name in {"marble-pack", "aicx-pack"}
+            ):
+                continue
+            try:
+                resolved = entry.resolve(strict=True)
+            except (OSError, RuntimeError):
+                unsafe.append(f"{entry.name} (broken)")
+                continue
+            for parent in (resolved.parent, *resolved.parents):
+                if (parent / ".git").exists():
+                    unsafe.append(f"{entry.name} -> {resolved}")
+                    break
+
+    if unsafe:
+        return [
+            DoctorFinding(
+                "fail",
+                "public-launchers",
+                "operator launcher(s) resolve into a source checkout: "
+                + ", ".join(unsafe[:5])
+                + (" ..." if len(unsafe) > 5 else ""),
+            )
+        ]
+    return [
+        DoctorFinding(
+            "ok",
+            "public-launchers",
+            "operator launchers are checkout-free",
+        )
+    ]
+
+
+def _slack_provider_contract_findings() -> list[DoctorFinding]:
+    """Require vc-slack to come from the immutable provider publication."""
+    try:
+        provider = importlib.import_module("slack_provider")
+    except ModuleNotFoundError:  # package import path in tests/installed runtime
+        try:
+            provider = importlib.import_module("scripts.slack_provider")
+        except ModuleNotFoundError as exc:
+            return [
+                DoctorFinding(
+                    "fail",
+                    "slack-provider",
+                    f"Slack provider installer is missing: {exc}",
+                )
+            ]
+    healthy, detail = provider.doctor()
+    if not healthy:
+        # Never-published is the deferred external case (vc-slack-agent is a
+        # sibling repo; hosts without it — CI runners, fresh installs — are
+        # legal). Only a BROKEN publication is a failure.
+        provider_root = provider.runtime_home() / "providers" / provider.PROVIDER_NAME
+        if not provider_root.exists():
+            return [
+                DoctorFinding(
+                    "warn",
+                    "slack-provider",
+                    f"{detail}. External provider (vc-slack-agent) is not "
+                    "installed on this host — optional; publish via "
+                    "`make install` with the sibling checkout present",
+                )
+            ]
+    return [
+        DoctorFinding(
+            "ok" if healthy else "fail",
+            "slack-provider",
+            detail
+            if healthy
+            else f"{detail}. Run `make install` from the Vibecrafted suite",
+        )
+    ]
+
+
 def _foundation_provenance_findings(
     foundation_name: str, executable_path: Path
 ) -> list[DoctorFinding]:
+    """Note when a foundation's resolved executable is an external developer-tool provider
+    (cargo/local bin) rather than the canonical launcher — informational, not a failure.
+    """
     findings: list[DoctorFinding] = []
     canonical_launcher = _canonical_launcher_root()
     executable = executable_path.expanduser()
@@ -8108,6 +9261,7 @@ def _foundation_provenance_findings(
 
 
 def _has_runtime_contract_failures(findings: Sequence[DoctorFinding]) -> bool:
+    """True if any finding is a failing `root:*` runtime-contract check."""
     return any(
         finding.level == "fail" and finding.component.startswith("root:")
         for finding in findings
@@ -8115,6 +9269,9 @@ def _has_runtime_contract_failures(findings: Sequence[DoctorFinding]) -> bool:
 
 
 def _pause_for_runtime_contract_failures(findings: Sequence[DoctorFinding]) -> None:
+    """In an interactive TTY, print manual cleanup guidance and pause for acknowledgement when
+    runtime-root contract findings failed; no-op otherwise.
+    """
     if not _has_runtime_contract_failures(findings):
         return
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
@@ -8192,6 +9349,11 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
         )
 
     findings.extend(_runtime_root_contract_findings())
+    findings.extend(_runtime_generation_contract_findings())
+    findings.extend(_host_shell_contract_findings())
+    findings.extend(_managed_frontier_contract_findings())
+    findings.extend(_public_launcher_contract_findings())
+    findings.extend(_slack_provider_contract_findings())
 
     # 3. Expected skills present
     for skill_name in state.skills:
@@ -8477,6 +9639,14 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
         if "uv" in resolved.parts and "tools" in resolved.parts:
             python_entrypoint_owners.add("uv tool")
             continue
+        if name == "vibecrafted":
+            try:
+                expected = _launcher_symlink_target(Path()).resolve(strict=True)
+            except (OSError, RuntimeError):
+                expected = None
+            if expected is not None and resolved == expected:
+                python_entrypoint_owners.add("runtime generation")
+                continue
         python_entrypoint_issues.append(f"{name}:not-uv-tool")
     if python_entrypoint_issues:
         findings.append(
@@ -8673,6 +9843,9 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
             available_ver = channel_data.get("version", "")
 
             def _semver_key(raw: str) -> tuple[int, ...]:
+                """Sort key for a raw version string like '3.6.0+g66c0958b': numeric (major,
+                minor, patch) tuple, truncated at the first non-numeric segment.
+                """
                 # "3.6.0+g66c0958b" -> (3, 6, 0); non-numeric parts end the key
                 # so a malformed version never outranks a real one.
                 core = raw.split("+", 1)[0].split("-", 1)[0]
@@ -9523,24 +10696,15 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     return 0
 
 
-def _uv_tool_shim() -> Path:
-    data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    return Path(data_home) / "uv" / "tools" / "vibecrafted" / "bin" / "vibecrafted"
-
-
 def _launcher_symlink_target(repo_root: Path) -> Path:
     """Resolve what ~/.local/bin/vibecrafted should point at.
 
-    The uv-tool shim wins when it exists (full `make install` lane). A
-    python-only install (CI skill-loader, bare `vetcoders_install.py install`)
-    has no shim yet — pointing at it would leave a dangling launcher that
-    doctor rightly fails. Fall back to the staged deck, then the source deck,
-    so the installed launcher always executes.
+    The host launcher always enters the immutable installed generation. Python
+    tooling may still live in its uv environment, but it is an implementation
+    dependency of the deck, never the user-facing runtime owner.
     """
-    shim = _uv_tool_shim()
-    if shim.exists():
-        return shim
-    staged_deck = (
+    _ = repo_root
+    return (
         vibecrafted_tools_home()
         / "vibecrafted-current"
         / "vibecrafted-core"
@@ -9548,9 +10712,6 @@ def _launcher_symlink_target(repo_root: Path) -> Path:
         / "deck"
         / "vibecrafted"
     )
-    if staged_deck.exists():
-        return staged_deck
-    return repo_root / "scripts" / "vibecrafted"
 
 
 def _install_launcher(repo_root: Path, dry_run: bool, update_rc: bool = False) -> None:
@@ -9563,10 +10724,14 @@ def _install_launcher(repo_root: Path, dry_run: bool, update_rc: bool = False) -
             canonical_bin_dir.mkdir(parents=True, exist_ok=True)
             canonical_launcher = canonical_bin_dir / "vibecrafted"
 
-            # Target 1: the uv-tool shim wins ~/.local/bin/vibecrafted when it
-            # exists; otherwise the staged/source deck keeps the launcher live
-            # (see _launcher_symlink_target). Never copy the deck over the name.
+            # Target 1: the immutable installed generation owns the launcher.
+            # Never point the public command at uv state or a source checkout.
             shim = _launcher_symlink_target(repo_root)
+            if not shim.is_file():
+                raise OSError(
+                    "installed runtime deck is missing; publish the runtime "
+                    "generation before installing launchers"
+                )
             if canonical_launcher.exists() or canonical_launcher.is_symlink():
                 if canonical_launcher.is_symlink():
                     try:
@@ -9651,6 +10816,9 @@ def _print_unicode_summary(
     current_runtime = _current_tools_link(store_path) / "runtime"
 
     def _agent_spawn_present(agent: str) -> bool:
+        """True if a spawn script for `agent` exists in the staged runtime or the legacy
+        vc-agents store fallback.
+        """
         # Spawn scripts live in the staged control-plane runtime; the legacy
         # vc-agents store layout is kept only as a back-compat fallback.
         return (current_runtime / "scripts" / f"{agent}_spawn.sh").exists() or (
@@ -10069,6 +11237,9 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
 
 
 def cmd_install(args: argparse.Namespace) -> int:
+    """Dispatch `install` to the verbose wizard flow or the compact one-screen flow based on
+    flags/TTY.
+    """
     repo_root = Path(args.source).resolve()
     if not repo_root.is_dir():
         err_line(f"repo root not found: {repo_root}")
@@ -10102,6 +11273,10 @@ def _known_bundle_names() -> list[str]:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
+    """Run `vibecrafted doctor`: apply any requested --fix-* repairs, run the full health check
+    (with discovery-mode and orphan-detection extras when no manifest exists), and print the
+    report.
+    """
     shared_home = vibecrafted_home()
     store_path = _canonical_store_path(shared_home)
     state = _load_install_state(store_path)
@@ -10233,6 +11408,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_list(args: argparse.Namespace) -> int:
+    """Print the discoverable skills bundle plus foundation install status for `list`."""
     repo_root = Path(args.source).resolve()
     if not repo_root.is_dir():
         print(red(f"Error: repo root not found: {repo_root}"))
@@ -10274,6 +11450,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def cmd_layout(args: argparse.Namespace) -> int:
+    """Dispatch `layout status|migrate|rollback` to the layout-transfer status/execute helpers."""
     store_path = vibecrafted_home() / "skills"
     action = getattr(args, "action", "status")
     dry_run = getattr(args, "dry_run", False)
@@ -10342,6 +11519,7 @@ def cmd_layout(args: argparse.Namespace) -> int:
 
 
 def _managed_tools_entry(path: Path) -> bool:
+    """True if `path`'s name looks like a Vibecrafted-managed staged-tools generation entry."""
     return (
         path.name == "vibecrafted-current"
         or path.name.startswith("vibecrafted-")
@@ -10360,10 +11538,17 @@ def _build_uninstall_inventory(
     launchers: Sequence[tuple[Path, Path]],
     rc_cleanup_targets: Sequence[Path],
 ) -> list[ManagedPath]:
+    """Build the complete uninstall inventory: skills, agent views, helpers, launchers, rc-file
+    edits, logs, staged-tools generations, and everything explicitly preserved (uv tools,
+    operator data, unmanaged siblings).
+    """
     records: list[ManagedPath] = []
     seen: dict[str, int] = {}
 
     def add(kind: str, path: Path, action: str = "remove", reason: str = "") -> None:
+        """Record one managed path for the uninstall inventory, deduping by resolved path and
+        upgrading a prior 'preserve' record if a stronger action applies.
+        """
         normalized = path.expanduser()
         if action != "remove-if-empty" and not _path_present(normalized):
             return
@@ -10479,6 +11664,7 @@ def _build_uninstall_inventory(
 
 
 def _print_uninstall_inventory(inventory: Sequence[ManagedPath]) -> None:
+    """Print the planned uninstall inventory (remove/edit/preserve) before acting on it."""
     print(bold("Managed teardown inventory:"))
     for record in inventory:
         verb = {
@@ -10493,6 +11679,9 @@ def _print_uninstall_inventory(inventory: Sequence[ManagedPath]) -> None:
 
 
 def _edit_rc_file(record: ManagedPath, *, dry_run: bool) -> tuple[bool, str]:
+    """Strip Vibecrafted-managed lines from one rc file; returns whether it changed and why it
+    couldn't.
+    """
     rcfile = record.path
     if not _is_writable(rcfile):
         return False, "locked; launcher/source hints remain"
@@ -10509,6 +11698,9 @@ def _edit_rc_file(record: ManagedPath, *, dry_run: bool) -> tuple[bool, str]:
 def _apply_uninstall_inventory(
     inventory: Sequence[ManagedPath], *, dry_run: bool
 ) -> tuple[list[ManagedPath], list[ManagedPath], list[str]]:
+    """Apply an uninstall inventory: remove deepest-first, edit rc files, and remove now-empty
+    directories; collects per-record failures instead of raising.
+    """
     applied: list[ManagedPath] = []
     preserved = [record for record in inventory if record.action == "preserve"]
     failures: list[str] = []
@@ -10565,6 +11757,9 @@ def _apply_uninstall_inventory(
 
 
 def cmd_uninstall(args: argparse.Namespace) -> int:
+    """Run `vibecrafted uninstall`: build the inventory, confirm interactively, back up
+    everything first, then apply the removal/edit plan and report results.
+    """
     shared_home = vibecrafted_home()
     store_path = _canonical_store_path(shared_home)
     state = _load_install_state(store_path)
@@ -10701,6 +11896,9 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
 
 def cmd_restore(args: argparse.Namespace) -> int:
+    """Run `vibecrafted restore`: replay the latest teardown backup's manifest, or fall back to
+    the older per-category backup layout if no teardown manifest exists.
+    """
     shared_home = vibecrafted_home()
     store_path = _canonical_store_path(shared_home)
     dry_run = args.dry_run
@@ -10860,6 +12058,7 @@ def detect_repo_root() -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entrypoint: parse subcommand args and dispatch to the matching `cmd_*` handler."""
     default_source = detect_repo_root()
 
     parser = argparse.ArgumentParser(

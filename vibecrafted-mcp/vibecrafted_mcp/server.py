@@ -65,6 +65,7 @@ SLIM_MAX_COMMITS = 5
 SLIM_MAX_DOCTOR_FINDINGS = 8
 SLIM_BUDGET_BYTES = 5 * 1024
 OBSERVE_MAX_BYTES = 64 * 1024
+OBSERVE_RESULT_MAX_BYTES = 64 * 1024
 OBSERVE_MAX_EVENTS = 100
 OBSERVE_MAX_WAIT_SECONDS = 30.0
 
@@ -93,6 +94,10 @@ def _override_vibecrafted_home(home: str | None) -> Iterator[None]:
 
 
 def _trim_recent_commits(state: dict[str, Any], limit: int) -> dict[str, Any]:
+    """Return ``state`` with ``recent_commits`` capped to ``limit`` entries.
+
+    Leaves ``state`` untouched (returns it as-is) when already within limit.
+    """
     commits = state.get("recent_commits") or []
     if len(commits) > limit:
         state = dict(state)
@@ -131,6 +136,7 @@ def _doctor_payload(slim: bool) -> dict[str, Any]:
 def _filter_events_by_run(
     events: list[dict[str, Any]], run_id: str, limit: int
 ) -> list[dict[str, Any]]:
+    """Return the first ``limit`` events in ``events`` matching ``run_id``."""
     matched: list[dict[str, Any]] = []
     for event in events:
         if str(event.get("run_id") or "") == run_id:
@@ -171,6 +177,7 @@ def _read_run_event_tail(
 
 
 def _clamp_int(value: int | None, default: int, ceiling: int) -> int:
+    """Coerce ``value`` to int (falling back to ``default``), clamped to ``[0, ceiling]``."""
     try:
         parsed = int(default if value is None else value)
     except (TypeError, ValueError):
@@ -179,6 +186,7 @@ def _clamp_int(value: int | None, default: int, ceiling: int) -> int:
 
 
 def _clamp_float(value: float | None, default: float, ceiling: float) -> float:
+    """Coerce ``value`` to float (falling back to ``default``), clamped to ``[0.0, ceiling]``."""
     try:
         parsed = float(default if value is None else value)
     except (TypeError, ValueError):
@@ -242,6 +250,7 @@ def _bounded_text_read(
 
 
 def _event_to_payload(event: Any) -> dict[str, Any]:
+    """Flatten a control-plane event object into a JSON-serializable dict."""
     return {
         "cursor": str(getattr(event, "cursor", "0") or "0"),
         "ts": str(getattr(event, "ts", "") or ""),
@@ -252,7 +261,39 @@ def _event_to_payload(event: Any) -> dict[str, Any]:
     }
 
 
+def _bound_observe_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep the complete serialized MCP result below the advertised budget."""
+
+    def payload_size() -> int:
+        return len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+
+    events = payload.get("events")
+    if isinstance(events, list):
+        while events and payload_size() > OBSERVE_RESULT_MAX_BYTES:
+            events.pop(0)
+    transcript = payload.get("transcript")
+    if isinstance(transcript, dict) and payload_size() > OBSERVE_RESULT_MAX_BYTES:
+        text = str(transcript.get("text") or "")
+        transcript["text"] = ""
+        overhead = payload_size()
+        allowance = max(OBSERVE_RESULT_MAX_BYTES - overhead - 64, 0)
+        encoded = text.encode("utf-8")
+        clipped = encoded[-allowance:] if allowance else b""
+        while clipped and (clipped[0] & 0xC0) == 0x80:
+            clipped = clipped[1:]
+        transcript["text"] = clipped.decode("utf-8", errors="replace")
+        transcript["bytes"] = len(clipped)
+        transcript["truncated"] = True
+    payload["result_bytes"] = payload_size()
+    return payload
+
+
 def _event_cursor_from_payload(cursor: dict[str, Any] | None) -> str:
+    """Extract the event cursor from a client-supplied cursor payload.
+
+    Prefers the current ``event_cursor`` key; falls back to the legacy
+    ``event_offset`` key for one-release compatibility, else ``"0"``.
+    """
     payload = dict(cursor or {})
     if "event_cursor" in payload:
         value = str(payload.get("event_cursor") or "0").strip()
@@ -270,6 +311,12 @@ def _read_run_events_delta(
     event_cursor: str | int | None = "0",
     max_events: int = OBSERVE_MAX_EVENTS,
 ) -> tuple[list[dict[str, Any]], str]:
+    """Pull up to ``max_events`` new events for ``run_id`` since ``event_cursor``.
+
+    Returns ``(events, next_cursor)``; ``next_cursor`` advances even when no
+    event matches ``run_id`` so callers can keep polling without re-reading
+    the whole stream.
+    """
     target = str(run_id or "").strip()
     limit = _clamp_int(max_events, OBSERVE_MAX_EVENTS, OBSERVE_MAX_EVENTS)
     cursor = str(event_cursor or "0")
@@ -287,6 +334,7 @@ def _read_run_events_delta(
 
 
 def _run_terminal(run: dict[str, Any] | None) -> bool:
+    """Return True when ``run`` has reached a terminal operator/health/liveness state."""
     if not run:
         return False
     operator_state = str(run.get("operator_state") or "")
@@ -298,6 +346,7 @@ def _run_terminal(run: dict[str, Any] | None) -> bool:
 
 
 def _report_ready(run: dict[str, Any] | None) -> bool:
+    """Return True when ``run`` names a report path that exists and is non-empty."""
     if not run:
         return False
     report = str(run.get("latest_report") or run.get("report") or "")
@@ -337,6 +386,13 @@ def _observe_run_once(
     max_bytes: int = OBSERVE_MAX_BYTES,
     max_events: int = OBSERVE_MAX_EVENTS,
 ) -> dict[str, Any]:
+    """Single non-blocking snapshot of one run's events + transcript delta.
+
+    Composes cursor resolution, control-plane lookup, the read-follows-write
+    fallback for a not-yet-synced run, and a bounded transcript read into the
+    payload shape returned by the ``vc_run_observe`` tool and the
+    ``vibecrafted://runs/{run_id}/transcript`` resource.
+    """
     target = str(run_id or "").strip()
     cursor_payload = dict(cursor or {})
     event_cursor = _event_cursor_from_payload(cursor_payload)
@@ -378,21 +434,23 @@ def _observe_run_once(
     else:
         state = "missing"
 
-    return {
-        "run_id": target,
-        "found": run is not None or resolved is not None,
-        "state": state,
-        "operator_state": (run or {}).get("operator_state", "") if run else "",
-        "cursor": {
-            "event_cursor": next_event_cursor,
-            "transcript_offset": int(transcript["next_offset"]),
-        },
-        "events": events,
-        "transcript": transcript,
-        "terminal": _run_terminal(run),
-        "report_ready": _report_ready(run),
-        "report_uri": f"vibecrafted://runs/{target}/report",
-    }
+    return _bound_observe_payload(
+        {
+            "run_id": target,
+            "found": run is not None or resolved is not None,
+            "state": state,
+            "operator_state": (run or {}).get("operator_state", "") if run else "",
+            "cursor": {
+                "event_cursor": next_event_cursor,
+                "transcript_offset": int(transcript["next_offset"]),
+            },
+            "events": events,
+            "transcript": transcript,
+            "terminal": _run_terminal(run),
+            "report_ready": _report_ready(run),
+            "report_uri": f"vibecrafted://runs/{target}/report",
+        }
+    )
 
 
 def _observe_run(
@@ -404,6 +462,11 @@ def _observe_run(
     max_events: int = OBSERVE_MAX_EVENTS,
     wait_seconds: float = 0.0,
 ) -> dict[str, Any]:
+    """Poll ``_observe_run_once`` until new data, terminal state, or ``wait_seconds`` elapses.
+
+    Backs the ``vc_run_observe`` tool's optional long-poll behavior; with
+    ``wait_seconds<=0`` this degrades to a single ``_observe_run_once`` call.
+    """
     wait = _clamp_float(wait_seconds, 0.0, OBSERVE_MAX_WAIT_SECONDS)
     start_event_cursor = _event_cursor_from_payload(cursor)
     deadline = time.monotonic() + wait
@@ -428,6 +491,11 @@ def _observe_run(
 
 
 def _run_status_resource_payload(run_id: str) -> dict[str, Any]:
+    """Build the ``vibecrafted://runs/{run_id}/status`` resource payload.
+
+    Falls back to ``_resolve_run_location`` (state "launching") when the run
+    is not yet present in the synced control-plane snapshot.
+    """
     run = _control_plane.lookup_run(run_id)
     resolved = _resolve_run_location(run_id) if run is None else None
     return {
@@ -443,6 +511,11 @@ def _run_status_resource_payload(run_id: str) -> dict[str, Any]:
 
 
 def _run_report_resource_payload(run_id: str) -> dict[str, Any]:
+    """Build the ``vibecrafted://runs/{run_id}/report`` resource payload.
+
+    Falls back to ``_resolve_run_location`` when the synced snapshot has no
+    report path yet but ``runtime_runs/`` already carries one.
+    """
     run = _control_plane.lookup_run(run_id)
     report_path = str(
         (run or {}).get("latest_report") or (run or {}).get("report") or ""
@@ -482,6 +555,7 @@ def _lifecycle_state_summary(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def _lifecycle_schema_resource_payload() -> dict[str, Any]:
+    """Load the packaged lifecycle JSON Schema, stamping ``$id`` if absent."""
     path = _core_resource_path("schemas", "lifecycle.schema.v1.json")
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload.setdefault("$id", _LIFECYCLE_SCHEMA_ID)

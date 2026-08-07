@@ -110,6 +110,7 @@ class ProfileSpec:
     extras: Mapping[str, Any] = field(default_factory=dict)
 
     def to_iterm2_profile(self) -> dict[str, Any]:
+        """Render this spec into the iTerm2 DynamicProfile JSON dict shape."""
         out: dict[str, Any] = {
             "Name": self.name,
             "Guid": stable_guid(self.namespace, self.name),
@@ -379,6 +380,7 @@ def migrate_from_experimental(
 
 
 def _cli(argv: list[str]) -> int:
+    """Dispatch the show/install/refresh/uninstall/path/migrate subcommands."""
     if not argv or argv[0] in ("-h", "--help"):
         print(
             "Usage: python -m vibecrafted_iterm2.iterm2_profiles <op>\n"

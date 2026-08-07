@@ -1,3 +1,5 @@
+"""Validate ExecutionEnvelope and DeliveryProofContract payloads (delivery-doctor CLI)."""
+
 from __future__ import annotations
 
 import argparse
@@ -20,21 +22,27 @@ from .model import (
 
 @dataclass(frozen=True)
 class DoctorError:
+    """One diagnostic finding: a dotted payload path plus a human-readable message."""
+
     path: str
     message: str
 
     def to_dict(self) -> dict[str, str]:
+        """Return the JSON-serializable representation of this error."""
         return {"path": self.path, "message": self.message}
 
 
 @dataclass(frozen=True)
 class DoctorReport:
+    """Outcome of diagnosing one envelope/contract pair: pass/fail plus errors."""
+
     ok: bool
     errors: tuple[DoctorError, ...]
     envelope: ExecutionEnvelope | None = None
     contract: DeliveryProofContract | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the JSON-serializable representation of this report (errors only)."""
         return {
             "ok": self.ok,
             "errors": [error.to_dict() for error in self.errors],
@@ -45,6 +53,12 @@ def diagnose_payload(
     envelope_payload: Mapping[str, Any] | None,
     contract_payload: Mapping[str, Any] | None,
 ) -> DoctorReport:
+    """Validate an execution envelope and a delivery proof contract independently.
+
+    Collects field-level errors before attempting model construction, so a
+    ``from_payload`` failure never masks the more specific field diagnostics
+    already found (including the oracle/subject producer_id tautology check).
+    """
     errors: list[DoctorError] = []
     envelope_obj: ExecutionEnvelope | None = None
     contract_obj: DeliveryProofContract | None = None
@@ -318,6 +332,12 @@ def extract_payloads_from_markdown(
 
 
 def diagnose_file(path: str | Path) -> DoctorReport:
+    """Diagnose a contract file: markdown brief (code-fenced) or a raw JSON/YAML file.
+
+    Markdown is detected by ``.md`` suffix or a leading ``#``; otherwise the file
+    is parsed as YAML/JSON and must contain ``execution``/``proof`` keys or a
+    recognized top-level ``schema``.
+    """
     source = Path(path).expanduser()
     try:
         text = source.read_text(encoding="utf-8")
@@ -360,6 +380,7 @@ def diagnose_file(path: str | Path) -> DoctorReport:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entrypoint: diagnose one contract file and print text or JSON output."""
     parser = argparse.ArgumentParser(
         prog="delivery-doctor",
         description="Validate vibecrafted ExecutionEnvelope and DeliveryProofContract artifacts.",

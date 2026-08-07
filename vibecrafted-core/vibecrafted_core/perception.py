@@ -86,6 +86,7 @@ Spawner = Callable[[Sequence[str]], "subprocess.Popen[bytes]"]
 
 
 def _now_iso() -> str:
+    """Current UTC timestamp in ISO 8601 form, used for outcome timestamps."""
     return datetime.now(timezone.utc).isoformat()
 
 
@@ -270,6 +271,7 @@ class WatchOutcome:
     checked_at: str = field(default_factory=_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize this outcome for JSON printing / receipt embedding."""
         return {
             "root": self.root,
             "status": self.status,

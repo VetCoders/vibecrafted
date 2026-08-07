@@ -107,6 +107,10 @@ def read_json(path: str | Path) -> dict[str, Any]:
 
 
 def _fsync_directory(directory: Path) -> None:
+    """Fsync a directory entry so a completed ``os.replace`` survives a crash.
+
+    Best-effort: filesystems that reject directory fsync are tolerated.
+    """
     flags = os.O_RDONLY
     if hasattr(os, "O_DIRECTORY"):
         flags |= os.O_DIRECTORY
@@ -125,6 +129,7 @@ def _fsync_directory(directory: Path) -> None:
 
 
 def _source_digests(values: Mapping[str, str]) -> dict[str, str]:
+    """Validate a derived-artifact's source-digest mapping: non-empty, all ``sha256:``."""
     normalized = {str(key): str(value) for key, value in values.items()}
     if not normalized:
         raise DeliveryStoreError("derived artifact requires source_digests")
@@ -142,24 +147,30 @@ class DeliveryStore:
     """Typed, atomic access to the canonical artifacts for one run directory."""
 
     def __init__(self, run_dir: str | Path) -> None:
+        """Bind this store to one run directory; no I/O happens until a call."""
         self.run_dir = Path(run_dir)
 
     def path(self, relative: str | Path) -> Path:
+        """Resolve a relative artifact path under ``run_dir``, refusing escape."""
         candidate = Path(relative)
         if candidate.is_absolute() or ".." in candidate.parts:
             raise DeliveryStoreError("delivery artifact path must stay inside run_dir")
         return self.run_dir / candidate
 
     def write_execution_envelope(self, value: ExecutionEnvelope) -> Path:
+        """Atomically persist the execution envelope."""
         return self._write_model(EXECUTION_ENVELOPE_PATH, value)
 
     def read_execution_envelope(self) -> ExecutionEnvelope:
+        """Load and fail-closed-validate the execution envelope."""
         return self._read_model(EXECUTION_ENVELOPE_PATH, ExecutionEnvelope)
 
     def write_proof_contract(self, value: DeliveryProofContract) -> Path:
+        """Atomically persist the delivery-proof contract."""
         return self._write_model(PROOF_CONTRACT_PATH, value)
 
     def read_proof_contract(self) -> DeliveryProofContract:
+        """Load and fail-closed-validate the delivery-proof contract."""
         return self._read_model(PROOF_CONTRACT_PATH, DeliveryProofContract)
 
     def write_execution(
@@ -169,6 +180,7 @@ class DeliveryStore:
         role: str | None = None,
         sequence: int = 1,
     ) -> Path:
+        """Persist one execution's evidence at ``proof/executions/<role>-<sequence>.json``."""
         resolved_role = str(role or value.role)
         if not _ROLE_RE.fullmatch(resolved_role):
             raise DeliveryStoreError(f"unsafe execution role {resolved_role!r}")
@@ -184,6 +196,7 @@ class DeliveryStore:
         )
 
     def read_execution(self, role: str, *, sequence: int = 1) -> ExecutionEvidence:
+        """Load one execution's evidence by role and sequence number."""
         if not _ROLE_RE.fullmatch(role) or sequence < 1:
             raise DeliveryStoreError("invalid execution role or sequence")
         return self._read_model(
@@ -196,6 +209,7 @@ class DeliveryStore:
         *,
         source_digests: Mapping[str, str],
     ) -> Path:
+        """Atomically persist proof assertions with their required source digests."""
         return atomic_write_json(
             self.path(ASSERTIONS_PATH),
             {
@@ -206,6 +220,7 @@ class DeliveryStore:
         )
 
     def read_assertions(self) -> dict[str, Any]:
+        """Load proof assertions, validating schema and source digests."""
         return self._read_derived(ASSERTIONS_PATH, ASSERTIONS_SCHEMA)
 
     def write_negative_controls(
@@ -214,6 +229,7 @@ class DeliveryStore:
         *,
         source_digests: Mapping[str, str],
     ) -> Path:
+        """Atomically persist negative controls with their required source digests."""
         return atomic_write_json(
             self.path(NEGATIVE_CONTROLS_PATH),
             {
@@ -224,27 +240,35 @@ class DeliveryStore:
         )
 
     def read_negative_controls(self) -> dict[str, Any]:
+        """Load negative controls, validating schema and source digests."""
         return self._read_derived(NEGATIVE_CONTROLS_PATH, NEGATIVE_CONTROLS_SCHEMA)
 
     def write_proof_result(self, value: ProofResult) -> Path:
+        """Atomically persist the proof result."""
         return self._write_model(PROOF_RESULT_PATH, value)
 
     def read_proof_result(self) -> ProofResult:
+        """Load and fail-closed-validate the proof result."""
         return self._read_model(PROOF_RESULT_PATH, ProofResult)
 
     def write_delivery_record(self, value: DeliveryRecord) -> Path:
+        """Atomically persist the delivery record."""
         return self._write_model(DELIVERY_RECORD_PATH, value)
 
     def read_delivery_record(self) -> DeliveryRecord:
+        """Load and fail-closed-validate the delivery record."""
         return self._read_model(DELIVERY_RECORD_PATH, DeliveryRecord)
 
     def write_delivery_seal(self, value: DeliverySeal) -> Path:
+        """Atomically persist the delivery seal."""
         return self._write_model(DELIVERY_SEAL_PATH, value)
 
     def read_delivery_seal(self) -> DeliverySeal:
+        """Load and fail-closed-validate the delivery seal."""
         return self._read_model(DELIVERY_SEAL_PATH, DeliverySeal)
 
     def _write_model(self, relative: Path, value: _ModelT) -> Path:
+        """Serialize a typed model and atomically write it, round-tripped first."""
         payload = value.to_payload()
         # Dataclass construction is intentionally lightweight; round-trip the
         # payload through its fail-closed reader before making it canonical.
@@ -252,9 +276,11 @@ class DeliveryStore:
         return atomic_write_json(self.path(relative), payload)
 
     def _read_model(self, relative: Path, model: type[_ModelT]) -> _ModelT:
+        """Read JSON at ``relative`` and construct it through the model's fail-closed reader."""
         return model.from_payload(read_json(self.path(relative)))
 
     def _read_derived(self, relative: Path, schema: str) -> dict[str, Any]:
+        """Read a derived artifact and enforce its schema tag and source digests."""
         payload = read_json(self.path(relative))
         if payload.get("schema") != schema:
             raise DeliveryStoreError(

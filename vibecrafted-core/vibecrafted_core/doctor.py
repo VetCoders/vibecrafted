@@ -1,5 +1,8 @@
+"""Package-API doctor: wraps the installer doctor and adds runtime health checks."""
+
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import os
 import shutil
@@ -11,8 +14,11 @@ from pathlib import Path
 from typing import Any
 from xml.parsers.expat import ExpatError
 
+import tomllib
+
 from .package_resources import deck_path, runtime_path, skills_path
 from .vc_frame_delivery import (
+    OPERATOR_SCRIPT_NAMES,
     classify_view_path,
     frontier_root,
     list_dangling_frontier_links,
@@ -36,6 +42,7 @@ class _Finding:
 
 
 def _uv_tool_shim() -> Path:
+    """Return the expected path of the uv-tool-installed `vibecrafted` shim."""
     data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
     return Path(data_home) / "uv" / "tools" / "vibecrafted" / "bin" / "vibecrafted"
 
@@ -43,14 +50,7 @@ def _uv_tool_shim() -> Path:
 def _launcher_shim_findings(
     which: Callable[[str], str | None] = shutil.which,
 ) -> list[_Finding]:
-    """Verify that `vibecrafted` on PATH is the uv-tool shim, not the legacy deck.
-
-    The bash command-deck shadows the uv-tool entry point when installed into
-    ~/.local/bin; it calls bare `python3`, which breaks under a non-uv
-    interpreter. The uv-tool shim carries the uv python in its shebang and
-    imports `vibecrafted_core.cli`. Report the truth so the operator can see
-    which one wins PATH.
-    """
+    """Verify that `vibecrafted` enters an installed owner, never a checkout."""
     resolved = which("vibecrafted")
     if not resolved:
         return [
@@ -67,31 +67,162 @@ def _launcher_shim_findings(
     except OSError as exc:
         return [_Finding("warn", "launcher", f"cannot read {path}: {exc}")]
 
+    findings: list[_Finding] = []
     if "vibecrafted_core.cli" in head and "import main" in head:
-        return [_Finding("ok", "launcher", f"uv-tool shim on PATH -> {path}")]
+        findings.append(
+            _Finding("ok", "launcher", f"Python package entrypoint on PATH -> {path}")
+        )
+    elif head.lstrip().startswith("#!") and "bash" in head.splitlines()[0]:
+        try:
+            deck = path.resolve(strict=True)
+        except OSError:
+            deck = path
+        installed_deck = (
+            deck.name == "vibecrafted"
+            and deck.parent.name == "deck"
+            and deck.parent.parent.name == "vibecrafted_core"
+            and any(part.startswith("vibecrafted-generation-") for part in deck.parts)
+        )
+        if installed_deck:
+            findings.append(
+                _Finding(
+                    "ok",
+                    "launcher",
+                    f"immutable runtime command deck on PATH -> {deck}",
+                )
+            )
+        else:
+            shim = _uv_tool_shim()
+            shim_hint = f" (uv-tool shim lives at {shim})" if shim.exists() else ""
+            return [
+                _Finding(
+                    "fail",
+                    "launcher",
+                    f"vibecrafted on PATH ({path}) is a checkout/legacy bash deck, "
+                    f"not the immutable runtime deck or uv-tool shim{shim_hint}. "
+                    "Reinstall so an installed owner wins PATH.",
+                )
+            ]
+    else:
+        findings.append(
+            _Finding(
+                "warn",
+                "launcher",
+                f"vibecrafted on PATH ({path}) is neither a package entrypoint "
+                f"nor the known deck — verify the install channel",
+            )
+        )
 
-    if head.lstrip().startswith("#!") and "bash" in head.splitlines()[0]:
-        shim = _uv_tool_shim()
-        shim_hint = f" (uv-tool shim lives at {shim})" if shim.exists() else ""
-        return [
+    # Version identity: bare package VERSION (no +gSHA) means an unstamped
+    # editable / living-tree checkout. Even when resolve lifts to the staged
+    # stamp for --version honesty, surface the PATH shadow so doctor is not
+    # "190 ok" while Homebrew editable wins the binary.
+    from . import __file__ as package_file
+    from . import __version__ as resolved_version
+    from .runtime_paths import (
+        read_staged_tools_version,
+        read_version_file,
+        version_is_stamped,
+        vibecrafted_tools_home,
+    )
+
+    staged = read_staged_tools_version()
+    package_dir = Path(package_file).resolve().parent
+    package_version = read_version_file(package_dir)
+    tools_home = vibecrafted_tools_home().resolve()
+    package_outside_tools = tools_home not in package_dir.parents
+
+    if not version_is_stamped(resolved_version):
+        staged_hint = (
+            f" Staged install stamp is {staged}."
+            if version_is_stamped(staged)
+            else " Run `make install` to stamp tools/vibecrafted-current."
+        )
+        findings.append(
+            _Finding(
+                "fail",
+                "version",
+                f"vibecrafted --version is unstamped ({resolved_version}) — "
+                f"install identity must be X.Y.Z+gSHORTSHA.{staged_hint} "
+                f"Common cause: Homebrew/pip editable install of the living "
+                f"tree shadows ~/.local/bin (PATH order). Uninstall the "
+                f"editable package or put ~/.local/bin first.",
+            )
+        )
+    else:
+        findings.append(
+            _Finding("ok", "version", f"stamped install identity {resolved_version}")
+        )
+
+    if (
+        package_outside_tools
+        and not version_is_stamped(package_version)
+        and version_is_stamped(staged)
+    ):
+        findings.append(
             _Finding(
                 "fail",
                 "launcher",
-                f"vibecrafted on PATH ({path}) is the legacy bash command-deck, "
-                f"not the uv-tool shim — it calls bare python3 and shadows the "
-                f"uv-tool entry point{shim_hint}. Reinstall so the uv-tool shim "
-                f"wins PATH.",
+                f"loaded package tree is unstamped ({package_version} at "
+                f"{package_dir}) while make-install stamp is {staged}. "
+                f"PATH winner {path} is almost certainly a pip/Homebrew "
+                f"editable living-tree install. Uninstall it "
+                f"(`python3 -m pip uninstall vibecrafted`) or ensure "
+                f"~/.local/bin precedes Homebrew on PATH.",
             )
-        ]
-
-    return [
-        _Finding(
-            "warn",
-            "launcher",
-            f"vibecrafted on PATH ({path}) is neither the uv-tool shim nor the "
-            f"known deck — verify the install channel",
         )
-    ]
+    elif version_is_stamped(staged) and resolved_version != staged:
+        findings.append(
+            _Finding(
+                "warn",
+                "version",
+                f"resolved version {resolved_version} differs from staged "
+                f"tools stamp {staged} — re-run make install or clear an "
+                f"editable PATH shadow",
+            )
+        )
+
+    return findings
+
+
+def _codex_mcp_config_findings(config_path: Path | None = None) -> list[_Finding]:
+    """Reject the known streamable-HTTP-to-SSE endpoint mismatch before startup."""
+
+    path = (
+        config_path
+        or Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "config.toml"
+    )
+    if not path.is_file():
+        return []
+    try:
+        payload = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return [_Finding("warn", "codex:mcp-config", f"cannot parse {path}: {exc}")]
+    servers = payload.get("mcp_servers")
+    if not isinstance(servers, dict):
+        return []
+    findings: list[_Finding] = []
+    for name, raw in sorted(servers.items()):
+        if not isinstance(raw, dict):
+            continue
+        transport = str(raw.get("transport") or raw.get("type") or "").lower()
+        url = str(raw.get("url") or "").rstrip("/")
+        if transport == "streamable_http" and url.endswith(("/messages", "/sse")):
+            findings.append(
+                _Finding(
+                    "fail",
+                    "codex:mcp-config",
+                    f"mcp_servers.{name} uses streamable_http with SSE-style endpoint "
+                    f"{url}. Disable this alias or configure the server's real "
+                    "streamable-HTTP endpoint; keep a verified stdio entry when that "
+                    "is the service's supported transport.",
+                )
+            )
+    if not findings:
+        findings.append(
+            _Finding("ok", "codex:mcp-config", "no obvious HTTP/SSE transport mismatch")
+        )
+    return findings
 
 
 def _server_supervision_findings(
@@ -130,7 +261,10 @@ def _server_supervision_findings(
         status_reader = status_reader or service_status
 
     try:
-        config = config_factory(launcher=Path(resolved_launcher))
+        service_launcher = _uv_tool_shim()
+        if not service_launcher.is_file():
+            service_launcher = Path(resolved_launcher)
+        config = config_factory(launcher=service_launcher)
         status = status_reader(config)
     except (
         OSError,
@@ -184,6 +318,7 @@ def _server_supervision_findings(
 
 
 def _repo_root_from_source() -> Path | None:
+    """Return the monorepo root when this package is loaded from a checkout."""
     package_root = Path(__file__).resolve().parents[1]
     candidate = package_root.parent if package_root.name == "vibecrafted-core" else None
     if candidate and (candidate / "scripts" / "vetcoders_install.py").is_file():
@@ -192,6 +327,7 @@ def _repo_root_from_source() -> Path | None:
 
 
 def _installer_module() -> Any:
+    """Lazily load and cache the `vetcoders_install` module (checkout or import)."""
     global _INSTALLER_MODULE
     if _INSTALLER_MODULE is not None:
         return _INSTALLER_MODULE
@@ -225,6 +361,7 @@ def _installer_module() -> Any:
 
 
 def _packaged_asset_findings() -> list[_Finding]:
+    """Verify runtime/skills/deck package assets are present under the package dir."""
     checks = (
         (
             "runtime",
@@ -273,6 +410,7 @@ def _vc_frame_delivery_findings(
         generated / "config.kdl",
         generated / "layouts",
         generated / "themes",
+        generated / "vc-composer.sh",
     )
     materialized = all(
         path.is_file() if path.suffix else path.is_dir() for path in materialized_paths
@@ -466,12 +604,272 @@ def _vc_frame_delivery_findings(
             )
         )
 
+    # Operator scripts + Super/Cmd contract on both projections. The runtime
+    # pins VC_FRAME_CONFIG_DIR to frontier first; a STALE-FILE composer there
+    # shadows every install that only rewires ~/.config/vc-frame.
+    frontier_cfg = froot / "vc-frame"
+    for projection, label in (
+        (view, "view"),
+        (frontier_cfg, "frontier"),
+    ):
+        missing_scripts = [
+            name
+            for name in OPERATOR_SCRIPT_NAMES
+            if name != "auto-theme.sh" and not (projection / name).exists()
+        ]
+        stale_scripts = [
+            name
+            for name in OPERATOR_SCRIPT_NAMES
+            if (projection / name).is_file() and not (projection / name).is_symlink()
+        ]
+        if missing_scripts:
+            findings.append(
+                _Finding(
+                    "fail",
+                    f"vc-frame:operator-scripts:{label}",
+                    f"missing {', '.join(missing_scripts)} under {projection} — "
+                    f"{view_repair}",
+                )
+            )
+        elif stale_scripts:
+            findings.append(
+                _Finding(
+                    "fail",
+                    f"vc-frame:operator-scripts:{label}",
+                    f"STALE-FILE (not install-managed link) for "
+                    f"{', '.join(stale_scripts)} under {projection} — "
+                    f"{view_repair} (backs up and re-wires)",
+                )
+            )
+        else:
+            findings.append(
+                _Finding(
+                    "ok",
+                    f"vc-frame:operator-scripts:{label}",
+                    f"operator scripts projected under {projection}",
+                )
+            )
+
+        cfg = projection / "config.kdl"
+        if cfg.is_file() or cfg.is_symlink():
+            try:
+                text = cfg.read_text(encoding="utf-8")
+            except OSError as exc:
+                findings.append(
+                    _Finding(
+                        "fail",
+                        f"vc-frame:key-contract:{label}",
+                        f"cannot read {cfg}: {exc}",
+                    )
+                )
+            else:
+                kitty_on = (
+                    "support_kitty_keyboard_protocol true" in text
+                    or "support_kitty_keyboard_protocol true" in text
+                )
+                has_super = 'bind "Super' in text or 'bind "Super' in text
+                if not kitty_on:
+                    findings.append(
+                        _Finding(
+                            "fail",
+                            f"vc-frame:key-contract:{label}",
+                            f"{cfg} has support_kitty_keyboard_protocol off — "
+                            "Super/Cmd chords will never reach keybinds; "
+                            f"{view_repair}",
+                        )
+                    )
+                elif not has_super:
+                    findings.append(
+                        _Finding(
+                            "fail",
+                            f"vc-frame:key-contract:{label}",
+                            f"{cfg} enables kitty protocol but binds no Super/* "
+                            f"chords — Cmd switcher/Composer are dead; {view_repair}",
+                        )
+                    )
+                else:
+                    findings.append(
+                        _Finding(
+                            "ok",
+                            f"vc-frame:key-contract:{label}",
+                            "kitty protocol on + Super/* binds present",
+                        )
+                    )
+
     if use_repo:
         findings.append(
             _Finding(
                 "ok",
                 "vc-frame:channel",
                 "VIBECRAFTED_PREFER_REPO_VC_FRAME=1 (dev-checkout preferred)",
+            )
+        )
+    return findings
+
+
+_TRUTH_PATTERNS = ("config.kdl", "auto-theme.sh", "layouts/*.kdl", "themes/*.kdl")
+
+
+def _hash_config_tree(root: Path) -> dict[str, str]:
+    """sha256 map of the canonical vc-frame config files under one truth root."""
+    hashes: dict[str, str] = {}
+    if not root.is_dir():
+        return hashes
+    for pattern in _TRUTH_PATTERNS:
+        for path in sorted(root.glob(pattern)):
+            if not path.is_file():
+                continue
+            try:
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                continue
+            hashes[str(path.relative_to(root))] = digest
+    return hashes
+
+
+def _diverged_files(left: dict[str, str], right: dict[str, str]) -> list[str]:
+    """Return sorted filenames whose hash differs (or is missing) between the two maps."""
+    return sorted(
+        name for name in left.keys() | right.keys() if left.get(name) != right.get(name)
+    )
+
+
+def _vc_frame_truth_drift_findings(
+    *,
+    home: Path | None = None,
+    tools_home: Path | None = None,
+) -> list[_Finding]:
+    """Content drift across the vc-frame config truths.
+
+    The delivery checks prove the FORM of the view (symlink channels, dangling
+    links). This proves the CONTENT: the published generation must agree with
+    itself (config/ vs runtime/generated/), the dev checkout may run ahead of
+    the store but never silently, and no projection link may resolve into a
+    parked generation instead of vibecrafted-current.
+    """
+    findings: list[_Finding] = []
+    current = tools_current_path(tools_home)
+    store_cfg = current / "config" / "vc-frame"
+    generated = current / "runtime" / "generated" / "vc-frame"
+
+    store_map = _hash_config_tree(store_cfg)
+    generated_map = _hash_config_tree(generated)
+    if store_map and generated_map:
+        # generated/ is HOST-ADAPTED from config/ (pane-shell + clipboard
+        # substitution in every kdl), so the raw trees legitimately differ on
+        # any host whose adaptation differs from the shipped defaults (a
+        # Linux box without pbcopy diverges on every layout). Compare against
+        # a fresh materialization built by the same production code instead
+        # of raw hashes — self-agreement modulo intended adaptation.
+        expected_map = store_map
+        try:
+            import tempfile
+
+            from .vc_frame_staging import (
+                materialize_vc_frame_config,
+                resolve_clipboard_command,
+                resolve_pane_shell,
+            )
+
+            with tempfile.TemporaryDirectory(prefix="vc-doctor-truth-") as tmp:
+                expected_root = Path(tmp) / "vc-frame"
+                materialize_vc_frame_config(
+                    store_cfg,
+                    expected_root,
+                    pane_shell=resolve_pane_shell(),
+                    clipboard_command=resolve_clipboard_command(),
+                )
+                expected_map = _hash_config_tree(expected_root)
+        except OSError:
+            # Incomplete store tree — raw comparison still beats no signal.
+            expected_map = store_map
+        split = _diverged_files(expected_map, generated_map)
+        if split:
+            findings.append(
+                _Finding(
+                    "fail",
+                    "vc-frame:truth",
+                    "published generation disagrees with itself "
+                    f"(config/ vs runtime/generated/): {', '.join(split[:6])}"
+                    f"{' …' if len(split) > 6 else ''} — run `vibecrafted update`",
+                )
+            )
+        else:
+            findings.append(
+                _Finding(
+                    "ok",
+                    "vc-frame:truth",
+                    f"store truths agree ({len(store_map)} file(s) hashed)",
+                )
+            )
+
+    checkout: Path | None = None
+    try:
+        from .frontier_assets import vc_frame_config_source
+
+        checkout = vc_frame_config_source()
+    except FileNotFoundError:
+        checkout = None
+    if checkout is not None and store_map:
+        drift = _diverged_files(_hash_config_tree(checkout), store_map)
+        if drift:
+            findings.append(
+                _Finding(
+                    "warn",
+                    "vc-frame:truth",
+                    f"dev checkout differs from published store on {len(drift)} "
+                    f"file(s): {', '.join(drift[:6])}"
+                    f"{' …' if len(drift) > 6 else ''} — legal mid-development; "
+                    "republish via `vibecrafted update` before trusting "
+                    "env-less sessions",
+                )
+            )
+        else:
+            findings.append(
+                _Finding("ok", "vc-frame:truth", "dev checkout matches published store")
+            )
+
+    tools_root = current.parent
+    try:
+        current_real = current.resolve(strict=True)
+    except OSError:
+        return findings
+    projection_roots = (
+        vc_frame_user_config_dir(home),
+        frontier_root(home) / "vc-frame",
+    )
+    stale: list[Path] = []
+    for root in projection_roots:
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if not path.is_symlink():
+                continue
+            try:
+                target = path.resolve(strict=True)
+            except OSError:
+                continue  # dangling links are the delivery check's finding
+            if target.is_relative_to(tools_root) and not target.is_relative_to(
+                current_real
+            ):
+                stale.append(path)
+    if stale:
+        listed = ", ".join(str(path) for path in stale[:4])
+        findings.append(
+            _Finding(
+                "fail",
+                "vc-frame:truth",
+                f"{len(stale)} projection link(s) resolve into a parked "
+                f"generation instead of vibecrafted-current: {listed}"
+                f"{' …' if len(stale) > 4 else ''} — re-run `vibecrafted update`",
+            )
+        )
+    else:
+        findings.append(
+            _Finding(
+                "ok",
+                "vc-frame:truth",
+                "all projection links resolve inside vibecrafted-current",
             )
         )
     return findings
@@ -498,12 +896,15 @@ def doctor_run(
         findings = list(installer.run_doctor(resolved_store, resolved_state))
         findings.extend(_packaged_asset_findings())
     findings.extend(_launcher_shim_findings())
+    findings.extend(_codex_mcp_config_findings())
     findings.extend(_server_supervision_findings())
     findings.extend(_vc_frame_delivery_findings())
+    findings.extend(_vc_frame_truth_drift_findings())
     return findings
 
 
 def doctor_summary(findings: Sequence[Any]) -> dict[str, Any]:
+    """Reduce a findings sequence to ok/warn/fail counts plus a serialized list."""
     oks = sum(1 for finding in findings if finding.level == "ok")
     warnings = sum(1 for finding in findings if finding.level == "warn")
     failures = sum(1 for finding in findings if finding.level == "fail")

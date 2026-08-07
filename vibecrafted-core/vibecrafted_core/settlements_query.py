@@ -36,6 +36,7 @@ class SettlementsQueryError(ValueError):
 
 
 def _path_is_file(value: object) -> bool:
+    """True when ``value`` is a non-empty path string pointing at an existing file."""
     if value is None:
         return False
     text = str(value).strip()
@@ -48,6 +49,7 @@ def _path_is_file(value: object) -> bool:
 
 
 def _path_is_dir(value: object) -> bool:
+    """True when ``value`` is a non-empty path string pointing at an existing directory."""
     if value is None:
         return False
     text = str(value).strip()
@@ -60,6 +62,7 @@ def _path_is_dir(value: object) -> bool:
 
 
 def _read_json_object(path: Path) -> dict[str, Any] | None:
+    """Read a JSON object file, returning None on any read/decode/shape failure."""
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
@@ -70,6 +73,7 @@ def _read_json_object(path: Path) -> dict[str, Any] | None:
 
 
 def _runtime_run_dir(run_id: str) -> Path:
+    """Return the runtime run directory for ``run_id`` under the control plane."""
     return control_plane_home() / "runtime_runs" / run_id
 
 
@@ -88,6 +92,7 @@ def _load_run_snapshot(run_id: str) -> tuple[dict[str, Any] | None, str | None]:
 
 
 def _pick_path(*candidates: object) -> str:
+    """Return the first non-empty stripped string among ``candidates``, else ""."""
     for candidate in candidates:
         text = str(candidate or "").strip()
         if text:
@@ -96,6 +101,7 @@ def _pick_path(*candidates: object) -> str:
 
 
 def _discover_runtime_artifact(run_dir: Path, *name_globs: str) -> str:
+    """Return the first non-empty file matching any glob pattern in ``run_dir``."""
     if not run_dir.is_dir():
         return ""
     for pattern in name_globs:
@@ -111,6 +117,11 @@ def _discover_runtime_artifact(run_dir: Path, *name_globs: str) -> str:
 def _resolve_artifacts(
     run_id: str, snapshot: Mapping[str, Any] | None
 ) -> dict[str, Any]:
+    """Resolve report/transcript paths for a run from snapshot, meta, then glob discovery.
+
+    Falls back to on-disk discovery only when the recorded path is missing or
+    stale (does not point at an existing file).
+    """
     snap = snapshot or {}
     artifacts = (
         snap.get("artifacts") if isinstance(snap.get("artifacts"), Mapping) else {}
@@ -168,6 +179,7 @@ def _resolve_artifacts(
 
 
 def _truthy_mapping(value: object) -> bool:
+    """True when ``value`` is a non-empty mapping."""
     return isinstance(value, Mapping) and bool(value)
 
 
@@ -175,6 +187,11 @@ def _enrich_record(
     run_id: str,
     ledger_record: Mapping[str, Any],
 ) -> dict[str, Any]:
+    """Merge one ledger row with control-plane snapshot/artifact context for display.
+
+    Read-only best-effort enrichment: a missing snapshot degrades fields to
+    None/False rather than raising.
+    """
     snapshot, snapshot_source = _load_run_snapshot(run_id)
     artifacts = _resolve_artifacts(run_id, snapshot)
     snap = snapshot or {}
@@ -250,6 +267,7 @@ def _iter_enriched(
     bucket: str | None = None,
     revalidatable: bool = False,
 ) -> list[dict[str, Any]]:
+    """Return enriched latest-by-run ledger rows, optionally filtered by bucket/revalidatable."""
     ledger = read_settlement_ledger()
     latest = ledger.get("latest_by_run") or {}
     if not isinstance(latest, Mapping):
@@ -270,6 +288,10 @@ def _iter_enriched(
 
 
 def _parse_group_fields(group: str | Sequence[str] | None) -> tuple[str, ...]:
+    """Parse a comma-string or sequence of group-by field names, validating against the allowlist.
+
+    Raises ``SettlementsQueryError`` for any field outside ``_GROUP_FIELDS``.
+    """
     if group is None or group == "":
         return ()
     if isinstance(group, str):
@@ -294,6 +316,7 @@ def _group_rows(
     *,
     sample_limit: int = 5,
 ) -> list[dict[str, Any]]:
+    """Group rows by the given field tuple, largest group first, with a sample of run_ids."""
     buckets: dict[tuple[Any, ...], list[Mapping[str, Any]]] = {}
     for row in rows:
         key = tuple(row.get(field) for field in fields)
@@ -513,6 +536,7 @@ def inspect_settlement(run_id: str) -> dict[str, Any]:
 
 
 def render_settlements_summary_text(payload: Mapping[str, Any]) -> str:
+    """Render ``settlements_summary`` payload as plain human-readable text."""
     counts = payload.get("counts") or {}
     latest = counts.get("latest_by_run") or {}
     historical = counts.get("historical_transitions") or {}
@@ -559,6 +583,7 @@ def render_settlements_summary_text(payload: Mapping[str, Any]) -> str:
 
 
 def render_settlements_list_text(payload: Mapping[str, Any]) -> str:
+    """Render ``list_settlements`` payload (grouped or flat) as plain human-readable text."""
     lines = [
         (
             "settlements list "
@@ -598,6 +623,7 @@ def render_settlements_list_text(payload: Mapping[str, Any]) -> str:
 
 
 def render_settlements_inspect_text(payload: Mapping[str, Any]) -> str:
+    """Render ``inspect_settlement`` payload as plain human-readable text."""
     enriched = payload.get("enriched") or {}
     ledger = payload.get("ledger") or {}
     lines = [

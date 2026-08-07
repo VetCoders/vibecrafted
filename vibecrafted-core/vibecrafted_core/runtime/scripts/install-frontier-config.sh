@@ -85,8 +85,14 @@ install_one() {
       printf '     already linked\n'
       return 0
     fi
-    mv "$target_file" "$backup_file"
-    printf '     backed up existing symlink to %s\n' "$backup_file"
+    if [[ -f "$target_file" ]]; then
+      cp -pL "$target_file" "$backup_file"
+      printf '     preserved existing symlink content as regular backup %s\n' "$backup_file"
+    else
+      printf 'legacy_symlink_target=%s\n' "$current_target" > "$backup_file"
+      printf '     recorded unreadable legacy symlink as regular migration receipt %s\n' "$backup_file"
+    fi
+    rm -f "$target_file"
   elif [[ -e "$target_file" ]]; then
     mv "$target_file" "$backup_file"
     printf '     backed up existing file to %s\n' "$backup_file"
@@ -101,10 +107,33 @@ install_one() {
   printf '     installed\n'
 }
 
+migrate_legacy_backup_links() {
+  local backup_link backup_target temporary
+  [[ -d "$frontier_root" ]] || return 0
+  while IFS= read -r -d '' backup_link; do
+    backup_target="$(readlink "$backup_link")"
+    if (( dry_run )); then
+      printf '  dry-run: would materialize legacy backup link: %s\n' "$backup_link"
+      continue
+    fi
+    temporary="${backup_link}.materialized.$$"
+    if [[ -f "$backup_link" ]]; then
+      cp -pL "$backup_link" "$temporary"
+    else
+      printf 'legacy_symlink_target=%s\n' "$backup_target" > "$temporary"
+    fi
+    rm -f "$backup_link"
+    mv "$temporary" "$backup_link"
+    printf '  materialized legacy backup link: %s\n' "$backup_link"
+  done < <(find "$frontier_root" -type l -name '*.bak.*' -print0 2>/dev/null)
+}
+
 printf 'Installing Vetcoders frontier config\n'
 printf '  source repo: %s\n' "$repo_root"
 printf '  mode: %s\n' "$mode"
 printf '  frontier root: %s\n' "$frontier_root"
+
+migrate_legacy_backup_links
 
 # Prefer staged tools store when present; fall back to checkout (--source).
 vc_frame_src="$repo_root/config/vc-frame"
@@ -118,6 +147,17 @@ fi
 
 install_one "$repo_root/config/starship.toml" "$frontier_root/starship.toml"
 install_one "$repo_root/config/atuin/config.toml" "$frontier_root/atuin/config.toml"
+# Host-terminal sidecars (optional — only when present in this generation).
+# Never overwrite ~/.config/alacritty; operators import/copy deliberately.
+if [[ -f "$repo_root/config/alacritty/vc-frame.toml" ]]; then
+  install_one "$repo_root/config/alacritty/vc-frame.toml" "$frontier_root/alacritty/vc-frame.toml"
+fi
+if [[ -f "$repo_root/config/alacritty/launch-primary-shell.zsh" ]]; then
+  install_one "$repo_root/config/alacritty/launch-primary-shell.zsh" "$frontier_root/alacritty/launch-primary-shell.zsh"
+fi
+if [[ -f "$repo_root/config/shell/atuin-up.zsh" ]]; then
+  install_one "$repo_root/config/shell/atuin-up.zsh" "$frontier_root/shell/atuin-up.zsh"
+fi
 install_one "$vc_frame_src/config.kdl" "$frontier_root/vc-frame/config.kdl"
 install_one "$vc_frame_src/layouts/research.kdl" "$frontier_root/vc-frame/layouts/research.kdl"
 install_one "$vc_frame_src/layouts/workflow.kdl" "$frontier_root/vc-frame/layouts/workflow.kdl"

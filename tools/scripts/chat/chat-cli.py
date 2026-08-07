@@ -68,6 +68,7 @@ logger = logging.getLogger(__name__)
 
 
 def validate_remote_url(url: str) -> str:
+    """Reject non-http(s) URLs before any network call; returns the URL unchanged."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
         raise ValueError("Only absolute http(s) URLs are allowed")
@@ -75,6 +76,7 @@ def validate_remote_url(url: str) -> str:
 
 
 def safe_urlopen(request: Request, timeout: float):
+    """Open ``request`` after validating its URL scheme; uses TLS context for https."""
     url = validate_remote_url(request.full_url)
     context = ssl.create_default_context() if url.startswith("https://") else None
     # Validation above rejects file:// and other non-network schemes before opening.
@@ -92,6 +94,7 @@ class C:
 
 
 def is_url(s: str) -> bool:
+    """Return True when ``s`` parses as an http(s) URL."""
     try:
         p = urlparse(s)
         return p.scheme in ("http", "https")
@@ -100,6 +103,7 @@ def is_url(s: str) -> bool:
 
 
 def file_to_data_url(path: str) -> str:
+    """Read a local file and encode it as a base64 ``data:`` URL for image attachments."""
     if not os.path.isfile(path):
         raise FileNotFoundError(f"No such file: {path}")
     mime, _ = mimetypes.guess_type(path)
@@ -115,6 +119,7 @@ def file_to_data_url(path: str) -> str:
 
 
 def read_audio_base64(path: str) -> tuple[str, str]:
+    """Read a local audio file and return ``(base64_data, format)`` for the API payload."""
     if not os.path.isfile(path):
         raise FileNotFoundError(f"No such file: {path}")
     ext = (os.path.splitext(path)[1] or "").lower().lstrip(".")
@@ -226,6 +231,10 @@ def post_once(
 def build_user_content(
     text: str | None, images: list[str], audios: list[str]
 ) -> list[dict[str, Any]]:
+    """Assemble an OpenAI-compatible multimodal ``content`` list from text/images/audio.
+
+    Attachment failures degrade to an inline error text part rather than raising.
+    """
     parts: list[dict[str, Any]] = []
     if text:
         parts.append({"type": "text", "text": text})
@@ -247,14 +256,17 @@ def build_user_content(
 
 
 def print_system(msg: str) -> None:
+    """Print a system-colored status line to stdout."""
     print(f"{C.SYSTEM}{msg}{C.RESET}")
 
 
 def print_assistant_prefix() -> None:
+    """Print the ``Assistant:`` prompt prefix without a trailing newline."""
     print(f"{C.ASSISTANT}Assistant: {C.RESET}", end="", flush=True)
 
 
 def main() -> None:
+    """Run the interactive REPL: parse CLI args, then loop reading/sending chat turns."""
     default_base = (
         os.environ.get("CHATCLIENT_BASE_URL") or os.environ.get("LLM_SERVER_URL") or ""
     )

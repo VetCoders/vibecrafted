@@ -78,6 +78,7 @@ class ToolCapability:
     checked_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize the capability record to a plain JSON-able dict."""
         return {
             "tool": self.tool,
             "present": self.present,
@@ -93,11 +94,15 @@ class ToolCapability:
 
 
 def _now_iso() -> str:
+    """Return the current UTC time as an ISO-8601 string."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def _default_runner(timeout: float) -> Runner:
+    """Build a :data:`Runner` that executes real subprocesses with ``timeout`` seconds."""
+
     def run(cmd: Sequence[str]) -> ProbeResult:
+        """Run ``cmd``, mapping not-found/timeout/OS errors to a failed :class:`ProbeResult`."""
         try:
             completed = subprocess.run(
                 list(cmd),
@@ -123,6 +128,7 @@ def _default_runner(timeout: float) -> Runner:
 
 
 def _ghost_bin_roots() -> tuple[Path, ...]:
+    """Return known non-canonical install roots to probe as a fallback discovery surface."""
     return (Path.home() / ".cargo" / "bin", Path("/usr/local/bin"))
 
 
@@ -153,6 +159,7 @@ def _resolve_executable(name: str) -> str | None:
 
 
 def _classify_provenance(executable: str | None) -> str:
+    """Classify ``executable`` as "missing", "canonical" (launcher bin), or "noncanonical"."""
     if not executable:
         return "missing"
     resolved = str(Path(executable).expanduser())
@@ -172,6 +179,7 @@ _VERSION_RE = re.compile(r"\b\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.]+)?\b")
 
 
 def _extract_version(text: str) -> str | None:
+    """Pull the first line containing a semver-ish token from ``--version`` output."""
     for line in text.splitlines():
         line = line.strip()
         if not line:
@@ -190,6 +198,7 @@ _HELP_ITEM_RE = re.compile(r"^([a-z][a-z0-9][a-z0-9_-]*)\b")
 
 
 def _extract_capabilities(help_text: str) -> list[str]:
+    """Parse subcommand names listed under a clap/argparse ``Commands:`` heading in ``--help``."""
     capabilities: list[str] = []
     in_section = False
     seen: set[str] = set()

@@ -44,6 +44,7 @@ class VcStatusBarState:
     _refresh: Callable[[], Any] | None = None
 
     def render(self) -> str:
+        """Build the status bar label: active count plus last-completion tag."""
         count = len(self.active_runs)
         head = f"vc: {count}"
         tail = self.last_completion
@@ -52,6 +53,11 @@ class VcStatusBarState:
         return head
 
     async def refresh(self) -> None:
+        """Trigger the iTerm2 status bar redraw via the registered callback.
+
+        No-op if a component has not registered `_refresh` yet; swallows
+        redraw errors so a transient iTerm2 API hiccup cannot crash the tail.
+        """
         if self._refresh is None:
             return
         try:
@@ -63,6 +69,11 @@ class VcStatusBarState:
 
 
 def _open_transcript(state: VcStatusBarState) -> bool:
+    """Open the last completed run's transcript with `open(1)`.
+
+    Returns False (no crash) when there is no transcript path or the file
+    does not exist, or if the ``open`` subprocess fails to launch.
+    """
     transcript = str(state.last_completion_payload.get("transcript") or "").strip()
     if not transcript or not os.path.exists(transcript):
         return False
@@ -96,10 +107,12 @@ async def register_status_bar(connection: Any, state: VcStatusBarState) -> Any:
     async def coroutine(
         knobs: dict[str, Any],
     ) -> str:
+        """Status bar RPC callback: current rendered label for this component."""
         return state.render()
 
     @iterm2.RPC  # type: ignore[attr-defined]
     async def on_click(session_id: str) -> None:
+        """Status bar click handler: open the last completed run's transcript."""
         opened = _open_transcript(state)
         if not opened:
             _LOG.info(

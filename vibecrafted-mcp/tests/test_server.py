@@ -782,6 +782,28 @@ def test_vc_run_observe_defaults_to_recent_tail_for_long_transcript(
     assert payload["transcript"]["truncated"] is True
 
 
+def test_observe_bounds_complete_serialized_result() -> None:
+    payload = {
+        "events": [
+            {"payload": {"blob": "x" * 20_000}, "cursor": str(index)}
+            for index in range(10)
+        ],
+        "transcript": {
+            "text": "old-head" + ("y" * 100_000) + "recent-tail",
+            "bytes": 100_019,
+            "truncated": False,
+            "next_offset": 100_019,
+        },
+    }
+
+    bounded = server._bound_observe_payload(payload)
+
+    encoded = json.dumps(bounded, ensure_ascii=False).encode("utf-8")
+    assert len(encoded) <= server.OBSERVE_RESULT_MAX_BYTES
+    assert bounded["transcript"]["truncated"] is True
+    assert bounded["transcript"]["text"].endswith("recent-tail")
+
+
 def test_run_resource_templates_resolve_bounded_artifacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

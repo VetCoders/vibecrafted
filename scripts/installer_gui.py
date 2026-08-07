@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+"""Browser-based guided installer: local HTTP control plane plus static HTML shell.
+
+Runs a local ThreadingHTTPServer that serves either the pre-built Svelte
+site bundle (when present) or an inline HTML fallback, exposes a JSON API
+for preflight diagnostics/install/control-plane status, and drives the
+actual install by spawning the same phased subprocess steps as the CLI
+installer.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -62,30 +71,37 @@ ADDITIONAL_TOOL_COMMANDS = ("mise", "starship", "atuin", "zoxide")
 
 
 def default_source_dir() -> str:
+    """Default framework source directory: the repo root two levels above this file."""
     return str(Path(__file__).resolve().parent.parent)
 
 
 def read_framework_version(source_dir: str) -> str:
+    """Read the framework VERSION string for source_dir."""
     return read_version_file(source_dir)
 
 
 def framework_store_dir() -> Path:
+    """Directory where installed vc-* skill directories live."""
     return vibecrafted_home() / "skills"
 
 
 def helper_layer_path() -> Path:
+    """Path to the shell helper layer sourced by interactive shells."""
     return xdg_config_home() / "vetcoders" / "vc-skills.sh"
 
 
 def install_log_path() -> Path:
+    """Path to the persisted install log under the Vibecrafted home."""
     return vibecrafted_home() / "install.log"
 
 
 def start_here_path() -> Path:
+    """Path to the post-install START_HERE.md guide."""
     return vibecrafted_home() / "START_HERE.md"
 
 
 def runtime_skill_views() -> dict[str, Path]:
+    """Map each supported agent runtime to its per-user skills directory."""
     home = Path.home()
     return {
         "agents": home / ".agents" / "skills",
@@ -99,18 +115,22 @@ def runtime_skill_views() -> dict[str, Path]:
 
 
 def installer_script_path(source_dir: str) -> Path:
+    """Path to the primary vetcoders_install.py entrypoint under source_dir."""
     return Path(source_dir).resolve() / "scripts" / "vetcoders_install.py"
 
 
 def foundations_script_path(source_dir: str) -> Path:
+    """Path to the optional foundations bootstrap script under source_dir."""
     return Path(source_dir).resolve() / "scripts" / "install-foundations.sh"
 
 
 def runtime_script_path(source_dir: str) -> Path:
+    """Path to the optional agent-runtime installer script under source_dir."""
     return Path(source_dir).resolve() / "scripts" / "install-runtime.sh"
 
 
 def build_install_command(source_dir: str, *, with_shell: bool) -> list[str]:
+    """Build the vetcoders_install.py invocation for a compact, non-interactive install."""
     installer_path = installer_script_path(source_dir)
     if not installer_path.exists():
         raise FileNotFoundError(f"Installer not found at {installer_path}")
@@ -131,15 +151,19 @@ def build_install_command(source_dir: str, *, with_shell: bool) -> list[str]:
 
 @dataclass(frozen=True)
 class InstallStep:
+    """One labeled subprocess command in the GUI install plan."""
+
     label: str
     command: list[str]
 
 
 def _command_display(command: list[str]) -> str:
+    """Render an argv list as a space-joined shell-style string for display."""
     return " ".join(command)
 
 
 def _serialize_install_plan(steps: list[InstallStep]) -> list[dict[str, str]]:
+    """Convert InstallStep objects to JSON-friendly {label, command} dicts."""
     return [
         {"label": step.label, "command": _command_display(step.command)}
         for step in steps
@@ -147,6 +171,7 @@ def _serialize_install_plan(steps: list[InstallStep]) -> list[dict[str, str]]:
 
 
 def build_install_steps(source_dir: str, *, with_shell: bool) -> list[InstallStep]:
+    """Build the ordered install plan: optional foundations, core install, optional runtime."""
     steps: list[InstallStep] = []
     foundations_path = foundations_script_path(source_dir)
     if foundations_path.exists():
@@ -176,6 +201,7 @@ def build_install_steps(source_dir: str, *, with_shell: bool) -> list[InstallSte
 
 
 def _command_check(name: str) -> dict[str, Any]:
+    """Diagnostics entry: whether name resolves on PATH, and where."""
     path = shutil.which(name)
     return {
         "label": name,
@@ -188,6 +214,7 @@ def _command_check(name: str) -> dict[str, Any]:
 def _path_check(
     label: str, path: Path, *, found: bool | None = None, detail: str | None = None
 ) -> dict[str, Any]:
+    """Diagnostics entry for a filesystem path, with overridable found/detail."""
     is_found = path.exists() if found is None else found
     return {
         "label": label,
@@ -198,6 +225,7 @@ def _path_check(
 
 
 def _framework_checks() -> dict[str, dict[str, Any]]:
+    """Diagnostics for the framework's own install: skills, helper file, binaries, symlinks."""
     store_dir = framework_store_dir()
     helper_file = helper_layer_path()
     skills = []
@@ -252,6 +280,7 @@ def _framework_checks() -> dict[str, dict[str, Any]]:
 
 
 def _bundled_os() -> str:
+    """Normalize sys.platform to the bundled-toolchain OS tag (macos/linux/windows)."""
     if sys.platform == "darwin":
         return "macos"
     if sys.platform.startswith("linux"):
@@ -262,6 +291,7 @@ def _bundled_os() -> str:
 
 
 def _bundled_arch() -> str:
+    """Normalize platform.machine() to the bundled-toolchain arch tag."""
     machine = platform.machine().lower()
     if machine in ("x86_64", "amd64"):
         return "x86_64"
@@ -273,6 +303,7 @@ def _bundled_arch() -> str:
 
 
 def bundled_bin_root(source_dir: str) -> Path:
+    """Resolve the bundled-toolchain bin directory: env override, per-arch, then generic."""
     override = os.environ.get("VIBECRAFTED_BUNDLED_BIN")
     if override:
         return Path(override).expanduser()
@@ -283,6 +314,7 @@ def bundled_bin_root(source_dir: str) -> Path:
 
 
 def _bundled_check(name: str, source_dir: str) -> dict[str, Any]:
+    """Diagnostics entry for a bundled binary: present and executable under bundled_bin_root."""
     root = bundled_bin_root(source_dir)
     path = root / name
     if path.is_file() and os.access(path, os.X_OK):
@@ -332,6 +364,7 @@ def run_diagnostics(
 def summarize_diagnostics(
     diagnostics: dict[str, dict[str, dict[str, Any]]],
 ) -> tuple[list[str], list[str], dict[str, list[str]]]:
+    """Flatten run_diagnostics() output into (found labels, missing labels, missing-by-category)."""
     found_items: list[str] = []
     missing_items: list[str] = []
     needs_install: dict[str, list[str]] = {}
@@ -353,6 +386,7 @@ def summarize_diagnostics(
 
 
 def install_runtime_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
+    """Return an env dict with vibecrafted/node/cargo/local bin dirs prepended to PATH."""
     env = dict(os.environ if base_env is None else base_env)
     path_entries = env.get("PATH", "").split(os.pathsep) if env.get("PATH") else []
 
@@ -372,6 +406,7 @@ def install_runtime_env(base_env: dict[str, str] | None = None) -> dict[str, str
 
 
 def _trim_home(value: str) -> str:
+    """Replace a leading home-directory prefix with `~` for display."""
     home = str(Path.home())
     if value.startswith(home):
         return value.replace(home, "~", 1)
@@ -379,6 +414,7 @@ def _trim_home(value: str) -> str:
 
 
 def _open_target(target: str) -> bool:
+    """Open target (path or URL) with the platform opener, falling back to webbrowser."""
     if sys.platform == "darwin" and shutil.which("open"):
         subprocess.Popen(
             ["open", target],
@@ -398,6 +434,8 @@ def _open_target(target: str) -> bool:
 
 @dataclass
 class InstallRun:
+    """Mutable snapshot of an in-progress or finished GUI install invocation."""
+
     command: list[str] = field(default_factory=list)
     plan: list[list[str]] = field(default_factory=list)
     plan_labels: list[str] = field(default_factory=list)
@@ -413,7 +451,10 @@ class InstallRun:
 
 
 class InstallController:
+    """Owns diagnostics, the running install thread, and control-plane state for the GUI."""
+
     def __init__(self, source_dir: str, *, bundle_dir: str | None = None) -> None:
+        """Resolve source_dir, run initial diagnostics, and locate the site bundle."""
         self.source_dir = str(Path(source_dir).resolve())
         self.version = read_framework_version(self.source_dir)
         self.diagnostics = run_diagnostics(self.source_dir)
@@ -476,6 +517,7 @@ class InstallController:
         return None
 
     def _category_cards(self) -> list[dict[str, Any]]:
+        """Build the per-category diagnostics summary cards used by the preflight payload."""
         cards: list[dict[str, Any]] = []
         for key, label in CATEGORY_LABELS.items():
             entries = []
@@ -504,6 +546,7 @@ class InstallController:
         return cards
 
     def preflight_payload(self) -> dict[str, Any]:
+        """Assemble the full `/api/preflight` JSON payload: brand, diagnostics, plan, status."""
         try:
             install_plan = _serialize_install_plan(
                 build_install_steps(self.source_dir, with_shell=True)
@@ -546,6 +589,7 @@ class InstallController:
         }
 
     def control_plane_payload(self) -> dict[str, Any]:
+        """Sync and enrich control-plane state with helper/guide paths and skills-ready count."""
         snapshot = sync_state()
         skill_store = framework_store_dir()
         skills_ready = 0
@@ -561,6 +605,7 @@ class InstallController:
         return snapshot
 
     def status_payload(self) -> dict[str, Any]:
+        """Return a thread-safe snapshot of the current InstallRun for `/api/install/status`."""
         with self._lock:
             output_tail = self._run.output[-OUTPUT_TAIL_LIMIT:]
             plan = self._run.plan or ([self._run.command] if self._run.command else [])
@@ -582,6 +627,7 @@ class InstallController:
             }
 
     def start(self, *, with_shell: bool) -> tuple[bool, str]:
+        """Start the install steps in a background daemon thread, refusing a concurrent run."""
         try:
             steps = build_install_steps(self.source_dir, with_shell=with_shell)
         except FileNotFoundError as exc:
@@ -626,10 +672,12 @@ class InstallController:
         return True, "Installer started."
 
     def _append_output(self, line: str) -> None:
+        """Thread-safely append one line to the current run's output buffer."""
         with self._lock:
             self._run.output.append(line)
 
     def _worker(self, steps: list[InstallStep]) -> None:
+        """Background-thread body: run install steps sequentially, streaming their output."""
         exit_code = 0
         error: str | None = None
         env = install_runtime_env()
@@ -666,6 +714,7 @@ class InstallController:
             self._run.finished_at = time.time()
 
     def open_start_here(self) -> tuple[bool, str]:
+        """Open the START_HERE.md guide with the platform opener."""
         guide = start_here_path()
         if not guide.exists():
             return False, f"Guide not found at {guide}"
@@ -674,6 +723,7 @@ class InstallController:
         return True, f"Opened {_trim_home(str(guide))}"
 
     def launch_workflow(self, payload: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+        """Normalize and launch a workflow spec from `/api/workflows/launch`."""
         try:
             spec = normalize_launch_spec(payload, self.source_dir)
             launch_payload = launch_workflow(
@@ -691,6 +741,8 @@ class InstallController:
 
 
 class InstallerHTTPServer(ThreadingHTTPServer):
+    """Threading HTTP server carrying the InstallController for request handlers to reach."""
+
     daemon_threads = True
     allow_reuse_address = True
 
@@ -699,6 +751,7 @@ class InstallerHTTPServer(ThreadingHTTPServer):
         server_address: tuple[str, int],
         controller: InstallController,
     ) -> None:
+        """Bind server_address and attach controller for handlers to read via self.server."""
         super().__init__(server_address, InstallerRequestHandler)
         self.controller = controller
 
@@ -730,9 +783,12 @@ STATIC_MIME_TYPES: dict[str, str] = {
 
 
 class InstallerRequestHandler(BaseHTTPRequestHandler):
+    """HTTP handler serving the JSON API plus the static/inline installer HTML."""
+
     server: InstallerHTTPServer
 
     def do_GET(self) -> None:
+        """Route GET: /api/* JSON endpoints, static site-bundle assets, then inline HTML."""
         parsed = urlparse(self.path)
         path = parsed.path
         if path.startswith("/api/"):
@@ -760,6 +816,11 @@ class InstallerRequestHandler(BaseHTTPRequestHandler):
         self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
 
     def _resolve_static(self, url_path: str) -> Path | None:
+        """Map a URL path to a file inside the site bundle, refusing path escapes.
+
+        Returns None when there is no bundle, no match, or the resolved path
+        would fall outside site_dist.
+        """
         site_dist = self.server.controller.site_dist_dir
         if site_dist is None:
             return None
@@ -791,6 +852,7 @@ class InstallerRequestHandler(BaseHTTPRequestHandler):
         return None
 
     def _send_file(self, path: Path) -> None:
+        """Serve a static file with the right MIME type; injects a live-mode flag into HTML."""
         try:
             data = path.read_bytes()
         except OSError:
@@ -821,6 +883,7 @@ class InstallerRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_POST(self) -> None:
+        """Route POST: /api/install, /api/open-start-here, /api/workflows/launch."""
         parsed = urlparse(self.path)
         if parsed.path == "/api/install":
             payload = self._read_json()
@@ -852,9 +915,11 @@ class InstallerRequestHandler(BaseHTTPRequestHandler):
         self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
 
     def log_message(self, format: str, *args: object) -> None:
+        """Suppress BaseHTTPRequestHandler's default per-request stderr logging."""
         return
 
     def _read_json(self) -> dict[str, Any]:
+        """Read and parse the request body as JSON; {} when there is no body."""
         content_length = int(self.headers.get("Content-Length", "0"))
         if content_length <= 0:
             return {}
@@ -864,6 +929,7 @@ class InstallerRequestHandler(BaseHTTPRequestHandler):
         return json.loads(raw.decode("utf-8"))
 
     def _send_html(self, payload: str, *, status: HTTPStatus = HTTPStatus.OK) -> None:
+        """Write an HTML response with the given status code."""
         body = payload.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -874,6 +940,7 @@ class InstallerRequestHandler(BaseHTTPRequestHandler):
     def _send_json(
         self, payload: dict[str, Any], *, status: HTTPStatus = HTTPStatus.OK
     ) -> None:
+        """Write a JSON response with no-store caching and the given status code."""
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -884,6 +951,11 @@ class InstallerRequestHandler(BaseHTTPRequestHandler):
 
 
 def build_html(preflight: dict[str, Any]) -> str:
+    """Render the inline HTML/CSS/JS installer shell, embedding preflight as boot JSON.
+
+    Used only when no pre-built Svelte site bundle is found; the returned
+    document polls the JSON API to drive its own UI.
+    """
     boot_json = json.dumps(preflight).replace("</", "<\\/")
     template = dedent(
         """\
@@ -2655,6 +2727,7 @@ def build_html(preflight: dict[str, Any]) -> str:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse installer_gui CLI arguments (--source, --host, --port, --no-open, --bundle-dir)."""
     parser = argparse.ArgumentParser(
         description="Launch the browser-based guided installer for Vibecrafted."
     )
@@ -2688,6 +2761,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI entrypoint: start the local control-plane server, open a browser, serve forever."""
     args = parse_args(argv)
     controller = InstallController(args.source, bundle_dir=args.bundle_dir)
     server = InstallerHTTPServer((args.host, args.port), controller)

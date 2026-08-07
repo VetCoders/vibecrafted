@@ -92,6 +92,7 @@ class ProviderCapability:
     notes: str = ""
 
     def to_dict(self) -> dict[str, Any]:
+        """Flatten this record to a JSON-serializable dict (tuples/nested recipe unpacked)."""
         payload: dict[str, Any] = {}
         for item in fields(self):
             value = getattr(self, item.name)
@@ -319,6 +320,7 @@ class ProbeResult:
     checked_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
+        """Flatten this probe result to a JSON-serializable dict."""
         return {
             "agent": self.agent,
             "state": self.state,
@@ -334,15 +336,20 @@ _PROBE_CACHE: dict[str, ProbeResult] = {}
 
 
 def clear_probe_cache() -> None:
+    """Drop all cached per-agent probe results, forcing the next probe() to re-run."""
     _PROBE_CACHE.clear()
 
 
 def _now_iso() -> str:
+    """Current UTC time as an ISO 8601 string."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def _default_runner(timeout: float) -> Runner:
+    """Build a subprocess-backed :data:`Runner` bound to a fixed timeout."""
+
     def run(cmd: Sequence[str]) -> CliProbe:
+        """Execute one read-only CLI probe command and capture its result."""
         try:
             completed = subprocess.run(
                 list(cmd),
@@ -368,6 +375,7 @@ def _default_runner(timeout: float) -> Runner:
 
 
 def _first_line(text: str) -> str | None:
+    """First non-blank line of ``text`` (e.g. a version banner), or None."""
     for line in text.splitlines():
         stripped = line.strip()
         if stripped:

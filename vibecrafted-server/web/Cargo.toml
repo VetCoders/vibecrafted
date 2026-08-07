@@ -21,6 +21,7 @@ leptos_meta = { version = "0.8" }
 control-core = { path = "../control-core", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
+serde_urlencoded = { version = "0.7", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["clock"], optional = true }
 
 axum = { version = "0.8", optional = true }
@@ -64,6 +65,7 @@ ssr = [
     "dep:control-core",
     "dep:serde",
     "dep:serde_json",
+    "dep:serde_urlencoded",
     "dep:chrono",
     "leptos/ssr",
     "leptos_router/ssr",
@@ -73,6 +75,11 @@ ssr = [
 [[test]]
 name = "control_events_sse"
 path = "tests/control_events_sse.rs"
+required-features = ["ssr"]
+
+[[test]]
+name = "scaffold_status_events"
+path = "tests/scaffold_status_events.rs"
 required-features = ["ssr"]
 
 [[test]]
@@ -96,5 +103,5 @@ bin-default-features = false
 lib-default-features = false
 
 lib-profile-release = "wasm-release"
-hash-files = true
+hash-files = false
 watch-additional-files = ["public", "styles"]

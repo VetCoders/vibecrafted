@@ -36,9 +36,12 @@ def test_vc_research_terminal_without_session_degrades_to_headless(
     tmp_path: Path,
 ) -> None:
     # VC-vbcr-stabilize-033 (operator-reported terminal kill): with terminal
-    # runtime and no live vc_frame session, vc-research used to hand the calling
-    # terminal to a blocking vc_frame client. It must degrade to headless, leave
-    # the shell alive, and never invoke a blocking vc_frame verb.
+    # runtime and no live vc_frame session, the research swarm used to hand the
+    # calling terminal to a blocking vc_frame client. It must degrade to
+    # headless, leave the shell alive, and never invoke a blocking vc_frame
+    # verb. Since 7e83fb60 the public `vc-research` is a deck passthrough, so
+    # the degrade guarantee is exercised on its owner: the legacy swarm helper
+    # `_vetcoders_research` (still shipped, still used by internal callers).
     root = tmp_path / "repo"
     root.mkdir()
     crafted_home = tmp_path / "home" / ".vibecrafted"
@@ -67,7 +70,8 @@ def test_vc_research_terminal_without_session_degrades_to_headless(
             (
                 f'export PATH="{stub_bin}:$PATH"; '
                 f'source "{HELPER_SCRIPT}"; '
-                f'vc-research --root "{root}" --prompt "probe terminal safety"; '
+                f'source "{REPO_ROOT}/runtime/vc-research/shell/research.sh"; '
+                f'_vetcoders_research --root "{root}" --prompt "probe terminal safety"; '
                 'rc=$?; echo "SHELL-ALIVE rc=$rc"; exit $rc'
             ),
         ],

@@ -1,3 +1,9 @@
+"""Legacy scripts/ shim re-exporting vibecrafted_core.control_plane (PEP 562).
+
+Kept so old ``scripts/control_plane_state.py`` import/CLI paths keep
+working; the canonical implementation lives in vibecrafted-core.
+"""
+
 from __future__ import annotations
 
 import sys
@@ -13,15 +19,22 @@ from vibecrafted_core.control_plane import vibecrafted_home
 
 
 def _sync_overrides() -> None:
+    """Rebind the canonical module's `vibecrafted_home` to this shim's resolved copy.
+
+    Guards against the two modules' `vibecrafted_home` diverging if the
+    canonical module is reloaded independently of this shim.
+    """
     _control_plane.vibecrafted_home = vibecrafted_home
 
 
 def sync_state() -> dict[str, object]:
+    """Sync overrides then delegate to the canonical module's `sync_state`."""
     _sync_overrides()
     return _control_plane.sync_state()
 
 
 def cli(argv: list[str] | None = None) -> int:
+    """Sync overrides then delegate to the canonical module's `cli` entry point."""
     _sync_overrides()
     return _control_plane.cli(argv)
 
@@ -32,6 +45,7 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
+    """Report the canonical module's public names plus this shim's own wrappers."""
     return sorted(set(dir(_control_plane)) | {"sync_state", "cli"})
 
 

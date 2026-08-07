@@ -55,6 +55,7 @@ from typing import Any
 
 from .delivery.store import atomic_write_json
 from .runtime_paths import vibecrafted_home
+from .server_config import load_server_config
 from .settlement import (
     SETTLEMENT_EVENT_KIND,
     SETTLEMENT_EVENT_SCHEMA,
@@ -74,7 +75,6 @@ GUARDIAN_STATE_SCHEMA_V1 = "vibecrafted.guardian-state.v1"
 GUARDIAN_DEAD_LETTER_SCHEMA = "vibecrafted.guardian-dead-letters.v2"
 GUARDIAN_READY_SCHEMA = "vibecrafted.guardian-ready.v1"
 TERMINAL_TRIAGE_OUTBOX_SCHEMA = "vibecrafted.terminal-triage-outbox.v1"
-DEFAULT_SERVER_URL = "http://127.0.0.1:3024"
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
 DEFAULT_RECOVERY_TIMEOUT_SECONDS = 5.0
 DEFAULT_BACKOFF_INITIAL_SECONDS = 1.0
@@ -150,6 +150,7 @@ def _bounded_text(
     allow_empty: bool = True,
     maximum: int = MAX_STATE_TEXT_BYTES,
 ) -> str:
+    """Validate `value` is a string within byte length and control-char rules."""
     if not isinstance(value, str):
         raise GuardianStateError(f"{field_name} must be a string")
     if not allow_empty and not value:
@@ -162,6 +163,7 @@ def _bounded_text(
 
 
 def _validate_cursor(value: object) -> CursorToken:
+    """Coerce `value` into a valid CursorToken (non-negative int or opaque str)."""
     if type(value) is int and value >= 0:
         return value
     if isinstance(value, str):
@@ -175,6 +177,7 @@ def _validate_cursor(value: object) -> CursorToken:
 
 
 def _parse_event_cursor(raw_cursor: str) -> CursorToken | None:
+    """Parse an SSE `id:` cursor as numeric or `v2:<epoch>:<gen>:<offset>`."""
     value = raw_cursor.strip()
     if not value or len(value.encode("utf-8")) > MAX_CURSOR_BYTES:
         return None
@@ -201,10 +204,12 @@ def _parse_event_cursor(raw_cursor: str) -> CursorToken | None:
 
 
 def _is_v2_cursor(cursor: object) -> bool:
+    """True when `cursor` is a well-formed opaque v2 cursor string."""
     return isinstance(cursor, str) and _parse_event_cursor(cursor) == cursor
 
 
 def _v2_cursor_parts(cursor: CursorToken) -> tuple[str, int, int] | None:
+    """Split a v2 cursor into (epoch, generation, offset); None if not v2."""
     if not _is_v2_cursor(cursor):
         return None
     assert isinstance(cursor, str)
@@ -213,6 +218,7 @@ def _v2_cursor_parts(cursor: CursorToken) -> tuple[str, int, int] | None:
 
 
 def _cursor_reaches(current: CursorToken, target: CursorToken) -> bool:
+    """True when `current` is at or past `target`, comparing within the same epoch."""
     current_parts = _v2_cursor_parts(current)
     target_parts = _v2_cursor_parts(target)
     if current_parts is not None and target_parts is not None:
@@ -234,6 +240,8 @@ def _boundary_is_valid(
     *,
     reason: str,
 ) -> bool:
+    """Validate a `stream.boundary` control: same cursor on connect, or same
+    epoch with an advancing generation on `generation_change`."""
     if reason == "connection_start":
         return from_cursor == to_cursor
     if reason != "generation_change":
@@ -248,6 +256,7 @@ def _boundary_is_valid(
 
 
 def _canonical_json(payload: object) -> bytes:
+    """Encode `payload` as sorted-key, compact-separator canonical JSON bytes."""
     try:
         encoded = json.dumps(
             payload,
@@ -262,9 +271,12 @@ def _canonical_json(payload: object) -> bytes:
 
 
 def _strict_json_loads(encoded: bytes) -> object:
+    """Parse strict JSON: rejects duplicate keys and non-finite numbers."""
+
     def object_without_duplicates(
         pairs: list[tuple[str, object]],
     ) -> dict[str, object]:
+        """json.loads object_pairs_hook: reject any object with a duplicate key."""
         result: dict[str, object] = {}
         for key, value in pairs:
             if key in result:
@@ -285,6 +297,7 @@ def _strict_json_loads(encoded: bytes) -> object:
 
 
 def _ensure_private_directory(path: Path) -> None:
+    """Create `path` as a 0700 directory owned by this uid, or raise fail-closed."""
     path.mkdir(mode=0o700, parents=True, exist_ok=True)
     flags = (
         os.O_RDONLY
@@ -317,6 +330,7 @@ def _ensure_private_directory(path: Path) -> None:
 
 
 def _validate_existing_private_file(path: Path) -> None:
+    """Raise if `path` exists but is not a private (0600, single-link, owned) file."""
     try:
         metadata = path.lstat()
     except FileNotFoundError:
@@ -331,6 +345,7 @@ def _validate_existing_private_file(path: Path) -> None:
 
 
 def _fsync_directory(path: Path) -> None:
+    """fsync a directory's own inode so a preceding rename/write is durable."""
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
     descriptor = os.open(path, flags)
     try:
@@ -340,6 +355,7 @@ def _fsync_directory(path: Path) -> None:
 
 
 def _atomic_private_write(path: Path, encoded: bytes) -> None:
+    """Write `encoded` to `path` via a 0600 temp file + atomic rename + fsync."""
     _ensure_private_directory(path.parent)
     _validate_existing_private_file(path)
     temporary = path.parent / (f".{path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp")
@@ -378,6 +394,7 @@ def _atomic_private_write(path: Path, encoded: bytes) -> None:
 
 
 def _read_private_file(path: Path, *, maximum: int) -> bytes:
+    """Read `path` after verifying it is a private regular file within `maximum` bytes."""
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(path, flags)
     try:
@@ -426,13 +443,16 @@ class SettlementRevision:
 
     @property
     def key(self) -> SettlementKey:
+        """Dedupe/highwater key: (run_id, revision)."""
         return (self.run_id, self.revision)
 
     @property
     def idempotency_key(self) -> str:
+        """Stable key passed through to resume adapters for exactly-once effect."""
         return f"settlement:{self.run_id}:{self.revision}"
 
     def to_state_payload(self) -> dict[str, object]:
+        """Serialize this revision to its canonical durable-state dict shape."""
         return {
             "run_id": self.run_id,
             "settlement_revision": self.revision,
@@ -448,6 +468,7 @@ class SettlementRevision:
     def from_state_payload(
         cls, payload: Mapping[str, object]
     ) -> SettlementRevision | None:
+        """Reconstruct a SettlementRevision from persisted state; None if invalid."""
         run_id = payload.get("run_id")
         revision = payload.get("settlement_revision")
         verdict = payload.get("verdict")
@@ -532,6 +553,7 @@ class CompletionRecord:
     reason: str
 
     def to_state_payload(self, run_id: str) -> dict[str, object]:
+        """Serialize this completion record with its owning `run_id` attached."""
         return {
             "run_id": run_id,
             "settlement_revision": self.revision,
@@ -555,9 +577,11 @@ class PendingRecord:
 
     @property
     def key(self) -> SettlementKey:
+        """Dedupe/highwater key of the underlying settlement event."""
         return self.event.key
 
     def to_state_payload(self) -> dict[str, object]:
+        """Serialize this outbox record (event fields plus retry/outcome state)."""
         return {
             **self.event.to_state_payload(),
             "stream_cursor": self.stream_cursor,
@@ -571,6 +595,7 @@ class PendingRecord:
 
     @classmethod
     def from_state_payload(cls, payload: Mapping[str, object]) -> PendingRecord:
+        """Reconstruct a PendingRecord from persisted state; raises on any invalid field."""
         expected = {
             "run_id",
             "settlement_revision",
@@ -650,10 +675,12 @@ CursorParser = Callable[[str], CursorToken | None]
 
 
 def _ignore_history_publish() -> None:
-    return None
+    """Default no-op history publisher used when no rail projection is wired."""
+    return
 
 
 def _ignore_triage_schedule(_run_id: str) -> bool:
+    """Default no-op triage scheduler that reports success without persisting."""
     return True
 
 
@@ -723,6 +750,7 @@ def _control_document(
     schema: str,
     fields: set[str],
 ) -> dict[str, object]:
+    """Parse and strictly shape-check one control frame's JSON body."""
     try:
         document = _strict_json_loads(frame.data.encode("utf-8"))
     except GuardianStateError as exc:
@@ -857,6 +885,7 @@ class ConnectionStats:
 
     @property
     def proved_stable(self) -> bool:
+        """True once this connection proved useful, resetting reconnect backoff."""
         # One accept + one immediate ping + drop must not pin reconnect delay to
         # the minimum forever. Two quiet heartbeats prove a sustained stream;
         # a completed settlement action proves useful forward progress.
@@ -877,6 +906,7 @@ class GuardianState:
     state_generation: int = 0
 
     def __post_init__(self) -> None:
+        """Validate cursor/flags/highwater/pending invariants fail-closed on load."""
         self.cursor = _validate_cursor(self.cursor)
         if type(self.state_generation) is not int or self.state_generation < 0:
             raise GuardianStateError("guardian state generation must be non-negative")
@@ -936,6 +966,7 @@ class GuardianState:
 
     @property
     def backup_path(self) -> Path:
+        """Path of this state file's `.bak` companion written before each primary write."""
         return self.path.with_name(f"{self.path.name}.bak")
 
     @property
@@ -955,6 +986,7 @@ class GuardianState:
         *,
         recovered_from_backup: bool = False,
     ) -> GuardianState:
+        """Parse and checksum-verify one v2 state document into a GuardianState."""
         document = _strict_json_loads(encoded)
         if not isinstance(document, dict) or frozenset(document) not in {
             frozenset(
@@ -1061,6 +1093,11 @@ class GuardianState:
 
     @classmethod
     def _migrate_v1(cls, path: Path, encoded: bytes) -> GuardianState:
+        """Migrate a legacy v1 state document to v2 with a fresh baseline.
+
+        Legacy pending actions are folded into highwater as suppressed/unbound
+        rather than replayed, since v1 carried no resume-authority guarantees.
+        """
         document = _strict_json_loads(encoded)
         if not isinstance(document, dict) or set(document) != {
             "schema",
@@ -1086,6 +1123,7 @@ class GuardianState:
         highwater: dict[str, CompletionRecord] = {}
 
         def merge(run_id: str, revision: int, outcome: str, reason: str) -> None:
+            """Upsert `highwater[run_id]` during v1 migration, keeping the newer revision."""
             existing = highwater.get(run_id)
             if existing is None or revision >= existing.revision:
                 highwater[run_id] = CompletionRecord(revision, outcome, reason)
@@ -1228,6 +1266,7 @@ class GuardianState:
         highwater: Mapping[str, CompletionRecord],
         pending: Mapping[SettlementKey, PendingRecord],
     ) -> dict[str, object]:
+        """Assemble the canonical (unchecksummed) body dict for a state snapshot."""
         return {
             "schema": GUARDIAN_STATE_SCHEMA,
             "state_generation": state_generation,
@@ -1250,6 +1289,12 @@ class GuardianState:
         highwater: Mapping[str, CompletionRecord],
         pending: Mapping[SettlementKey, PendingRecord],
     ) -> None:
+        """Checksum, write backup+primary atomically, then update in-memory state.
+
+        The live object is advanced to the new generation before the primary
+        write so a caught OSError on the primary cannot leave in-memory state
+        pointing at a stale generation the backup already exceeded.
+        """
         next_generation = self.state_generation + 1
         GuardianState(
             path=self.path,
@@ -1316,6 +1361,7 @@ class GuardianState:
         self.cursor = cursor
 
     def _known(self, key: SettlementKey) -> bool:
+        """True if `key` is already pending or already covered by highwater."""
         if key in self.pending:
             return True
         completion = self.highwater.get(key[0])
@@ -1329,6 +1375,7 @@ class GuardianState:
         outcome: str,
         reason: str,
     ) -> None:
+        """In-place upsert `highwater[run_id]` only if `key`'s revision is newer/equal."""
         existing = highwater.get(key[0])
         if existing is None or key[1] >= existing.revision:
             highwater[key[0]] = CompletionRecord(
@@ -1396,6 +1443,7 @@ class GuardianState:
         return True
 
     def mark_notified(self, key: SettlementKey) -> bool:
+        """Persist that the operator notification for `key` was sent; idempotent."""
         record = self.pending.get(key)
         if record is None or record.notification_done:
             return False
@@ -1501,6 +1549,7 @@ class GuardianState:
         now: float,
         limit: int,
     ) -> tuple[PendingRecord, ...]:
+        """Return up to `limit` due pending records, oldest-retry-first."""
         if limit <= 0:
             return ()
         due = [record for record in self.pending.values() if record.next_retry <= now]
@@ -1661,6 +1710,7 @@ class BoundedBackoff:
     _next: float = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        """Validate bounds and seed the next delay at `initial`."""
         if self.initial <= 0:
             raise ValueError("initial backoff must be > 0")
         if self.maximum < self.initial:
@@ -1668,11 +1718,13 @@ class BoundedBackoff:
         self._next = self.initial
 
     def next_delay(self) -> float:
+        """Return the current delay and double it (capped at `maximum`)."""
         delay = self._next
         self._next = min(self.maximum, self._next * 2)
         return delay
 
     def reset(self) -> None:
+        """Reset the delay back to `initial` after a proven-stable connection."""
         self._next = self.initial
 
 
@@ -1750,6 +1802,7 @@ def iter_sse(
 
 
 def _declares_settlement_event(data: str) -> bool:
+    """True when `data` parses as JSON and claims `kind == settlement.changed`."""
     try:
         frame = json.loads(data)
     except json.JSONDecodeError:
@@ -1916,6 +1969,7 @@ def _default_guard_enforcer(
     sha: str = "",
     skill: str = "",
 ) -> object:
+    """Default GuardEnforcer: delegates to `guard.enforce_continuation`."""
     from .guard import enforce_continuation
 
     return enforce_continuation(
@@ -1936,6 +1990,7 @@ def _default_native_resumer(
     expected_receipt_id: str,
     idempotency_key: str,
 ) -> Mapping[str, object]:
+    """Default NativeResumer: delegates to `workflow.native_resume_run`."""
     from .workflow import native_resume_run
 
     return native_resume_run(
@@ -1950,6 +2005,7 @@ def _default_native_resumer(
 
 
 def _explicit_identity(value: object) -> str:
+    """Normalize `value` to a string, treating placeholder tokens as unset."""
     candidate = str(value or "").strip()
     if candidate.lower() in {"", "unknown", "pending", "none", "null"}:
         return ""
@@ -1957,6 +2013,7 @@ def _explicit_identity(value: object) -> str:
 
 
 def _validate_server_url(value: str) -> str:
+    """Validate `value` is a bare http(s) origin (no path/query/fragment)."""
     normalized = value.rstrip("/")
     parsed = urllib.parse.urlsplit(normalized)
     if (
@@ -1971,10 +2028,12 @@ def _validate_server_url(value: str) -> str:
 
 
 def _base_media_type(value: object) -> str:
+    """Strip parameters (e.g. `; charset=`) from a Content-Type header value."""
     return str(value or "").split(";", 1)[0].strip().lower()
 
 
 def _server_run_is_terminal(run: Mapping[str, object]) -> bool:
+    """True when the server-projected run record is in a terminal state."""
     # Mirrors control_plane._run_is_terminal / control-core RunStatus::is_terminal.
     terminal_states = {
         "report_validated",
@@ -2000,6 +2059,7 @@ def _server_run_is_terminal(run: Mapping[str, object]) -> bool:
 
 
 def _canonical_triage_run_id(run_id: object) -> str:
+    """Validate `run_id` is a safe bare filename component; raise otherwise."""
     candidate = str(run_id or "").strip()
     if (
         not candidate
@@ -2014,24 +2074,28 @@ def _canonical_triage_run_id(run_id: object) -> str:
 
 
 def _terminal_triage_outbox_root() -> Path:
+    """Return (creating if needed) the durable terminal-triage outbox directory."""
     root = vibecrafted_home() / "control_plane" / "guardian" / "triage-outbox"
     _ensure_private_directory(root)
     return root
 
 
 def _terminal_triage_quarantine_root() -> Path:
+    """Return (creating if needed) the terminal-triage quarantine directory."""
     root = vibecrafted_home() / "control_plane" / "guardian" / "triage-quarantine"
     _ensure_private_directory(root)
     return root
 
 
 def _terminal_triage_outbox_path(run_id: str) -> Path:
+    """Return the digest-named outbox file path for `run_id`."""
     candidate = _canonical_triage_run_id(run_id)
     digest = hashlib.sha256(candidate.encode("utf-8")).hexdigest()
     return _terminal_triage_outbox_root() / f"{digest}.json"
 
 
 def _terminal_triage_quarantine_has_capacity(root: Path) -> bool:
+    """True while `root` holds fewer than TERMINAL_TRIAGE_QUARANTINE_CAPACITY entries."""
     if TERMINAL_TRIAGE_QUARANTINE_CAPACITY <= 0:
         return False
     for count, _entry in enumerate(root.iterdir(), start=1):
@@ -2131,6 +2195,7 @@ def _bounded_terminal_triage_outbox_occupancy_locked(
 
 
 def _persist_terminal_triage_outbox(run_id: str) -> Path:
+    """Durably (re)queue one terminal-triage job, admitting new jobs only under capacity."""
     candidate = _canonical_triage_run_id(run_id)
     path = _terminal_triage_outbox_path(candidate)
     # Existing jobs may always refresh their generation. New jobs are admitted
@@ -2170,6 +2235,7 @@ def _persist_terminal_triage_outbox(run_id: str) -> Path:
 
 
 def _terminal_triage_outbox_document(run_id: str, queued_at_ns: int) -> bytes:
+    """Serialize one terminal-triage outbox record to canonical JSON bytes."""
     return (
         json.dumps(
             {
@@ -2186,6 +2252,7 @@ def _terminal_triage_outbox_document(run_id: str, queued_at_ns: int) -> bytes:
 
 
 def _read_terminal_triage_outbox(path: Path) -> tuple[str, int]:
+    """Read and validate one outbox record; enforces its filename binds its run id."""
     payload = _strict_json_loads(_read_private_file(path, maximum=64 * 1024))
     if (
         not isinstance(payload, dict)
@@ -2208,6 +2275,7 @@ def _clear_terminal_triage_outbox(
     *,
     expected_generation: int | None = None,
 ) -> bool:
+    """Remove one outbox record; skip if its generation moved past `expected_generation`."""
     path = _terminal_triage_outbox_path(run_id)
     with _TERMINAL_TRIAGE_LOCK:
         try:
@@ -2349,6 +2417,7 @@ _TERMINAL_TRIAGE_STOP = threading.Event()
 
 
 def _run_terminal_triage_jobs() -> None:
+    """Background worker loop: drain the job queue, else periodically sweep the outbox."""
     while not _TERMINAL_TRIAGE_STOP.is_set():
         try:
             key, run_id = _TERMINAL_TRIAGE_JOBS.get(
@@ -2414,6 +2483,7 @@ def _enqueue_terminal_triage_job(key: str, run_id: str | None) -> bool:
 
 
 def _schedule_terminal_triage_run(run_id: str) -> bool:
+    """Durably queue and enqueue one run's terminal-triage job (the TriageScheduler)."""
     try:
         candidate = _canonical_triage_run_id(run_id)
         _persist_terminal_triage_outbox(candidate)
@@ -2427,6 +2497,7 @@ def _schedule_terminal_triage_run(run_id: str) -> bool:
 
 
 def _schedule_triage_startup_sweep() -> bool:
+    """Enqueue the one-time startup sweep that recovers dispatcher-orphaned runs."""
     return _enqueue_terminal_triage_job("startup-sweep", None)
 
 
@@ -2442,6 +2513,7 @@ class GuardianRecoveryAdapter:
         guard_enforcer: GuardEnforcer = _default_guard_enforcer,
         native_resumer: NativeResumer = _default_native_resumer,
     ) -> None:
+        """Bind server URL, HTTP opener, and injected guard/resume adapters."""
         self.server_url = _validate_server_url(server_url)
         if timeout <= 0:
             raise ValueError("recovery HTTP timeout must be > 0")
@@ -2452,6 +2524,7 @@ class GuardianRecoveryAdapter:
         self._contexts: dict[SettlementKey, RecoveryContext] = {}
 
     def _fetch_run(self, run_id: str) -> dict[str, object]:
+        """Fetch and strictly validate the JSON run projection for `run_id`."""
         encoded = urllib.parse.quote(run_id, safe="")
         request = urllib.request.Request(
             f"{self.server_url}/api/control/runs/{encoded}",
@@ -2485,6 +2558,7 @@ class GuardianRecoveryAdapter:
 
     @staticmethod
     def _attempt(run: Mapping[str, object]) -> int | None:
+        """Return the run's recovery attempt count, defaulting to 0; None if malformed."""
         raw = run.get("attempt")
         if raw is None:
             return 0
@@ -2626,6 +2700,11 @@ class GuardianRecoveryAdapter:
 
 
 def _parse_action_result(value: object) -> ActionResult | None:
+    """Validate and coerce a raw resume-adapter reply into an ActionResult.
+
+    Enforces the accepted/retryable/terminal exclusivity contract; returns
+    None (fail-closed, treated as a retry) on any shape violation.
+    """
     if not isinstance(value, Mapping):
         return None
     accepted = value.get("accepted")
@@ -2676,6 +2755,7 @@ class GuardianWorker:
         cursor_parser: CursorParser = _parse_event_cursor,
         control_parser: ControlParser | None = parse_stream_control,
     ) -> None:
+        """Bind server URL, durable state, and all injected side-effect callbacks."""
         self.server_url = _validate_server_url(server_url)
         self.state = state
         self.notifier = notifier
@@ -2708,6 +2788,7 @@ class GuardianWorker:
             LOGGER.exception("guardian settlement-history publication failed")
 
     def _request(self) -> urllib.request.Request:
+        """Build the SSE GET request, resuming from the persisted cursor when known."""
         # A fresh numeric zero is not sent: omitting it lets a v2 server choose
         # its generation-aware start cursor. Persisted opaque cursors are safe
         # across rotation; numeric cursors remain compatibility-only.
@@ -2728,6 +2809,7 @@ class GuardianWorker:
 
     @staticmethod
     def _validate_response(response: Any) -> None:
+        """Raise GuardianProtocolError unless the response is a live SSE stream."""
         status = getattr(response, "status", 200)
         if status != 200:
             raise GuardianProtocolError(f"SSE endpoint returned HTTP {status}")
@@ -2957,6 +3039,7 @@ class GuardianWorker:
         )
 
     def _attempt_record_safely(self, record: PendingRecord) -> bool:
+        """Run `_attempt_record`, converting a persistence failure into a retry signal."""
         try:
             return self._attempt_record(record)
         except (OSError, GuardianStateError):
@@ -3111,6 +3194,8 @@ class GuardianWorker:
 
 
 def _validate_lock_descriptor(path: Path, descriptor: int) -> None:
+    """Raise GuardianLockSecurityError unless `descriptor` is a private, unshared,
+    still-linked regular file matching `path` (defends against symlink/TOCTOU races)."""
     metadata = os.fstat(descriptor)
     if (
         not stat.S_ISREG(metadata.st_mode)
@@ -3182,11 +3267,22 @@ def single_instance_lock(path: Path) -> Iterator[None]:
 
 
 def default_state_path() -> Path:
+    """Default path for the guardian's durable cursor/outbox state file."""
     return vibecrafted_home() / "control_plane" / "guardian" / "state.json"
 
 
 def default_lock_path() -> Path:
+    """Default path for the guardian's single-instance lock file."""
     return vibecrafted_home() / "control_plane" / "guardian" / "guardian.lock"
+
+
+def default_server_url() -> str:
+    """Resolve the observer from an explicit process override or typed config."""
+    return (
+        os.environ.get("VC_SERVER_URL")
+        or os.environ.get("VIBECRAFTED_SERVER_URL")
+        or load_server_config().public_url
+    )
 
 
 def write_ready_receipt(
@@ -3238,10 +3334,11 @@ def remove_ready_receipt_if_owned(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the guardian CLI argument parser (server URL, state/lock paths, timing)."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--server-url",
-        default=os.environ.get("VIBECRAFTED_SERVER_URL", DEFAULT_SERVER_URL),
+        default=default_server_url(),
         help="vibecrafted-server origin (default: %(default)s)",
     )
     parser.add_argument("--state", type=Path, default=default_state_path())
@@ -3365,6 +3462,7 @@ def _recover_untriaged_runs_background() -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entrypoint: load state, wire the recovery adapter, and run forever."""
     parser = build_parser()
     args = parser.parse_args(argv)
     logging.basicConfig(
@@ -3376,12 +3474,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--ready-file and --ready-nonce must be provided together")
 
     def notifier(notification: GuardianNotification) -> None:
+        """CLI Notifier: forward to `notify_operator` honoring `--no-desktop`."""
         notify_operator(notification, desktop=not args.no_desktop)
 
     ready_callback: ReadyCallback | None = None
     if args.ready_file is not None and args.ready_nonce is not None:
 
         def announce_ready() -> None:
+            """ReadyCallback: write the launcher readiness receipt for this CLI run."""
             write_ready_receipt(
                 args.ready_file,
                 nonce=args.ready_nonce,

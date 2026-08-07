@@ -18,10 +18,16 @@ API_PATH = "/res/v1/web/search"
 
 
 def build_tls_context() -> ssl.SSLContext:
+    """Return a default (verifying) SSL context for the Brave Search HTTPS connection."""
     return ssl.create_default_context()
 
 
 def search(query: str, count: int = 8, lang: str | None = None) -> dict:
+    """Call the Brave Search web API and return the decoded JSON response.
+
+    Returns a dict with an "error" key (never raises) when the API key is
+    missing, the HTTP call fails, or the response is not valid JSON.
+    """
     api_key = os.getenv("BRAVE_SEARCH_API_KEY") or os.getenv("BRAVE_API_KEY")
     if not api_key:
         return {
@@ -61,6 +67,7 @@ def search(query: str, count: int = 8, lang: str | None = None) -> dict:
 
 
 def format_results(data: dict) -> str:
+    """Render a Brave Search response dict as a human-readable text listing."""
     if "error" in data:
         return f"Error: {data['error']}"
 

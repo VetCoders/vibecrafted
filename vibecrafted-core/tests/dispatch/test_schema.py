@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -52,7 +53,7 @@ def test_cut_model_pin_parses_and_defaults_empty_when_absent() -> None:
     dispatch = load_dispatch(FIXTURES / "model-pin.dispatch.toml")
 
     assert dispatch.cuts[0].id == "d1-pinned"
-    assert dispatch.cuts[0].model == "gpt-5-codex"
+    assert dispatch.cuts[0].model == "test-codex-model"
     # An unpinned cut carries no pin: empty string, plan still valid.
     assert dispatch.cuts[1].id == "d2-unpinned"
     assert dispatch.cuts[1].model == ""
@@ -112,6 +113,27 @@ def test_prompt_rendering_substitutes_previous_verdict_baton() -> None:
     assert '"verified": 1' in prompt
     assert '"total": 7' in prompt
     assert '"ratio": 0.14285714285714285' in prompt
+
+
+def test_required_commit_contract_is_rendered_with_exact_cut_identity() -> None:
+    dispatch = load_dispatch(FIXTURES / "minimal.dispatch.toml")
+    dispatch = replace(dispatch, policy=replace(dispatch.policy, require_commit=True))
+
+    prompt = render_cell_prompt(dispatch, dispatch.cuts[0])
+
+    assert "DELIVERY CONTRACT (supervisor-enforced)" in prompt
+    assert "exact cut id 'd1-schema-parser'" in prompt
+    assert "slot marker '[d1-schema-parser]'" in prompt
+    assert "Commit: <sha>" in prompt
+
+
+def test_commit_contract_is_absent_when_not_required_or_cut_is_read() -> None:
+    dispatch = load_dispatch(FIXTURES / "minimal.dispatch.toml")
+    assert "DELIVERY CONTRACT" not in render_cell_prompt(dispatch, dispatch.cuts[0])
+
+    required = replace(dispatch, policy=replace(dispatch.policy, require_commit=True))
+    read_cut = replace(required.cuts[0], mode="read")
+    assert "DELIVERY CONTRACT" not in render_cell_prompt(required, read_cut)
 
 
 def test_matchers_cover_required_set() -> None:
@@ -182,8 +204,6 @@ prompt = "duplicate"
 
 
 def test_verifier_rendering_substitutes_placeholders_and_keeps_matchers() -> None:
-    from dataclasses import replace
-
     from vibecrafted_core.dispatch.model import Verify
     from vibecrafted_core.dispatch.schema import render_cut_verifies
 

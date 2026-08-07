@@ -61,9 +61,10 @@ pub use model::{
 };
 pub use read::{ControlPlane, StateView, vibecrafted_home};
 pub use scaffold::{
-    SCAFFOLD_MANIFEST_SCHEMA_JSON, SCAFFOLD_SCHEMA_VERSION, ScaffoldArtifact,
-    ScaffoldArtifactDeclaration, ScaffoldArtifactPatch, ScaffoldArtifactRole,
-    ScaffoldArtifactStore, ScaffoldChange, ScaffoldCheckpoint, ScaffoldCheckpointPatch,
-    ScaffoldDoctorError, ScaffoldDoctorReport, ScaffoldError, ScaffoldManifest,
-    ScaffoldPlanSummary, ScaffoldResult, ScaffoldWorkspace, doctor_plan_root,
+    SCAFFOLD_EXPORT_SCHEMA_VERSION, SCAFFOLD_MANIFEST_SCHEMA_JSON, SCAFFOLD_SCHEMA_VERSION,
+    ScaffoldArtifact, ScaffoldArtifactDeclaration, ScaffoldArtifactPatch, ScaffoldArtifactRole,
+    ScaffoldArtifactStore, ScaffoldCatalog, ScaffoldCatalogSkip, ScaffoldChange,
+    ScaffoldCheckpoint, ScaffoldCheckpointPatch, ScaffoldDoctorError, ScaffoldDoctorReport,
+    ScaffoldError, ScaffoldExportArtifact, ScaffoldExportBundle, ScaffoldManifest,
+    ScaffoldPlanSummary, ScaffoldResult, ScaffoldStatusPatch, ScaffoldWorkspace, doctor_plan_root,
 };

@@ -302,6 +302,21 @@ def _runtime_pointer_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     return source, old_target, current
 
 
+def test_atomic_runtime_pointer_survives_symlinked_parent_path(tmp_path: Path) -> None:
+    real_root = tmp_path / "real"
+    tools = real_root / "tools"
+    generation = tools / "vibecrafted-generation-test"
+    generation.mkdir(parents=True)
+    alias = tmp_path / "alias"
+    alias.symlink_to(real_root, target_is_directory=True)
+    current = alias / "tools" / "vibecrafted-current"
+
+    installer._atomic_symlink(alias / "tools" / generation.name, current)
+
+    assert current.is_symlink()
+    assert current.resolve(strict=True) == generation.resolve(strict=True)
+
+
 def test_live_legacy_service_cutover_publishes_native_identity_without_orphans(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1236,6 +1251,73 @@ def test_runtime_launch_agent_backup_restores_exact_bytes_and_absence(
     assert not path.exists()
 
 
+def test_installer_seeds_server_config_from_verified_custom_plist(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operator_home = tmp_path / "operator"
+    monkeypatch.setattr(installer, "_canonical_operator_home", lambda: operator_home)
+    backup = installer._RuntimeLaunchAgentBackup(
+        operator_home / "Library/LaunchAgents/io.vetcoders.vibecrafted.server.plist",
+        b"verified",
+        0o600,
+        (
+            "--host",
+            "100.82.232.70",
+            "--port",
+            "3025",
+            "--interval",
+            "2.75",
+        ),
+    )
+
+    arguments = installer._runtime_service_arguments_from_config(backup)
+    config_path = operator_home / ".config/vibecrafted/config.toml"
+
+    assert arguments == (
+        "--host",
+        "100.82.232.70",
+        "--port",
+        "3025",
+        "--interval",
+        "2.75",
+    )
+    assert 'bind_host = "100.82.232.70"' in config_path.read_text(encoding="utf-8")
+    assert "port = 3025" in config_path.read_text(encoding="utf-8")
+
+
+def test_installer_existing_server_config_overrides_legacy_plist_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operator_home = tmp_path / "operator"
+    config_path = operator_home / ".config/vibecrafted/config.toml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        "[server]\n"
+        'bind_host = "100.82.232.70"\n'
+        "port = 3025\n"
+        'public_url = "http://100.82.232.70:3025"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(installer, "_canonical_operator_home", lambda: operator_home)
+    backup = installer._RuntimeLaunchAgentBackup(
+        operator_home / "Library/LaunchAgents/io.vetcoders.vibecrafted.server.plist",
+        b"verified",
+        0o600,
+        ("--host", "127.0.0.1", "--port", "3024"),
+    )
+
+    arguments = installer._runtime_service_arguments_from_config(backup)
+
+    assert arguments == (
+        "--host",
+        "100.82.232.70",
+        "--port",
+        "3025",
+    )
+
+
 def test_runtime_cutover_failed_legacy_stop_recovers_previous_service(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1590,6 +1672,10 @@ def test_service_install_executes_exact_staged_supervisor_from_repo_cwd(
     shutil.copy2(
         REPO_ROOT / "vibecrafted-core" / "vibecrafted_core" / "server_supervisor.py",
         staged_package / "server_supervisor.py",
+    )
+    shutil.copy2(
+        REPO_ROOT / "vibecrafted-core" / "vibecrafted_core" / "server_config.py",
+        staged_package / "server_config.py",
     )
     _write_executable(
         launcher,
@@ -2343,6 +2429,209 @@ def test_successful_explicit_service_install_repairs_retained_disabled_gate(
 
     assert result == 0
     assert active is True
+    assert current.resolve() != old_target.resolve()
+    handoff = installer._read_tools_handoff(shared_home)
+    assert handoff is not None and handoff["state"] == "complete"
+    assert gate_state["disabled"] is False
+
+
+def test_reclaimable_degraded_service_status_is_known_not_transition() -> None:
+    """Supervisor live + pair down is drainable, not an in-progress race."""
+    degraded = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=True,
+        supervisor_live=True,
+        supervisor_verified=True,
+        supervisor_service_managed=True,
+        build_current=True,
+        pair_healthy=False,
+        supervisor_pid=4326,
+    )
+    mid_start = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=True,
+        supervisor_live=False,
+        supervisor_verified=False,
+        supervisor_service_managed=False,
+        build_current=False,
+        pair_healthy=False,
+        supervisor_pid=None,
+    )
+
+    assert not degraded.healthy
+    assert not degraded.quiescent
+    assert degraded.reclaimable
+    assert degraded.needs_drain
+
+    payload = {
+        "installed": True,
+        "loaded": True,
+        "supervisor_live": True,
+        "supervisor_verified": True,
+        "supervisor_service_managed": True,
+        "build_current": True,
+        "pair_healthy": False,
+        "supervisor_pid": 4326,
+    }
+    decoded = installer._decode_runtime_service_status(
+        subprocess.CompletedProcess(
+            ["service", "status", "--json"],
+            1,
+            json.dumps(payload) + "\n",
+            "",
+        )
+    )
+    assert decoded.reclaimable
+    assert decoded.needs_drain
+
+    with pytest.raises(installer._RuntimeServiceTransition):
+        installer._decode_runtime_service_status(
+            subprocess.CompletedProcess(
+                ["service", "status", "--json"],
+                1,
+                json.dumps(
+                    {
+                        "installed": True,
+                        "loaded": True,
+                        "supervisor_live": False,
+                        "supervisor_verified": False,
+                        "supervisor_service_managed": False,
+                        "build_current": False,
+                        "pair_healthy": False,
+                        "supervisor_pid": None,
+                    }
+                )
+                + "\n",
+                "",
+            )
+        )
+    assert not mid_start.reclaimable
+    assert not mid_start.needs_drain
+
+
+def test_install_drains_reclaimable_degraded_supervisor_before_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Next install heals supervisor-live/pair-down without manual isolated ops."""
+    home = tmp_path / "home"
+    shared_home = home / ".vibecrafted"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    source = tmp_path / "source"
+    old_target = tools / "vibecrafted-generation-old"
+    current = tools / "vibecrafted-current"
+    launcher = home / ".local" / "bin" / "vibecrafted"
+    _write_complete_source(
+        source,
+        helper='printf "new helper\\n"\n',
+        launcher='#!/usr/bin/env bash\nprintf "new launcher\\n"\n',
+        service_lock_contract=True,
+    )
+    _write_valid_runtime_generation(old_target)
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.symlink_to(old_target.name)
+    _write_executable(launcher, "#!/usr/bin/env bash\nexit 0\n")
+    _write_runtime_launch_agent(home, shared_home, launcher)
+
+    degraded = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=True,
+        supervisor_live=True,
+        supervisor_verified=True,
+        supervisor_service_managed=True,
+        build_current=True,
+        pair_healthy=False,
+        supervisor_pid=4326,
+    )
+    quiescent = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=False,
+        supervisor_live=False,
+        supervisor_verified=False,
+        supervisor_service_managed=False,
+        build_current=False,
+        pair_healthy=False,
+        supervisor_pid=None,
+    )
+    healthy = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=True,
+        supervisor_live=True,
+        supervisor_verified=True,
+        supervisor_service_managed=True,
+        build_current=True,
+        pair_healthy=True,
+        supervisor_pid=9191,
+    )
+    mode = "degraded"
+    events: list[str] = []
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(shared_home))
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
+    monkeypatch.setenv("VIBECRAFTED_LAUNCHER_BIN", str(launcher.parent))
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    gate_state = _mock_runtime_launchd_gate(monkeypatch)
+    monkeypatch.setattr(
+        installer,
+        "_bootout_owned_runtime_launchd_job",
+        lambda _shared_home: events.append("bootout") or True,
+    )
+    monkeypatch.setattr(
+        installer,
+        "_assert_runtime_launchd_job_owned",
+        lambda _shared_home: True,
+    )
+
+    def snapshot(_shared_home: Path):
+        if mode == "degraded":
+            return launcher, degraded, "stopped"
+        if mode == "stopped":
+            return launcher, quiescent, "stopped"
+        return launcher, healthy, "running"
+
+    monkeypatch.setattr(installer, "_runtime_service_snapshot", snapshot)
+
+    def service_command(
+        _launcher: Path,
+        _shared_home: Path,
+        *arguments: str,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal mode
+        if arguments == ("service", "stop"):
+            events.append("service stop")
+            mode = "stopped"
+            return subprocess.CompletedProcess(list(arguments), 0, "", "")
+        if arguments[:2] == ("service", "install"):
+            events.append("service install")
+            mode = "healthy"
+            return subprocess.CompletedProcess(list(arguments), 0, "", "")
+        raise AssertionError(arguments)
+
+    monkeypatch.setattr(installer, "_run_runtime_service_command", service_command)
+    child = (
+        "from pathlib import Path; import sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import vetcoders_install as v\n"
+        "v.refresh_current_tools(Path(sys.argv[2]), Path(sys.argv[3]), mirror=True)\n"
+    )
+
+    result = installer.run_with_tools_install_lease(
+        shared_home,
+        [
+            sys.executable,
+            "-c",
+            child,
+            str(REPO_ROOT / "scripts"),
+            str(source),
+            str(shared_home),
+        ],
+        service_policy="ensure",
+    )
+
+    assert result == 0
+    assert "service stop" in events
+    assert "service install" in events
     assert current.resolve() != old_target.resolve()
     handoff = installer._read_tools_handoff(shared_home)
     assert handoff is not None and handoff["state"] == "complete"
@@ -4665,9 +4954,29 @@ def test_runtime_generation_failure_keeps_old_pointer_live(
     assert not list(current.parent.glob("vibecrafted-generation-9.9.9+gtest-*"))
 
 
+def test_tarball_install_version_uses_explicit_source_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "vibecrafted-tarball"
+    source.mkdir()
+    (source / "VERSION").write_text("3.7.0\n", encoding="utf-8")
+    revision = "0123456789abcdef0123456789abcdef01234567"
+    monkeypatch.setenv("VIBECRAFTED_SOURCE_REVISION", revision)
+
+    assert installer.get_repo_commit(source) == "01234567"
+    assert installer.get_repo_full_commit(source) == revision
+    assert installer.get_install_version(source) == "3.7.0+g01234567"
+
+
 def test_runtime_generation_pointer_swap_never_removes_current(
     tmp_path: Path, monkeypatch
 ) -> None:
+    monkeypatch.setenv(
+        "VIBECRAFTED_SOURCE_REVISION",
+        "0123456789abcdef0123456789abcdef01234567",
+    )
+    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "Vetcoders/vibecrafted")
     source, old_target, current = _runtime_pointer_fixture(tmp_path)
     original_replace = installer.os.replace
     observations: list[tuple[bool, bool, bool]] = []
@@ -4710,6 +5019,191 @@ def test_runtime_generation_pointer_swap_never_removes_current(
     assert current.resolve() == generation.resolve()
     assert current.resolve() != old_target.resolve()
     assert (current / "scripts" / "vibecrafted").is_file()
+    manifest = json.loads(
+        (generation / installer._RUNTIME_GENERATION_MANIFEST).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["schema"] == installer._RUNTIME_GENERATION_MANIFEST_SCHEMA
+    assert manifest["version"] == "9.9.9+gtest"
+    assert manifest["entrypoint"] == (
+        "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
+    )
+    assert manifest["owner_repo"] == "Vetcoders/vibecrafted"
+    assert manifest["source_revision"] == ("0123456789abcdef0123456789abcdef01234567")
+    assert set(manifest["hashes"]) == {
+        "VERSION",
+        "runtime/generated/vc-frame/config.kdl",
+        "scripts/vibecrafted",
+        "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
+    }
+
+
+def test_runtime_generation_rejects_active_source_checkout_reference(
+    tmp_path: Path,
+) -> None:
+    source, old_target, current = _runtime_pointer_fixture(tmp_path)
+    launcher = source / "scripts" / "vibecrafted"
+    launcher.write_text(
+        launcher.read_text(encoding="utf-8")
+        + f"\nreadonly LEAKED_CHECKOUT={source!s}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(OSError, match="references source checkout"):
+        installer.sync_control_plane_tree(
+            source,
+            current,
+            mirror=True,
+            install_version="9.9.9+gleak",
+        )
+
+    assert current.resolve() == old_target.resolve()
+    assert not list(current.parent.glob("vibecrafted-generation-9.9.9+gleak-*"))
+
+
+def test_runtime_generation_doctor_verifies_manifest_and_launcher(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    source = tmp_path / "source"
+    old_target = tools / "vibecrafted-generation-old"
+    current = tools / "vibecrafted-current"
+    _write_complete_source(
+        source,
+        helper='printf "new helper\\n"\n',
+        launcher='#!/usr/bin/env bash\nprintf "new launcher\\n"\n',
+    )
+    _write_valid_runtime_generation(old_target)
+    current.symlink_to(old_target.name)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv(
+        "VIBECRAFTED_SOURCE_REVISION",
+        "0123456789abcdef0123456789abcdef01234567",
+    )
+    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "Vetcoders/vibecrafted")
+
+    generation = installer.sync_control_plane_tree(
+        source,
+        current,
+        mirror=True,
+        install_version="9.9.9+gdoctor",
+    )
+    launcher = home / ".local" / "bin" / "vibecrafted"
+    launcher.parent.mkdir(parents=True)
+    launcher.symlink_to(
+        current / "vibecrafted-core" / "vibecrafted_core" / "deck" / "vibecrafted"
+    )
+
+    findings = installer._runtime_generation_contract_findings()
+    assert findings == [
+        installer.DoctorFinding(
+            "ok",
+            "runtime-generation",
+            f"{generation.name} is manifest-bound and checkout-free",
+        )
+    ]
+
+    (generation / "scripts" / "vibecrafted").write_text(
+        "#!/usr/bin/env bash\nexit 42\n",
+        encoding="utf-8",
+    )
+    [drift] = installer._runtime_generation_contract_findings()
+    assert drift.level == "fail"
+    assert "manifest-bound file drifted: scripts/vibecrafted" in drift.message
+
+
+def test_runtime_generation_doctor_rejects_deck_drift_and_incomplete_hashes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    source = tmp_path / "source"
+    current = tools / "vibecrafted-current"
+    _write_complete_source(
+        source,
+        helper='printf "helper\\n"\n',
+        launcher='#!/usr/bin/env bash\nprintf "launcher\\n"\n',
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv(
+        "VIBECRAFTED_SOURCE_REVISION",
+        "0123456789abcdef0123456789abcdef01234567",
+    )
+    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "Vetcoders/vibecrafted")
+    generation = installer.sync_control_plane_tree(
+        source,
+        current,
+        mirror=True,
+        install_version="9.9.9+gdeck",
+    )
+    launcher = home / ".local" / "bin" / "vibecrafted"
+    launcher.parent.mkdir(parents=True)
+    launcher.symlink_to(
+        current / "vibecrafted-core" / "vibecrafted_core" / "deck" / "vibecrafted"
+    )
+    deck = generation / installer._RUNTIME_GENERATION_ENTRYPOINT
+    original = deck.read_bytes()
+    deck.write_bytes(original + b"\nexit 99\n")
+    [drift] = installer._runtime_generation_contract_findings()
+    assert drift.level == "fail"
+    assert (
+        f"manifest-bound file drifted: {installer._RUNTIME_GENERATION_ENTRYPOINT}"
+        in drift.message
+    )
+
+    deck.write_bytes(original)
+    manifest_path = generation / installer._RUNTIME_GENERATION_MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["hashes"].pop(installer._RUNTIME_GENERATION_ENTRYPOINT.as_posix())
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    [invalid] = installer._runtime_generation_contract_findings()
+    assert invalid.level == "fail"
+    assert "does not satisfy the runtime schema" in invalid.message
+
+
+def test_runtime_generation_doctor_rejects_launcher_from_old_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    source = tmp_path / "source"
+    current = tools / "vibecrafted-current"
+    _write_complete_source(
+        source,
+        helper='printf "helper\\n"\n',
+        launcher='#!/usr/bin/env bash\nprintf "launcher\\n"\n',
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv(
+        "VIBECRAFTED_SOURCE_REVISION",
+        "0123456789abcdef0123456789abcdef01234567",
+    )
+    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "Vetcoders/vibecrafted")
+    generation = installer.sync_control_plane_tree(
+        source,
+        current,
+        mirror=True,
+        install_version="9.9.9+gcurrent",
+    )
+    shadow = tools / "vibecrafted-generation-shadow"
+    shadow_entrypoint = shadow / installer._RUNTIME_GENERATION_ENTRYPOINT
+    shadow_entrypoint.parent.mkdir(parents=True)
+    shadow_entrypoint.write_bytes(
+        (generation / installer._RUNTIME_GENERATION_ENTRYPOINT).read_bytes()
+    )
+    shadow_entrypoint.chmod(0o755)
+    launcher = home / ".local" / "bin" / "vibecrafted"
+    launcher.parent.mkdir(parents=True)
+    launcher.symlink_to(shadow_entrypoint)
+
+    [finding] = installer._runtime_generation_contract_findings()
+    assert finding.level == "fail"
+    assert "does not resolve to the current generation entrypoint" in finding.message
 
 
 def test_chained_prepared_publish_keeps_last_verified_rollback_target(

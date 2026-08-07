@@ -247,7 +247,7 @@ class ConflictTie:
     reason: str
 
     def __bool__(self) -> bool:  # pragma: no cover — sentinel truthiness
-        # Truthy so ``if tie:`` reads naturally as "yes, there's a tie".
+        """Always True, so ``if tie:`` reads naturally as "yes, there's a tie"."""
         return True
 
 
@@ -270,6 +270,7 @@ class SyncPlan:
 
     @property
     def is_empty(self) -> bool:
+        """True when the plan has no adds, conflicts, or held-back deletes."""
         return not (
             self.adds_local_to_remote
             or self.adds_remote_to_local
@@ -307,6 +308,7 @@ class SyncResult:
     corrupted: tuple[Path, ...] = ()
 
     def ok(self) -> bool:
+        """True when the apply produced no errors and no unresolved conflict ties."""
         return not self.errors and not self.unresolved_ties
 
     def to_jsonable(self) -> dict[str, Any]:
@@ -381,6 +383,7 @@ def _safe_load_chunk(path: Path) -> AicxChunk | None:
 
 
 def _chunk_from_dict(data: Mapping[str, Any], path: Path) -> AicxChunk | None:
+    """Build an :class:`AicxChunk` from a parsed ``.json`` chunk dict; None if malformed."""
     try:
         chunk_id = str(data["chunk_id"])
         authority = str(data.get("authority", "stale_or_unknown"))
@@ -505,6 +508,7 @@ class AicxSyncEngine:
         conflict_log: Path | None = None,
         prompt_on_tie: bool = True,
     ) -> None:
+        """Configure the engine's conflict-log path and interactive-tie behavior."""
         self.conflict_log = conflict_log or DEFAULT_CONFLICT_LOG
         self.prompt_on_tie = prompt_on_tie
         self._cached_log: dict[str, dict[str, Any]] | None = None
@@ -662,6 +666,7 @@ class AicxSyncEngine:
         )
 
     def _read_log(self) -> dict[str, dict[str, Any]]:
+        """Return the conflict log, loading and caching it on first access."""
         if self._cached_log is None:
             self._cached_log = _load_conflict_log(self.conflict_log)
         return self._cached_log

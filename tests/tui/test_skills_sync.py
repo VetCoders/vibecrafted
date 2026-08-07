@@ -180,8 +180,20 @@ def test_install_shell_writes_rc_files_with_consent(tmp_path: Path) -> None:
     home.mkdir()
     zshrc = home / ".zshrc"
     bashrc = home / ".bashrc"
-    zshrc.write_text("# zsh user config\n", encoding="utf-8")
-    bashrc.write_text("# bash user config\n", encoding="utf-8")
+    legacy_source = (
+        '[[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" ]] '
+        '&& source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"'
+    )
+    legacy_block = (
+        "# >>> vibecrafted >>>\n"
+        'export VETCODERS_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders"\n'
+        'if [ -f "$VETCODERS_CONFIG_DIR/vc-skills.sh" ]; then\n'
+        f"  {legacy_source}\n"
+        "fi\n"
+        "# <<< vibecrafted <<<\n"
+    )
+    zshrc.write_text(f"# zsh user config\n{legacy_block}", encoding="utf-8")
+    bashrc.write_text(f"# bash user config\n{legacy_block}", encoding="utf-8")
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -196,5 +208,49 @@ def test_install_shell_writes_rc_files_with_consent(tmp_path: Path) -> None:
         text=True,
     )
 
-    assert "vetcoders/vc-skills.sh" in zshrc.read_text(encoding="utf-8")
-    assert "vetcoders/vc-skills.sh" in bashrc.read_text(encoding="utf-8")
+    for rcfile in (zshrc, bashrc):
+        text = rcfile.read_text(encoding="utf-8")
+        assert "vetcoders/vc-skills.sh" not in text
+        assert "VETCODERS_CONFIG_DIR" not in text
+        assert "# >>> vibecrafted >>>" not in text
+        assert text.count("$HOME/.local/bin") == 2
+        assert "# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher" in text
+
+
+def test_install_shell_preserves_unclosed_managed_block(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    config = tmp_path / "config"
+    home.mkdir()
+    zshrc = home / ".zshrc"
+    original = (
+        "# user config\n"
+        "# >>> vibecrafted >>>\n"
+        'source "$HOME/.config/vetcoders/vc-skills.sh"\n'
+        "export KEEP_ME=1\n"
+        "alias keep-me=true\n"
+    )
+    zshrc.write_text(original, encoding="utf-8")
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["XDG_CONFIG_HOME"] = str(config)
+    env["SHELL"] = "/bin/zsh"
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(INSTALL_SHELL),
+            "--source",
+            str(REPO_ROOT),
+            "--write-rc",
+            "--no-bashrc",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert zshrc.read_text(encoding="utf-8") == original
+    assert "unclosed Vibecrafted block" in result.stdout

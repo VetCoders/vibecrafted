@@ -1,0 +1,227 @@
+{
+  "schema_version": "vibecrafted.ownership.v1",
+  "adr": "docs/adr/0002-unified-operator-ownership.md",
+  "plan_id": "vc-unified-operator-runtime",
+  "frozen": "2026-07-29",
+  "domains": [
+    {
+      "id": "installed-runtime",
+      "truth": "installed runtime, generations and profile under ~/.local/share/vibecrafted and ~/.vibecrafted",
+      "owner": "vibecrafted-runtime-manifest",
+      "write_surface": "installer generation build + atomic generation switch",
+      "read_projections": [
+        "host shell path helper",
+        "vc-start environment",
+        "vc-terminal environment",
+        "doctor"
+      ]
+    },
+    {
+      "id": "run-lifecycle",
+      "truth": "process, run, lifecycle and control state under ~/.vibecrafted/control_plane, including the mission-level continuity packet",
+      "owner": "control-plane",
+      "write_surface": "vibecrafted_core dispatcher + typed control-plane routes",
+      "read_projections": [
+        "vibecrafted-server NOW/FLEET/METRICS",
+        "vibecrafted-mcp board tools",
+        "vibecrafted-slack threads",
+        "vc-frame session views"
+      ]
+    },
+    {
+      "id": "session-intention",
+      "truth": "agent session history, intentions and decisions",
+      "owner": "aicx",
+      "write_surface": "aicx extract/index pipeline",
+      "read_projections": [
+        "operator shell CONTEXT pane",
+        "loctree AICX overlay",
+        "continuity packet excerpts"
+      ]
+    },
+    {
+      "id": "repository-structure",
+      "truth": "repository structure, hubs, impact and report artifacts",
+      "owner": "loctree",
+      "write_surface": "loct scan + loctree report generation",
+      "read_projections": [
+        "operator shell STRUCTURE pane",
+        "report deep links",
+        "loctree-mcp tools"
+      ]
+    },
+    {
+      "id": "terminal-substrate",
+      "truth": "branded terminal emulator surface: rendering, fonts, window, branding",
+      "owner": "vc-terminal-alacritty",
+      "write_surface": "installed vc-terminal profile from the runtime manifest",
+      "read_projections": ["wezterm compatibility adapter"]
+    },
+    {
+      "id": "session-composition",
+      "truth": "tabs, layouts, panes, multiplexing and session composition",
+      "owner": "vc-frame",
+      "write_surface": "vc-frame layout and session commands",
+      "read_projections": ["vc-terminal windows", "operator shell FLEET links"]
+    },
+    {
+      "id": "a2a-envelopes",
+      "truth": "directed agent-to-agent and human-agent envelopes: ACK, correlation, dedup, heartbeat, handoff evidence",
+      "owner": "vibecrafted-slack-bus",
+      "write_surface": "persisted outbox/inbox with cursors; ACK only after persist",
+      "read_projections": [
+        "#agents-room threads",
+        "operator shell FLEET handoff evidence",
+        "control-plane run annotations"
+      ]
+    },
+    {
+      "id": "commercial-entitlement",
+      "truth": "tenants, auth state, billing tiers and feature entitlement",
+      "owner": "polar-tenant-service",
+      "write_surface": "Polar webhooks + tenant service (loctree-com tier ladder)",
+      "read_projections": [
+        "operator shell onboarding",
+        "feature gates",
+        "team views"
+      ]
+    },
+    {
+      "id": "plan-artifacts",
+      "truth": "plan artifacts (mission, atlas, briefs, tracker, reports) under $VIBECRAFTED_HOME/artifacts/<org>/<repo>/<day>/plans/",
+      "owner": "plan-filesystem",
+      "write_surface": "direct file writes in the artifact tree (workers, operators and the scaffold editor all write the same files; the scaffold API is a convenience client of this surface and the only path for remote integrations without filesystem access)",
+      "read_projections": [
+        "scaffold API and editor views",
+        "scaffold changes/checkpoints ledger (derived, best-effort)",
+        "operator shell plan views"
+      ]
+    }
+  ],
+  "components": [
+    {
+      "id": "vibecrafted-runtime-manifest",
+      "owns": ["installed-runtime"],
+      "must_not": [
+        "link installed artifacts to a repository checkout",
+        "source product logic into the host shell"
+      ]
+    },
+    {
+      "id": "control-plane",
+      "owns": ["run-lifecycle"],
+      "must_not": ["delegate run truth to any UI or transport"]
+    },
+    {
+      "id": "aicx",
+      "owns": ["session-intention"],
+      "must_not": [
+        "act as a run-state store",
+        "act as a repository-structure store"
+      ]
+    },
+    {
+      "id": "loctree",
+      "owns": ["repository-structure"],
+      "must_not": ["act as a session-memory store"]
+    },
+    {
+      "id": "vc-terminal-alacritty",
+      "owns": ["terminal-substrate"],
+      "must_not": [
+        "implement run or session lifecycle",
+        "duplicate vc-frame state"
+      ]
+    },
+    {
+      "id": "vc-frame",
+      "owns": ["session-composition"],
+      "must_not": [
+        "own run-lifecycle truth (projects the control plane)",
+        "own the terminal substrate"
+      ]
+    },
+    {
+      "id": "wezterm-adapter",
+      "owns": [],
+      "must_not": ["carry the product terminal identity", "own any lifecycle"]
+    },
+    {
+      "id": "vibecrafted-server",
+      "owns": [],
+      "must_not": [
+        "invent a parallel state model",
+        "crawl arbitrary files",
+        "reconstruct liveness heuristically",
+        "render a control without an authorized backend transition"
+      ]
+    },
+    {
+      "id": "vibecrafted-slack-bus",
+      "owns": ["a2a-envelopes"],
+      "must_not": [
+        "be the source of run-lifecycle truth",
+        "execute untrusted text through a shell",
+        "emit ACK before the envelope and cursor are persisted"
+      ]
+    },
+    {
+      "id": "polar-tenant-service",
+      "owns": ["commercial-entitlement"],
+      "must_not": ["coexist with a second billing system", "gate runtime truth"]
+    },
+    {
+      "id": "plan-filesystem",
+      "owns": ["plan-artifacts"],
+      "must_not": ["depend on any service being up for a write to count"]
+    },
+    {
+      "id": "scaffold-store",
+      "owns": [],
+      "must_not": [
+        "become a required mediator for plan-artifact writes (files are the only write surface)",
+        "treat its changes/checkpoints ledger as authoritative over the plan files on disk"
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "id": "one-owner-per-domain",
+      "statement": "Every truth domain has exactly one owner; projections never write.",
+      "enforced_by": "tests/test_ownership_contract.py"
+    },
+    {
+      "id": "checkout-free-install",
+      "statement": "Installed artifacts never resolve to a repository checkout; repo paths appear only in development receipts.",
+      "forbidden_path_patterns": [
+        "/Volumes/vc-workspace",
+        "~/Libraxis",
+        "/Users/*/Libraxis"
+      ],
+      "enforced_by": "tests/test_ownership_contract.py + installer symlink audit (FALSIFICATION: recursive symlink and literal-path audit)"
+    },
+    {
+      "id": "resume-lineage",
+      "statement": "A resume attempt preserves identity and lineage; it never silently replaces the worker with a different persona.",
+      "semantics": "lineage-preserving-attempt",
+      "persona_replacement": "forbidden",
+      "enforced_by": "tests/test_ownership_contract.py + A2A handoff evidence"
+    },
+    {
+      "id": "real-controls",
+      "statement": "Every visible control performs a real, authorized action or is absent.",
+      "enforced_by": "click-to-event integration tests (FALSIFICATION: controls are real)"
+    },
+    {
+      "id": "artifact-gates",
+      "statement": "Runtime gates are verified through the artifact the user actually runs.",
+      "enforced_by": "clean-machine artifact walk-around (FALSIFICATION: product is shippable)"
+    },
+    {
+      "id": "in-file-provenance",
+      "statement": "Append-entries in plan-artifact files (tracker rows, decision addenda, journal lines) carry an inline HTML-comment provenance stamp with the same key set as commit-msg trailers. Server changes/checkpoints ledgers and AICX intents are projections of these stamps, never their source.",
+      "stamp_format": "<!-- provenance: source=<kind> agent=<agent> model=<model> session_id=<uuid> time=<iso8601> runtime=<runtime> -->",
+      "enforced_by": "tests/test_ownership_contract.py (rule presence) + planned decision-entry lint"
+    }
+  ]
+}

@@ -221,6 +221,8 @@ def run_proof(
 
 
 class _Artifact:
+    """A loaded (or missing) evidence artifact: raw bytes, digest, source label."""
+
     def __init__(
         self,
         *,
@@ -243,6 +245,7 @@ def _run_role(
     default_cwd: Path,
     witness: Mapping[str, Any],
 ) -> ExecutionResult:
+    """Run one declared role (subject or oracle) and return its execution evidence."""
     role_cwd = Path(str(declaration.get("cwd", default_cwd))).expanduser().resolve()
     argv = _declared_argv(declaration)
     inputs = [str(witness["input"])] if witness.get("input") else []
@@ -262,6 +265,7 @@ def _run_role(
 
 
 def _declared_argv(declaration: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return the explicit ``argv`` if present, else shlex-split ``public_surface``."""
     argv = declaration.get("argv")
     if isinstance(argv, Sequence) and not isinstance(argv, (str, bytes)):
         return tuple(str(item) for item in argv)
@@ -272,6 +276,7 @@ def _declared_argv(declaration: Mapping[str, Any]) -> tuple[str, ...]:
 
 
 def _validate_public_surface(declaration: Mapping[str, Any]) -> str | None:
+    """Return an error string unless argv's first token matches the declared public_surface."""
     public_surface = declaration.get("public_surface")
     argv = _declared_argv(declaration)
     if not isinstance(public_surface, str) or not public_surface.strip():
@@ -283,11 +288,13 @@ def _validate_public_surface(declaration: Mapping[str, Any]) -> str | None:
 
 
 def _contract_cwd(contract: DeliveryProofContract) -> Path:
+    """Return the resolved working directory declared by the contract's subject."""
     value = contract.subject.get("cwd") or os.getcwd()
     return Path(str(value)).expanduser().resolve()
 
 
 def _allowed_roots(cwd: Path, paths: Sequence[str]) -> tuple[Path, ...]:
+    """Return cwd plus the parent directory of every declared input/output path."""
     roots = {cwd}
     for raw in paths:
         path = Path(raw).expanduser()
@@ -301,6 +308,7 @@ def _read_assertion_actual(
     cwd: Path,
     subject_result: ExecutionResult | None,
 ) -> _Artifact:
+    """Load the assertion's ``actual`` artifact: subject stdout or a declared file path."""
     actual = assertion.get("actual")
     if actual == "subject.stdout":
         if subject_result is None:
@@ -318,6 +326,7 @@ def _read_assertion_actual(
 
 
 def _read_assertion_expected(assertion: Mapping[str, Any], cwd: Path) -> _Artifact:
+    """Load the assertion's ``expected`` file artifact, if declared."""
     expected = assertion.get("expected")
     if expected is None:
         return _Artifact(data=None, digest=None, source="undeclared", missing=True)
@@ -325,6 +334,7 @@ def _read_assertion_expected(assertion: Mapping[str, Any], cwd: Path) -> _Artifa
 
 
 def _read_path_artifact(value: Any, cwd: Path, label: str) -> _Artifact:
+    """Read a file path (relative to cwd if not absolute) into an _Artifact."""
     if not isinstance(value, (str, os.PathLike)) or not str(value):
         return _Artifact(data=None, digest=None, source=label, missing=True)
     raw = Path(value).expanduser()
@@ -338,6 +348,9 @@ def _read_path_artifact(value: Any, cwd: Path, label: str) -> _Artifact:
 def _assertion_consumed_subject_output(
     result: ExecutionResult, actual: _Artifact
 ) -> bool:
+    """Return whether the assertion's ``actual`` digest matches evidence the subject
+    actually produced (its recorded stdout digest or a recorded output digest).
+    """
     if actual.digest is None:
         return False
     if actual.source == "subject.stdout":
@@ -353,6 +366,11 @@ def _evaluate_assertion(
     expected: _Artifact,
     subject_result: ExecutionResult | None,
 ) -> dict[str, Any]:
+    """Evaluate one assertion kind (equality/exists/stdout-contract) against actual/expected.
+
+    Returns a result dict with ``valid`` (was the check itself well-formed) and
+    ``passed`` (did the assertion hold) kept as separate axes.
+    """
     kind = str(assertion.get("kind", ""))
     base: dict[str, Any] = {
         "id": str(assertion.get("id", "assertion")),
@@ -433,6 +451,11 @@ def _run_negative_control(
     oracle: Mapping[str, Any] | None,
     cwd: Path,
 ) -> dict[str, Any]:
+    """Apply one declared mutation to an isolated copy of ``actual`` and re-assert.
+
+    The control passes (``detected_falsehood: True``) only if the mutated copy
+    now fails the assertion — proving the verifier is not tautologically green.
+    """
     control_id = str(control.get("id", "negative-control"))
     mutation = str(control.get("mutation", ""))
     with tempfile.TemporaryDirectory(prefix="vibecrafted-proof-control-") as temp:
@@ -486,6 +509,11 @@ def _run_negative_control(
 def _replacement_bytes(
     control: Mapping[str, Any], oracle: Mapping[str, Any] | None, cwd: Path
 ) -> bytes:
+    """Resolve replacement bytes for the unrelated-oracle-output negative control.
+
+    Falls back to a fixed sentinel string when no replacement/oracle path is declared
+    or the declared path does not resolve to a real file.
+    """
     raw = control.get("replacement")
     if raw is None and oracle is not None:
         raw = oracle.get("unrelated_output")
@@ -498,6 +526,7 @@ def _replacement_bytes(
 
 
 def _normalized_value(data: bytes) -> Any:
+    """Parse bytes as JSON for structural comparison; return raw bytes if not JSON."""
     try:
         return json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -505,6 +534,7 @@ def _normalized_value(data: bytes) -> Any:
 
 
 def _vacuous_reason(assertion: Mapping[str, Any], data: bytes | None) -> str | None:
+    """Return a reason string if ``data`` matches a declared vacuous_patterns entry."""
     text = (data or b"").decode("utf-8", errors="replace")
     for pattern in assertion.get("vacuous_patterns", ()):
         if str(pattern) in text:
@@ -515,6 +545,11 @@ def _vacuous_reason(assertion: Mapping[str, Any], data: bytes | None) -> str | N
 def _infer_relevant_paths(
     contract: DeliveryProofContract, cwd: Path
 ) -> tuple[Path, ...]:
+    """Infer the paths whose drift during proof execution would invalidate the result.
+
+    Includes this module itself plus resolved subject/oracle executables, file
+    arguments, witness input, and verifier_config — anything the proof depends on.
+    """
     candidates: list[str | os.PathLike[str]] = [Path(__file__).resolve()]
     for declaration in (contract.subject, contract.oracle):
         if declaration is None:
@@ -554,6 +589,7 @@ def _infer_relevant_paths(
 def _unique_paths(
     paths: Sequence[str | os.PathLike[str]], cwd: Path
 ) -> tuple[Path, ...]:
+    """Resolve each path against ``cwd``, dedupe, and return in sorted order."""
     normalized: dict[str, Path] = {}
     for item in paths:
         path = Path(item).expanduser()
@@ -563,6 +599,7 @@ def _unique_paths(
 
 
 def _capture_paths(paths: Sequence[Path]) -> dict[Path, str]:
+    """Return {path: sha256-or-"missing"} snapshots for drift detection before/after a proof."""
     return {
         path: _sha256(path.read_bytes()) if path.is_file() else "missing"
         for path in paths
@@ -572,6 +609,7 @@ def _capture_paths(paths: Sequence[Path]) -> dict[Path, str]:
 def _changed_paths(
     before: Mapping[Path, str], after: Mapping[Path, str], selected: frozenset[Path]
 ) -> tuple[Path, ...]:
+    """Return the sorted subset of ``selected`` whose digest differs between snapshots."""
     return tuple(
         path
         for path in sorted(selected, key=str)
@@ -580,6 +618,7 @@ def _changed_paths(
 
 
 def _failure_suffix(result: ExecutionResult) -> str:
+    """Return a parenthesized failure_reason suffix for a message, or an empty string."""
     if result.failure_reason:
         return f" ({result.failure_reason})"
     return ""
@@ -588,6 +627,8 @@ def _failure_suffix(result: ExecutionResult) -> str:
 def _execution_matches_contract(
     declaration: Mapping[str, Any], result: ExecutionResult
 ) -> bool:
+    """Return whether a run spawned, did not time out or hit output limits, and matched
+    the declaration's expected_exit code."""
     expected_exit = int(declaration.get("expected_exit", 0))
     return (
         result.spawned
@@ -598,6 +639,7 @@ def _execution_matches_contract(
 
 
 def _engine_digest() -> str:
+    """Return a digest binding ENGINE_VERSION to the source of this module and executor.py."""
     digest = hashlib.sha256()
     digest.update(ENGINE_VERSION.encode())
     digest.update(Path(__file__).read_bytes())
@@ -606,4 +648,5 @@ def _engine_digest() -> str:
 
 
 def _sha256(data: bytes) -> str:
+    """Return the ``sha256:<hex>`` digest of an in-memory byte string."""
     return f"sha256:{hashlib.sha256(data).hexdigest()}"

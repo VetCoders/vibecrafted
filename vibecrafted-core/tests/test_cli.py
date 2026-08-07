@@ -396,11 +396,7 @@ def test_version_reads_installed_package_never_delegates_to_deck(
     # inside a checkout it reports that checkout's version, not the installed one).
     # Make any deck subprocess fail loudly so a regression that re-delegates
     # `--version` cannot pass silently.
-    expected = (
-        (Path(__file__).resolve().parents[2] / "VERSION")
-        .read_text(encoding="utf-8")
-        .strip()
-    )
+    from vibecrafted_core import __version__ as expected
 
     def _no_deck(*_args, **_kwargs):
         raise AssertionError("--version must not shell out to the deck")
@@ -468,6 +464,22 @@ def test_root_cli_launch_missing_work_prints_friendly_error(
     assert "error: Launch requires either --prompt text or --file path." in captured.err
     assert "vibecrafted implement claude --prompt 'what to do'" in captured.err
     assert "vibecrafted implement claude --file /path/to/brief.md" in captured.err
+
+
+def test_root_cli_missing_file_fails_before_launch(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    def fail_launch(_spec, _source_dir):
+        raise AssertionError("launch_workflow should not run for a missing file")
+
+    monkeypatch.setattr(cli, "launch_workflow", fail_launch)
+    missing = tmp_path / "missing-brief.md"
+
+    assert cli.main(["implement", "codex", "--file", str(missing)]) == 2
+    assert (
+        f"Prompt file does not exist or is not a file: {missing}"
+        in capsys.readouterr().err
+    )
 
 
 def test_root_cli_prune_without_work_uses_discovery_prompt(monkeypatch, capsys) -> None:
@@ -563,6 +575,20 @@ def test_root_cli_prints_full_launch_receipt(monkeypatch, capsys) -> None:
         "await (ARM NOW, supervisor-side): vibecrafted codex await --run-id impl-260613-145127-33000"
         in out
     )
+
+
+def test_blocked_launch_receipt_prints_reasons_inline(capsys) -> None:
+    payload = _accepted_launch_payload()
+    payload.update(
+        {
+            "status": "blocked",
+            "reasons": ["Foundation authority is unbound"],
+        }
+    )
+
+    cli._print_launch_receipt(payload)
+
+    assert "reasons:    Foundation authority is unbound" in capsys.readouterr().out
 
 
 def test_root_cli_agent_observe_accepts_receipt_command(monkeypatch, capsys) -> None:
@@ -954,6 +980,7 @@ def test_apply_live_liveness_flags_dead_launcher() -> None:
         {"launcher_pid": 999999, "liveness": "heartbeat", "state": "process_spawned"}
     )
     assert dead["liveness"] == "pid_gone"
+    assert "not yet reconciled" in dead["liveness_note"]
 
     alive = cli._apply_live_liveness(
         {
@@ -989,3 +1016,171 @@ def test_apply_live_liveness_prefers_live_worker_over_dead_launcher() -> None:
     )
 
     assert run["liveness"] == "heartbeat"
+
+
+# --- _tail_lines: coalescence + window-after-render (W1-A) ---------------
+
+
+def _ansi_free(line: str) -> str:
+    return cli.ANSI_PATTERN.sub("", line)
+
+
+def _grok_token_transcript() -> tuple[list[str], list[str]]:
+    """Per-token grok stream: one {"type":"thought","data":<token>} JSON event
+    per word, newline tokens between sentences. >=120 events tokenizing
+    >=3 full sentences — mirrors real grok streaming granularity. Sentences
+    are kept short so each rendered line (with per-token ANSI dim wrappers)
+    stays under the 500-raw-char _clip_line budget."""
+    ordinals = ["one", "two", "three", "four", "five", "six", "seven", "eight"]
+    sentences = [
+        f"Sentence {ordinal} of the grok stream keeps flowing token by token "
+        "toward the final stop."
+        for ordinal in ordinals
+    ]
+    events: list[str] = []
+    for index, sentence in enumerate(sentences):
+        if index:
+            events.append(json.dumps({"type": "thought", "data": "\n"}))
+        words = sentence.split(" ")
+        events.append(json.dumps({"type": "thought", "data": words[0]}))
+        for word in words[1:]:
+            events.append(json.dumps({"type": "thought", "data": " " + word}))
+    assert len(events) >= 120
+    return sentences, events
+
+
+def test_tail_lines_coalesces_grok_per_token_thoughts_into_sentences(
+    tmp_path: Path,
+) -> None:
+    sentences, events = _grok_token_transcript()
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text("\n".join(events) + "\n", encoding="utf-8")
+
+    lines, error = cli._tail_lines(str(transcript), agent="grok")
+
+    assert error == ""
+    stripped = [_ansi_free(line) for line in lines]
+    # A1: every sentence's tokens land in ONE rendered line, not token-per-line.
+    for sentence in sentences:
+        matches = [line for line in stripped if sentence in line]
+        assert matches, f"sentence not coalesced into one line: {sentence!r}"
+    # Not token-per-line: 8 sentences -> 8 rendered lines, not 120 token lines.
+    assert len(lines) == len(sentences)
+
+
+def test_tail_lines_window_is_rendered_lines_not_raw_events(
+    tmp_path: Path,
+) -> None:
+    sentences, events = _grok_token_transcript()
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text("\n".join(events) + "\n", encoding="utf-8")
+
+    lines, error = cli._tail_lines(str(transcript), agent="grok")
+
+    assert error == ""
+    stripped = "\n".join(_ansi_free(line) for line in lines)
+    # A2: content from beyond the last 40 raw JSON lines must be visible.
+    # Sentence one lives >120 raw events before EOF; the old raw-first cut
+    # (lines[-40:]) could never show it.
+    assert sentences[0] in stripped
+    last_40_raw_payload = "".join(
+        json.loads(event).get("data", "") for event in events[-40:]
+    )
+    assert "Sentence one" not in last_40_raw_payload
+
+
+def test_tail_lines_codex_shaped_fat_events_render_unchanged(
+    tmp_path: Path,
+) -> None:
+    """Regression contract (A3): captured from _tail_lines BEFORE the
+    coalescence change — fat multi-line codex events must render identically:
+    one session header, each embedded text line on its own line, one tokens
+    line. 7 lines total."""
+    events = [
+        {"type": "thread.started", "thread_id": "codex-thread"},
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "agent_message",
+                "text": "first paragraph line one\nfirst paragraph line two",
+            },
+        },
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "agent_message",
+                "text": "second message\nwith three\nrendered lines",
+            },
+        },
+        {
+            "type": "turn.completed",
+            "usage": {"input_tokens": 11, "cached_input_tokens": 4, "output_tokens": 6},
+        },
+    ]
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8"
+    )
+
+    lines, error = cli._tail_lines(str(transcript), agent="codex")
+
+    assert error == ""
+    stripped = [_ansi_free(line) for line in lines]
+    assert len(stripped) == 7
+    assert "session: codex-thread" in stripped[0]
+    assert stripped[1:6] == [
+        "first paragraph line one",
+        "first paragraph line two",
+        "second message",
+        "with three",
+        "rendered lines",
+    ]
+    assert "tokens: 11 in (4 cached) / 6 out" in stripped[6]
+
+
+@pytest.mark.parametrize("agent", ["", "grok", "codex"])
+def test_tail_lines_missing_path_and_file_edges(agent: str, tmp_path: Path) -> None:
+    assert cli._tail_lines("", agent=agent) == ([], "missing_path")
+    assert cli._tail_lines(str(tmp_path / "absent.log"), agent=agent) == (
+        [],
+        "missing_file",
+    )
+
+
+@pytest.mark.parametrize("agent", ["", "grok", "codex"])
+def test_tail_lines_empty_file_edge(agent: str, tmp_path: Path) -> None:
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text("", encoding="utf-8")
+    assert cli._tail_lines(str(transcript), agent=agent) == ([], "empty")
+
+
+def test_tail_lines_json_without_renderable_events(tmp_path: Path) -> None:
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text('{"type":"end","sessionId":"grok-sess"}\n', encoding="utf-8")
+    assert cli._tail_lines(str(transcript), agent="grok") == (
+        [],
+        "no_renderable_events",
+    )
+
+
+def test_tail_lines_no_agent_returns_last_max_lines_raw(tmp_path: Path) -> None:
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text(
+        "\n".join(f"line {idx}" for idx in range(1, 66)) + "\n", encoding="utf-8"
+    )
+    lines, error = cli._tail_lines(str(transcript))
+    assert error == ""
+    assert lines == [f"line {idx}" for idx in range(26, 66)]
+
+
+def test_tail_lines_agent_with_plain_text_passes_through_raw_tail(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text(
+        "\n".join(f"line {idx}" for idx in range(1, 66)) + "\n", encoding="utf-8"
+    )
+    lines, error = cli._tail_lines(str(transcript), agent="codex")
+    assert error == ""
+    assert lines[-1] == "line 65"
+    assert len(lines) == 40

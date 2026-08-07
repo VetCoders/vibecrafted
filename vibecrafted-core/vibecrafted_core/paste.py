@@ -1,3 +1,5 @@
+"""``vc-paste`` CLI: launch an agent whose task prompt is the clipboard contents."""
+
 from __future__ import annotations
 
 import argparse
@@ -46,6 +48,7 @@ def build_paste_payload(
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build the ``vc-paste`` argument parser."""
     parser = argparse.ArgumentParser(
         prog="vc-paste",
         description="Launch an agent with a deferred clipboard bootstrap prompt.",
@@ -60,20 +63,24 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _source_dir() -> Path:
+    """Directory this module lives in, used as the default launch-spec source."""
     return Path(__file__).resolve().parent
 
 
 def _spec_payload(spec: WorkflowLaunchSpec) -> dict[str, Any]:
+    """Serialize a launch spec for ``--dry-run``/``--json`` output."""
     return spec.to_payload()
 
 
 def _print_json(payload: dict[str, Any]) -> None:
+    """Print ``payload`` as pretty-printed, non-ASCII-escaped JSON."""
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
 def run_namespace(
     args: argparse.Namespace, *, source_dir: str | Path | None = None
 ) -> int:
+    """Execute one parsed ``vc-paste`` invocation; return the process exit code."""
     if args.print_prompt:
         print(BOOTSTRAP_PASTE_PROMPT)
         return 0
@@ -108,6 +115,7 @@ def run_namespace(
 
 
 def paste_main(argv: Sequence[str] | None = None) -> int:
+    """Entry point for the ``vc-paste`` console script."""
     parser = _build_parser()
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
     return run_namespace(args)

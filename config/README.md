@@ -14,5 +14,7 @@ Current presets:
 
 - `starship.toml` — compact operator prompt with repo/runtime context
 - `atuin/config.toml` — history defaults tuned for project/workspace recall
+- `shell/atuin-up.zsh` — keyboard Up → Atuin (wheel stays host scrollback)
+- `alacritty/` — host-terminal sidecars (wheel ~Alt/Alt split + primary-shell launcher); vendored from `vc-frame/tools/alacritty`, never forced over `~/.config/alacritty`
 - `vc-frame/config.kdl` — optional vc-frame baseline that stays opt-in
 - `vc-frame/layouts/*.kdl` — branded dashboards launched only when you ask for them

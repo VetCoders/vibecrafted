@@ -68,10 +68,12 @@ def vibecrafted_home() -> Path:
 
 
 def events_jsonl_path() -> Path:
+    """Full path to the control-plane events.jsonl tailed by this plugin."""
     return vibecrafted_home() / EVENTS_JSONL_RELPATH
 
 
 def _parse_event_line(line: str) -> dict[str, Any] | None:
+    """Decode one JSON-lines row; returns None on blank or malformed input."""
     line = line.strip()
     if not line:
         return None
@@ -82,10 +84,12 @@ def _parse_event_line(line: str) -> dict[str, Any] | None:
 
 
 def _is_spawn_update(event: dict[str, Any]) -> bool:
+    """True if `event["kind"]` matches the spawn-update event kind."""
     return str(event.get("kind") or "") == SPAWN_UPDATE_KIND
 
 
 def _format_completion_label(payload: dict[str, Any]) -> str:
+    """Render an ``agent/skill state (exit N)`` label for a finished run."""
     agent = str(payload.get("agent") or "?")
     skill = str(payload.get("skill") or "?")
     state = str(payload.get("state") or "?")
@@ -95,10 +99,12 @@ def _format_completion_label(payload: dict[str, Any]) -> str:
 
 
 def _is_active_state(state: str) -> bool:
+    """True for spawn states that count toward the live active-run tally."""
     return state in {"launching", "running"}
 
 
 def _is_final_state(state: str) -> bool:
+    """True for spawn states that terminate a run (success, failure, or stop)."""
     return state in {"completed", "failed", "stopped", "timed_out"}
 
 
@@ -180,10 +186,17 @@ class VcPluginRuntime:
     """
 
     def __init__(self) -> None:
+        """Construct empty state; `connection` is set by the caller after connect."""
         self.state = VcStatusBarState()
         self.connection: Any = None
 
     async def handle_event(self, event: dict[str, Any]) -> None:
+        """Fold one decoded events.jsonl row into status-bar state.
+
+        Non spawn-update events are ignored. Active states populate
+        `active_runs`; final states clear the run, record the completion
+        label, and fire a best-effort iTerm2 notification.
+        """
         if not _is_spawn_update(event):
             return
         payload = dict(event.get("payload") or {})
@@ -205,6 +218,7 @@ class VcPluginRuntime:
 
 
 async def _main_loop(connection: Any) -> None:
+    """Register the status bar then tail events.jsonl forever (per connection)."""
     runtime = VcPluginRuntime()
     runtime.connection = connection
 
@@ -218,6 +232,11 @@ async def _main_loop(connection: Any) -> None:
 async def _run_with_reconnect(
     backoff: Iterable[float] = DEFAULT_RECONNECT_BACKOFF,
 ) -> None:
+    """Run `_main_loop` under `iterm2.async_main`, reconnecting on any failure.
+
+    Loops forever with exponential backoff (per `backoff`, holding at the
+    last value once exhausted); a clean iteration resets the attempt count.
+    """
     if iterm2 is None:  # pragma: no cover - sandbox import guard
         raise RuntimeError(
             "iterm2 package is not available; this script must run inside "

@@ -1,3 +1,6 @@
+"""PreCompact/PostCompact hook logic: extract session history via aicx before a
+compaction and replay the unseen delta back to the agent afterward."""
+
 from __future__ import annotations
 
 import argparse
@@ -17,10 +20,12 @@ AICX_EXTRACT_TIMEOUT_SECONDS = 90.0
 
 
 def utc_now() -> str:
+    """Current UTC time as a ``Z``-suffixed ISO 8601 string."""
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def load_hook_input(stdin: str) -> dict[str, object]:
+    """Parse the hook's JSON stdin payload; returns {} on empty/malformed input."""
     try:
         payload = json.loads(stdin or "{}")
     except json.JSONDecodeError:
@@ -29,12 +34,14 @@ def load_hook_input(stdin: str) -> dict[str, object]:
 
 
 def hook_agent() -> str:
+    """Resolve the invoking agent name from env, defaulting to ``claude``."""
     return os.environ.get("VIBECRAFTED_COMPACT_AGENT") or os.environ.get(
         "VIBECRAFTED_AGENT", "claude"
     )
 
 
 def aicx_extract_timeout_seconds() -> float:
+    """Timeout budget for one ``aicx extract`` subprocess call, floored at 0.1s."""
     raw = os.environ.get(
         "VIBECRAFTED_AICX_EXTRACT_TIMEOUT_SECONDS",
         str(AICX_EXTRACT_TIMEOUT_SECONDS),
@@ -47,6 +54,7 @@ def aicx_extract_timeout_seconds() -> float:
 
 
 def codex_sessions_dir() -> Path:
+    """Root directory of codex session JSONL files (env-overridable)."""
     codex_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
     return Path(
         os.environ.get("CODEX_SESSIONS_DIR", str(codex_home / "sessions"))
@@ -54,6 +62,7 @@ def codex_sessions_dir() -> Path:
 
 
 def normalize_path(value: str) -> str:
+    """Expand and resolve a path to its canonical absolute form; best-effort on OSError."""
     if not value:
         return ""
     try:
@@ -63,6 +72,9 @@ def normalize_path(value: str) -> str:
 
 
 def hook_project_dir(payload: dict[str, object]) -> str:
+    """Best-effort project directory for this hook invocation: payload cwd/
+    project_dir/repository fields, else CODEX_PROJECT_DIR/CLAUDE_PROJECT_DIR
+    env, else the process cwd."""
     raw = str(
         payload.get("cwd")
         or payload.get("project_dir")
@@ -75,6 +87,8 @@ def hook_project_dir(payload: dict[str, object]) -> str:
 
 
 def session_meta_from_jsonl(path: Path) -> dict[str, str]:
+    """Scan a codex session JSONL for its ``session_meta`` event and return
+    {"id", "cwd"}; {} if the file is unreadable or carries no such event."""
     try:
         with path.open("r", encoding="utf-8", errors="replace") as handle:
             for line in handle:
@@ -97,10 +111,13 @@ def session_meta_from_jsonl(path: Path) -> dict[str, str]:
 
 
 def session_id_from_jsonl(path: Path) -> str:
+    """Session id parsed from a codex session JSONL's ``session_meta`` event."""
     return session_meta_from_jsonl(path).get("id", "")
 
 
 def latest_codex_session_path(project_dir: str = "") -> Path | None:
+    """Most recently modified codex session file, scoped to ``project_dir`` when
+    a scoped match exists; falls back to the newest file overall otherwise."""
     root = codex_sessions_dir()
     if not root.is_dir():
         return None
@@ -119,6 +136,8 @@ def latest_codex_session_path(project_dir: str = "") -> Path | None:
 
 
 def codex_session_path_for(session_id: str) -> Path | None:
+    """Locate a codex session file by id: filename glob first, then a full
+    session_meta scan fallback for files not named after their session id."""
     if not session_id:
         return None
     root = codex_sessions_dir()
@@ -134,6 +153,13 @@ def codex_session_path_for(session_id: str) -> Path | None:
 
 
 def resolve_session_id(payload: dict[str, object], agent: str) -> str:
+    """Resolve the active session id for the hook payload.
+
+    Non-codex agents use the explicit ``session_id``/``conversation_id`` field
+    verbatim. Codex resolves the true session id via its JSONL transcript
+    (session_meta event), since the payload's session/conversation id may not
+    match the on-disk session file's own identity.
+    """
     explicit = str(
         payload.get("session_id") or payload.get("conversation_id") or ""
     ).strip()
@@ -167,6 +193,7 @@ def resolve_session_id(payload: dict[str, object], agent: str) -> str:
 
 
 def compact_state_path() -> Path:
+    """Path to the JSON file tracking per-session compact-hook delta cursors."""
     return Path(
         os.environ.get(
             "VIBECRAFTED_COMPACT_STATE",
@@ -176,6 +203,7 @@ def compact_state_path() -> Path:
 
 
 def load_compact_state() -> dict[str, Any]:
+    """Load the compact-hook state file; {} when missing or unparsable."""
     path = compact_state_path()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -185,6 +213,7 @@ def load_compact_state() -> dict[str, Any]:
 
 
 def save_compact_state(state: dict[str, Any]) -> None:
+    """Persist the compact-hook state file; failures are swallowed (best-effort)."""
     path = compact_state_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -200,6 +229,9 @@ def delta_lines(
     raw_lines: list[str],
     project_dir: str,
 ) -> tuple[list[str], int, int]:
+    """Slice the unseen tail of ``raw_lines`` since this session's last recorded
+    cursor, then persist the new cursor. Returns (delta, previous_count,
+    current_count); a stale/out-of-range previous cursor resets to 0."""
     state = load_compact_state()
     sessions = state.setdefault("sessions", {})
     key = f"{agent}:{session_id}"
@@ -224,6 +256,8 @@ def delta_lines(
 
 
 def emit_postcompact_context(text: str, output_format: str = "json") -> str:
+    """Wrap ``text`` as the PostCompact hookSpecificOutput JSON envelope, or
+    return it verbatim when ``output_format == "plain"``."""
     if output_format == "plain":
         return text
     return json.dumps(
@@ -240,6 +274,7 @@ def emit_postcompact_context(text: str, output_format: str = "json") -> str:
 def append_journal(
     event: str, agent: str, session_id: str, status: str, detail: str
 ) -> None:
+    """Append one JSONL audit record of a compact-hook run; failures are silent."""
     journal = Path(
         os.environ.get(
             "VIBECRAFTED_COMPACT_JOURNAL",
@@ -269,6 +304,7 @@ def append_journal(
 
 
 def run_aicx_extract(agent: str, session_id: str, *, user_only: bool = False) -> str:
+    """Run ``aicx extract`` for a session; returns "missing"/"timeout"/"ok"/"failed"."""
     if not shutil.which("aicx"):
         return "missing"
     command = [
@@ -296,6 +332,8 @@ def run_aicx_extract(agent: str, session_id: str, *, user_only: bool = False) ->
 
 
 def precompact(stdin: str) -> int:
+    """PreCompact hook body: extract the session's conversation + user-only
+    transcripts via aicx before Claude/Codex compacts, and journal the outcome."""
     payload = load_hook_input(stdin)
     agent = hook_agent()
     session_id = resolve_session_id(payload, agent)
@@ -322,6 +360,8 @@ def precompact(stdin: str) -> int:
 
 
 def extract_candidates(agent: str, session_id: str) -> list[Path]:
+    """Ordered candidate paths for a session's aicx extract, including the
+    claude-namespace fallback for non-claude agents that share its store."""
     candidates = [
         Path.home() / ".aicx" / "extracts" / agent / f"{session_id}_conversation.md",
         Path.home() / ".aicx" / "extracts" / agent / f"{session_id}.md",
@@ -341,6 +381,8 @@ def extract_candidates(agent: str, session_id: str) -> list[Path]:
 
 
 def strip_skill_bodies(lines: list[str]) -> list[str]:
+    """Replace ``Base directory for this skill: ...`` fenced skill bodies with a
+    one-line placeholder, trimming bulk that PostCompact recall does not need."""
     output: list[str] = []
     in_skill = False
     for line in lines:
@@ -358,6 +400,7 @@ def strip_skill_bodies(lines: list[str]) -> list[str]:
 
 
 def dedupe_adjacent(lines: list[str]) -> list[str]:
+    """Collapse consecutive duplicate lines, keeping the first of each run."""
     output: list[str] = []
     previous: str | None = None
     for line in lines:
@@ -369,6 +412,7 @@ def dedupe_adjacent(lines: list[str]) -> list[str]:
 
 
 def clean_context(text: str) -> str:
+    """Strip control characters (except newline/tab) that would corrupt hook JSON."""
     return "".join(ch for ch in text if ch == "\n" or ch == "\t" or ord(ch) >= 32)
 
 
@@ -377,6 +421,9 @@ def fallback(
     extract_path: Path | None = None,
     output_format: str = "json",
 ) -> str:
+    """Build the degraded-recall PostCompact context: names the reason and points
+    the agent at manual loctree/aicx recovery commands instead of pretending
+    the compact summary is full temporal truth."""
     extract = str(extract_path) if extract_path else "<none>"
     return emit_postcompact_context(
         "\n".join(
@@ -400,10 +447,14 @@ def fallback(
 
 
 def emit_context(text: str, output_format: str) -> None:
+    """Clean and print one PostCompact context payload to stdout."""
     print(emit_postcompact_context(clean_context(text), output_format))
 
 
 def postcompact(stdin: str, output_format: str | None = None) -> int:
+    """PostCompact hook body: locate the session's aicx extract, slice the delta
+    since the last compact, chunk it to bounded files, and emit a recall
+    context pointing the agent at the newest chunk plus recovery commands."""
     output_format = output_format or os.environ.get(
         "VIBECRAFTED_COMPACT_OUTPUT", "json"
     )
@@ -515,6 +566,8 @@ def postcompact(stdin: str, output_format: str | None = None) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """``vibecrafted compact-hook`` entrypoint: dispatches precompact/postcompact/
+    postcompact-noop/recall events against JSON stdin."""
     parser = argparse.ArgumentParser(prog="vibecrafted compact-hook")
     parser.add_argument(
         "event",

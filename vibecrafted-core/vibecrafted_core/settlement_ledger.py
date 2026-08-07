@@ -92,6 +92,8 @@ class SettlementLedgerAppendResult:
 
 @dataclass(frozen=True)
 class _LedgerState:
+    """Fully-parsed, index-built view of the ledger file at one point in time."""
+
     metadata: dict[str, Any] | None
     records: tuple[dict[str, Any], ...]
     baseline_by_run: dict[str, dict[str, Any]]
@@ -110,11 +112,13 @@ def settlement_ledger_path() -> Path:
 
 
 def _settlement_ledger_lock_path(path: Path | None = None) -> Path:
+    """Return the sibling lock-file path for the given (or default) ledger path."""
     ledger_path = settlement_ledger_path() if path is None else path
     return ledger_path.with_name(".settlement_ledger.lock")
 
 
 def _canonical_json(payload: Mapping[str, Any]) -> bytes:
+    """Encode ``payload`` as sorted, compact UTF-8 JSON for stable hashing."""
     return json.dumps(
         dict(payload),
         sort_keys=True,
@@ -124,12 +128,18 @@ def _canonical_json(payload: Mapping[str, Any]) -> bytes:
 
 
 def _record_hash(payload: Mapping[str, Any]) -> str:
+    """Return the SHA-256 hash of ``payload`` with any ``record_hash`` field excluded."""
     unsigned = dict(payload)
     unsigned.pop("record_hash", None)
     return hashlib.sha256(_canonical_json(unsigned)).hexdigest()
 
 
 def _secure_control_plane_home(path: Path | None = None) -> Path:
+    """Return the control-plane home dir after verifying ownership and permissions.
+
+    Raises if the directory is not owned by the current user or is
+    group/world writable — the ledger's durability guarantees depend on it.
+    """
     ledger_path = settlement_ledger_path() if path is None else path
     home = ledger_path.parent
     home.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -144,6 +154,7 @@ def _secure_control_plane_home(path: Path | None = None) -> Path:
 
 
 def _validate_private_regular_file(fd: int, *, label: str) -> None:
+    """Raise unless ``fd`` is a regular, current-user-owned, non-group/world-writable file."""
     metadata = os.fstat(fd)
     if not stat.S_ISREG(metadata.st_mode):
         raise OSError(errno.EINVAL, f"{label} is not a regular file")
@@ -182,6 +193,7 @@ def _settlement_ledger_lock(
 
 
 def _fsync_directory(path: Path) -> None:
+    """Fsync a directory so a preceding rename/create is durable across a crash."""
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     fd = os.open(path, flags)
     try:
@@ -191,6 +203,7 @@ def _fsync_directory(path: Path) -> None:
 
 
 def _read_fd(fd: int) -> bytes:
+    """Read the full contents of an open file descriptor from offset 0."""
     os.lseek(fd, 0, os.SEEK_SET)
     chunks: list[bytes] = []
     while True:
@@ -225,6 +238,7 @@ def _repair_partial_tail_locked(fd: int) -> int:
 
 
 def _decode_line(raw: bytes, *, line_number: int) -> dict[str, Any]:
+    """Decode one ledger line as a JSON object, raising ``SettlementLedgerCorrupt`` on failure."""
     if len(raw) + 1 > SETTLEMENT_LEDGER_MAX_LINE_BYTES:
         raise SettlementLedgerCorrupt(
             f"settlement ledger line {line_number} exceeds line limit"
@@ -243,6 +257,10 @@ def _decode_line(raw: bytes, *, line_number: int) -> dict[str, Any]:
 
 
 def _validate_metadata(payload: dict[str, Any]) -> None:
+    """Validate the ledger's first-line metadata record's shape, backfill, and hash.
+
+    Raises ``SettlementLedgerCorrupt`` on any structural or hash mismatch.
+    """
     if set(payload) != _METADATA_FIELDS:
         raise SettlementLedgerCorrupt("settlement ledger metadata fields invalid")
     if (
@@ -274,6 +292,11 @@ def _validate_metadata(payload: dict[str, Any]) -> None:
 
 
 def _validated_event(payload: Any) -> SettlementEventV2:
+    """Parse ``payload`` as a ``SettlementEventV2`` and confirm it round-trips exactly.
+
+    Raises ``SettlementLedgerCorrupt`` if the payload is not a valid, canonical
+    v2 event — guards against a hand-edited or truncated ledger line.
+    """
     from .settlement import SettlementEventV2
 
     if not isinstance(payload, Mapping):
@@ -292,6 +315,12 @@ def _validated_event(payload: Any) -> SettlementEventV2:
 
 
 def _parse_ledger_bytes(data: bytes) -> _LedgerState:
+    """Parse and fully re-verify the raw ledger file bytes into a ``_LedgerState``.
+
+    Re-checks the hash chain, monotonic revisions per run, and duplicate
+    identities on every call; raises ``SettlementLedgerCorrupt`` on the first
+    violation found.
+    """
     if not data:
         return _LedgerState(None, (), {}, {}, {}, {}, _ZERO_HASH)
     if not data.endswith(b"\n"):
@@ -384,6 +413,7 @@ def _parse_ledger_bytes(data: bytes) -> _LedgerState:
 
 
 def _snapshot_candidates(root: Path) -> tuple[Path, ...]:
+    """List active and archived run-snapshot JSON files under ``root/runs``."""
     runs = root / "runs"
     return tuple(sorted(runs.glob("*.json"))) + tuple(
         sorted((runs / "archive").glob("*.json"))
@@ -391,6 +421,12 @@ def _snapshot_candidates(root: Path) -> tuple[Path, ...]:
 
 
 def _snapshot_observations(root: Path) -> tuple[dict[str, Any], ...]:
+    """Scan run snapshots for the highest-revision settlement per run_id.
+
+    Used once, at ledger creation, to freeze a lower-bound pre-ledger baseline.
+    Raises ``SettlementLedgerCollision`` if two snapshots disagree at the same
+    revision for the same run.
+    """
     by_run: dict[str, dict[str, Any]] = {}
     for path in _snapshot_candidates(root):
         try:
@@ -436,12 +472,18 @@ def _snapshot_observations(root: Path) -> tuple[dict[str, Any], ...]:
 
 
 def _observation_manifest(observations: Sequence[Mapping[str, Any]]) -> str:
+    """Return the SHA-256 manifest hash binding a canonical observation list."""
     return hashlib.sha256(
         _canonical_json({"observations": list(observations)})
     ).hexdigest()
 
 
 def _validated_observations(backfill: object) -> tuple[dict[str, Any], ...] | None:
+    """Validate a backfill block's observed pre-ledger baseline, or return None if invalid.
+
+    Enforces strictly ascending ``run_id`` ordering and a matching manifest
+    hash — this is the sole trusted decode path for baseline observations.
+    """
     if not isinstance(backfill, Mapping) or set(backfill) != {
         "status",
         "history_before_ledger",
@@ -491,6 +533,7 @@ def _validated_observations(backfill: object) -> tuple[dict[str, Any], ...] | No
 
 
 def _metadata_observations(metadata: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return the metadata record's baseline observations keyed by run_id."""
     observations = _validated_observations(metadata.get("backfill"))
     if observations is None:
         return {}
@@ -500,6 +543,7 @@ def _metadata_observations(metadata: Mapping[str, Any]) -> dict[str, dict[str, A
 def _metadata_record(
     observations: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
+    """Build the ledger's first-line metadata record, hashing in its own record_hash."""
     canonical_observations = [dict(item) for item in observations]
     if canonical_observations:
         history_origin = "observed_snapshot_lower_bound"
@@ -538,6 +582,7 @@ def _entry_record(
     ordinal: int,
     previous_hash: str,
 ) -> dict[str, Any]:
+    """Build one hash-chained ledger entry record for a settlement transition."""
     payload: dict[str, Any] = {
         "schema": SETTLEMENT_LEDGER_ENTRY_SCHEMA,
         "record_type": "settlement_transition",
@@ -556,6 +601,7 @@ def _entry_record(
 
 
 def _encoded_record(payload: Mapping[str, Any]) -> bytes:
+    """Encode a record as a canonical-JSON line, enforcing the per-line byte limit."""
     line = _canonical_json(payload) + b"\n"
     if len(line) > SETTLEMENT_LEDGER_MAX_LINE_BYTES:
         raise ValueError(
@@ -566,6 +612,11 @@ def _encoded_record(payload: Mapping[str, Any]) -> bytes:
 
 
 def _append_line_locked(fd: int, line: bytes) -> None:
+    """Append and fsync one line; caller must hold the exclusive ledger lock.
+
+    Truncates back to the pre-write offset on any failure (short write or
+    exception) so a partial append never survives.
+    """
     start = os.lseek(fd, 0, os.SEEK_END)
     try:
         written = os.write(fd, line)
@@ -580,6 +631,10 @@ def _append_line_locked(fd: int, line: bytes) -> None:
 
 
 def _ensure_metadata_locked(fd: int, path: Path) -> _LedgerState:
+    """Return the parsed ledger state, writing the metadata line first if absent.
+
+    Caller must hold the exclusive ledger lock.
+    """
     state = _parse_ledger_bytes(_read_fd(fd))
     if state.metadata is not None:
         return state
@@ -695,6 +750,7 @@ def _append_settlement_fact(
 
 
 def _history_gaps(state: _LedgerState) -> list[dict[str, Any]]:
+    """Derive gap evidence: pre-ledger unknown history plus any missing revision runs."""
     backfill_status = str(
         ((state.metadata or {}).get("backfill") or {}).get("status") or "not_performed"
     )
@@ -733,6 +789,7 @@ def _history_gaps(state: _LedgerState) -> list[dict[str, Any]]:
 
 
 def _snapshot_payload(state: _LedgerState) -> dict[str, Any]:
+    """Build the public read-side snapshot payload (historical + latest-by-run + gaps)."""
     historical_counts = {"f": 0, "x": 0, "n": 0}
     historical_transitions: list[dict[str, Any]] = []
     latest_by_run: dict[str, dict[str, Any]] = {}

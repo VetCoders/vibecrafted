@@ -1,3 +1,6 @@
+"""Foreground/launchd supervisor for the vibecrafted server+guardian pair: lease
+coordination, identity-verified launchd service management, and CLI entrypoint."""
+
 from __future__ import annotations
 
 import argparse
@@ -22,6 +25,13 @@ from typing import Any, Self
 from xml.parsers.expat import ExpatError
 
 from . import __version__ as PACKAGE_VERSION
+from .server_config import (
+    ServerConfigError,
+    config_path,
+    has_server_config,
+    load_server_config,
+    origin_for,
+)
 
 SUPERVISOR_SCHEMA = "vibecrafted.server-supervisor.v1"
 SUPERVISOR_LOCK_SCHEMA = "vibecrafted.server-supervisor-lock.v1"
@@ -47,13 +57,19 @@ _PASSTHROUGH_ENVIRONMENT = (
 
 
 class SupervisorError(RuntimeError):
+    """Raised for any supervisor failure; carries the process exit code to use."""
+
     def __init__(self, message: str, exit_code: int = 1) -> None:
+        """Store the message and the exit code the CLI should return."""
+
         super().__init__(message)
         self.exit_code = exit_code
 
 
 @dataclass(frozen=True)
 class SupervisorPaths:
+    """Canonical filesystem locations the supervisor reads from and writes to."""
+
     home: Path
     runtime_home: Path
     operator_home: Path
@@ -72,6 +88,9 @@ class SupervisorPaths:
         runtime_home: Path,
         operator_home: Path,
     ) -> SupervisorPaths:
+        """Canonicalize the three home directories and derive the fixed
+        server/lock/receipt/LaunchAgent/log paths beneath them."""
+
         canonical_home = _absolute_path(home)
         canonical_runtime_home = _absolute_path(runtime_home)
         canonical_operator_home = _absolute_path(operator_home)
@@ -96,22 +115,31 @@ class SupervisorPaths:
 
 @dataclass(frozen=True)
 class SupervisorConfig:
+    """Resolved supervisor run configuration: paths, launcher, endpoint, timing."""
+
     paths: SupervisorPaths
     launcher: Path
     host: str
     port: int
+    public_url: str = ""
+    config_file: Path | None = None
     interval: float = 1.0
     maximum_backoff: float = 30.0
     command_timeout: float = 60.0
 
     @property
     def endpoint(self) -> str:
+        """`http://host:port` endpoint, bracketing a bare IPv6 host."""
+
         rendered_host = f"[{self.host}]" if ":" in self.host else self.host
         return f"http://{rendered_host}:{self.port}"
 
 
 @dataclass(frozen=True)
 class SupervisorProbe:
+    """Snapshot of the coordination-lock state: liveness, verified identity,
+    and (when verified) the owning process and its build/hash fingerprint."""
+
     live: bool
     verified: bool
     pid: int | None
@@ -126,6 +154,9 @@ class SupervisorProbe:
 
 @dataclass(frozen=True)
 class ServiceStatus:
+    """Composite view of launchd installation/load state plus the running
+    supervisor's identity and the health of the managed server+guardian pair."""
+
     installed: bool
     loaded: bool
     supervisor_live: bool
@@ -138,6 +169,9 @@ class ServiceStatus:
 
 @dataclass(frozen=True)
 class SupervisorIdentity:
+    """Content-hash fingerprint of the running supervisor build: its
+    executable, this runtime module, package version, and paired launcher."""
+
     executable: Path
     executable_sha256: str
     runtime_sha256: str
@@ -146,6 +180,10 @@ class SupervisorIdentity:
 
 
 def _absolute_path(path: Path) -> Path:
+    """Expand `~` and resolve `path`; raise `SupervisorError` if the input was
+    not already absolute (symlinks are resolved but relativity is rejected
+    up front)."""
+
     expanded = path.expanduser()
     if not expanded.is_absolute():
         raise SupervisorError(f"path must be absolute: {path}", EX_CONFIG)
@@ -153,6 +191,8 @@ def _absolute_path(path: Path) -> Path:
 
 
 def _utc_now() -> str:
+    """Current UTC time as `YYYY-MM-DDTHH:MM:SS.nnnnnnnnnZ` for receipt fields."""
+
     return (
         time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
         + f".{int(time.time_ns() % 1_000_000_000):09d}Z"
@@ -160,6 +200,9 @@ def _utc_now() -> str:
 
 
 def _ensure_owned_directory(path: Path, mode: int = 0o700) -> None:
+    """Create `path` if missing, then require it to be a non-symlinked
+    directory owned by the current uid, chmod'd to `mode`."""
+
     path.mkdir(parents=True, exist_ok=True)
     info = path.lstat()
     if (
@@ -180,6 +223,9 @@ def _file_owner_is_trusted(
     *,
     allow_root_owned: bool,
 ) -> bool:
+    """Trust a file owned by the current uid, or (when `allow_root_owned`) one
+    owned by root with no group/other write bits set."""
+
     if file_uid == os.getuid():
         return True
     return (
@@ -196,6 +242,9 @@ def _validate_owned_regular_file(
     allow_symlink: bool = True,
     allow_root_owned: bool = False,
 ) -> Path:
+    """Resolve `path` and require it to be a trusted, single-hardlink regular
+    file (optionally executable); raise `SupervisorError` otherwise."""
+
     if not allow_symlink and path.is_symlink():
         raise SupervisorError(f"path must not be a symlink: {path}", EX_CONFIG)
     canonical = path.resolve(strict=True)
@@ -219,6 +268,10 @@ def _validate_owned_regular_file(
 
 
 def _sha256_file(path: Path, *, allow_root_owned: bool = False) -> str:
+    """Hash `path` by open file descriptor, verifying it is a trusted, single-
+    hardlink regular file whose descriptor identity matches the named path
+    before reading; raises `SupervisorError` if that trust check fails."""
+
     digest = hashlib.sha256()
     descriptor = os.open(
         path,
@@ -257,6 +310,11 @@ def _supervisor_identity(
     expected_version: str | None = None,
     expected_launcher_sha256: str | None = None,
 ) -> SupervisorIdentity:
+    """Determine and hash the running supervisor's executable, this runtime
+    module, and the launcher, verifying each against any `expected_*` value
+    supplied (raising `SupervisorError` on mismatch). Defaults the executable
+    to `sys.argv[0]` when executable and absolute, else `sys.executable`."""
+
     candidate = executable
     allow_root_owned = False
     if candidate is None:
@@ -308,6 +366,9 @@ def _launcher_sha256(
     *,
     expected_sha256: str | None = None,
 ) -> str:
+    """Hash the launcher, requiring the path to already be canonical and, if
+    `expected_sha256` is given, matching it exactly."""
+
     canonical = _validate_owned_regular_file(launcher, executable=True)
     if canonical != launcher:
         raise SupervisorError("launcher path must already be canonical", EX_CONFIG)
@@ -321,6 +382,9 @@ def _launcher_sha256(
 
 
 def _validate_existing_destination(path: Path) -> None:
+    """No-op if `path` doesn't exist yet; otherwise require it to be an owned,
+    non-symlinked, single-hardlink regular file before it can be replaced."""
+
     if not path.exists() and not path.is_symlink():
         return
     info = path.lstat()
@@ -337,6 +401,8 @@ def _validate_existing_destination(path: Path) -> None:
 
 
 def _fsync_directory(path: Path) -> None:
+    """fsync a directory's inode so a preceding rename into it is durable."""
+
     descriptor = os.open(
         path,
         os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
@@ -348,6 +414,10 @@ def _fsync_directory(path: Path) -> None:
 
 
 def _atomic_private_write(path: Path, payload: bytes) -> bool:
+    """Write `payload` to `path` at mode 0600 via tempfile+fsync+rename, made
+    idempotent (returns False, no rename) when the existing content already
+    matches. Returns True when a write actually occurred."""
+
     _ensure_owned_directory(path.parent)
     _validate_existing_destination(path)
     if path.is_file() and _read_owned_bytes(path) == payload:
@@ -402,6 +472,8 @@ def _atomic_private_write(path: Path, payload: bytes) -> bool:
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
+    """Serialize `payload` as sorted, indented JSON and write it atomically."""
+
     encoded = (
         json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
     ).encode("utf-8")
@@ -409,6 +481,11 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _open_verified_lock(path: Path, *, create: bool) -> int:
+    """Open (optionally creating) the lock file, verifying by fd that it is a
+    stable, owned, single-hardlink regular file, and chmod it to 0600. Returns
+    the open descriptor; propagates `FileNotFoundError` when `create` is False
+    and the path is absent."""
+
     _ensure_owned_directory(path.parent)
     flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     if create:
@@ -441,6 +518,9 @@ def _open_verified_lock(path: Path, *, create: bool) -> int:
 
 
 def _read_lock_payload(descriptor: int) -> dict[str, Any] | None:
+    """Read and JSON-decode the lock file's content from `descriptor`; return
+    None on any decode failure or a non-object payload."""
+
     os.lseek(descriptor, 0, os.SEEK_SET)
     encoded = os.read(descriptor, 64 * 1024)
     try:
@@ -457,6 +537,9 @@ def _write_lock_payload(
     service_managed: bool,
     identity: SupervisorIdentity | None,
 ) -> None:
+    """Truncate and rewrite the lock file's content with the current holder's
+    pid/role/service-managed flag and (when supplied) build identity."""
+
     payload = {
         "schema": SUPERVISOR_LOCK_SCHEMA,
         "pid": os.getpid(),
@@ -483,6 +566,8 @@ def _write_lock_payload(
 
 
 def _process_alive(pid: int) -> bool:
+    """Zero-signal liveness probe; treats pid <= 1 (init/invalid) as dead."""
+
     if pid <= 1:
         return False
     try:
@@ -495,6 +580,10 @@ def _process_alive(pid: int) -> bool:
 
 
 def _child_environment(paths: SupervisorPaths) -> dict[str, str]:
+    """Build the sanitized environment for spawned launcher subprocesses: a
+    passthrough allowlist plus fixed HOME/PATH/VIBECRAFTED_* overrides so the
+    child can never inherit an operator's arbitrary shell environment."""
+
     environment = {
         key: os.environ[key] for key in _PASSTHROUGH_ENVIRONMENT if os.environ.get(key)
     }
@@ -514,6 +603,10 @@ def _child_environment(paths: SupervisorPaths) -> dict[str, str]:
 
 
 def _read_owned_bytes(path: Path) -> bytes | None:
+    """Read up to 64KiB from an owned, non-symlinked, single-hardlink regular
+    file, verifying descriptor identity matches the named path; None on any
+    trust failure or OS error."""
+
     try:
         visible = path.lstat()
         if (
@@ -541,6 +634,8 @@ def _read_owned_bytes(path: Path) -> bytes | None:
 
 
 def _read_owned_text(path: Path) -> str | None:
+    """UTF-8 decode of `_read_owned_bytes`; None on read failure or bad encoding."""
+
     encoded = _read_owned_bytes(path)
     if encoded is None:
         return None
@@ -551,6 +646,9 @@ def _read_owned_text(path: Path) -> str | None:
 
 
 def _service_stderr_cursor(path: Path) -> tuple[int, int, int] | None:
+    """Snapshot (dev, ino, size) of the service stderr log so a later read can
+    report only newly appended bytes; None if the file is untrusted or absent."""
+
     try:
         visible = path.lstat()
         if (
@@ -581,6 +679,11 @@ def _bounded_service_stderr(
     path: Path,
     cursor: tuple[int, int, int] | None,
 ) -> str | None:
+    """Read the last stderr line written since `cursor` (or the trailing 4KiB
+    if no valid cursor), redact bearer tokens/secret-like key=value pairs/long
+    base64-ish blobs and non-ASCII bytes, and clip to 512 chars for safe
+    inclusion in an error message."""
+
     try:
         visible = path.lstat()
         if (
@@ -631,6 +734,10 @@ def _bounded_service_stderr(
 
 
 def _managed_pair_snapshot(paths: SupervisorPaths) -> dict[str, int | None]:
+    """Read the `server`/`guardian` pid+identity files, accepting a role's pid
+    only when its identity file corroborates the same schema/role/pid and the
+    process is alive; unmatched roles stay None."""
+
     snapshot: dict[str, int | None] = {
         "server_pid": None,
         "guardian_pid": None,
@@ -657,6 +764,9 @@ def _managed_pair_snapshot(paths: SupervisorPaths) -> dict[str, int | None]:
 
 
 def _managed_pair_healthy(snapshot: dict[str, int | None]) -> bool:
+    """True when both server and guardian pids are present, real ints, and
+    distinct from each other."""
+
     server_pid = snapshot.get("server_pid")
     guardian_pid = snapshot.get("guardian_pid")
     return (
@@ -669,6 +779,11 @@ def _managed_pair_healthy(snapshot: dict[str, int | None]) -> bool:
 
 
 def probe_supervisor(paths: SupervisorPaths) -> SupervisorProbe:
+    """Non-destructively probe the coordination lock: try a non-blocking
+    exclusive flock; if it succeeds no one holds the lease (unlock and report
+    not live), if it's held (EAGAIN/EACCES) read and schema-validate the
+    holder's payload to decide whether it is a verified supervisor."""
+
     try:
         descriptor = _open_verified_lock(paths.lock_file, create=False)
     except FileNotFoundError:
@@ -740,6 +855,10 @@ def probe_supervisor(paths: SupervisorPaths) -> SupervisorProbe:
 
 
 class _SupervisorLease:
+    """Context manager holding the exclusive coordination flock while this
+    process supervises the server+guardian pair; writes/clears the lock
+    payload declaring who holds it."""
+
     def __init__(
         self,
         paths: SupervisorPaths,
@@ -748,6 +867,8 @@ class _SupervisorLease:
         role: str = "supervisor",
         identity: SupervisorIdentity | None = None,
     ) -> None:
+        """Store lease parameters; the descriptor is acquired in `__enter__`."""
+
         self.paths = paths
         self.service_managed = service_managed
         self.role = role
@@ -755,6 +876,9 @@ class _SupervisorLease:
         self.descriptor = -1
 
     def __enter__(self) -> Self:
+        """Acquire the non-blocking exclusive flock (raising `SupervisorError`
+        if another holder already has it) and write the lease payload."""
+
         descriptor = _open_verified_lock(self.paths.lock_file, create=True)
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -782,6 +906,8 @@ class _SupervisorLease:
         return self
 
     def __exit__(self, *_exc: object) -> None:
+        """Release the flock and close the descriptor, if held."""
+
         if self.descriptor < 0:
             return
         fcntl.flock(self.descriptor, fcntl.LOCK_UN)
@@ -790,6 +916,9 @@ class _SupervisorLease:
 
 
 def _tools_install_lock_path(paths: SupervisorPaths) -> Path:
+    """Location of the cross-process installer coordination lock, honoring
+    `VIBECRAFTED_TOOLS_HOME` or defaulting under `runtime_home/tools`."""
+
     configured = os.environ.get("VIBECRAFTED_TOOLS_HOME")
     tools_home = (
         _absolute_path(Path(configured)) if configured else paths.runtime_home / "tools"
@@ -798,6 +927,10 @@ def _tools_install_lock_path(paths: SupervisorPaths) -> Path:
 
 
 def _validate_tools_install_descriptor(descriptor: int, lock_path: Path) -> None:
+    """Verify an install-lock descriptor still identifies the named
+    `lock_path` and is a regular file owned by the effective uid; raise
+    `SupervisorError` otherwise."""
+
     try:
         opened = os.fstat(descriptor)
         named = os.stat(lock_path, follow_symlinks=False)
@@ -822,11 +955,17 @@ class _ToolsInstallMutationLease:
     """Serialize service mutations with runtime publication and uv replacement."""
 
     def __init__(self, paths: SupervisorPaths) -> None:
+        """Store paths; the descriptor is acquired or inherited in `__enter__`."""
+
         self.paths = paths
         self.descriptor = -1
         self.inherited = False
 
     def __enter__(self) -> Self:
+        """Reuse an inherited lease descriptor from
+        `VIBECRAFTED_INSTALL_LEASE_FD` if present and still held, else open and
+        flock the install lock file, creating its directory as needed."""
+
         lock_path = _tools_install_lock_path(self.paths)
         inherited_raw = os.environ.get(_TOOLS_INSTALL_LEASE_ENV)
         if inherited_raw:
@@ -886,6 +1025,9 @@ class _ToolsInstallMutationLease:
         return self
 
     def __exit__(self, *_exc: object) -> None:
+        """Release the flock and close the descriptor, unless it was inherited
+        (in which case the original owner remains responsible for closing it)."""
+
         if self.descriptor < 0 or self.inherited:
             return
         fcntl.flock(self.descriptor, fcntl.LOCK_UN)
@@ -908,6 +1050,9 @@ def _receipt(
     last_error: str | None,
     last_exit_code: int | None,
 ) -> dict[str, Any]:
+    """Assemble the JSON receipt payload describing current supervisor state,
+    identity, endpoint, and success/failure history for the status file."""
+
     return {
         "schema": SUPERVISOR_SCHEMA,
         "state": state,
@@ -925,6 +1070,8 @@ def _receipt(
             "host": config.host,
             "port": config.port,
             "url": config.endpoint,
+            "public_url": config.public_url or config.endpoint,
+            "config_path": str(config.config_file) if config.config_file else None,
         },
         "managed_pair": managed_pair,
         "started_at": started_at,
@@ -945,6 +1092,11 @@ def _run_child(
     timeout: float,
     stop_event: threading.Event,
 ) -> tuple[int, str]:
+    """Run `argv` to completion (or until `timeout`/`stop_event`), capturing
+    output into temp files rather than pipes; returns (exit_code, tail-of-
+    stderr-or-stdout detail, clipped to 4000 chars). Exit code 143 signals a
+    stop-event abort, 124 a timeout."""
+
     # Pipes make ``communicate`` wait for EOF from every descendant that inherited
     # them, even after the direct launcher has exited. The shell deck deliberately
     # daemonizes the server and guardian, so capture into private temporary files
@@ -1003,6 +1155,12 @@ def run_supervisor(
     service_managed: bool = False,
     identity: SupervisorIdentity | None = None,
 ) -> int:
+    """Foreground supervisor loop: acquire the coordination lease, then
+    repeatedly launch `<launcher> server start`, verify canonical pair health,
+    and back off exponentially on failure, until `stop_event` fires — at which
+    point it runs `<launcher> server stop` and writes a final receipt. Always
+    returns 0; failures are recorded in the receipt, not the return value."""
+
     event = stop_event or threading.Event()
     if (
         config.interval <= 0
@@ -1232,6 +1390,11 @@ def render_launch_agent_plist(
     *,
     supervisor_binary: Path,
 ) -> bytes:
+    """Render the launchd LaunchAgent plist for the supervisor: verifies and
+    hashes the supervisor binary, this runtime module, and the launcher, and
+    embeds those hashes plus RunAtLoad/KeepAlive so launchd both launches and
+    respawns the exact build; returns the plist bytes."""
+
     supervisor = _validate_owned_regular_file(supervisor_binary, executable=True)
     launcher = _validate_owned_regular_file(config.launcher, executable=True)
     supervisor_sha256 = _sha256_file(supervisor)
@@ -1279,6 +1442,8 @@ def render_launch_agent_plist(
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
             "VIBECRAFTED_HOME": str(config.paths.home),
             "VIBECRAFTED_RUNTIME_HOME": str(config.paths.runtime_home),
+            "VC_SERVER_PUBLIC_URL": config.public_url or config.endpoint,
+            "VIBECRAFTED_SERVER_CONFIG": str(config.config_file or ""),
             "VIBECRAFTED_SERVER_SERVICE": "launchd",
             "VIBECRAFTED_SERVER_SUPERVISOR_PATH": str(supervisor),
             "VIBECRAFTED_SERVER_SUPERVISOR_SHA256": supervisor_sha256,
@@ -1295,6 +1460,9 @@ def install_service(
     *,
     supervisor_binary: Path,
 ) -> bool:
+    """Render and atomically write the LaunchAgent plist; returns True only if
+    the file's content actually changed."""
+
     rendered = render_launch_agent_plist(
         config,
         supervisor_binary=supervisor_binary,
@@ -1303,6 +1471,10 @@ def install_service(
 
 
 def _installed_service_identity(paths: SupervisorPaths) -> SupervisorIdentity | None:
+    """Parse the identity fields embedded in the installed LaunchAgent plist's
+    `EnvironmentVariables`; None if the plist is missing, malformed, or any
+    expected identity field is absent/mistyped."""
+
     encoded = _read_owned_bytes(paths.launch_agent_file)
     if encoded is None:
         return None
@@ -1343,6 +1515,10 @@ def _installed_service_identity(paths: SupervisorPaths) -> SupervisorIdentity | 
 
 
 def _installed_service_launcher(paths: SupervisorPaths) -> Path | None:
+    """Extract the `--launcher` argument value from the installed LaunchAgent
+    plist's `ProgramArguments`; None if the plist is missing/malformed or the
+    argument is absent."""
+
     encoded = _read_owned_bytes(paths.launch_agent_file)
     if encoded is None:
         return None
@@ -1368,6 +1544,9 @@ def _installed_service_launcher(paths: SupervisorPaths) -> Path | None:
 
 
 def _probe_is_supervisor(probe: SupervisorProbe) -> bool:
+    """True when the probe found a live, schema-verified `supervisor`-role
+    lease holder (as opposed to a `manual-stop` cleanup lease)."""
+
     return probe.live and probe.verified and probe.role == "supervisor"
 
 
@@ -1377,6 +1556,9 @@ def _probe_matches_identity(
     *,
     service_managed: bool,
 ) -> bool:
+    """True when the probe reports a live supervisor whose service-managed
+    flag and full build fingerprint exactly match `identity`."""
+
     return (
         identity is not None
         and _probe_is_supervisor(probe)
@@ -1393,6 +1575,9 @@ def _launcher_matches_identity(
     launcher: Path,
     identity: SupervisorIdentity | None,
 ) -> bool:
+    """True when `launcher`'s current hash still matches `identity`'s recorded
+    launcher hash; False on any mismatch, missing identity, or OS error."""
+
     if identity is None:
         return False
     try:
@@ -1403,6 +1588,10 @@ def _launcher_matches_identity(
 
 
 def _launchctl(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    """Run `/bin/launchctl` with `args` under a minimal sanitized environment
+    and a 15s timeout; raises `SupervisorError` if launchctl is unavailable
+    (non-macOS)."""
+
     launchctl = Path("/bin/launchctl")
     if not launchctl.is_file():
         raise SupervisorError(
@@ -1431,14 +1620,20 @@ def _launchctl(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
 
 
 def _launch_domain() -> str:
+    """launchd GUI domain string for the current uid."""
+
     return f"gui/{os.getuid()}"
 
 
 def _launch_target() -> str:
+    """Fully-qualified launchd service target for the supervisor's LaunchAgent."""
+
     return f"{_launch_domain()}/{LAUNCH_AGENT_LABEL}"
 
 
 def _launchctl_loaded() -> bool:
+    """True when `launchctl print` for the target job succeeds (job loaded)."""
+
     return _launchctl(["print", _launch_target()]).returncode == 0
 
 
@@ -1449,6 +1644,10 @@ def _launchctl_print_value(
     separator: str,
     section: str | None = None,
 ) -> str | None:
+    """Scrape one `key <separator> value` line out of `launchctl print` text
+    output, optionally scoped inside a `section = { ... }` block; None if not
+    found or the value is empty."""
+
     prefix = f"{key} {separator} "
     in_section = section is None
     for raw_line in payload.splitlines():
@@ -1466,6 +1665,10 @@ def _launchctl_print_value(
 
 
 def _launchctl_start_diagnostics() -> tuple[str, bool]:
+    """Best-effort `launchctl print` snapshot of state/pid/runs/last-exit-code
+    for error messages; returns (human-readable detail, whether any process
+    activity was actually observed)."""
+
     try:
         result = _launchctl(["print", _launch_target()])
     except (OSError, subprocess.SubprocessError, SupervisorError):
@@ -1509,6 +1712,10 @@ def _launchctl_start_diagnostics() -> tuple[str, bool]:
 
 
 def _launchctl_job_owns_paths(paths: SupervisorPaths) -> bool:
+    """Cross-check the loaded launchd job's plist path, program path, and
+    environment (supervisor/home/runtime_home/operator_home) against `paths`,
+    to detect a stale job definition pointed at a different install."""
+
     result = _launchctl(["print", _launch_target()])
     if result.returncode != 0:
         return False
@@ -1560,6 +1767,9 @@ def _launchctl_job_owns_paths(paths: SupervisorPaths) -> bool:
 
 
 def _require_macos_service() -> None:
+    """Raise `SupervisorError` when not running on macOS; the service
+    management surface is launchd-only."""
+
     if sys.platform != "darwin":
         raise SupervisorError(
             "server service is macOS launchd-only; this platform is unsupported "
@@ -1574,6 +1784,9 @@ def _wait_for_supervisor(
     live: bool,
     timeout: float = 10.0,
 ) -> SupervisorProbe:
+    """Poll `probe_supervisor` until its liveness matches `live` or `timeout`
+    elapses; returns whatever the last probe observed either way."""
+
     deadline = time.monotonic() + timeout
     probe = probe_supervisor(paths)
     while probe.live != live and time.monotonic() < deadline:
@@ -1589,6 +1802,10 @@ def _wait_for_managed_supervisor(
     previous_pid: int | None = None,
     timeout: float = 10.0,
 ) -> SupervisorProbe:
+    """Poll until the coordination lease is held by a service-managed
+    supervisor matching `identity` and (if `previous_pid` given) running under
+    a new pid, or until `timeout` elapses."""
+
     deadline = time.monotonic() + timeout
     probe = probe_supervisor(config.paths)
     while time.monotonic() < deadline:
@@ -1607,6 +1824,10 @@ def _pair_healthy(
     *,
     timeout: float = 60.0,
 ) -> bool:
+    """Run `<launcher> server status` and require both "Server: RUNNING" and
+    "Guardian: RUNNING" in stdout with exit code 0; False on any subprocess
+    error."""
+
     try:
         result = subprocess.run(
             [str(launcher), "server", "status"],
@@ -1626,6 +1847,9 @@ def _pair_healthy(
 
 
 def service_status(config: SupervisorConfig) -> ServiceStatus:
+    """Compose a full `ServiceStatus` from the LaunchAgent's presence,
+    launchctl's load state, the lease probe, and a live pair-health check."""
+
     installed = False
     if (
         config.paths.launch_agent_file.exists()
@@ -1671,6 +1895,11 @@ def service_status(config: SupervisorConfig) -> ServiceStatus:
 
 
 def start_service(config: SupervisorConfig) -> None:
+    """Load (or kickstart) the LaunchAgent and block until the installed
+    supervisor identity acquires the coordination lease, raising
+    `SupervisorError` with diagnostics on any inconsistency or timeout along
+    the way (unowned lease, foreground supervisor already active, etc.)."""
+
     _require_macos_service()
     if not config.paths.launch_agent_file.is_file():
         raise SupervisorError(
@@ -1713,6 +1942,12 @@ def start_service(config: SupervisorConfig) -> None:
             EX_TEMPFAIL,
         )
     if not loaded:
+        result = _launchctl(["enable", _launch_target()])
+        if result.returncode != 0:
+            raise SupervisorError(
+                f"launchctl enable failed: {result.stderr.strip()}",
+                result.returncode or 1,
+            )
         result = _launchctl(
             [
                 "bootstrap",
@@ -1779,6 +2014,11 @@ def start_service(config: SupervisorConfig) -> None:
 
 
 def stop_service(config: SupervisorConfig) -> None:
+    """Unload the LaunchAgent job (`launchctl bootout`) and wait for the
+    coordination lease to clear, raising `SupervisorError` if a foreground
+    (non-launchd) supervisor holds it, if the job doesn't own the target
+    paths, or if the lease is still held after unload."""
+
     _require_macos_service()
     identity = _installed_service_identity(config.paths)
     if identity is None:
@@ -1858,6 +2098,10 @@ def restart_service(
     *,
     previous_pid: int | None = None,
 ) -> SupervisorProbe:
+    """Stop then start the launchd service, requiring the post-restart
+    supervisor to match the installed identity and (when a previous pid was
+    live) to have actually respawned under a new pid."""
+
     _require_macos_service()
     if _launchctl_loaded():
         active = probe_supervisor(config.paths)
@@ -1902,6 +2146,10 @@ def install_and_reconcile_service(
     *,
     supervisor_binary: Path,
 ) -> tuple[bool, bool]:
+    """Install/refresh the LaunchAgent plist, then restart it if it changed or
+    the running supervisor no longer matches the installed identity, or start
+    it fresh if launchd wasn't loaded. Returns (plist_changed, restarted)."""
+
     _require_macos_service()
     loaded = _launchctl_loaded()
     previous = probe_supervisor(config.paths)
@@ -1926,6 +2174,10 @@ def install_and_reconcile_service(
 
 
 def uninstall_service(config: SupervisorConfig) -> bool:
+    """Stop the service if loaded (raising if a foreground supervisor is
+    active instead), then delete the LaunchAgent plist. Returns whether a
+    plist was actually removed."""
+
     _require_macos_service()
     if _launchctl_loaded():
         stop_service(config)
@@ -1945,6 +2197,9 @@ def uninstall_service(config: SupervisorConfig) -> bool:
 
 
 def _launchd_owns_pair(paths: SupervisorPaths) -> bool:
+    """True on macOS when the launchd job is loaded and its plist/environment
+    corroborate ownership of `paths`; validates the plist file's trust first."""
+
     if paths.launch_agent_file.exists() or paths.launch_agent_file.is_symlink():
         _validate_owned_regular_file(
             paths.launch_agent_file,
@@ -1954,6 +2209,10 @@ def _launchd_owns_pair(paths: SupervisorPaths) -> bool:
 
 
 def manual_stop_guard(paths: SupervisorPaths) -> None:
+    """Raise `SupervisorError` if a launchd service or foreground supervisor
+    currently owns the pair, since a manual stop would just be respawned; a
+    no-op when invoked from inside a supervisor child (env flag set)."""
+
     if os.environ.get("VIBECRAFTED_SERVER_SUPERVISOR_CHILD") == "1":
         return
     loaded = _launchd_owns_pair(paths)
@@ -1970,6 +2229,11 @@ def manual_stop_guard(paths: SupervisorPaths) -> None:
 
 
 def manual_stop(config: SupervisorConfig) -> None:
+    """Stop the server+guardian pair directly while holding the manual-stop
+    coordination lease, refusing when launchd owns the pair and repairing
+    (bootout) a launchd job that races back in mid-stop; raises
+    `SupervisorError` if invoked from inside a supervisor child."""
+
     if os.environ.get("VIBECRAFTED_SERVER_SUPERVISOR_CHILD") == "1":
         raise SupervisorError(
             "manual-stop coordination command cannot run as a supervisor child",
@@ -2039,6 +2303,9 @@ def manual_stop(config: SupervisorConfig) -> None:
 
 
 def _validated_endpoint(host: str, port: int) -> tuple[str, int]:
+    """Validate a host/port pair (hostname charset, length, leading dash, port
+    range); raises `SupervisorError` on any violation."""
+
     if (
         not host
         or host != host.strip()
@@ -2058,9 +2325,14 @@ def default_config(
     home: Path | None = None,
     runtime_home: Path | None = None,
     operator_home: Path | None = None,
-    host: str = "127.0.0.1",
-    port: int = 3024,
+    host: str | None = None,
+    port: int | None = None,
 ) -> SupervisorConfig:
+    """Build a `SupervisorConfig` from environment defaults and operator
+    config-file settings, letting explicit `host`/`port` arguments override
+    the on-disk `[server]` values (and, when overriding, recomputing
+    `public_url` from the override instead of reusing the stored one)."""
+
     resolved_operator_home = _absolute_path(
         operator_home or Path(os.environ.get("HOME", str(Path.home())))
     )
@@ -2082,7 +2354,17 @@ def default_config(
             )
         )
     )
-    validated_host, validated_port = _validated_endpoint(host, port)
+    settings_path = config_path(operator_home=resolved_operator_home)
+    settings = load_server_config(settings_path)
+    validated_host, validated_port = _validated_endpoint(
+        host if host is not None else settings.bind_host,
+        port if port is not None else settings.port,
+    )
+    public_url = (
+        settings.public_url
+        if host is None and port is None
+        else origin_for(validated_host, validated_port)
+    )
     return SupervisorConfig(
         paths=SupervisorPaths.create(
             home=resolved_home,
@@ -2092,10 +2374,15 @@ def default_config(
         launcher=_validate_owned_regular_file(launcher, executable=True),
         host=validated_host,
         port=validated_port,
+        public_url=public_url,
+        config_file=settings_path,
     )
 
 
 def _paths_from_args(args: argparse.Namespace) -> SupervisorPaths:
+    """Build `SupervisorPaths` from the parsed `--home`/`--runtime-home`/
+    `--operator-home` CLI arguments."""
+
     return SupervisorPaths.create(
         home=Path(args.home),
         runtime_home=Path(args.runtime_home),
@@ -2104,13 +2391,28 @@ def _paths_from_args(args: argparse.Namespace) -> SupervisorPaths:
 
 
 def _config_from_args(args: argparse.Namespace) -> SupervisorConfig:
-    host, port = _validated_endpoint(args.host, args.port)
+    """Build a `SupervisorConfig` for CLI subcommands, layering CLI
+    `--host`/`--port`/timing overrides on top of the on-disk server config."""
+
+    paths = _paths_from_args(args)
+    settings_path = config_path(operator_home=paths.operator_home)
+    settings = load_server_config(settings_path)
+    host, port = _validated_endpoint(
+        args.host if args.host is not None else settings.bind_host,
+        args.port if args.port is not None else settings.port,
+    )
     launcher = _validate_owned_regular_file(Path(args.launcher), executable=True)
     return SupervisorConfig(
-        paths=_paths_from_args(args),
+        paths=paths,
         launcher=launcher,
         host=host,
         port=port,
+        public_url=(
+            settings.public_url
+            if args.host is None and args.port is None
+            else origin_for(host, port)
+        ),
+        config_file=settings_path,
         interval=args.interval,
         maximum_backoff=args.maximum_backoff,
         command_timeout=args.command_timeout,
@@ -2118,6 +2420,9 @@ def _config_from_args(args: argparse.Namespace) -> SupervisorConfig:
 
 
 def _add_common_paths(parser: argparse.ArgumentParser) -> None:
+    """Register `--home`/`--runtime-home`/`--operator-home` with environment-
+    derived defaults on `parser`."""
+
     operator_home = _absolute_path(Path(os.environ.get("HOME", str(Path.home()))))
     home = _absolute_path(
         Path(os.environ.get("VIBECRAFTED_HOME", operator_home / ".vibecrafted"))
@@ -2136,16 +2441,22 @@ def _add_common_paths(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_config_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register the common path arguments plus `--launcher`, `--host`,
+    `--port`, and supervisor timing knobs on `parser`."""
+
     _add_common_paths(parser)
     parser.add_argument("--launcher", required=True)
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=3024)
+    parser.add_argument("--host")
+    parser.add_argument("--port", type=int)
     parser.add_argument("--interval", type=float, default=1.0)
     parser.add_argument("--maximum-backoff", type=float, default=30.0)
     parser.add_argument("--command-timeout", type=float, default=60.0)
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Construct the `vc-server-supervisor` argparse CLI: `run`, `service`,
+    `runtime-status`, `config`, `manual-stop-guard`, `manual-stop`, `probe`."""
+
     parser = argparse.ArgumentParser(prog="vc-server-supervisor")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -2183,6 +2494,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_common_paths(runtime_status)
 
+    config = subparsers.add_parser(
+        "config",
+        help="report the effective operator-owned server configuration",
+    )
+    _add_common_paths(config)
+    config.add_argument("--json", action="store_true")
+
     guard = subparsers.add_parser(
         "manual-stop-guard",
         help="refuse a manual pair stop while a supervisor owns it",
@@ -2202,6 +2520,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _install_requires_supervisor_binary(args: argparse.Namespace) -> Path:
+    """Validate and return the `--supervisor-bin` path required for install/
+    reconcile; raises `SupervisorError` telling the operator to run
+    `make install` when it was not supplied."""
+
     if not args.supervisor_bin:
         raise SupervisorError(
             "vc-server-supervisor entrypoint is missing; run 'make install' first",
@@ -2211,6 +2533,8 @@ def _install_requires_supervisor_binary(args: argparse.Namespace) -> Path:
 
 
 def _print_service_status(status: ServiceStatus, *, as_json: bool) -> None:
+    """Print `status` as JSON or a fixed-format human-readable summary line."""
+
     payload = {
         "installed": status.installed,
         "loaded": status.loaded,
@@ -2236,7 +2560,35 @@ def _print_service_status(status: ServiceStatus, *, as_json: bool) -> None:
     )
 
 
+def _print_server_config(args: argparse.Namespace) -> None:
+    """Print the effective operator server config as JSON or a summary line,
+    noting whether it came from file or built-in defaults."""
+
+    operator_home = _absolute_path(Path(args.operator_home))
+    path = config_path(operator_home=operator_home)
+    configured = has_server_config(path)
+    config = load_server_config(path)
+    payload = {
+        "bind_host": config.bind_host,
+        "port": config.port,
+        "public_url": config.public_url,
+        "config_path": str(path),
+        "source": "file" if configured else "default",
+    }
+    if args.json:
+        print(json.dumps(payload, sort_keys=True))
+        return
+    print(
+        f"bind={config.bind_addr} public_url={config.public_url} "
+        f"source={payload['source']} config={path}"
+    )
+
+
 def _runtime_status(paths: SupervisorPaths) -> int:
+    """Print a one-line supervision verdict (LAUNCHD/FOREGROUND/BROKEN/
+    UNSUPERVISED) and return the matching exit code (0 for a coherent state,
+    1 for BROKEN)."""
+
     installed = False
     if paths.launch_agent_file.exists() or paths.launch_agent_file.is_symlink():
         _validate_owned_regular_file(
@@ -2290,6 +2642,11 @@ def _runtime_status(paths: SupervisorPaths) -> int:
 
 
 def _service_command(args: argparse.Namespace) -> int:
+    """Dispatch the `service` subcommand's action (status/install/reconcile/
+    restart/start/stop/uninstall), serializing mutating actions behind the
+    tools-install lease; prints a confirmation line and returns an exit code
+    (status returns 1 unless every health field is green)."""
+
     _require_macos_service()
     config = _config_from_args(args)
     if args.action == "status":
@@ -2339,6 +2696,10 @@ def _service_command(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entrypoint: parse `argv` and dispatch to the matching subcommand
+    handler, converting `SupervisorError`/`ServerConfigError` into a printed
+    message plus their exit code."""
+
     args = _build_parser().parse_args(argv)
     try:
         if args.command == "run":
@@ -2357,6 +2718,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             stop_event = threading.Event()
 
             def request_stop(_signum: int, _frame: object) -> None:
+                """SIGTERM/SIGINT handler: signal the supervisor loop to stop."""
+
                 stop_event.set()
 
             previous_term = signal.signal(signal.SIGTERM, request_stop)
@@ -2375,6 +2738,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 signal.signal(signal.SIGINT, previous_int)
         if args.command == "service":
             return _service_command(args)
+        if args.command == "config":
+            _print_server_config(args)
+            return 0
         paths = _paths_from_args(args)
         if args.command == "runtime-status":
             return _runtime_status(paths)
@@ -2411,6 +2777,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SupervisorError as exc:
         print(f"vc-server-supervisor: {exc}", file=sys.stderr)
         return exc.exit_code
+    except ServerConfigError as exc:
+        print(f"vc-server-supervisor: {exc}", file=sys.stderr)
+        return EX_CONFIG
 
 
 if __name__ == "__main__":
