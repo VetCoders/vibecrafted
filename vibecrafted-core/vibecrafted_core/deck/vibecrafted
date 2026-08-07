@@ -117,10 +117,10 @@ _version() {
   source_root="$(_repo_source_root 2>/dev/null || true)"
 
   for vf in \
+    "$repo_root/VERSION" \
     "${source_root:+$source_root/VERSION}" \
     "$crafted_home/VERSION" \
-    "$crafted_tools/VERSION" \
-    "$repo_root/VERSION"; do
+    "$crafted_tools/VERSION"; do
     [[ -f "$vf" ]] || continue
     cat "$vf"
     return 0
