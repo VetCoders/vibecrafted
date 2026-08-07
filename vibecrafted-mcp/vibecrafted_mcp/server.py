@@ -65,6 +65,7 @@ SLIM_MAX_COMMITS = 5
 SLIM_MAX_DOCTOR_FINDINGS = 8
 SLIM_BUDGET_BYTES = 5 * 1024
 OBSERVE_MAX_BYTES = 64 * 1024
+OBSERVE_RESULT_MAX_BYTES = 64 * 1024
 OBSERVE_MAX_EVENTS = 100
 OBSERVE_MAX_WAIT_SECONDS = 30.0
 
@@ -260,6 +261,33 @@ def _event_to_payload(event: Any) -> dict[str, Any]:
     }
 
 
+def _bound_observe_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep the complete serialized MCP result below the advertised budget."""
+
+    def payload_size() -> int:
+        return len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+
+    events = payload.get("events")
+    if isinstance(events, list):
+        while events and payload_size() > OBSERVE_RESULT_MAX_BYTES:
+            events.pop(0)
+    transcript = payload.get("transcript")
+    if isinstance(transcript, dict) and payload_size() > OBSERVE_RESULT_MAX_BYTES:
+        text = str(transcript.get("text") or "")
+        transcript["text"] = ""
+        overhead = payload_size()
+        allowance = max(OBSERVE_RESULT_MAX_BYTES - overhead - 64, 0)
+        encoded = text.encode("utf-8")
+        clipped = encoded[-allowance:] if allowance else b""
+        while clipped and (clipped[0] & 0xC0) == 0x80:
+            clipped = clipped[1:]
+        transcript["text"] = clipped.decode("utf-8", errors="replace")
+        transcript["bytes"] = len(clipped)
+        transcript["truncated"] = True
+    payload["result_bytes"] = payload_size()
+    return payload
+
+
 def _event_cursor_from_payload(cursor: dict[str, Any] | None) -> str:
     """Extract the event cursor from a client-supplied cursor payload.
 
@@ -406,21 +434,23 @@ def _observe_run_once(
     else:
         state = "missing"
 
-    return {
-        "run_id": target,
-        "found": run is not None or resolved is not None,
-        "state": state,
-        "operator_state": (run or {}).get("operator_state", "") if run else "",
-        "cursor": {
-            "event_cursor": next_event_cursor,
-            "transcript_offset": int(transcript["next_offset"]),
-        },
-        "events": events,
-        "transcript": transcript,
-        "terminal": _run_terminal(run),
-        "report_ready": _report_ready(run),
-        "report_uri": f"vibecrafted://runs/{target}/report",
-    }
+    return _bound_observe_payload(
+        {
+            "run_id": target,
+            "found": run is not None or resolved is not None,
+            "state": state,
+            "operator_state": (run or {}).get("operator_state", "") if run else "",
+            "cursor": {
+                "event_cursor": next_event_cursor,
+                "transcript_offset": int(transcript["next_offset"]),
+            },
+            "events": events,
+            "transcript": transcript,
+            "terminal": _run_terminal(run),
+            "report_ready": _report_ready(run),
+            "report_uri": f"vibecrafted://runs/{target}/report",
+        }
+    )
 
 
 def _observe_run(

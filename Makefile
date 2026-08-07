@@ -227,6 +227,7 @@ install-tools-held:
 	unset PYTHONPATH; \
 	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-core"; \
 	uv tool install --force --reinstall --editable "$$stable_root/plugins/iterm2"; \
+	echo "[install-tools] NOTICE: replacing vibecrafted-mcp may close attached stdio clients; reconnect the operator session after install" >&2; \
 	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-mcp" --with-editable "$$stable_root/vibecrafted-core"; \
 	$(PYTHON) -c 'import sys; from pathlib import Path; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; v._install_launcher(Path(sys.argv[1]), dry_run=False, update_rc=False)' "$$stable_root"; \
 	tool_root="$$(uv tool dir --color never)/vibecrafted"; \

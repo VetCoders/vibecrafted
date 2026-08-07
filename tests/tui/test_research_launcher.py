@@ -2,8 +2,8 @@
 
 These assert the **deck/Python** contract after interactive zsh pass-through
 (`vc-research` → `command vibecrafted research`). Legacy shell swarm layout
-(`rsch-*` run dirs, `Research override (…) prepared`, uno|duo|trio keywords)
-is intentionally not required on the public entrypoint.
+(`rsch-*` run dirs and `Research override (…) prepared`) is not required, but
+the stable uno|duo|trio public arity contract remains supported by core.
 """
 
 from __future__ import annotations
@@ -14,6 +14,9 @@ import re
 import subprocess
 import textwrap
 from pathlib import Path
+
+import pytest
+from vibecrafted_core.cli import _normalize_research_arity_args
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
@@ -105,6 +108,33 @@ def _parse_receipt(stdout: str) -> dict[str, str]:
     m2 = re.search(r"\b((?:rese|rsch)-[0-9a-zA-Z-]+)\b", out)
     assert m2 is not None, out
     return {"run_id": m2.group(1), "status": "launching", "raw": out}
+
+
+@pytest.mark.parametrize(
+    ("keyword", "agents"),
+    [
+        ("uno", ["codex"]),
+        ("duo", ["codex", "agy"]),
+        ("trio", ["claude", "codex", "agy"]),
+    ],
+)
+def test_research_arity_keywords_expand_to_exact_agent_lists(
+    keyword: str, agents: list[str]
+) -> None:
+    args = ["research", keyword, *agents, "--prompt", "compare"]
+    assert _normalize_research_arity_args(args) == [
+        "research",
+        *agents,
+        "--prompt",
+        "compare",
+    ]
+
+
+def test_research_arity_keyword_fails_closed_on_wrong_lane_count() -> None:
+    with pytest.raises(ValueError, match="trio expects exactly 3 agent"):
+        _normalize_research_arity_args(
+            ["research", "trio", "claude", "codex", "--prompt", "compare"]
+        )
 
 
 def test_vc_research_help_is_pure_help() -> None:

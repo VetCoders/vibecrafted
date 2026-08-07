@@ -96,11 +96,13 @@ def _print_doctor(report: Any, *, json_output: bool) -> int:
     """Render a doctor report to stdout (JSON or human-readable) and return its exit code."""
     if json_output:
         print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
-    elif report.ok:
-        print("dispatch-doctor: ok")
     else:
         for error in report.errors:
             print(f"{error.path}: {error.message}")
+        for warning in report.warnings:
+            print(f"warning: {warning.path}: {warning.message}")
+        if report.ok:
+            print("dispatch-doctor: ok")
     return 0 if report.ok else 1
 
 

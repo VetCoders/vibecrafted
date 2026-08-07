@@ -784,6 +784,7 @@ def test_make_install_verifies_server_supervisor_entrypoint() -> None:
     assert "is not owned by the uv interpreter" in install_tools_block
     assert 'if [ "$$entrypoint" = "vibecrafted-mcp" ]' in install_tools_block
     assert "$${tool_root%/vibecrafted}/vibecrafted-mcp" in install_tools_block
+    assert "reconnect the operator session after install" in install_tools_block
     assert "vibecrafted vc-workflow vc-guardian vc-server-supervisor" in (
         install_tools_block
     )

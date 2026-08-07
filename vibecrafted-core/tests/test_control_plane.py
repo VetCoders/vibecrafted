@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import fcntl
+import gzip
 import json
 import multiprocessing
 import os
@@ -103,6 +104,117 @@ def test_resolve_run_raises_loud_when_still_launching(
     assert run_id in message
     assert "await" in message
     assert excinfo.value.run_id == run_id
+
+
+def test_full_sync_rotates_terminal_transcript_and_sweeps_old_temps(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_TRANSCRIPT_MAX_BYTES", "64")
+    run_dir = home / "control_plane" / "runtime_runs" / "done-run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "meta.json").write_text(
+        json.dumps({"run_id": "done-run", "state": "completed", "exit_code": 0}),
+        encoding="utf-8",
+    )
+    original = bytes(range(200))
+    transcript = run_dir / "transcript.log"
+    transcript.write_bytes(original)
+    stale_runtime_temp = run_dir / "meta.json.tmp.123"
+    stale_runtime_temp.write_text("stale", encoding="utf-8")
+    runs_dir = home / "control_plane" / "runs"
+    runs_dir.mkdir(parents=True)
+    stale_snapshot_temp = runs_dir / "done-run.json.tmp.123"
+    stale_snapshot_temp.write_text("stale", encoding="utf-8")
+    fresh_temp = run_dir / "meta.json.tmp.456"
+    fresh_temp.write_text("fresh", encoding="utf-8")
+    old = time.time() - control_plane.RUNTIME_TMP_MAX_AGE_SECONDS - 1
+    os.utime(stale_runtime_temp, (old, old))
+    os.utime(stale_snapshot_temp, (old, old))
+
+    result = control_plane.sync_state()
+
+    assert transcript.read_bytes() == original[-64:]
+    with gzip.open(run_dir / "transcript.log.archive.gz", "rb") as archive:
+        assert archive.read() == original[:-64]
+    assert not stale_runtime_temp.exists()
+    assert not stale_snapshot_temp.exists()
+    assert fresh_temp.exists()
+    assert result["storage_maintenance"] == {
+        "orphan_temps_removed": 2,
+        "transcripts_rotated": 1,
+        "archives_removed": 0,
+    }
+
+
+def test_full_sync_compacts_cold_terminal_transcripts_below_size_cap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_TRANSCRIPT_MAX_BYTES", "512")
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES", "64")
+    monkeypatch.setenv("VIBECRAFTED_RUN_SNAPSHOT_RETENTION_SECONDS", "60")
+    run_dir = home / "control_plane" / "runtime_runs" / "cold-terminal"
+    run_dir.mkdir(parents=True)
+    (run_dir / "meta.json").write_text(
+        json.dumps({"run_id": "cold-terminal", "state": "completed", "exit_code": 0}),
+        encoding="utf-8",
+    )
+    original = bytes(range(200))
+    transcript = run_dir / "transcript.log"
+    transcript.write_bytes(original)
+    old = time.time() - 61
+    os.utime(transcript, (old, old))
+
+    result = control_plane.sync_state()
+
+    assert transcript.read_bytes() == original[-64:]
+    with gzip.open(run_dir / "transcript.log.archive.gz", "rb") as archive:
+        assert archive.read() == original[:-64]
+    assert result["storage_maintenance"]["transcripts_rotated"] == 1
+
+
+def test_full_sync_never_compacts_old_active_transcript(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_TRANSCRIPT_MAX_BYTES", "512")
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES", "64")
+    monkeypatch.setenv("VIBECRAFTED_RUN_SNAPSHOT_RETENTION_SECONDS", "60")
+    run_dir = home / "control_plane" / "runtime_runs" / "active-run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "meta.json").write_text(
+        json.dumps({"run_id": "active-run", "state": "active"}), encoding="utf-8"
+    )
+    original = bytes(range(200))
+    transcript = run_dir / "transcript.log"
+    transcript.write_bytes(original)
+    old = time.time() - 61
+    os.utime(transcript, (old, old))
+
+    result = control_plane.sync_state()
+
+    assert transcript.read_bytes() == original
+    assert not (run_dir / "transcript.log.archive.gz").exists()
+    assert result["storage_maintenance"]["transcripts_rotated"] == 0
+
+
+def test_atomic_write_reports_actionable_degraded_mode_before_enospc(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "runs" / "run.json"
+    monkeypatch.setattr(control_plane, "_storage_free_bytes", lambda _path: 0)
+
+    with pytest.raises(control_plane.ControlPlaneStorageError) as excinfo:
+        control_plane._write_json(target, {"run_id": "run"})
+
+    message = str(excinfo.value)
+    assert "control-plane degraded" in message
+    assert "Free disk space" in message
+    assert not target.exists()
 
 
 def test_operator_stop_is_sticky_over_late_failure_and_artifact_aliases(
@@ -890,6 +1002,7 @@ def test_sync_state_reconciles_dead_launcher_with_missing_report_to_terminal_fai
     home = tmp_path / ".vibecrafted"
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
     monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "1")
+    now = dt.datetime.now(dt.timezone.utc)
     _write_meta(
         home,
         {
@@ -900,8 +1013,8 @@ def test_sync_state_reconciles_dead_launcher_with_missing_report_to_terminal_fai
             "root": str(tmp_path),
             "report": str(tmp_path / "missing-report.md"),
             "transcript": str(tmp_path / "transcript.log"),
-            "updated_at": "2026-05-19T00:02:00+00:00",
-            "heartbeat_at": "2026-05-19T00:00:00+00:00",
+            "updated_at": now.isoformat(),
+            "heartbeat_at": (now - dt.timedelta(seconds=2)).isoformat(),
             "skill_code": "just",
             "launcher_pid": 999999999,
             "liveness": "pid_alive",
@@ -1375,6 +1488,7 @@ def test_await_run_completes_when_dead_worker_missing_report_is_terminal(
     home = tmp_path / ".vibecrafted"
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
     monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "1")
+    now = dt.datetime.now(dt.timezone.utc)
     _write_meta(
         home,
         {
@@ -1385,8 +1499,8 @@ def test_await_run_completes_when_dead_worker_missing_report_is_terminal(
             "root": str(tmp_path),
             "report": str(tmp_path / "missing-report.md"),
             "transcript": str(tmp_path / "transcript.log"),
-            "updated_at": "2026-05-19T00:02:00+00:00",
-            "heartbeat_at": "2026-05-19T00:00:00+00:00",
+            "updated_at": now.isoformat(),
+            "heartbeat_at": (now - dt.timedelta(seconds=2)).isoformat(),
             "skill_code": "wflw",
             "launcher_pid": 999999999,
             "liveness": "pid_alive",
@@ -1833,6 +1947,7 @@ def test_sync_state_projects_event_stream_lifecycle(
 ) -> None:
     home = tmp_path / ".vibecrafted"
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    now = dt.datetime.now(dt.timezone.utc)
     events = home / "control_plane" / "events.jsonl"
     events.parent.mkdir(parents=True, exist_ok=True)
     events.write_text(
@@ -1840,7 +1955,7 @@ def test_sync_state_projects_event_stream_lifecycle(
             [
                 json.dumps(
                     {
-                        "ts": "2026-05-19T00:00:00+00:00",
+                        "ts": now.isoformat(),
                         "run_id": "wflw-111111-1111",
                         "kind": "launch",
                         "message": "launch accepted",
@@ -1867,7 +1982,7 @@ def test_sync_state_projects_event_stream_lifecycle(
                 ),
                 json.dumps(
                     {
-                        "ts": "2026-05-19T00:00:05+00:00",
+                        "ts": (now + dt.timedelta(microseconds=1)).isoformat(),
                         "run_id": "wflw-111111-1111",
                         "kind": "lifecycle:active",
                         "message": "process active",
@@ -1885,9 +2000,9 @@ def test_sync_state_projects_event_stream_lifecycle(
     run = snapshot["recent_runs"][0]
     assert run["run_id"] == "wflw-111111-1111"
     assert run["state"] == "active"
-    assert run["operator_state"] == "blocked"
-    assert run["artifact_gate"] == "failed"
-    assert "report_missing" in run["artifact_errors"]
+    assert run["operator_state"] == "running"
+    assert run["artifact_gate"] == "pending"
+    assert "report_missing" not in run["artifact_errors"]
     assert run["agent_session_id"] == "claude-native-parent"
     assert run["runtime_session_id"] == "runtime-child"
     assert run["parent_runtime_session_id"] == "runtime-parent"

@@ -18,7 +18,7 @@ agent: {{AGENT}}
 skill: {{SKILL}}
 wave: {{WAVE}}
 slot: {{SLOT}}
-baseline_branch: {{BASELINE_BRANCH}}
+baseline_branch: <living-tree>
 authored_by: {{AUTHORED_BY}}
 target_repo: {{TARGET_REPO}}
 ---
@@ -37,7 +37,7 @@ agent: {{AGENT}}
 skill: {{SKILL}}
 wave: {{WAVE}}
 slot: {{SLOT}}
-baseline_branch: {{BASELINE_BRANCH}}
+baseline_branch: <living-tree>
 parallel_with: {{PARALLEL_WITH}}
 authored_by: {{AUTHORED_BY}}
 target_repo: {{TARGET_REPO}}

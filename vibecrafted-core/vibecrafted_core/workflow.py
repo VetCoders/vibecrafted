@@ -1504,6 +1504,8 @@ def normalize_launch_spec(
 
     if definition.requires_input and not prompt and not file_path:
         raise ValueError("Launch requires either --prompt text or --file path.")
+    if file_path and not Path(file_path).expanduser().is_file():
+        raise ValueError(f"Prompt file does not exist or is not a file: {file_path}")
 
     return WorkflowLaunchSpec(
         agent=agent,
@@ -1526,14 +1528,9 @@ def normalize_launch_spec(
 def _source_prompt(spec: WorkflowLaunchSpec) -> str:
     """Resolve the operator's raw prompt text from ``spec.file`` or ``spec.prompt``."""
     if spec.file:
-        try:
-            return (
-                Path(spec.file)
-                .expanduser()
-                .read_text(encoding="utf-8", errors="replace")
-            )
-        except OSError:
-            return f"Read the requested prompt file yourself: {spec.file}"
+        return (
+            Path(spec.file).expanduser().read_text(encoding="utf-8", errors="replace")
+        )
     return spec.prompt
 
 

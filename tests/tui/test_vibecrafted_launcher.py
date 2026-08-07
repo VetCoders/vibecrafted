@@ -1057,6 +1057,44 @@ def test_repo_launcher_is_directly_executable() -> None:
     assert "telemetry smoke" not in result.stdout
 
 
+def test_installed_deck_version_is_owned_by_deck_not_checkout_cwd(
+    tmp_path: Path,
+) -> None:
+    package_root = tmp_path / "generation" / "vibecrafted_core"
+    deck = package_root / "deck" / "vibecrafted"
+    deck.parent.mkdir(parents=True)
+    deck.write_text(
+        (REPO_ROOT / "vibecrafted-core/vibecrafted_core/deck/vibecrafted").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
+    deck.chmod(0o755)
+    (package_root / "VERSION").write_text("3.7.0+ginstalled\n", encoding="utf-8")
+    (package_root / "runtime").mkdir()
+    (package_root / "skills").mkdir()
+    checkout = tmp_path / "checkout"
+    (checkout / "scripts").mkdir(parents=True)
+    (checkout / "scripts/vibecrafted").write_text("fixture\n", encoding="utf-8")
+    (checkout / "skills").mkdir()
+    (checkout / "runtime").mkdir()
+    (checkout / "VERSION").write_text("3.7.0\n", encoding="utf-8")
+    public_bin = tmp_path / "bin"
+    public_bin.mkdir()
+    public_launcher = public_bin / "vibecrafted"
+    public_launcher.symlink_to(deck)
+
+    result = subprocess.run(
+        [str(public_launcher), "--version"],
+        check=True,
+        cwd=checkout,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "vibecrafted 3.7.0+ginstalled"
+
+
 def test_update_web_fallback_verifies_install_sh_against_sha256sums(
     tmp_path: Path,
 ) -> None:
@@ -1564,6 +1602,18 @@ def test_autonomous_delivery_skills_route_to_core_async_launcher(
         (
             ["codex", "agy", "--prompt", "Check Codescribe"],
             ["research", "codex", "agy", "--prompt", "Check Codescribe"],
+        ),
+        (
+            ["trio", "claude", "codex", "agy", "--prompt", "Check Codescribe"],
+            [
+                "research",
+                "trio",
+                "claude",
+                "codex",
+                "agy",
+                "--prompt",
+                "Check Codescribe",
+            ],
         ),
     ],
 )

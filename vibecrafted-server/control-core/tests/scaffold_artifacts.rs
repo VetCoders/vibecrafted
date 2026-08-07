@@ -2,9 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use control_core::{
-    SCAFFOLD_MANIFEST_SCHEMA_JSON, ScaffoldArtifactPatch, ScaffoldArtifactRole,
-    ScaffoldArtifactStore, ScaffoldCheckpointPatch, ScaffoldError, ScaffoldManifest,
-    doctor_plan_root,
+    SCAFFOLD_EXPORT_SCHEMA_VERSION, SCAFFOLD_MANIFEST_SCHEMA_JSON, ScaffoldArtifactPatch,
+    ScaffoldArtifactRole, ScaffoldArtifactStore, ScaffoldCheckpointPatch, ScaffoldError,
+    ScaffoldManifest, doctor_plan_root,
 };
 use serde_json::json;
 
@@ -293,6 +293,65 @@ fn manifest_plan_is_discovered_without_operator_mirror_and_roles_are_explicit() 
         "notes/architecture.md"
     );
     assert!(!root.join("../operator").exists());
+
+    fs::remove_dir_all(home).ok();
+}
+
+#[test]
+fn portable_export_removes_host_paths_and_freezes_no_branch() {
+    let home = temp_home("portable-export");
+    let root = write_plan(&home, "plan-a", declarations());
+    populate(&root, "plan-a");
+    let driver = fs::read_to_string(root.join("DRIVER.md")).expect("driver");
+    fs::write(
+        root.join("DRIVER.md"),
+        driver.replace(
+            "/Users/polyversai/.vibecrafted/artifacts/vetcoders/vibecrafted/2026_0720/plans/plan-a",
+            &root.display().to_string(),
+        ),
+    )
+    .expect("portable fixture driver");
+    let repo_root = "/Volumes/vc-workspace/vetcoders/vibecrafted";
+    fs::write(
+        root.join("notes/architecture.md"),
+        format!(
+            "{}baseline_branch: feat/author-host\nrepo={repo_root}/src\nplan: {}/briefs\n",
+            frontmatter("design-doc", "plan-a"),
+            root.display(),
+        ),
+    )
+    .expect("portable fixture design");
+    let store = ScaffoldArtifactStore::new(&home);
+
+    assert!(
+        store
+            .export_bundle("vetcoders", "vibecrafted", "2026_0720", "plan-a", None)
+            .is_err(),
+        "undeclared repo root must fail closed"
+    );
+    let bundle = store
+        .export_bundle(
+            "vetcoders",
+            "vibecrafted",
+            "2026_0720",
+            "plan-a",
+            Some(repo_root),
+        )
+        .expect("portable bundle");
+    let encoded = serde_json::to_string(&bundle).expect("bundle json");
+
+    assert_eq!(bundle.schema_version, SCAFFOLD_EXPORT_SCHEMA_VERSION);
+    assert!(!encoded.contains("/Users/"));
+    assert!(!encoded.contains("/Volumes/"));
+    assert!(encoded.contains("${SCAFFOLD_ROOT}"));
+    assert!(encoded.contains("${REPO_ROOT}"));
+    assert!(encoded.contains("baseline_branch: <living-tree>"));
+    assert!(
+        bundle
+            .artifacts
+            .iter()
+            .all(|artifact| !artifact.relative_path.starts_with('/'))
+    );
 
     fs::remove_dir_all(home).ok();
 }

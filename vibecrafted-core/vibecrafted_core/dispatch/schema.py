@@ -51,6 +51,7 @@ class DispatchDoctorResult:
 
     ok: bool
     errors: tuple[str, ...]
+    warnings: tuple[str, ...] = ()
     dispatch: Dispatch | None = None
 
 
@@ -76,19 +77,29 @@ def doctor_dispatch(
     try:
         dispatch = parse_dispatch(text, base_dir=base_dir)
         policy_errors = _doctor_policy_errors(dispatch)
+        warnings = tuple(
+            f"cuts[{index}].model: pin {cut.model!r} will be forwarded to "
+            f"{cut.agent}; provider/account availability is not validated"
+            for index, cut in enumerate(dispatch.cuts)
+            if cut.model
+        )
         if policy_errors:
             return DispatchDoctorResult(
                 ok=False,
                 errors=tuple(policy_errors),
+                warnings=warnings,
                 dispatch=dispatch,
             )
         return DispatchDoctorResult(
             ok=True,
             errors=(),
+            warnings=warnings,
             dispatch=dispatch,
         )
     except DispatchSchemaError as exc:
-        return DispatchDoctorResult(ok=False, errors=exc.errors, dispatch=None)
+        return DispatchDoctorResult(
+            ok=False, errors=exc.errors, warnings=(), dispatch=None
+        )
 
 
 def parse_dispatch(text: str, *, base_dir: str | Path | None = None) -> Dispatch:
@@ -166,7 +177,24 @@ def render_cell_prompt(
         "baton": active_baton.to_json(),
     }
     body = _brief_or_prompt(cut)
-    parts = [dispatch.common.text, body, cut.extra, active_baton.to_json()]
+    delivery_contract = ""
+    if cut.mode != "read" and dispatch.policy.require_commit:
+        slot = cut.id.split("_", 1)[0]
+        delivery_contract = (
+            "DELIVERY CONTRACT (supervisor-enforced): commit the verified delivery. "
+            f"The commit message must contain the exact cut id '{cut.id}' or slot "
+            f"marker '[{slot}]'. If no new commit is needed and "
+            "allow_idempotent_existing is enabled, report exactly one proof line "
+            "'Commit: <sha>' naming an ancestor commit whose message also identifies "
+            "this cut."
+        )
+    parts = [
+        dispatch.common.text,
+        body,
+        cut.extra,
+        delivery_contract,
+        active_baton.to_json(),
+    ]
     rendered = [_format_known(part, variables).strip() for part in parts if part]
     return "\n\n".join(part for part in rendered if part).rstrip() + "\n"
 

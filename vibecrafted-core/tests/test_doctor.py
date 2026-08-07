@@ -93,6 +93,44 @@ def test_launcher_shim_finding_warns_when_absent() -> None:
     assert findings[0].component == "launcher"
 
 
+def test_codex_mcp_config_rejects_streamable_http_on_sse_messages_endpoint(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[mcp_servers.memex]\ntransport = "streamable_http"\n'
+        'url = "http://100.73.193.98:8997/messages"\n',
+        encoding="utf-8",
+    )
+
+    findings = doctor._codex_mcp_config_findings(config)
+
+    assert len(findings) == 1
+    assert findings[0].level == "fail"
+    assert findings[0].component == "codex:mcp-config"
+    assert "Disable this alias" in findings[0].message
+
+
+def test_codex_mcp_config_keeps_stdio_and_real_mcp_endpoint_green(
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[mcp_servers.rust_memex]\ncommand = "rust-memex"\n'
+        '[mcp_servers.remote]\ntransport = "streamable_http"\n'
+        'url = "https://example.test/mcp"\n',
+        encoding="utf-8",
+    )
+
+    findings = doctor._codex_mcp_config_findings(config)
+
+    assert findings == [
+        doctor._Finding(
+            "ok", "codex:mcp-config", "no obvious HTTP/SSE transport mismatch"
+        )
+    ]
+
+
 def test_server_supervision_finding_proves_current_managed_pair() -> None:
     status = SimpleNamespace(
         installed=True,
@@ -236,6 +274,7 @@ def test_doctor_run_includes_server_supervision_finding(monkeypatch) -> None:
     monkeypatch.setattr(doctor, "_installer_module", missing_installer)
     monkeypatch.setattr(doctor, "_packaged_asset_findings", list)
     monkeypatch.setattr(doctor, "_launcher_shim_findings", list)
+    monkeypatch.setattr(doctor, "_codex_mcp_config_findings", list)
     monkeypatch.setattr(doctor, "_server_supervision_findings", lambda: [expected])
     monkeypatch.setattr(doctor, "_vc_frame_delivery_findings", list)
     monkeypatch.setattr(doctor, "_vc_frame_truth_drift_findings", list)

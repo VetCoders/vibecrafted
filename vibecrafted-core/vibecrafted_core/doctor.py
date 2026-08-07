@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 from xml.parsers.expat import ExpatError
 
+import tomllib
+
 from .package_resources import deck_path, runtime_path, skills_path
 from .vc_frame_delivery import (
     OPERATOR_SCRIPT_NAMES,
@@ -180,6 +182,46 @@ def _launcher_shim_findings(
             )
         )
 
+    return findings
+
+
+def _codex_mcp_config_findings(config_path: Path | None = None) -> list[_Finding]:
+    """Reject the known streamable-HTTP-to-SSE endpoint mismatch before startup."""
+
+    path = (
+        config_path
+        or Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "config.toml"
+    )
+    if not path.is_file():
+        return []
+    try:
+        payload = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return [_Finding("warn", "codex:mcp-config", f"cannot parse {path}: {exc}")]
+    servers = payload.get("mcp_servers")
+    if not isinstance(servers, dict):
+        return []
+    findings: list[_Finding] = []
+    for name, raw in sorted(servers.items()):
+        if not isinstance(raw, dict):
+            continue
+        transport = str(raw.get("transport") or raw.get("type") or "").lower()
+        url = str(raw.get("url") or "").rstrip("/")
+        if transport == "streamable_http" and url.endswith(("/messages", "/sse")):
+            findings.append(
+                _Finding(
+                    "fail",
+                    "codex:mcp-config",
+                    f"mcp_servers.{name} uses streamable_http with SSE-style endpoint "
+                    f"{url}. Disable this alias or configure the server's real "
+                    "streamable-HTTP endpoint; keep a verified stdio entry when that "
+                    "is the service's supported transport.",
+                )
+            )
+    if not findings:
+        findings.append(
+            _Finding("ok", "codex:mcp-config", "no obvious HTTP/SSE transport mismatch")
+        )
     return findings
 
 
@@ -826,6 +868,7 @@ def doctor_run(
         findings = list(installer.run_doctor(resolved_store, resolved_state))
         findings.extend(_packaged_asset_findings())
     findings.extend(_launcher_shim_findings())
+    findings.extend(_codex_mcp_config_findings())
     findings.extend(_server_supervision_findings())
     findings.extend(_vc_frame_delivery_findings())
     findings.extend(_vc_frame_truth_drift_findings())

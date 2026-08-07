@@ -14,7 +14,7 @@ id = "d1-pinned"
 phase = "Foundation"
 agent = "codex"
 workflow = "implement"
-model = "gpt-5-codex"
+model = "test-codex-model"
 prompt = "Implement pinned cut {id} in {repo}."
 
   [[cuts.verify]]

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const SCAFFOLD_SCHEMA_VERSION: &str = "1";
+pub const SCAFFOLD_EXPORT_SCHEMA_VERSION: &str = "vibecrafted.scaffold-export.v1";
 pub const SCAFFOLD_MANIFEST_SCHEMA_JSON: &str =
     include_str!("../schema/scaffold-manifest-v1.schema.json");
 
@@ -183,6 +184,25 @@ pub struct ScaffoldWorkspace {
     pub changes_path: String,
     pub checkpoints_path: String,
     pub artifacts: Vec<ScaffoldArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScaffoldExportArtifact {
+    pub id: String,
+    pub role: ScaffoldArtifactRole,
+    pub relative_path: String,
+    pub editable: bool,
+    pub required: bool,
+    pub content: String,
+    pub content_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScaffoldExportBundle {
+    pub schema_version: String,
+    pub exported_at: String,
+    pub manifest: ScaffoldManifest,
+    pub artifacts: Vec<ScaffoldExportArtifact>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -487,6 +507,55 @@ impl ScaffoldArtifactStore {
             }
         };
         self.manifest_workspace(org, repo, day, &selected.plan_id)
+    }
+
+    /// Export a manifest-backed plan without author-host filesystem identity.
+    ///
+    /// Artifact paths are always relative. Known host roots inside content are
+    /// replaced with stable placeholders; any remaining `/Users/...` or
+    /// `/Volumes/...` token fails closed instead of shipping a deceptive bundle.
+    pub fn export_bundle(
+        &self,
+        org: &str,
+        repo: &str,
+        day: &str,
+        plan_id: &str,
+        repo_root: Option<&str>,
+    ) -> ScaffoldResult<ScaffoldExportBundle> {
+        let root = self.plan_root(org, repo, day, plan_id)?;
+        let manifest = read_manifest(&root)?;
+        validate_identity(&manifest, org, repo, day, plan_id)?;
+        let workspace = self.manifest_workspace(org, repo, day, plan_id)?;
+        let plan_root = root.display().to_string();
+        let home = self.home.display().to_string();
+        let mut artifacts = Vec::with_capacity(workspace.artifacts.len());
+        for artifact in workspace.artifacts {
+            let content =
+                portable_scaffold_content(&artifact.content, &plan_root, &home, repo_root);
+            if let Some(path) = first_private_absolute_path(&content) {
+                return Err(ScaffoldError::UnsafePath {
+                    message: format!(
+                        "portable export still contains host path {path:?} in artifact {}; pass repo_root when exporting or replace the undeclared host path",
+                        artifact.id
+                    ),
+                });
+            }
+            artifacts.push(ScaffoldExportArtifact {
+                id: artifact.id,
+                role: artifact.role,
+                relative_path: artifact.relative_path,
+                editable: artifact.editable,
+                required: artifact.required,
+                content_hash: content_hash(content.as_bytes()),
+                content,
+            });
+        }
+        Ok(ScaffoldExportBundle {
+            schema_version: SCAFFOLD_EXPORT_SCHEMA_VERSION.to_string(),
+            exported_at: Utc::now().to_rfc3339(),
+            manifest,
+            artifacts,
+        })
     }
 
     fn manifest_workspace(
@@ -1815,6 +1884,53 @@ fn artifact_title(relative: &str, role: ScaffoldArtifactRole) -> String {
 
 fn content_hash(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
+fn portable_scaffold_content(
+    content: &str,
+    plan_root: &str,
+    home: &str,
+    repo_root: Option<&str>,
+) -> String {
+    let mut portable = content.replace(plan_root, "${SCAFFOLD_ROOT}");
+    if let Some(repo_root) = repo_root.filter(|value| !value.trim().is_empty()) {
+        portable = portable.replace(repo_root, "${REPO_ROOT}");
+    }
+    portable = portable.replace(home, "${VIBECRAFTED_HOME}");
+    portable
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("baseline_branch:") {
+                let indent = &line[..line.len() - trimmed.len()];
+                format!("{indent}baseline_branch: <living-tree>")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + if content.ends_with('\n') { "\n" } else { "" }
+}
+
+fn first_private_absolute_path(content: &str) -> Option<String> {
+    ["/Users/", "/Volumes/"].into_iter().find_map(|marker| {
+        let start = content.find(marker)?;
+        let rest = &content[start..];
+        let end = rest
+            .char_indices()
+            .find_map(|(index, character)| {
+                (index > 0
+                    && (character.is_whitespace()
+                        || matches!(
+                            character,
+                            '`' | '\'' | '"' | ')' | ']' | '}' | ',' | ';'
+                        )))
+                .then_some(index)
+            })
+            .unwrap_or(rest.len());
+        Some(rest[..end].to_string())
+    })
 }
 
 fn modified_at(path: &Path) -> String {

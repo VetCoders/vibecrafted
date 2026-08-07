@@ -18,8 +18,13 @@ spawn_control_plane_script() {
 spawn_sync_control_plane() {
   local script_path
   script_path="$(spawn_control_plane_script 2>/dev/null || true)"
-  [[ -n "$script_path" ]] || return 0
-  python3 "$script_path" sync >/dev/null 2>&1 || true
+  if [[ -z "$script_path" ]]; then
+    printf '%s\n' 'vibecrafted: warning: control-plane sync helper unavailable; projection may be stale' >&2
+    return 0
+  fi
+  if ! python3 "$script_path" sync >/dev/null; then
+    printf 'vibecrafted: warning: control-plane sync failed via %s; projection may be stale\n' "$script_path" >&2
+  fi
 }
 
 spawn_find_meta_for_run_id() {
@@ -48,6 +53,7 @@ for fname in sorted(os.listdir(reports_dir), reverse=True):
         print(fpath)
         raise SystemExit(0)
 PY
+  spawn_sync_control_plane
 }
 
 spawn_read_meta_field() {
@@ -376,6 +382,7 @@ spawn_python_bin() {
   local candidate
   for candidate in \
     "${VIBECRAFTED_PYTHON:-}" \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/vibecrafted/bin/python3" \
     "${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/vibecrafted-core/bin/python3" \
     python3.13 python3.12 python3.11 python3; do
     [[ -n "$candidate" ]] || continue

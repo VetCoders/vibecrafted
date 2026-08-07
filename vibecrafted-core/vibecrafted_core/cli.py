@@ -33,6 +33,7 @@ from .workflow import (
 )
 
 AGENTS = {"claude", "codex", "agy", "junie", "grok", "swarm"}
+RESEARCH_ARITY = {"uno": 1, "duo": 2, "trio": 3}
 LAUNCHERS = (
     "audit",
     "decorate",
@@ -91,6 +92,31 @@ TERMINAL_STATES = {
 _INSTALLER_LEASE_FD_ENV = "VIBECRAFTED_INSTALL_LEASE_FD"
 _INSTALLER_LOCK_NAME = ".vibecrafted-install.lock"
 _EX_TEMPFAIL = 75
+
+
+def _normalize_research_arity_args(args: Sequence[str]) -> list[str]:
+    """Expand the stable uno/duo/trio contract before argparse sees agents."""
+    normalized = list(args)
+    if len(normalized) < 2 or normalized[0] != "research":
+        return normalized
+    keyword = normalized[1]
+    expected = RESEARCH_ARITY.get(keyword)
+    if expected is None:
+        return normalized
+
+    agents: list[str] = []
+    cursor = 2
+    while cursor < len(normalized) and not normalized[cursor].startswith("-"):
+        agents.append(normalized[cursor])
+        cursor += 1
+    if len(agents) != expected:
+        raise ValueError(
+            f"{keyword} expects exactly {expected} agent(s), got {len(agents)}"
+        )
+    unsupported = [agent for agent in agents if agent not in AGENTS - {"swarm"}]
+    if unsupported:
+        raise ValueError(f"Unsupported research agent: {unsupported[0]}")
+    return ["research", *agents, *normalized[cursor:]]
 
 
 def _installer_lease_pass_fds(tools_home: Path) -> tuple[int, ...]:
@@ -503,6 +529,9 @@ def _print_launch_receipt(payload: dict[str, Any]) -> None:
     print(f"root:       {_field(payload, 'root')}")
     print(f"dispatch:   {_field(payload, 'dispatch', '0')}")
     print(f"status:     {_field(payload, 'status', 'launching')}")
+    reasons = _launch_receipt_reasons(payload)
+    if reasons:
+        print(f"reasons:    {'; '.join(reasons)}")
     print(f"control:    {_field(payload, 'control')}")
     print(f"report:     {_field(payload, 'report')}")
     print(f"transcript: {_field(payload, 'transcript')}")
@@ -511,6 +540,27 @@ def _print_launch_receipt(payload: dict[str, Any]) -> None:
         f"await (ARM NOW, supervisor-side): vibecrafted {agent} await --run-id {run_id}"
     )
     print("=====================================================================")
+
+
+def _launch_receipt_reasons(payload: dict[str, Any]) -> list[str]:
+    raw = payload.get("reasons") or payload.get("block_reasons")
+    if isinstance(raw, str):
+        reasons = [raw]
+    elif isinstance(raw, (list, tuple)):
+        reasons = [str(item) for item in raw if str(item).strip()]
+    else:
+        reasons = []
+    direct = str(payload.get("reason") or "").strip()
+    if direct and direct not in reasons:
+        reasons.append(direct)
+    failure_card = payload.get("failure_card")
+    if isinstance(failure_card, dict):
+        card_reason = str(
+            failure_card.get("reason") or failure_card.get("message") or ""
+        ).strip()
+        if card_reason and card_reason not in reasons:
+            reasons.append(card_reason)
+    return reasons
 
 
 def _print_resume_session_receipt(payload: dict[str, Any]) -> None:
@@ -614,6 +664,10 @@ def _apply_live_liveness(run: dict[str, Any] | None) -> dict[str, Any] | None:
 
     run = dict(run)
     run["liveness"] = "pid_gone"
+    run["liveness_note"] = (
+        "process proof is gone while metadata remains non-terminal; "
+        "projection is not yet reconciled — inspect transcript/report before recovery"
+    )
     return run
 
 
@@ -646,6 +700,8 @@ def _print_run_status(run: dict[str, Any], *, include_tail: bool = True) -> None
     print(f"skill:      {run.get('skill') or ''}")
     print(f"root:       {run.get('root') or ''}")
     print(f"liveness:   {run.get('liveness') or ''}")
+    if run.get("liveness_note"):
+        print(f"note:       {run.get('liveness_note')}")
     if run.get("last_error") and state not in {"completed", "report_validated"}:
         print(f"last_error: {run.get('last_error')}")
     print(f"report:     {run.get('latest_report') or run.get('report') or ''}")
@@ -932,6 +988,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if help_requested:
             print(render_workflow_help(raw_args[0]), end="")
             return 0
+
+    try:
+        raw_args = _normalize_research_arity_args(raw_args)
+    except ValueError as exc:
+        print(f"vibecrafted research: {exc}", file=sys.stderr)
+        return 2
 
     python_commands = {
         "acp",

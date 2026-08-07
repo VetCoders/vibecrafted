@@ -9,9 +9,11 @@ import contextlib
 import datetime as dt
 import errno
 import fcntl
+import gzip
 import json
 import os
 import re
+import shutil
 import stat
 import time
 import uuid
@@ -142,6 +144,14 @@ EVENTS_ARCHIVE_MAX_FILES = 64
 EVENTS_ARCHIVE_MAX_FILES_ENV = "VIBECRAFTED_EVENTS_ARCHIVE_MAX_FILES"
 EVENTS_ARCHIVE_MAX_BYTES = 512 * 1024 * 1024
 EVENTS_ARCHIVE_MAX_BYTES_ENV = "VIBECRAFTED_EVENTS_ARCHIVE_MAX_BYTES"
+RUNTIME_TRANSCRIPT_MAX_BYTES = 16 * 1024 * 1024
+RUNTIME_TRANSCRIPT_MAX_BYTES_ENV = "VIBECRAFTED_RUNTIME_TRANSCRIPT_MAX_BYTES"
+RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES = 64 * 1024
+RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES_ENV = (
+    "VIBECRAFTED_RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES"
+)
+RUNTIME_TMP_MAX_AGE_SECONDS = 60 * 60
+CONTROL_PLANE_WRITE_RESERVE_BYTES = 1024 * 1024
 EVENT_SEGMENT_SCHEMA = "vibecrafted.event-stream-segment.v1"
 EVENT_MAX_LINE_BYTES = 256 * 1024
 RECENT_RUN_LIMIT = 12
@@ -276,6 +286,28 @@ def _sync_lock_timeout_seconds() -> float:
     return _DEFAULT_SYNC_LOCK_TIMEOUT_SECONDS
 
 
+class ControlPlaneStorageError(RuntimeError):
+    """A control-plane write cannot be made safely with available storage."""
+
+
+def _storage_free_bytes(path: Path) -> int:
+    return int(shutil.disk_usage(path).free)
+
+
+def _ensure_storage_capacity(path: Path, required_bytes: int) -> None:
+    required = max(int(required_bytes), 0) + CONTROL_PLANE_WRITE_RESERVE_BYTES
+    try:
+        free = _storage_free_bytes(path.parent)
+    except OSError:
+        return
+    if free < required:
+        raise ControlPlaneStorageError(
+            "control-plane degraded: insufficient disk space for atomic write "
+            f"at {path} (need {required} bytes including reserve, {free} free). "
+            "Free disk space, then run `vibecrafted control-plane sync`."
+        )
+
+
 @contextlib.contextmanager
 def _event_lock(*, exclusive: bool) -> Iterator[None]:
     """Coordinate event appends with generation rotation.
@@ -371,6 +403,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     """Write ``payload`` as JSON via a tmp-file + atomic rename (crash-safe)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     data = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    _ensure_storage_capacity(path, len(data.encode("utf-8")))
     # Atomic write (tmp + os.replace) so a crash mid-write or a concurrent
     # reader never sees a half-written, unparseable snapshot — _read_json would
     # silently degrade a truncated file to {} and lose the run's metadata.
@@ -378,6 +411,13 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     try:
         tmp.write_text(data, encoding="utf-8")
         os.replace(tmp, path)
+    except OSError as exc:
+        if exc.errno == errno.ENOSPC:
+            raise ControlPlaneStorageError(
+                "control-plane degraded: disk became full while atomically writing "
+                f"{path}. Free disk space, then run `vibecrafted control-plane sync`."
+            ) from exc
+        raise
     finally:
         with contextlib.suppress(OSError):
             tmp.unlink()
@@ -388,6 +428,7 @@ def _write_json_durable(path: Path, payload: dict[str, Any]) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     data = (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    _ensure_storage_capacity(path, len(data))
     tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
     descriptor = -1
     mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
@@ -401,6 +442,13 @@ def _write_json_durable(path: Path, payload: dict[str, Any]) -> None:
         descriptor = -1
         os.replace(tmp, path)
         _fsync_directory_durable(path.parent)
+    except OSError as exc:
+        if exc.errno == errno.ENOSPC:
+            raise ControlPlaneStorageError(
+                "control-plane degraded: disk became full while durably writing "
+                f"{path}. Free disk space, then run `vibecrafted control-plane sync`."
+            ) from exc
+        raise
     finally:
         if descriptor >= 0:
             os.close(descriptor)
@@ -620,6 +668,118 @@ def _configured_events_archive_max_bytes() -> int:
     )
 
 
+def _configured_runtime_transcript_max_bytes() -> int:
+    return _configured_nonnegative_int(
+        RUNTIME_TRANSCRIPT_MAX_BYTES_ENV, RUNTIME_TRANSCRIPT_MAX_BYTES
+    )
+
+
+def _configured_runtime_transcript_cold_tail_bytes() -> int:
+    return _configured_nonnegative_int(
+        RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES_ENV,
+        RUNTIME_TRANSCRIPT_COLD_TAIL_BYTES,
+    )
+
+
+def _runtime_runs_dir() -> Path:
+    return control_plane_home() / "runtime_runs"
+
+
+def _runtime_run_is_terminal(run_dir: Path) -> bool:
+    payload = _read_json(run_dir / "meta.json")
+    state = str(payload.get("state") or payload.get("status") or "")
+    return state in FINAL_STATES or _coerce_int(payload.get("exit_code")) is not None
+
+
+def _maintain_runtime_run_storage() -> dict[str, int]:
+    """Bound terminal transcripts and remove stale interrupted-write debris.
+
+    Live transcripts are never replaced under an open writer. Once a run is
+    terminal, oversized transcripts keep the configured tail. Terminal logs
+    older than the snapshot retention window keep only a small readable cold
+    tail even when each file is individually below the size cap. Removed
+    prefixes are gzip-archived; archives age out after another retention window.
+    """
+
+    root = _runtime_runs_dir()
+    counts = {
+        "orphan_temps_removed": 0,
+        "transcripts_rotated": 0,
+        "archives_removed": 0,
+    }
+    if not root.is_dir():
+        return counts
+
+    now = time.time()
+    for temp in root.rglob("*.tmp.*"):
+        try:
+            if (
+                temp.is_file()
+                and now - temp.stat().st_mtime >= RUNTIME_TMP_MAX_AGE_SECONDS
+            ):
+                temp.unlink()
+                counts["orphan_temps_removed"] += 1
+        except OSError:
+            continue
+    for temp in run_snapshot_dir().glob("*.tmp.*"):
+        try:
+            if (
+                temp.is_file()
+                and now - temp.stat().st_mtime >= RUNTIME_TMP_MAX_AGE_SECONDS
+            ):
+                temp.unlink()
+                counts["orphan_temps_removed"] += 1
+        except OSError:
+            continue
+
+    max_bytes = _configured_runtime_transcript_max_bytes()
+    cold_tail_bytes = _configured_runtime_transcript_cold_tail_bytes()
+    retention = _configured_snapshot_retention_seconds()
+    for run_dir in root.iterdir():
+        if not run_dir.is_dir() or run_dir.name == "archive":
+            continue
+        archive = run_dir / "transcript.log.archive.gz"
+        try:
+            if archive.is_file() and now - archive.stat().st_mtime >= retention:
+                archive.unlink()
+                counts["archives_removed"] += 1
+        except OSError:
+            pass
+        transcript = run_dir / "transcript.log"
+        try:
+            if not transcript.is_file() or not _runtime_run_is_terminal(run_dir):
+                continue
+            transcript_stat = transcript.stat()
+            size = transcript_stat.st_size
+            target_bytes = max_bytes
+            if retention <= 0 or now - transcript_stat.st_mtime >= retention:
+                target_bytes = min(target_bytes, cold_tail_bytes)
+            if target_bytes <= 0 or size <= target_bytes:
+                continue
+            prefix_bytes = size - target_bytes
+            with transcript.open("rb") as source:
+                prefix = source.read(prefix_bytes)
+                tail = source.read()
+            _ensure_storage_capacity(archive, len(prefix) + len(tail))
+            with gzip.open(archive, "ab") as compressed:
+                compressed.write(prefix)
+            replacement = transcript.with_name(
+                f"{transcript.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
+            )
+            try:
+                replacement.write_bytes(tail)
+                os.replace(replacement, transcript)
+            finally:
+                with contextlib.suppress(OSError):
+                    replacement.unlink()
+            counts["transcripts_rotated"] += 1
+        except (OSError, ControlPlaneStorageError):
+            # Maintenance must not block projection; the next explicit write
+            # still fails with an actionable degraded-mode error if disk is full.
+            continue
+    return counts
+
+
 def _configured_nonnegative_int(env_name: str, default: int) -> int:
     """Read a non-negative int from an env var, falling back to ``default`` on
     a missing or unparsable value."""
@@ -695,8 +855,15 @@ def _artifact_projection(
     artifact_ok = run.get("artifact_ok")
     terminal_state = state in {"report_validated", "completed", "closed"}
     operator_stopped = _accepted_operator_stop_payload(run)
-    has_live_identity = bool(str(run.get("session_id") or "").strip())
-    defer_report_gate = state in ACTIVE_STATES and has_live_identity
+    # Report absence is not a failure while execution has fresh proof of life.
+    # Session identity may legitimately arrive after the first lifecycle/meta
+    # write, but a stale/dead `pid_alive` string must not defer the gate forever.
+    activity_age = _activity_age_seconds(run, _now())
+    defer_report_gate = (
+        state in ACTIVE_STATES
+        and activity_age is not None
+        and activity_age < _configured_stale_heartbeat_seconds()
+    )
 
     if operator_stopped:
         # Completion evidence is intentionally not owed after an operator stop.
@@ -3176,6 +3343,11 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
     scope = str(only_run_id or "").strip()
     scoped = bool(scope)
     child_prefix = f"{scope}-" if scope else ""
+    storage_maintenance = (
+        {"orphan_temps_removed": 0, "transcripts_rotated": 0, "archives_removed": 0}
+        if scoped
+        else _maintain_runtime_run_storage()
+    )
 
     def _in_scope(run_id: str) -> bool:
         """True when the pass is unscoped, or ``run_id`` is the target run or its child round."""
@@ -3292,6 +3464,7 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
     fxn = board_fxn_counts(payload_runs)
     return {
         "generated_at": _now().isoformat(),
+        "storage_maintenance": storage_maintenance,
         "active_runs": active_runs,
         "stalled_runs": stalled_runs,
         "recent_runs": recent_runs,
@@ -3928,12 +4101,15 @@ def cli(argv: list[str] | None = None) -> int:
         help="drain: snapshots per lock acquisition (lock released between batches).",
     )
     args = parser.parse_args(argv)
-    if args.command == "drain":
-        payload: dict[str, Any] = drain_settled_snapshots(
-            keep_hours=args.keep_hours, batch_size=args.batch_size
-        )
-    else:
-        payload = sync_state()
+    try:
+        if args.command == "drain":
+            payload: dict[str, Any] = drain_settled_snapshots(
+                keep_hours=args.keep_hours, batch_size=args.batch_size
+            )
+        else:
+            payload = sync_state()
+    except ControlPlaneStorageError as exc:
+        parser.exit(2, f"{exc}\n")
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     return 0
 

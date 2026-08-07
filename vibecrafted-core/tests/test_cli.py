@@ -396,11 +396,7 @@ def test_version_reads_installed_package_never_delegates_to_deck(
     # inside a checkout it reports that checkout's version, not the installed one).
     # Make any deck subprocess fail loudly so a regression that re-delegates
     # `--version` cannot pass silently.
-    expected = (
-        (Path(__file__).resolve().parents[2] / "VERSION")
-        .read_text(encoding="utf-8")
-        .strip()
-    )
+    from vibecrafted_core import __version__ as expected
 
     def _no_deck(*_args, **_kwargs):
         raise AssertionError("--version must not shell out to the deck")
@@ -468,6 +464,22 @@ def test_root_cli_launch_missing_work_prints_friendly_error(
     assert "error: Launch requires either --prompt text or --file path." in captured.err
     assert "vibecrafted implement claude --prompt 'what to do'" in captured.err
     assert "vibecrafted implement claude --file /path/to/brief.md" in captured.err
+
+
+def test_root_cli_missing_file_fails_before_launch(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    def fail_launch(_spec, _source_dir):
+        raise AssertionError("launch_workflow should not run for a missing file")
+
+    monkeypatch.setattr(cli, "launch_workflow", fail_launch)
+    missing = tmp_path / "missing-brief.md"
+
+    assert cli.main(["implement", "codex", "--file", str(missing)]) == 2
+    assert (
+        f"Prompt file does not exist or is not a file: {missing}"
+        in capsys.readouterr().err
+    )
 
 
 def test_root_cli_prune_without_work_uses_discovery_prompt(monkeypatch, capsys) -> None:
@@ -563,6 +575,20 @@ def test_root_cli_prints_full_launch_receipt(monkeypatch, capsys) -> None:
         "await (ARM NOW, supervisor-side): vibecrafted codex await --run-id impl-260613-145127-33000"
         in out
     )
+
+
+def test_blocked_launch_receipt_prints_reasons_inline(capsys) -> None:
+    payload = _accepted_launch_payload()
+    payload.update(
+        {
+            "status": "blocked",
+            "reasons": ["Foundation authority is unbound"],
+        }
+    )
+
+    cli._print_launch_receipt(payload)
+
+    assert "reasons:    Foundation authority is unbound" in capsys.readouterr().out
 
 
 def test_root_cli_agent_observe_accepts_receipt_command(monkeypatch, capsys) -> None:
@@ -954,6 +980,7 @@ def test_apply_live_liveness_flags_dead_launcher() -> None:
         {"launcher_pid": 999999, "liveness": "heartbeat", "state": "process_spawned"}
     )
     assert dead["liveness"] == "pid_gone"
+    assert "not yet reconciled" in dead["liveness_note"]
 
     alive = cli._apply_live_liveness(
         {

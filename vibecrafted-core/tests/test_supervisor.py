@@ -278,6 +278,33 @@ def test_finish_meta_python_owns_terminal_state(tmp_path: Path) -> None:
     assert payload["completed_at"] == payload["updated_at"]
 
 
+def test_finish_meta_emits_terminal_lifecycle_event(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    meta = tmp_path / "shell.meta.json"
+    meta.write_text(
+        json.dumps(
+            {
+                "run_id": "shell-finish-001",
+                "status": "running",
+                "root": str(tmp_path),
+                "agent": "codex",
+                "skill_code": "impl",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    finish_meta(meta, "completed", 0)
+
+    events = control_plane.read_event_tail(10)
+    terminal = next(event for event in events if event["run_id"] == "shell-finish-001")
+    assert terminal["kind"] == "lifecycle:completed"
+    assert terminal["payload"]["liveness"] == "terminal"
+
+
 def test_finalize_artifacts_maps_junie_json_stream_receipt(tmp_path: Path) -> None:
     report = tmp_path / "junie.md"
     transcript = tmp_path / "junie.transcript.log"

@@ -565,12 +565,14 @@ class DispatchSupervisor:
             return ""
         match = re.search(
             r"(?mi)^(?:commit|commit_sha|sha|head_sha):"
-            r"\s*['\"]?([0-9a-f]{7,40})['\"]?\s*$",
+            r"\s*(?P<quote>[`'\"]?)(?P<sha>[0-9a-f]{7,40})(?P=quote)\s*$",
             report_text,
         )
         if match is None:
             return ""
-        resolved = self._git(["rev-parse", "--verify", f"{match.group(1)}^{{commit}}"])
+        resolved = self._git(
+            ["rev-parse", "--verify", f"{match.group('sha')}^{{commit}}"]
+        )
         if not resolved or not self._git_ok(
             ["merge-base", "--is-ancestor", resolved, "HEAD"]
         ):
