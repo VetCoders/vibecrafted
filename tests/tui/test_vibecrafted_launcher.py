@@ -1565,6 +1565,18 @@ def test_autonomous_delivery_skills_route_to_core_async_launcher(
             ["codex", "agy", "--prompt", "Check Codescribe"],
             ["research", "codex", "agy", "--prompt", "Check Codescribe"],
         ),
+        (
+            ["trio", "claude", "codex", "agy", "--prompt", "Check Codescribe"],
+            [
+                "research",
+                "trio",
+                "claude",
+                "codex",
+                "agy",
+                "--prompt",
+                "Check Codescribe",
+            ],
+        ),
     ],
 )
 def test_research_preserves_optional_variadic_agents_for_core_parser(

@@ -259,7 +259,9 @@ WORKFLOW_HELP: dict[str, WorkflowHelp] = {
         (
             'vibecrafted research --prompt "Find the strongest runtime design"',
             "vc-research codex agy --file /path/to/research-plan.md",
+            'vibecrafted research trio claude codex agy --prompt "Compare independent evidence"',
         ),
+        ("uno|duo|trio declare an exact lane count and require that many agents.",),
     ),
     "review": WorkflowHelp(
         "Bounded PR, branch, commit-range, or artifact-pack review with findings-first output.",
@@ -436,6 +438,7 @@ def _usage_lines(topic: str) -> list[str]:
     if topic == "research":
         return [
             "  vibecrafted research [agents...] [flags]",
+            "  vibecrafted research <uno|duo|trio> <agents...> [flags]",
             "  vc-research [agents...] [flags]",
         ]
     if topic == "paste":

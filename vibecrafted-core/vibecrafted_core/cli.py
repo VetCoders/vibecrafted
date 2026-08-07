@@ -33,6 +33,7 @@ from .workflow import (
 )
 
 AGENTS = {"claude", "codex", "agy", "junie", "grok", "swarm"}
+RESEARCH_ARITY = {"uno": 1, "duo": 2, "trio": 3}
 LAUNCHERS = (
     "audit",
     "decorate",
@@ -91,6 +92,31 @@ TERMINAL_STATES = {
 _INSTALLER_LEASE_FD_ENV = "VIBECRAFTED_INSTALL_LEASE_FD"
 _INSTALLER_LOCK_NAME = ".vibecrafted-install.lock"
 _EX_TEMPFAIL = 75
+
+
+def _normalize_research_arity_args(args: Sequence[str]) -> list[str]:
+    """Expand the stable uno/duo/trio contract before argparse sees agents."""
+    normalized = list(args)
+    if len(normalized) < 2 or normalized[0] != "research":
+        return normalized
+    keyword = normalized[1]
+    expected = RESEARCH_ARITY.get(keyword)
+    if expected is None:
+        return normalized
+
+    agents: list[str] = []
+    cursor = 2
+    while cursor < len(normalized) and not normalized[cursor].startswith("-"):
+        agents.append(normalized[cursor])
+        cursor += 1
+    if len(agents) != expected:
+        raise ValueError(
+            f"{keyword} expects exactly {expected} agent(s), got {len(agents)}"
+        )
+    unsupported = [agent for agent in agents if agent not in AGENTS - {"swarm"}]
+    if unsupported:
+        raise ValueError(f"Unsupported research agent: {unsupported[0]}")
+    return ["research", *agents, *normalized[cursor:]]
 
 
 def _installer_lease_pass_fds(tools_home: Path) -> tuple[int, ...]:
@@ -932,6 +958,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if help_requested:
             print(render_workflow_help(raw_args[0]), end="")
             return 0
+
+    try:
+        raw_args = _normalize_research_arity_args(raw_args)
+    except ValueError as exc:
+        print(f"vibecrafted research: {exc}", file=sys.stderr)
+        return 2
 
     python_commands = {
         "acp",
