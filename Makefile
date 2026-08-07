@@ -250,6 +250,11 @@ install-tools-held:
 		entrypoint_shebang="$$(sed -n '1p' "$$entrypoint_path")"; \
 		case "$$entrypoint_shebang" in \
 			"#!$$entrypoint_tool_root/bin/python"|"#!$$entrypoint_tool_root/bin/python3") ;; \
+			"#!/bin/sh") \
+				if ! sed -n '2p' "$$entrypoint_path" | grep -F "$$entrypoint_tool_root/bin/python" >/dev/null; then \
+					echo "[install-tools] FATAL: uv tool entrypoint $$entrypoint is not owned by the uv interpreter: $$entrypoint_shebang" >&2; \
+					exit 1; \
+				fi ;; \
 			*) echo "[install-tools] FATAL: uv tool entrypoint $$entrypoint is not owned by the uv interpreter: $$entrypoint_shebang" >&2; exit 1 ;; \
 		esac; \
 	done; \
