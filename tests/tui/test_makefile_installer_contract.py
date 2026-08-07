@@ -608,7 +608,7 @@ def test_foundations_product_binaries_are_validation_only() -> None:
         1,
     )[0]
     aicx_block = text.split("install_aicx() {", 1)[1].split(
-        "# ---------------------------------------------------------------------------\n# vc-frame installer",
+        "# ---------------------------------------------------------------------------\n# vc-frame — product frame binary",
         1,
     )[0]
 
@@ -637,6 +637,15 @@ def test_foundations_product_binaries_are_validation_only() -> None:
         "will not guess crates, npm packages, or local checkout paths" in loctree_block
     )
     assert "will not guess crates, npm packages, or local checkout paths" in aicx_block
+
+
+def test_foundations_never_overwrite_uv_owned_python_entrypoints() -> None:
+    text = (REPO_ROOT / "scripts" / "install-foundations.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "install_vc_wrappers" not in text
+    assert 'for src in "$source_bin"/vc-*' not in text
 
 
 def test_setup_installer_uses_canonical_foundation_action_only() -> None:
@@ -770,6 +779,12 @@ def test_make_install_verifies_server_supervisor_entrypoint() -> None:
     ].split("\ndef _symlink_target(", 1)[0]
 
     assert "vc-server-supervisor" in install_tools_block
+    assert "python_entrypoints=" in install_tools_block
+    assert "PYTHON_ENTRYPOINT_LAUNCHERS" in install_tools_block
+    assert "is not owned by the uv interpreter" in install_tools_block
+    assert "vibecrafted vc-workflow vc-guardian vc-server-supervisor" in (
+        install_tools_block
+    )
     assert "expected executable entrypoint" in install_tools_block
     assert '"$$resolved" --help' in install_tools_block
     # --color never is load-bearing: FORCE_COLOR-style env makes `uv tool dir`

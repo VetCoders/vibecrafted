@@ -495,24 +495,6 @@ ensure_prefix() {
   esac
 }
 
-install_vc_wrappers() {
-  local source_bin="$SOURCE_DIR/bin"
-  local name src
-  [[ -d "$source_bin" ]] || return 0
-  mkdir -p "$LAUNCHER_PREFIX"
-  for src in "$source_bin"/vc-* "$source_bin"/vibecrafted-resume; do
-    [[ -f "$src" ]] || continue
-    name="$(basename "$src")"
-    if (( CHECK_ONLY )); then
-      info "Would install $name -> $LAUNCHER_PREFIX/$name"
-      continue
-    fi
-    cp "$src" "$LAUNCHER_PREFIX/$name"
-    chmod +x "$LAUNCHER_PREFIX/$name"
-    ok "Installed $name -> $LAUNCHER_PREFIX/$name"
-  done
-}
-
 install_loctree() {
   loctree_suite_ready() {
     local missing=() bin
@@ -1212,10 +1194,10 @@ for target in "${TARGETS[@]}"; do
   echo
 done
 
-if (( exit_code == 0 )) && (( !CHECK_ONLY )); then
-  install_vc_wrappers || exit_code=1
-fi
-
+# Python ``vc-*`` launchers are owned exclusively by ``uv tool install`` in
+# Makefile::install-tools-held. Copying the checkout's ``bin/vc-*`` files here
+# used to follow ~/.local/bin symlinks and overwrite the uv console scripts in
+# place, replacing their venv shebang with ``#!/usr/bin/env python3``.
 if (( exit_code == 0 )) && (( !CHECK_ONLY )); then
   printf '\033[1mFoundation install complete.\033[0m\n'
   # Remind about PATH
