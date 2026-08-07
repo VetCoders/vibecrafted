@@ -18,8 +18,15 @@ set -euo pipefail
 #   bash scripts/install-foundations.sh --check           # dry-run: show what would install
 #   bash scripts/install-foundations.sh --prefix /usr/local  # custom install prefix
 #
-# Product spine (audit SF-2): vc-frame is no longer validate-only. Missing binary
-# fails the foundations run so the installer cannot "succeed" without a cockpit.
+# Product spine (audit SF-2): vc-frame is no longer validate-only. The gate is
+# COCKPIT READY, not PATH-only:
+#   1. binary exists AND runs
+#   2. product identity (vc-frame, not stock zellij)
+#   3. live config projection (frontier or view) with default_layout / Start here
+#   4. operator scripts (at least vc-composer.sh) install-managed or present
+#   5. launch door on PATH (vc-start and/or vibecrafted)
+# Missing any of the hard checks fails foundations so install cannot "succeed"
+# without a rideable operator surface.
 # ---------------------------------------------------------------------------
 
 PRVIEW_CRATE="prview"
@@ -189,6 +196,152 @@ binary_runs() {
   local bin="$1"
   has_cmd "$bin" || return 1
   "$bin" --version >/dev/null 2>&1 || "$bin" --help >/dev/null 2>&1
+}
+
+# Live config dirs the product actually reads (frontier first — VC_FRAME_CONFIG_DIR).
+_vcframe_config_roots() {
+  local xdg="${XDG_CONFIG_HOME:-$HOME/.config}"
+  printf '%s\n' \
+    "${VC_FRAME_CONFIG_DIR:-}" \
+    "$xdg/vetcoders/frontier/vc-frame" \
+    "$xdg/vc-frame"
+}
+
+# COCKPIT READY — hard product spine after binary is on PATH.
+# Prints findings; returns 0 only when the operator can ride.
+verify_vcframe_cockpit() {
+  local bin cfg_root cfg layout composer door fails=0
+  local ver=""
+
+  if ! has_cmd vc-frame; then
+    warn "cockpit: vc-frame not on PATH"
+    return 1
+  fi
+  bin="$(command -v vc-frame)"
+
+  if ! binary_runs vc-frame; then
+    warn "cockpit: vc-frame at $bin does not run (--version/--help failed)"
+    return 1
+  fi
+
+  ver="$(vc-frame --version 2>/dev/null | head -1 || true)"
+  # Product identity: refuse stock zellij masquerading as the frame.
+  if printf '%s' "$ver" | grep -qiE '^zellij([[:space:]]|$)' \
+    && ! printf '%s' "$ver" | grep -qi 'vc-frame'; then
+    warn "cockpit: binary looks like stock zellij ($ver), not product vc-frame"
+    fails=1
+  fi
+  if ! printf '%s' "$ver" | grep -qiE 'vc-frame|zellij'; then
+    # Unknown version string — still require build-info or setup to respond.
+    if ! vc-frame --build-info >/dev/null 2>&1 && ! vc-frame setup --check >/dev/null 2>&1; then
+      warn "cockpit: vc-frame produces no version/build-info/setup signal"
+      fails=1
+    fi
+  fi
+  ok "cockpit: binary runs ($ver) @ $bin"
+
+  cfg_root=""
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    if [[ -f "$candidate/config.kdl" ]]; then
+      cfg_root="$candidate"
+      break
+    fi
+  done < <(_vcframe_config_roots)
+
+  if [[ -z "$cfg_root" ]]; then
+    warn "cockpit: no live config.kdl under frontier or ~/.config/vc-frame"
+    warn "  fix: vibecrafted config install   # or checkout stage_vc_frame_config"
+    fails=1
+  else
+    cfg="$cfg_root/config.kdl"
+    ok "cockpit: config @ $cfg"
+    if ! grep -qE 'default_layout[[:space:]]+"?(vibecrafted|operator)' "$cfg" 2>/dev/null \
+      && ! grep -q 'default_layout' "$cfg" 2>/dev/null; then
+      warn "cockpit: config has no default_layout (Start here path unclear)"
+      fails=1
+    fi
+    # Super/Cmd product contract (install projection must not leave hollow copy).
+    if grep -q 'support_kitty_keyboard_protocol[[:space:]]*false' "$cfg" 2>/dev/null; then
+      warn "cockpit: support_kitty_keyboard_protocol is false — Super/Cmd chords die"
+      fails=1
+    fi
+    if ! grep -q 'bind "Super' "$cfg" 2>/dev/null; then
+      warn "cockpit: no Super/* keybinds in live config (Cmd switcher missing)"
+      fails=1
+    fi
+  fi
+
+  # Start here layout: operator.kdl or built-in default_layout vibecrafted.
+  layout=""
+  if [[ -n "$cfg_root" ]]; then
+    for candidate in \
+      "$cfg_root/layouts/operator.kdl" \
+      "$cfg_root/layouts/vibecrafted.kdl"
+    do
+      if [[ -f "$candidate" ]] && grep -q 'Start here' "$candidate" 2>/dev/null; then
+        layout="$candidate"
+        break
+      fi
+    done
+  fi
+  if [[ -n "$layout" ]]; then
+    ok "cockpit: Start here layout @ $layout"
+  else
+    # Built-in default_layout vibecrafted may carry Start here without a file copy.
+    if [[ -n "$cfg_root" ]] && grep -qE 'default_layout[[:space:]]+"vibecrafted"' "$cfg_root/config.kdl" 2>/dev/null; then
+      ok "cockpit: Start here via built-in default_layout vibecrafted"
+    else
+      warn "cockpit: no Start here layout file and default_layout is not vibecrafted"
+      fails=1
+    fi
+  fi
+
+  composer=""
+  if [[ -n "$cfg_root" ]]; then
+    for candidate in \
+      "$cfg_root/vc-composer.sh" \
+      "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier/vc-frame/vc-composer.sh" \
+      "${XDG_CONFIG_HOME:-$HOME/.config}/vc-frame/vc-composer.sh"
+    do
+      if [[ -x "$candidate" || -L "$candidate" ]]; then
+        # Prefer non-tiny STALE stubs (legacy 606B antique).
+        if [[ -f "$candidate" ]] && [[ "$(wc -c <"$candidate" | tr -d ' ')" -lt 1500 ]]; then
+          warn "cockpit: $candidate looks like a STALE stub (<1.5KB) — re-run config install"
+          fails=1
+          continue
+        fi
+        composer="$candidate"
+        break
+      fi
+    done
+  fi
+  if [[ -n "$composer" ]]; then
+    ok "cockpit: operator composer @ $composer"
+  else
+    warn "cockpit: vc-composer.sh missing/unusable on live config path"
+    fails=1
+  fi
+
+  door=""
+  if has_cmd vc-start; then
+    door="vc-start"
+  elif has_cmd vibecrafted; then
+    door="vibecrafted start"
+  fi
+  if [[ -n "$door" ]]; then
+    ok "cockpit: launch door on PATH ($door)"
+  else
+    warn "cockpit: neither vc-start nor vibecrafted on PATH — no launch door"
+    fails=1
+  fi
+
+  if (( fails )); then
+    warn "cockpit: NOT READY — installer must not claim success without the above"
+    return 1
+  fi
+  ok "cockpit: READY (binary + identity + config + Start here + scripts + door)"
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -526,63 +679,94 @@ _vcframe_run_remote_or_local_installer() {
 }
 
 install_vcframe() {
+  local sibling local_install_sh
+  local need_binary=0
+
   if binary_runs vc-frame; then
-    ok "vc-frame already installed: $(command -v vc-frame)"
-    return 0
+    ok "vc-frame binary present: $(command -v vc-frame)"
+  else
+    need_binary=1
   fi
 
-  local sibling local_install_sh
+  if (( need_binary )); then
+    sibling="$(_vcframe_sibling_root 2>/dev/null || true)"
+    if [[ -n "$sibling" ]]; then
+      if (( CHECK_ONLY )); then
+        info "Would install vc-frame from sibling checkout:"
+        info "  make -C $sibling install"
+      else
+        info "Installing vc-frame from sibling Living Tree: $sibling"
+        if make -C "$sibling" --no-print-directory install; then
+          if binary_runs vc-frame; then
+            ok "vc-frame installed from checkout: $(command -v vc-frame)"
+            need_binary=0
+          else
+            warn "make install finished but vc-frame still not runnable on PATH"
+          fi
+        else
+          warn "sibling make install failed; trying tools/install.sh / release"
+        fi
 
-  sibling="$(_vcframe_sibling_root 2>/dev/null || true)"
-  if [[ -n "$sibling" ]]; then
-    if (( CHECK_ONLY )); then
-      info "Would install vc-frame from sibling checkout:"
-      info "  make -C $sibling install"
-      return 0
-    fi
-    info "Installing vc-frame from sibling Living Tree: $sibling"
-    if make -C "$sibling" --no-print-directory install; then
-      # make install links into ~/.cargo/bin + ~/.local/bin; ensure launcher PATH
-      if binary_runs vc-frame; then
-        ok "vc-frame installed from checkout: $(command -v vc-frame)"
-        return 0
+        if (( need_binary )); then
+          local_install_sh="$sibling/tools/install.sh"
+          if [[ -f "$local_install_sh" ]]; then
+            if _vcframe_run_remote_or_local_installer "$local_install_sh" "file" \
+              && binary_runs vc-frame; then
+              ok "vc-frame installed via tools/install.sh: $(command -v vc-frame)"
+              need_binary=0
+            fi
+          fi
+        fi
       fi
-      warn "make install finished but vc-frame still not runnable on PATH"
-    else
-      warn "sibling make install failed; trying tools/install.sh / release"
     fi
 
-    local_install_sh="$sibling/tools/install.sh"
-    if [[ -f "$local_install_sh" ]]; then
-      if _vcframe_run_remote_or_local_installer "$local_install_sh" "file" \
-        && binary_runs vc-frame; then
-        ok "vc-frame installed via tools/install.sh: $(command -v vc-frame)"
-        return 0
+    if (( need_binary )); then
+      if (( CHECK_ONLY )); then
+        info "Would install vc-frame from release installer:"
+        info "  curl -fsSL $VCFRAME_INSTALL_URL | INSTALL_DIR=$LAUNCHER_PREFIX VCFRAME_REQUIRE_GPG=$VCFRAME_REQUIRE_GPG sh"
+      else
+        info "Fetching vc-frame via $VCFRAME_INSTALL_URL"
+        if _vcframe_run_remote_or_local_installer "$VCFRAME_INSTALL_URL" "url" \
+          && binary_runs vc-frame; then
+          ok "vc-frame installed from release: $(command -v vc-frame)"
+          need_binary=0
+        fi
       fi
     fi
+  fi
+
+  if (( need_binary )) && ! (( CHECK_ONLY )); then
+    warn "vc-frame binary missing — cockpit cannot exist without it."
+    warn "Manual paths:"
+    sibling="$(_vcframe_sibling_root 2>/dev/null || true)"
+    if [[ -n "$sibling" ]]; then
+      warn "  make -C $sibling install"
+    fi
+    warn "  curl -fsSL $VCFRAME_INSTALL_URL | INSTALL_DIR=$LAUNCHER_PREFIX VCFRAME_REQUIRE_GPG=$VCFRAME_REQUIRE_GPG sh"
+    warn "  (or set VIBECRAFTED_VC_FRAME_SOURCE to a checkout and rerun)"
+    return 1
   fi
 
   if (( CHECK_ONLY )); then
-    info "Would install vc-frame from release installer:"
-    info "  curl -fsSL $VCFRAME_INSTALL_URL | INSTALL_DIR=$LAUNCHER_PREFIX VCFRAME_REQUIRE_GPG=$VCFRAME_REQUIRE_GPG sh"
+    # Dry-run still reports cockpit gaps against current machine.
+    verify_vcframe_cockpit || warn "cockpit gaps present (check-only; install would fail until fixed)"
     return 0
   fi
 
-  info "Fetching vc-frame via $VCFRAME_INSTALL_URL"
-  if _vcframe_run_remote_or_local_installer "$VCFRAME_INSTALL_URL" "url" \
-    && binary_runs vc-frame; then
-    ok "vc-frame installed from release: $(command -v vc-frame)"
-    return 0
+  # Best-effort projection before cockpit verify (binary alone is not enough).
+  if command -v vibecrafted >/dev/null 2>&1 \
+    && vibecrafted help 2>/dev/null | grep -q 'config'; then
+    vibecrafted config install 2>/dev/null || true
+  elif [[ -f "$SOURCE_DIR/vibecrafted-core/vibecrafted_core/vc_frame_delivery.py" ]]; then
+    (
+      cd "$SOURCE_DIR"
+      PYTHONPATH="$SOURCE_DIR/vibecrafted-core${PYTHONPATH:+:$PYTHONPATH}" \
+        python3 -c "from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config; stage_vc_frame_config()" \
+        >/dev/null 2>&1
+    ) || true
   fi
 
-  warn "vc-frame is required for the operator cockpit (Start here / sessions rail)."
-  warn "Could not install automatically. Manual paths:"
-  if [[ -n "$sibling" ]]; then
-    warn "  make -C $sibling install"
-  fi
-  warn "  curl -fsSL $VCFRAME_INSTALL_URL | INSTALL_DIR=$LAUNCHER_PREFIX VCFRAME_REQUIRE_GPG=$VCFRAME_REQUIRE_GPG sh"
-  warn "  (or set VIBECRAFTED_VC_FRAME_SOURCE to a checkout and rerun)"
-  return 1
+  verify_vcframe_cockpit
 }
 
 # ---------------------------------------------------------------------------

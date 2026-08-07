@@ -494,7 +494,11 @@ FOUNDATIONS: list[Foundation] = [
         description="VC Frame multi-agent terminal workspace surface",
         channels=["canonical"],
         packages={
-            "canonical": "curl -fsSL https://vibecrafted.io/install.sh | bash",
+            # Frame binary installer — not the framework orchestrator.
+            "canonical": (
+                "curl -fsSL https://github.com/vetcoders/vc-frame"
+                "/releases/latest/download/install.sh | sh"
+            ),
         },
         verify_cmd="vc-frame --version",
         required=True,
