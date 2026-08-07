@@ -4115,8 +4115,16 @@ def _runtime_service_pair_state(
     if (
         _RUNTIME_SERVICE_COMMAND_DEADLINE.get() is not None
         and "Supervision: LAUNCHD" in result.stdout
-        and "Server: PID-MISMATCH" in result.stdout
-        and "Guardian: STOPPED" in result.stdout
+        and (
+            (
+                "Server: PID-MISMATCH" in result.stdout
+                and "Guardian: STOPPED" in result.stdout
+            )
+            or (
+                "Server: RUNNING" in result.stdout
+                and "Guardian: STOPPED" in result.stdout
+            )
+        )
     ):
         raise _RuntimeServiceTransition(
             "runtime server identity is still converging during bounded activation "

@@ -2862,14 +2862,27 @@ def test_runtime_service_probe_honors_transaction_deadline(
     assert time.monotonic() - started < 1
 
 
-def test_runtime_pair_pid_mismatch_retries_only_during_bounded_activation(
+@pytest.mark.parametrize(
+    "pair_lines",
+    (
+        (
+            "Server: PID-MISMATCH (43426 is live but identity is unverified)\n"
+            "Guardian: STOPPED\n"
+        ),
+        (
+            "Server: RUNNING (PID 92141, listening on http://100.82.232.70:3025)\n"
+            "Guardian: STOPPED\n"
+        ),
+    ),
+)
+def test_partial_runtime_pair_retries_only_during_bounded_activation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    pair_lines: str,
 ) -> None:
     output = (
         "Supervision: LAUNCHD (installed=yes, loaded=yes, supervisor PID 43242)\n"
-        "Server: PID-MISMATCH (43426 is live but identity is unverified)\n"
-        "Guardian: STOPPED\n"
+        + pair_lines
     )
     monkeypatch.setattr(
         installer,
