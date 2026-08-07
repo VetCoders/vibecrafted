@@ -769,6 +769,62 @@ install_vcframe() {
   verify_vcframe_cockpit
 }
 
+
+# Product entry wrapper: ~/.local/bin/vc-frame → product choke + real binary.
+install_vc_frame_product_wrapper() {
+  local real dest wrapper_src cargo_bin
+  dest="$LAUNCHER_PREFIX/vc-frame"
+  wrapper_src="$SOURCE_DIR/scripts/vc-frame-product-entry.sh"
+  cargo_bin="${HOME}/.cargo/bin/vc-frame"
+
+  if [[ ! -f "$wrapper_src" ]]; then
+    warn "product entry wrapper source missing: $wrapper_src"
+    return 0
+  fi
+
+  # Locate real Mach-O/ELF binary (not a shell wrapper).
+  real=""
+  if [[ -n "${VIBECRAFTED_VC_FRAME_BIN:-}" && -x "${VIBECRAFTED_VC_FRAME_BIN}" ]]; then
+    real="$VIBECRAFTED_VC_FRAME_BIN"
+  elif [[ -x "$cargo_bin" ]] && ! head -c 2 "$cargo_bin" 2>/dev/null | grep -q '#!'; then
+    real="$cargo_bin"
+  elif [[ -x "$dest" ]] && ! head -c 2 "$dest" 2>/dev/null | grep -q '#!'; then
+    # Move real binary aside once.
+    mkdir -p "$LAUNCHER_PREFIX"
+    if [[ ! -e "$LAUNCHER_PREFIX/vc-frame.real" ]]; then
+      mv "$dest" "$LAUNCHER_PREFIX/vc-frame.real"
+    fi
+    real="$LAUNCHER_PREFIX/vc-frame.real"
+  elif [[ -x "$LAUNCHER_PREFIX/vc-frame.real" ]]; then
+    real="$LAUNCHER_PREFIX/vc-frame.real"
+  fi
+
+  if [[ -z "$real" ]]; then
+    warn "could not locate real vc-frame binary for product wrapper"
+    return 0
+  fi
+
+  if (( CHECK_ONLY )); then
+    info "Would install product vc-frame entry wrapper -> $dest (real=$real)"
+    return 0
+  fi
+
+  mkdir -p "$LAUNCHER_PREFIX"
+  if [[ -x "$dest" ]] && ! head -c 2 "$dest" 2>/dev/null | grep -q '#!'; then
+    if [[ ! -e "$LAUNCHER_PREFIX/vc-frame.real" ]]; then
+      cp -p "$dest" "$LAUNCHER_PREFIX/vc-frame.real" 2>/dev/null || mv "$dest" "$LAUNCHER_PREFIX/vc-frame.real"
+      real="$LAUNCHER_PREFIX/vc-frame.real"
+    fi
+  fi
+  install -m 0755 "$wrapper_src" "$dest"
+  # Ensure wrapper can find real bin via env default path.
+  if [[ -n "$real" && "$real" != "$LAUNCHER_PREFIX/vc-frame.real" && ! -e "$LAUNCHER_PREFIX/vc-frame.real" ]]; then
+    ln -sfn "$real" "$LAUNCHER_PREFIX/vc-frame.real" 2>/dev/null || true
+  fi
+  ok "product vc-frame entry installed: $dest (real=$real)"
+}
+
+
 # ---------------------------------------------------------------------------
 # Agent CLI installer
 # ---------------------------------------------------------------------------
@@ -1058,7 +1114,10 @@ for target in "${TARGETS[@]}"; do
     aicx)     install_aicx     || foundation_optional_fail aicx ;;
     # vc-frame is the operator cockpit substrate — hard fail on product path
     # (no more validate-only loop that re-points at vibecrafted install.sh).
-    vc-frame) install_vcframe  || exit_code=1 ;;
+    vc-frame)
+      install_vcframe  || exit_code=1
+      install_vc_frame_product_wrapper || true
+      ;;
     agents)
       if ! install_agents; then
         if (( AGENTS_REQUIRED )); then
