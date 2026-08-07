@@ -111,7 +111,11 @@ jobs:
           # users); without it here doctor reports INSTALLED_NOT_ON_PATH.
           export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.local/share/vibecrafted/bin:$PATH"
           if command -v vibecrafted >/dev/null 2>&1; then
-            vibecrafted doctor
+            # Neutral cwd: the deck resolves core via `python -m`, and a
+            # checkout cwd shadows the installed (stamped) package tree with
+            # the living tree — the launcher check rightly flags that as
+            # unstamped. Real users run doctor from anywhere; so does CI.
+            (cd "${RUNNER_TEMP:-/tmp}" && vibecrafted doctor)
           else
             # Fallback to the in-repo Makefile target if the staged CLI
             # isn't on PATH yet (smoke uses the repo source tree).
@@ -215,6 +219,12 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+          # actions/checkout registers safe.directory only in a TEMPORARY git
+          # config (under an overridden HOME); this step's git calls run with
+          # the job HOME and hit "dubious ownership" on the mounted workspace,
+          # which breaks version stamping (3.7.0+UNSTAMPED) and the generation
+          # manifest. Register it persistently for the container user.
+          git config --global --add safe.directory "$(pwd)"
           make install
 
       - name: Run vibecrafted doctor
@@ -222,7 +232,11 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.local/share/vibecrafted/bin:$PATH"
           if command -v vibecrafted >/dev/null 2>&1; then
-            vibecrafted doctor
+            # Neutral cwd: the deck resolves core via `python -m`, and a
+            # checkout cwd shadows the installed (stamped) package tree with
+            # the living tree — the launcher check rightly flags that as
+            # unstamped. Real users run doctor from anywhere; so does CI.
+            (cd "${RUNNER_TEMP:-/tmp}" && vibecrafted doctor)
           else
             make doctor
           fi
