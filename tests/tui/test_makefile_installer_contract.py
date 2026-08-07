@@ -782,6 +782,8 @@ def test_make_install_verifies_server_supervisor_entrypoint() -> None:
     assert "python_entrypoints=" in install_tools_block
     assert "PYTHON_ENTRYPOINT_LAUNCHERS" in install_tools_block
     assert "is not owned by the uv interpreter" in install_tools_block
+    assert 'if [ "$$entrypoint" = "vibecrafted-mcp" ]' in install_tools_block
+    assert "$${tool_root%/vibecrafted}/vibecrafted-mcp" in install_tools_block
     assert "vibecrafted vc-workflow vc-guardian vc-server-supervisor" in (
         install_tools_block
     )

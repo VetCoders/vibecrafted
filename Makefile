@@ -234,14 +234,18 @@ install-tools-held:
 	fi; \
 	python_entrypoints="$$($(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; print(" ".join(v.PYTHON_ENTRYPOINT_LAUNCHERS))')"; \
 	for entrypoint in $$python_entrypoints; do \
-		entrypoint_path="$$tool_root/bin/$$entrypoint"; \
+		entrypoint_tool_root="$$tool_root"; \
+		if [ "$$entrypoint" = "vibecrafted-mcp" ]; then \
+			entrypoint_tool_root="$${tool_root%/vibecrafted}/vibecrafted-mcp"; \
+		fi; \
+		entrypoint_path="$$entrypoint_tool_root/bin/$$entrypoint"; \
 		if [ ! -x "$$entrypoint_path" ]; then \
 			echo "[install-tools] FATAL: uv tool entrypoint $$entrypoint is missing or not executable" >&2; \
 			exit 1; \
 		fi; \
 		entrypoint_shebang="$$(sed -n '1p' "$$entrypoint_path")"; \
 		case "$$entrypoint_shebang" in \
-			"#!$$tool_root/bin/python"|"#!$$tool_root/bin/python3") ;; \
+			"#!$$entrypoint_tool_root/bin/python"|"#!$$entrypoint_tool_root/bin/python3") ;; \
 			*) echo "[install-tools] FATAL: uv tool entrypoint $$entrypoint is not owned by the uv interpreter: $$entrypoint_shebang" >&2; exit 1 ;; \
 		esac; \
 	done; \
