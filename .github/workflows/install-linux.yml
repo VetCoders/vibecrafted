@@ -105,8 +105,11 @@ jobs:
         run: |
           set -euo pipefail
           # PATH adjustments mirror what the install.sh interactive path does
-          # — make sure the staged CLI is visible to this step.
-          export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+          # — make sure the staged CLI is visible to this step. Foundations
+          # (loct/aicx/…) install into the runtime bin
+          # (~/.local/share/vibecrafted/bin, wired by vc-start for real
+          # users); without it here doctor reports INSTALLED_NOT_ON_PATH.
+          export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.local/share/vibecrafted/bin:$PATH"
           if command -v vibecrafted >/dev/null 2>&1; then
             vibecrafted doctor
           else
@@ -217,7 +220,7 @@ jobs:
       - name: Run vibecrafted doctor
         run: |
           set -euo pipefail
-          export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+          export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.local/share/vibecrafted/bin:$PATH"
           if command -v vibecrafted >/dev/null 2>&1; then
             vibecrafted doctor
           else
@@ -227,13 +230,13 @@ jobs:
       - name: Run install.sh / install.ps1 host smoke
         run: |
           set -euo pipefail
-          export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+          export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.local/share/vibecrafted/bin:$PATH"
           make test-install
 
       - name: Run skill-loader smoke
         run: |
           set -euo pipefail
-          export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+          export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.local/share/vibecrafted/bin:$PATH"
           make test-skills
 
   # ---------------------------------------------------------------------------
