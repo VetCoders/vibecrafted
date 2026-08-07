@@ -165,9 +165,12 @@ install-bundle-tools:
 	@set -eu; \
 	case "$(INSTALL_SERVER_SERVICE_POLICY)" in preserve|ensure|isolated) ;; *) echo "[server] INSTALL_SERVER_SERVICE_POLICY must be preserve, ensure, or isolated" >&2; exit 2 ;; esac; \
 	payload=0; \
-	if command -v cargo >/dev/null 2>&1; then \
+	if command -v cargo >/dev/null 2>&1 && command -v cargo-leptos >/dev/null 2>&1; then \
 		$(MAKE) --no-print-directory build-server-release; \
 		payload=1; \
+	elif command -v cargo >/dev/null 2>&1; then \
+		echo "[server] cargo-leptos not found — preserving the installed server payload" >&2; \
+		echo "[server] interactive shell deferred: cargo install cargo-leptos && make install-bundle-tools" >&2; \
 	else \
 		echo "[server] cargo not found — preserving the installed server payload" >&2; \
 	fi; \
