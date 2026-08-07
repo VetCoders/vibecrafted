@@ -113,19 +113,49 @@ plugins {
 }
 
 // ─── Keybindings ────────────────────────────────────────────────────────────────
-// Plain-Ctrl scheme — works on iTerm2 and any legacy terminal, no enhanced
-// keyboard protocol required. Mode switches keep vc-frame's native Ctrl+<letter>
-// (Ctrl+p PANE, Ctrl+t TAB, Ctrl+o SESSION, Ctrl+n direct NewPane, Ctrl+g LOCK,
-// Ctrl+h MOVE, Ctrl+s SCROLL); every other action lives inside its mode.
+// Two layers (product key-contract v3):
+//   1. Super/Cmd — global switcher + Composer. Lives in `shared` so it works
+//      even under LOCK. Requires support_kitty_keyboard_protocol true (above)
+//      and a host terminal that emits CSI-u Super (Alacritty preset ships it).
+//   2. Plain Ctrl — mode switches + in-mode muscle memory. Works on any terminal.
 //
 // The Alt layer is left unbound so macOS Option still types Polish diacritics
 // (ź, ó, ł, ż, ć, ń …) instead of triggering vc-frame actions.
 //
-// History: a Ctrl+Shift+<letter> direct-action layer used to live here. On a
-// terminal without the kitty/CSI-u protocol the Shift bit is dropped from a
-// Ctrl chord, so that whole layer was unreachable. Removed in favour of plain
-// Ctrl. (See support_kitty_keyboard_protocol above.)
+// History: comments used to *promise* Super binds while the body only shipped
+// plain Ctrl — install then projected that hollow promise to frontier, and
+// Cmd chords silently did nothing. Super binds are first-class here.
 keybinds {
+    // Super/Cmd switcher — alive in EVERY mode including LOCK (Super never
+    // collides with pane input). Must stay in `shared`, not shared_except.
+    shared {
+        unbind "Ctrl q"
+        bind "Super Left" { GoToPreviousTab; }
+        bind "Super Right" { GoToNextTab; }
+        bind "Super Up" {
+            MessagePlugin "session-rail" {
+                name "vc_rail_nav"
+                payload "up"
+            };
+        }
+        bind "Super Down" {
+            MessagePlugin "session-rail" {
+                name "vc_rail_nav"
+                payload "down"
+            };
+        }
+        // Command Composer (spec 1.2 §A): Super+e / Cmd+E. Alt+e unbound so
+        // macOS Option types Polish `ę`. Prefers installed vc-composer.sh on
+        // frontier (install must project it — never leave a STALE-FILE there).
+        bind "Super e" {
+            Run "sh" "-c" "if [ -x \"${HOME}/.config/vetcoders/frontier/vc-frame/vc-composer.sh\" ]; then \"${HOME}/.config/vetcoders/frontier/vc-frame/vc-composer.sh\"; elif [ -x \"${HOME}/.config/vc-frame/vc-composer.sh\" ]; then \"${HOME}/.config/vc-frame/vc-composer.sh\"; else f=$(mktemp \"${TMPDIR:-/tmp}/vc-composer.XXXXXX\") || exit 1; ${EDITOR:-vim} -c 'set number' -c 'set laststatus=0' -c 'set nowrap' -c 'set textwidth=0' -c 'set sidescroll=1' -c 'nnoremap <silent> <F2> :set wrap! wrap?<CR>' \"$f\"; if [ -s \"$f\" ]; then vc-frame action toggle-floating-panes; vc-frame action write-chars \"$(cat \"$f\")\"; fi; rm -f -- \"$f\"; fi" {
+                floating true
+                close_on_exit true
+                name "✍ Composer · ⧉ Paste stack"
+            }
+        }
+    }
+
     shared_except "locked" {
         // Free the Alt layer for Polish diacritics.
         unbind "Alt f" "Alt n" "Alt i" "Alt o"
@@ -139,25 +169,24 @@ keybinds {
         // Shift+H/J/K/L directional).
         bind "Ctrl n" { NewPane; }
 
-        // Quick pane-focus navigation straight from Normal mode, no mode
-        // switch. Ctrl+<arrows> instead of the freed Alt layer (Alt is
-        // reserved for Polish diacritics). Any in-pane TUI that itself wants
-        // Ctrl+<arrows> is reachable by locking vc-frame first (Ctrl+g).
-        bind "Ctrl Left" { MoveFocus "Left"; }
-        bind "Ctrl Right" { MoveFocus "Right"; }
-        bind "Ctrl Up" { MoveFocus "Up"; }
-        bind "Ctrl Down" { MoveFocus "Down"; }
-    }
+        // Unlocked muscle-memory lane: Ctrl+arrows mirror the Super switcher
+        // outside LOCK. In LOCK they pass through to the pane.
+        bind "Ctrl Left" { GoToPreviousTab; }
+        bind "Ctrl Right" { GoToNextTab; }
+        bind "Ctrl Up" {
+            MessagePlugin "session-rail" {
+                name "vc_rail_nav"
+                payload "up"
+            };
+        }
+        bind "Ctrl Down" {
+            MessagePlugin "session-rail" {
+                name "vc_rail_nav"
+                payload "down"
+            };
+        }
 
-    // Ctrl+Q = close the focused PANE, never quit the session. Kill the default
-    // `Ctrl q -> Quit` in EVERY mode first (deterministic — a plain override in
-    // shared_except does not reliably beat the default `shared` Quit during
-    // merge), then bind CloseFocus everywhere below. CloseFocus on the last pane
-    // of the last tab exits vc-frame on its own — pane by pane, last one quits.
-    shared {
-        unbind "Ctrl q"
-    }
-    shared_except "locked" {
+        // Ctrl+Q = close the focused PANE, never quit the session.
         bind "Ctrl q" { CloseFocus; SwitchToMode "Normal"; }
     }
 

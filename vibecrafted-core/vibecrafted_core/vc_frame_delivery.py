@@ -1,4 +1,4 @@
-"""Materialize package vc-frame config and wire ~/.config/vc-frame.
+"""Materialize package vc-frame config and wire live config projections.
 
 Delivery contract (plan vcframe-config-delivery):
 - Source: ``vc_frame_config_source()`` (wheel package data or checkout).
@@ -8,10 +8,14 @@ Delivery contract (plan vcframe-config-delivery):
   the published generation.
 - Ownership: config delivery never creates or flips the runtime-owned
   ``vibecrafted-current`` symlink.
-- View: ``$XDG_CONFIG_HOME/vc-frame/{config.kdl,layouts,themes}`` → store-current
-  (or checkout when ``VIBECRAFTED_PREFER_REPO_VC_FRAME=1``).
+- Views (both must stay in lockstep — operator runtime pins frontier first):
+  1. ``$XDG_CONFIG_HOME/vc-frame/{config.kdl,layouts,themes,operator scripts}``
+  2. ``$XDG_CONFIG_HOME/vetcoders/frontier/vc-frame/…`` (``VC_FRAME_CONFIG_DIR``)
 - Stage-time host adaptation: rewrite every shipped zsh entrypoint and select
   an available clipboard command.
+- Operator scripts (Composer / paste-stack / quick-cmd / …) are first-class
+  install artifacts, not hand-copied orphans. STALE-FILE copies under frontier
+  are backed up and re-wired on every delivery pass.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from . import vc_frame_staging as _vc_frame_staging
 from .frontier_assets import vc_frame_config_source
 from .runtime_paths import vibecrafted_tools_home, xdg_config_home
 from .vc_frame_staging import (
+    materialize_vc_frame_config,
     resolve_clipboard_command,
     resolve_pane_shell,
 )
@@ -34,6 +39,21 @@ substitute_pane_shell = _vc_frame_staging.substitute_pane_shell
 
 _FENCE_BEGIN = "# >>> vibecrafted >>>"
 _FENCE_END = "# <<< vibecrafted <<<"
+
+# Shipped next to config.kdl. compact-bar / default keybinds prefer frontier paths
+# first — if install skips these, an old STALE-FILE on disk shadows the package
+# forever (see scaf-260805-triptych runtime diagnosis, 2026-08-07).
+OPERATOR_SCRIPT_NAMES: tuple[str, ...] = (
+    "auto-theme.sh",
+    "vc-composer.sh",
+    "paste-stack.sh",
+    "copy-scrollback.sh",
+    "scrollback-select.sh",
+    "vc-quick-cmd.sh",
+    "vc-deck.sh",
+)
+
+_CORE_VIEW_NAMES: tuple[str, ...] = ("config.kdl", "layouts", "themes")
 
 
 @dataclass
@@ -289,18 +309,11 @@ def plan_delivery(
     )
 
     # The mirrored distribution exposes package data through a symlink back to
-    # ``<runtime>/config/vc-frame``.  Never stage there: deleting the previous
-    # generated tree would then delete the source before it can be copied.
-    staged_cfg = runtime_root / "runtime" / "generated" / "vc-frame"
+    # ``<runtime>/config/vc-frame``.  Never stage *into* that package path:
+    # deleting the previous generated tree would then delete the source.
+    # Re-materialize only into runtime/generated/vc-frame (below).
     if not use_repo:
         _require_materialized_config(runtime_root, dry_run=dry_run)
-        plan.actions.append(
-            WireAction(
-                "note",
-                str(staged_cfg),
-                "pre-materialized before runtime publication",
-            )
-        )
         plan.actions.append(
             WireAction(
                 "note",
@@ -308,7 +321,33 @@ def plan_delivery(
                 f"preserve runtime owner (requested config version {version or 'current'})",
             )
         )
-        base = current / "runtime" / "generated" / "vc-frame"
+        # Re-materialize into the published generation's generated/ tree so
+        # `vibecrafted config install` refreshes operator scripts + Super binds
+        # without a full tools republish. Does not flip vibecrafted-current.
+        generated = current / "runtime" / "generated" / "vc-frame"
+        if dry_run:
+            plan.actions.append(
+                WireAction(
+                    "note",
+                    str(generated),
+                    "would re-materialize host-adapted config from package source",
+                )
+            )
+        else:
+            materialize_vc_frame_config(
+                source,
+                generated,
+                pane_shell=pane_shell,
+                clipboard_command=clipboard_command,
+            )
+            plan.actions.append(
+                WireAction(
+                    "stage",
+                    str(generated),
+                    "re-materialized host-adapted config from package source",
+                )
+            )
+        base = generated
     else:
         plan.actions.append(
             WireAction("note", str(source), "dev-checkout: skip stage copy")
@@ -319,28 +358,73 @@ def plan_delivery(
     # Ownership is the complete current runtime, while exact-target equality
     # decides whether an existing owned link is current or needs migration.
     store_anchor = current
-    for name in ("config.kdl", "layouts", "themes"):
-        _wire_one(
-            view_root / name,
-            base / name,
+    store_current = store_anchor if not use_repo else current
+    # Two projections: legacy view + frontier (the path VC_FRAME_CONFIG_DIR
+    # pins via _vetcoders_pin_vc_frame_config_dir). Wiring only the view left
+    # frontier as STALE-FILE forever — scripts/config never refreshed.
+    projection_roots = (
+        view_root,
+        frontier_root(home) / "vc-frame",
+    )
+    for projection in projection_roots:
+        _wire_projection(
+            projection,
+            base,
             force=force,
             dry_run=dry_run,
             actions=plan.actions,
-            store_current=store_anchor if not use_repo else current,
-            checkout=checkout,
-        )
-    # auto-theme.sh optional at view root for operators who expect it nearby
-    if (base / "auto-theme.sh").exists() or dry_run:
-        _wire_one(
-            view_root / "auto-theme.sh",
-            base / "auto-theme.sh",
-            force=force,
-            dry_run=dry_run,
-            actions=plan.actions,
-            store_current=store_anchor if not use_repo else current,
+            store_current=store_current,
             checkout=checkout,
         )
     return plan
+
+
+def _wire_projection(
+    projection_root: Path,
+    base: Path,
+    *,
+    force: bool,
+    dry_run: bool,
+    actions: list[WireAction],
+    store_current: Path,
+    checkout: Path | None,
+) -> None:
+    """Wire one config projection (view or frontier) from the staged base."""
+    for name in _CORE_VIEW_NAMES:
+        target = base / name
+        if not target.exists() and not dry_run:
+            continue
+        _wire_one(
+            projection_root / name,
+            target,
+            force=force,
+            dry_run=dry_run,
+            actions=actions,
+            store_current=store_current,
+            checkout=checkout,
+        )
+    for name in OPERATOR_SCRIPT_NAMES:
+        target = base / name
+        if not target.exists() and not dry_run:
+            # dry_run still records the intended link so plans stay auditable
+            if dry_run:
+                actions.append(
+                    WireAction(
+                        "note",
+                        str(projection_root / name),
+                        f"operator script absent from source base: {name}",
+                    )
+                )
+            continue
+        _wire_one(
+            projection_root / name,
+            target,
+            force=force,
+            dry_run=dry_run,
+            actions=actions,
+            store_current=store_current,
+            checkout=checkout,
+        )
 
 
 def stage_vc_frame_config(

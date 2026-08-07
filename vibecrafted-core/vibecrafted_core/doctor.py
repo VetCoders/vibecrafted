@@ -14,6 +14,7 @@ from xml.parsers.expat import ExpatError
 
 from .package_resources import deck_path, runtime_path, skills_path
 from .vc_frame_delivery import (
+    OPERATOR_SCRIPT_NAMES,
     classify_view_path,
     frontier_root,
     list_dangling_frontier_links,
@@ -361,6 +362,7 @@ def _vc_frame_delivery_findings(
         generated / "config.kdl",
         generated / "layouts",
         generated / "themes",
+        generated / "vc-composer.sh",
     )
     materialized = all(
         path.is_file() if path.suffix else path.is_dir() for path in materialized_paths
@@ -553,6 +555,98 @@ def _vc_frame_delivery_findings(
                 f"no dangling frontier links under {froot}",
             )
         )
+
+    # Operator scripts + Super/Cmd contract on both projections. The runtime
+    # pins VC_FRAME_CONFIG_DIR to frontier first; a STALE-FILE composer there
+    # shadows every install that only rewires ~/.config/vc-frame.
+    frontier_cfg = froot / "vc-frame"
+    for projection, label in (
+        (view, "view"),
+        (frontier_cfg, "frontier"),
+    ):
+        missing_scripts = [
+            name
+            for name in OPERATOR_SCRIPT_NAMES
+            if name != "auto-theme.sh" and not (projection / name).exists()
+        ]
+        stale_scripts = [
+            name
+            for name in OPERATOR_SCRIPT_NAMES
+            if (projection / name).is_file() and not (projection / name).is_symlink()
+        ]
+        if missing_scripts:
+            findings.append(
+                _Finding(
+                    "fail",
+                    f"vc-frame:operator-scripts:{label}",
+                    f"missing {', '.join(missing_scripts)} under {projection} — "
+                    f"{view_repair}",
+                )
+            )
+        elif stale_scripts:
+            findings.append(
+                _Finding(
+                    "fail",
+                    f"vc-frame:operator-scripts:{label}",
+                    f"STALE-FILE (not install-managed link) for "
+                    f"{', '.join(stale_scripts)} under {projection} — "
+                    f"{view_repair} (backs up and re-wires)",
+                )
+            )
+        else:
+            findings.append(
+                _Finding(
+                    "ok",
+                    f"vc-frame:operator-scripts:{label}",
+                    f"operator scripts projected under {projection}",
+                )
+            )
+
+        cfg = projection / "config.kdl"
+        if cfg.is_file() or cfg.is_symlink():
+            try:
+                text = cfg.read_text(encoding="utf-8")
+            except OSError as exc:
+                findings.append(
+                    _Finding(
+                        "fail",
+                        f"vc-frame:key-contract:{label}",
+                        f"cannot read {cfg}: {exc}",
+                    )
+                )
+            else:
+                kitty_on = (
+                    "support_kitty_keyboard_protocol true" in text
+                    or "support_kitty_keyboard_protocol true" in text
+                )
+                has_super = 'bind "Super' in text or 'bind "Super' in text
+                if not kitty_on:
+                    findings.append(
+                        _Finding(
+                            "fail",
+                            f"vc-frame:key-contract:{label}",
+                            f"{cfg} has support_kitty_keyboard_protocol off — "
+                            "Super/Cmd chords will never reach keybinds; "
+                            f"{view_repair}",
+                        )
+                    )
+                elif not has_super:
+                    findings.append(
+                        _Finding(
+                            "fail",
+                            f"vc-frame:key-contract:{label}",
+                            f"{cfg} enables kitty protocol but binds no Super/* "
+                            f"chords — Cmd switcher/Composer are dead; {view_repair}",
+                        )
+                    )
+                else:
+                    findings.append(
+                        _Finding(
+                            "ok",
+                            f"vc-frame:key-contract:{label}",
+                            "kitty protocol on + Super/* binds present",
+                        )
+                    )
 
     if use_repo:
         findings.append(

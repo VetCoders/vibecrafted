@@ -94,6 +94,47 @@ def test_stage_wires_view_through_current(tmp_path: Path, monkeypatch) -> None:
     assert (current / "vibecrafted-core").is_dir()
     assert (current / "runtime" / "scripts" / "codex_spawn.sh").is_file()
     assert (current / "runtime" / "generated" / "vc-frame" / "config.kdl").exists()
+    # Operator scripts + frontier projection (VC_FRAME_CONFIG_DIR) are install-owned.
+    generated = current / "runtime" / "generated" / "vc-frame"
+    assert (generated / "vc-composer.sh").is_file()
+    composer_view = view / "vc-composer.sh"
+    assert composer_view.is_symlink()
+    assert composer_view.resolve() == (generated / "vc-composer.sh").resolve()
+    frontier = home / ".config" / "vetcoders" / "frontier" / "vc-frame"
+    frontier_cfg = frontier / "config.kdl"
+    frontier_composer = frontier / "vc-composer.sh"
+    assert frontier_cfg.is_symlink()
+    assert frontier_composer.is_symlink()
+    assert frontier_composer.resolve() == (generated / "vc-composer.sh").resolve()
+    assert 'bind "Super e"' in text or 'bind "Super e"' in text
+    assert "support_kitty_keyboard_protocol true" in text
+
+
+def test_stage_rewires_stale_frontier_composer(tmp_path: Path, monkeypatch) -> None:
+    """STALE-FILE under frontier must not shadow package scripts forever."""
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    _seed_complete_runtime(tools)
+    monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    frontier = home / ".config" / "vetcoders" / "frontier" / "vc-frame"
+    frontier.mkdir(parents=True)
+    stale = frontier / "vc-composer.sh"
+    stale.write_text("#!/bin/sh\n# ancient\n", encoding="utf-8")
+    stale.chmod(0o755)
+    stage_vc_frame_config(
+        home=home,
+        tools_home=tools,
+        version="3.6.0-test",
+        dry_run=False,
+        prefer_repo=False,
+        path_env=os.environ.get("PATH", ""),
+    )
+    assert stale.is_symlink()
+    body = stale.resolve().read_text(encoding="utf-8")
+    assert "ancient" not in body
+    assert "VC_COMPOSER_CARET" in body or "guicursor" in body or "t_SI" in body
 
 
 def test_wire_only_requires_pre_materialized_runtime(
