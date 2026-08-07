@@ -2862,6 +2862,40 @@ def test_runtime_service_probe_honors_transaction_deadline(
     assert time.monotonic() - started < 1
 
 
+def test_runtime_pair_pid_mismatch_retries_only_during_bounded_activation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = (
+        "Supervision: LAUNCHD (installed=yes, loaded=yes, supervisor PID 43242)\n"
+        "Server: PID-MISMATCH (43426 is live but identity is unverified)\n"
+        "Guardian: STOPPED\n"
+    )
+    monkeypatch.setattr(
+        installer,
+        "_run_runtime_service_command",
+        lambda _launcher, _shared_home, *arguments: subprocess.CompletedProcess(
+            list(arguments),
+            0,
+            output,
+            "",
+        ),
+    )
+
+    with pytest.raises(OSError, match="refusing install handoff"):
+        installer._runtime_service_pair_state(tmp_path / "launcher", tmp_path)
+
+    token = installer._RUNTIME_SERVICE_COMMAND_DEADLINE.set(time.monotonic() + 1)
+    try:
+        with pytest.raises(
+            installer._RuntimeServiceTransition,
+            match="still converging during bounded activation",
+        ):
+            installer._runtime_service_pair_state(tmp_path / "launcher", tmp_path)
+    finally:
+        installer._RUNTIME_SERVICE_COMMAND_DEADLINE.reset(token)
+
+
 def test_activation_rejects_healthy_service_with_stale_endpoint_arguments(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -4112,6 +4112,16 @@ def _runtime_service_pair_state(
     detail = (
         result.stderr.strip() or result.stdout.strip() or f"exit={result.returncode}"
     )
+    if (
+        _RUNTIME_SERVICE_COMMAND_DEADLINE.get() is not None
+        and "Supervision: LAUNCHD" in result.stdout
+        and "Server: PID-MISMATCH" in result.stdout
+        and "Guardian: STOPPED" in result.stdout
+    ):
+        raise _RuntimeServiceTransition(
+            "runtime server identity is still converging during bounded activation "
+            f"({detail})"
+        )
     raise OSError(
         "runtime server/guardian identity is uncertain; refusing install handoff "
         f"({detail})"
