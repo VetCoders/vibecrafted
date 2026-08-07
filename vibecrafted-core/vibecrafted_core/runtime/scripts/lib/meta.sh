@@ -382,6 +382,7 @@ spawn_python_bin() {
   local candidate
   for candidate in \
     "${VIBECRAFTED_PYTHON:-}" \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/vibecrafted/bin/python3" \
     "${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/vibecrafted-core/bin/python3" \
     python3.13 python3.12 python3.11 python3; do
     [[ -n "$candidate" ]] || continue
