@@ -4397,8 +4397,7 @@ cmd_dispatch() {
 
 cmd_core_workflow_skill() {
   local skill="$1"
-  local agent="$2"
-  shift 2 || true
+  shift || true
   local core_dir core_skill
   core_skill="$skill"
   [[ "$core_skill" != "justdo" ]] || core_skill="implement"
@@ -4409,7 +4408,7 @@ cmd_core_workflow_skill() {
     return 1
   }
   PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" \
-    "$(_vibecrafted_python)" -m vibecrafted_core.cli "$core_skill" "$agent" --source-dir "$(_script_repo_root)" "$@"
+    "$(_vibecrafted_python)" -m vibecrafted_core.cli "$core_skill" "$@" --source-dir "$(_script_repo_root)"
 }
 
 cmd_init() {
@@ -5196,6 +5195,18 @@ run_skill() {
     return
   fi
 
+  # Research owns an optional, variadic agent contract. Preserve its argv
+  # verbatim for the core parser instead of forcing the shared one-agent skill
+  # shape (which otherwise mistakes a leading --prompt for an agent).
+  if [[ "$skill" == "research" ]]; then
+    [[ -n "$agent" ]] || {
+      cmd_skill_help "$skill" >&2
+      return 1
+    }
+    cmd_core_workflow_skill "$skill" "$agent" "$@"
+    return
+  fi
+
   if [[ "$skill" == "marbles" ]] && _is_marbles_control_subcommand "$agent"; then
     _ensure_helpers_loaded || return 1
     _run_helper "marbles-$agent" "$@"
@@ -5233,7 +5244,7 @@ run_skill() {
   }
 
   case "$skill" in
-    implement|justdo|workflow|research|review|marbles)
+    implement|justdo|workflow|review|marbles)
       cmd_core_workflow_skill "$skill" "$agent" "$@"
       return
       ;;

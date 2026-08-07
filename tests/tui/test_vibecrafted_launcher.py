@@ -1550,6 +1550,56 @@ def test_autonomous_delivery_skills_route_to_core_async_launcher(
     assert "Ship the cut" in args
 
 
+@pytest.mark.parametrize(
+    ("research_args", "expected_prefix"),
+    [
+        (
+            ["--prompt", "Check Codescribe"],
+            ["research", "--prompt", "Check Codescribe"],
+        ),
+        (
+            ["codex", "--prompt", "Check Codescribe"],
+            ["research", "codex", "--prompt", "Check Codescribe"],
+        ),
+        (
+            ["codex", "agy", "--prompt", "Check Codescribe"],
+            ["research", "codex", "agy", "--prompt", "Check Codescribe"],
+        ),
+    ],
+)
+def test_research_preserves_optional_variadic_agents_for_core_parser(
+    tmp_path: Path,
+    research_args: list[str],
+    expected_prefix: list[str],
+) -> None:
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "python-args.txt"
+    fake_bin.mkdir()
+    _write_fake_python(fake_bin, capture_file)
+
+    env = os.environ.copy()
+    env["CAPTURE_FILE"] = str(capture_file)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VIBECRAFTED_PYTHON"] = str(fake_bin / "python3")
+
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "research", *research_args],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Unknown agent" not in result.stderr
+    args = capture_file.read_text(encoding="utf-8").splitlines()
+    assert args[:2] == ["-m", "vibecrafted_core.cli"]
+    assert args[2 : 2 + len(expected_prefix)] == expected_prefix
+    assert args[-2:] == ["--source-dir", str(REPO_ROOT)]
+
+
 def test_compact_help_teaches_implement_before_alias() -> None:
     result = subprocess.run(
         [str(LAUNCHER), "help"],
