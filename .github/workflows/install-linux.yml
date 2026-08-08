@@ -23,6 +23,12 @@ on:
       - main
       - develop
       - "release/*"
+  # The main ruleset requires this workflow's "docker build + doctor"
+  # context, and the merge queue (HEADGREEN) waits for required contexts on
+  # the queue head. Without a merge_group trigger this workflow can never
+  # report there, so every queued merge deadlocks until the 60-minute
+  # check_response_timeout kills the entry.
+  merge_group:
 
 permissions:
   contents: read
