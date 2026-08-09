@@ -254,13 +254,18 @@ seat unless `VIBECRAFTED_WORKER_SESSION` is set.
 
 1. `VIBECRAFTED_WORKER_SESSION` if set — explicit override wins (any name,
    including one that matches the operator seat).
-2. Else `basename(--root)` (SPAWN_ROOT / VIBECRAFTED_ROOT / cwd) — the
-   per-project host (e.g. `vibecrafted`, `vc-frame`).
-3. If that name equals the **dispatcher seat**
-   (`VC_FRAME_SESSION_NAME` / `ZELLIJ_SESSION_NAME` — the session the human
-   is attached to when dispatch fires), use `"<repo> workers"` instead so
-   the operator session never receives a worker tab — even when repo name
-   equals seat name.
+2. Else `"<basename(--root)> workers"` (SPAWN_ROOT / VIBECRAFTED_ROOT / cwd)
+   — the per-project worker host (e.g. `vibecrafted workers`,
+   `vc-frame workers`), **always** suffixed. Bare `basename(--root)` is the
+   operator's own interactive card in the rail and is never a worker target,
+   so the dispatcher seat plays no part in host resolution.
+
+_2026-08-09 — the suffix used to be conditional on `basename(--root)` matching
+the dispatcher seat (`VC_FRAME_SESSION_NAME` / `ZELLIJ_SESSION_NAME`). That
+guarded only the seat==repo case: a dispatch fired from any other seat routed
+worker tabs straight into the operator's interactive card (field proof: 20 runs
+`impl-260809-16*` stamped `operator_session: "vibecrafted"`). The invariant
+above was always unconditional; now the code is too._
 
 **Missing host**: G3 contract applies — one
 `vc-frame attach --create-background <host>`, then the `new-tab` action.

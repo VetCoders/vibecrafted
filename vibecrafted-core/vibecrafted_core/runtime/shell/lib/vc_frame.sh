@@ -238,8 +238,10 @@ _vetcoders_operator_session_name() {
 }
 
 # G7 twin of spawn_effective_operator_session (scripts/lib/vc_frame.sh).
-# Worker host session: override → basename(root) → collision suffix. Never the
-# human operator seat (VC_FRAME_SESSION_NAME / ZELLIJ_SESSION_NAME).
+# Worker host session: override → "<basename(root)> workers", always suffixed.
+# The bare basename is the human operator's interactive card and never hosts a
+# worker tab (2026-08-09: was a seat-collision suffix that only fired when the
+# dispatcher happened to sit in a session named after the repo).
 _vetcoders_effective_worker_session() {
   if [[ -n "${VIBECRAFTED_WORKER_SESSION:-}" ]]; then
     printf '%s\n' "${VIBECRAFTED_WORKER_SESSION}"
@@ -252,11 +254,7 @@ _vetcoders_effective_worker_session() {
   local host=""
   host="$(basename "$root_dir")"
   [[ -n "$host" ]] || return 1
-  local dispatcher="${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
-  if [[ -n "$dispatcher" && "$host" == "$dispatcher" ]]; then
-    host="${host} workers"
-  fi
-  printf '%s\n' "$host"
+  printf '%s workers\n' "$host"
 }
 
 _vetcoders_vc_frame_gc_script() {

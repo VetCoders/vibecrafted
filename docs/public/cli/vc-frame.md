@@ -45,10 +45,11 @@ vibecrafted dashboard gc               # preview prune of dead sessions
 vibecrafted dashboard gc --apply       # prune dead EXITED sessions
 ```
 
-Worker tabs are hosted in per-project sessions named after the repository
-basename — never in the operator's own interactive session. The
-`VIBECRAFTED_WORKER_SESSION` environment variable overrides the host session
-name; a repo/seat name collision routes workers to `<repo> workers`.
+Worker tabs are hosted in per-project sessions named `<repo basename> workers`
+— never in the operator's own interactive session, which is the bare
+`<repo basename>` card. The `VIBECRAFTED_WORKER_SESSION` environment variable
+overrides the host session name; nothing else does, so where the dispatch was
+fired from never affects where the worker tab lands.
 
 ## gui and tui
 
