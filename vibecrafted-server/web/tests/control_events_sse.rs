@@ -164,11 +164,14 @@ async fn health_is_constant_and_independent_of_control_plane_history() {
         .await
         .expect("health body");
     let payload: serde_json::Value = serde_json::from_slice(&body).expect("health JSON");
+    // `version` is the compile-time product stamp (build.rs: VERSION + git
+    // sha), so health stays constant-time and history-independent with it.
     assert_eq!(
         payload,
         serde_json::json!({
             "schema": "vibecrafted.health.v1",
             "status": "ok",
+            "version": env!("VC_SERVER_VERSION"),
         })
     );
 }

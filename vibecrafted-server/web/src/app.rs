@@ -5,6 +5,7 @@ use leptos_meta::{Link, Meta, Title};
 use leptos_router::components::{Route, Router, Routes};
 use leptos_router::path;
 
+use crate::run_detail::RunDetailPage;
 use crate::scaffold::ScaffoldEditorPage;
 use crate::theme::{Theme, ThemeBridge, provide_theme_context, use_theme};
 
@@ -206,11 +207,13 @@ fn run_cards(runs: Vec<DashboardRun>) -> impl IntoView {
             } else {
                 run.latest_report.clone()
             };
+            // Civilized console link: every run id opens its observability page.
+            let detail_href = format!("/run/{}", run.run_id);
 
             view! {
                 <article class="control-run-row">
                     <div class="control-run-primary">
-                        <span class="control-run-id">{run.run_id}</span>
+                        <a class="control-run-id" href=detail_href>{run.run_id}</a>
                         <span class="control-run-root">{run.root}</span>
                     </div>
                     <div class="control-run-tags">
@@ -289,10 +292,12 @@ fn action_cards(runs: Vec<DashboardLifecycleRun>) -> impl IntoView {
                 "Inspect the latest runtime event".to_string()
             };
 
+            let detail_href = format!("/run/{}", run.run_id);
+
             view! {
                 <article class="operator-action-row">
                     <div class="control-run-primary">
-                        <span class="control-run-id">{run.run_id}</span>
+                        <a class="control-run-id" href=detail_href>{run.run_id}</a>
                         <span class="control-run-root">{run.workflow}</span>
                     </div>
                     <div class="control-run-tags">
@@ -421,6 +426,7 @@ pub fn App() -> impl IntoView {
             <ThemeBridge />
             <Routes fallback=|| view! { <ConsolePage /> }>
                 <Route path=path!("/") view=ConsolePage />
+                <Route path=path!("/run/:run_id") view=RunDetailPage />
                 <Route path=path!("/scaffold") view=ScaffoldEditorPage />
             </Routes>
         </Router>
@@ -484,6 +490,7 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
             <section class="server-console-hero">
                 <div class="server-console-topbar">
                     <span class="server-console-brand mono-cap">"vc-server"</span>
+                    <span class="server-console-version mono-cap">{env!("VC_SERVER_VERSION")}</span>
                     <button
                         type="button"
                         class="server-console-toggle"
