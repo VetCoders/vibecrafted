@@ -802,10 +802,14 @@ install_vc_frame_product_wrapper() {
   # Ensure wrapper can find real bin via env default path. The wrapper's
   # runtime resolve order prefers vc-frame.real next to itself, so a stale
   # moved-aside copy would silently shadow a fresher authoritative binary
-  # forever while this function reports real=$cargo_bin — always repoint
-  # vc-frame.real at the resolved authority when they differ.
-  if [[ -n "$real" && "$real" != "$LAUNCHER_PREFIX/vc-frame.real" ]]; then
-    ln -sfn "$real" "$LAUNCHER_PREFIX/vc-frame.real" 2>/dev/null || true
+  # forever while this function reports real=$cargo_bin. Refresh it with a
+  # COPY, never a symlink: the bin-dir ownership contract forbids
+  # cargo-owned symlinks in ~/.local/bin (a symlink drifts implicitly the
+  # moment `cargo install` re-runs; a copy only moves through install).
+  if [[ -n "$real" && "$real" != "$LAUNCHER_PREFIX/vc-frame.real" ]] \
+    && ! cmp -s "$real" "$LAUNCHER_PREFIX/vc-frame.real" 2>/dev/null; then
+    rm -f "$LAUNCHER_PREFIX/vc-frame.real" 2>/dev/null || true
+    cp -p "$real" "$LAUNCHER_PREFIX/vc-frame.real" 2>/dev/null || true
   fi
   ok "product vc-frame entry installed: $dest (real=$real)"
 }
