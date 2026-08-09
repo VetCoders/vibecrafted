@@ -86,6 +86,7 @@ pub mod api {
         Json(json!({
             "schema": "vibecrafted.health.v1",
             "status": "ok",
+            "version": env!("VC_SERVER_VERSION"),
         }))
     }
 

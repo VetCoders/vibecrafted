@@ -51,9 +51,11 @@ Examples:
     }
 
     fn print_version() {
+        // VC_SERVER_VERSION is the build.rs product stamp (VERSION + git sha),
+        // the same identity shape `vibecrafted --version` reports.
         println!(
             "vc-server {} ({})",
-            env!("CARGO_PKG_VERSION"),
+            env!("VC_SERVER_VERSION"),
             env!("CARGO_PKG_NAME")
         );
     }

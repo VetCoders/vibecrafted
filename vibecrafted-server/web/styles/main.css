@@ -2002,3 +2002,76 @@ button:hover > .icon-box {
     grid-row: auto;
   }
 }
+
+/* --- Run detail page (/run/{run_id}) --------------------------------- */
+
+a.control-run-id {
+  text-decoration: none;
+}
+
+a.control-run-id:hover,
+a.control-run-id:focus-visible {
+  text-decoration: underline;
+}
+
+.server-console-version {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  margin-right: auto;
+}
+
+.run-detail-shell .control-panel-wide {
+  margin-top: var(--space-4);
+}
+
+.run-detail-title {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.run-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-3) 0 0;
+}
+
+.run-detail-fact dt {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.run-detail-fact dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.run-detail-artifacts {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.run-detail-artifact {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  overflow-wrap: anywhere;
+}
+
+.run-detail-plane {
+  justify-content: flex-end;
+}
+
+@media (max-width: 720px) {
+  .run-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
