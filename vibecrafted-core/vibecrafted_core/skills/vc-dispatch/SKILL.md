@@ -99,7 +99,13 @@ pin deliberately, and treat a missing pin as a smell to resolve before launch.
    before the line moves — a gate that matches 0 tests is trivially green;
    demand ≥1 new non-trivial test in EXTRA. `grep -c` exits 1 on 0 hits
    (`|| true`); count ALL `test result:` lines (multiple binaries — `tail -1`
-   lies); `cargo test` takes ONE positional filter, not two.
+   lies); `cargo test` takes ONE positional filter, not two. For pytest
+   gates, prove the `-k` selection is non-empty (`--collect-only -q` ≥1);
+   prefer **semantic probe** verifiers that print the OLD value today and
+   the NEW value only after the cut — run them live pre-flight. For a
+   `.dispatch.toml` line: `--doctor` → probe/collect pre-flight → `--dry-run`
+   with rendered-prompt placeholder gate → launch. Full field-learned rules:
+   `references/toml-plan-preflight.md`.
 2. **Dispatch**: one prompt file (never argv — `ps`-public, ARG_MAX, broken
    newlines), four layers per the checklist. Launch:
    `bash -c 'ulimit -f unlimited; vibecrafted <skill> <agent> --file <p.md>'`
@@ -225,7 +231,11 @@ backlog cuts on the operator's button.
 
 ## Failure patterns (do not repeat)
 
-- Prompt in argv; placeholders unrendered (`grep -c '{' file` gate = 0).
+- Prompt in argv; placeholders left unrendered. Gate on the **known
+  placeholder tokens** (`grep -E '\{(repo|id|agent|workflow|resolved_workflow|reports_dir|tracker|baton)\}'`
+  over the dry-run prompts, expect empty) — a naive `grep -c '{'` gate
+  false-positives on rendered `{baton}` JSON, which legitimately carries
+  braces (see `references/toml-plan-preflight.md`).
 - Killing a supervisor racing its own loop — check `ps` children and
   `git log` after; the orphan often delivers.
 - Operator heredoc typed into chat instead of shell — verify the file exists

@@ -2025,10 +2025,11 @@ def test_spawn_prepare_paths_generates_real_run_context_when_missing(
 
 def test_spawn_in_operator_session_targets_named_session(tmp_path: Path) -> None:
     run_id = "marb-014520"
-    # G7: host is basename(SPAWN_ROOT), not ambient VIBECRAFTED_OPERATOR_SESSION.
+    # G7: host is "<basename(SPAWN_ROOT)> workers", not the ambient
+    # VIBECRAFTED_OPERATOR_SESSION and not the bare repo card either.
     project_root = tmp_path / "proj-foo"
     project_root.mkdir()
-    host_session = project_root.name
+    host_session = f"{project_root.name} workers"
     launcher = project_root / "launch.sh"
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     launcher.chmod(0o755)
@@ -2085,7 +2086,7 @@ def test_spawn_in_operator_session_suppresses_vc_frame_tab_number_output(
     tmp_path: Path,
 ) -> None:
     run_id = "marb-014520"
-    host_session = tmp_path.name  # G7: basename(SPAWN_ROOT)
+    host_session = f"{tmp_path.name} workers"  # G7: <basename(SPAWN_ROOT)> workers
     launcher = tmp_path / "launch.sh"
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     launcher.chmod(0o755)
@@ -2547,7 +2548,7 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
     tmp_path: Path,
 ) -> None:
     run_id = "rsch-014520"
-    host_session = tmp_path.name  # G7: basename(SPAWN_ROOT)
+    host_session = f"{tmp_path.name} workers"  # G7: <basename(SPAWN_ROOT)> workers
     expected_tmp_root = tmp_path / ".vibecrafted" / "tmp"
     launcher = tmp_path / "launch.sh"
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
@@ -2644,7 +2645,7 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
     tmp_path: Path,
 ) -> None:
     run_id = "ownr-014520"
-    host_session = tmp_path.name  # G7: basename(SPAWN_ROOT)
+    host_session = f"{tmp_path.name} workers"  # G7: <basename(SPAWN_ROOT)> workers
     expected_tmp_root = tmp_path / ".vibecrafted" / "tmp"
     launcher = tmp_path / "launch.sh"
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
@@ -3177,8 +3178,24 @@ def _g7_fake_vc_frame(
     return fake_bin, state, capture
 
 
+def _g7_session_args(calls: str) -> list[str]:
+    """Every value passed as `--session <value>` to the vc-frame stub."""
+    lines = calls.splitlines()
+    return [
+        lines[i + 1]
+        for i, line in enumerate(lines)
+        if line == "--session" and i + 1 < len(lines)
+    ]
+
+
 def test_g7_worker_tab_never_lands_in_operator_session(tmp_path: Path) -> None:
-    """Dispatch from seat X for repo foo → tab in foo, zero --session X."""
+    """Dispatch from seat X for repo foo → tab in "foo workers", never in foo.
+
+    2026-08-09 regression: the host suffix used to be conditional on the seat
+    name colliding with the repo basename, so a dispatch fired from any
+    differently-named seat resolved to bare ``foo`` — which is the operator's
+    own interactive card in the rail. The suffix is now unconditional.
+    """
     project = tmp_path / "foo"
     project.mkdir()
     launcher = project / "launch.sh"
@@ -3186,10 +3203,15 @@ def test_g7_worker_tab_never_lands_in_operator_session(tmp_path: Path) -> None:
     launcher.chmod(0o755)
     operator_seat = "operator-X"
     fake_bin, state, _capture = _g7_fake_vc_frame(
-        tmp_path, live_sessions=[f"{operator_seat} [Created]", "foo [Created]"]
+        tmp_path,
+        live_sessions=[
+            f"{operator_seat} [Created]",
+            "foo [Created]",
+            "foo workers [Created]",
+        ],
     )
 
-    _bash(
+    result = _bash(
         f'''
         set -euo pipefail
         export PATH="{fake_bin}:$PATH"
@@ -3205,20 +3227,16 @@ def test_g7_worker_tab_never_lands_in_operator_session(tmp_path: Path) -> None:
         '''
     )
 
-    calls = (state / "calls").read_text(encoding="utf-8")
-    assert "--session" in calls
-    assert "\nfoo\n" in calls or calls.endswith("foo") or "\nfoo\n" in f"\n{calls}\n"
-    # No action targets the operator seat.
-    assert f"--session\n{operator_seat}\n" not in calls
-    assert "operator-X" not in [
-        line
-        for i, line in enumerate(calls.splitlines())
-        if i and calls.splitlines()[i - 1] == "--session"
-    ]
+    assert "resolved=foo workers" in result.stdout
+    session_args = _g7_session_args((state / "calls").read_text(encoding="utf-8"))
+    assert "foo workers" in session_args
+    # Neither the operator's seat nor the bare repo card is ever a target.
+    assert operator_seat not in session_args
+    assert "foo" not in session_args
 
 
 def test_g7_missing_project_session_create_background_then_tab(tmp_path: Path) -> None:
-    """Host foo missing → one create-background + tab; live host → no create."""
+    """Host "foo workers" missing → one create-background + tab; live → none."""
     project = tmp_path / "foo"
     project.mkdir()
     launcher = project / "launch.sh"
@@ -3239,7 +3257,7 @@ def test_g7_missing_project_session_create_background_then_tab(tmp_path: Path) -
     )
     create = (state / "create").read_text(encoding="utf-8")
     calls = (state / "calls").read_text(encoding="utf-8")
-    assert "create:foo" in create
+    assert "create:foo workers" in create
     assert "--create-background" in calls
     # Real actions only (exclude `action new-tab --help` capability probe).
     material_new_tabs = [
@@ -3253,7 +3271,7 @@ def test_g7_missing_project_session_create_background_then_tab(tmp_path: Path) -
     state2 = tmp_path / "g7-live"
     state2.mkdir()
     fake_bin2, state_live, _ = _g7_fake_vc_frame(
-        state2, live_sessions=["foo [Created]"]
+        state2, live_sessions=["foo workers [Created]"]
     )
     launcher2 = state2 / "foo" / "launch.sh"
     launcher2.parent.mkdir()
@@ -3302,21 +3320,18 @@ def test_g7_worker_session_env_override(tmp_path: Path) -> None:
         '''
     )
     assert "host=bar" in result.stdout
-    sessions = [
-        line
-        for i, line in enumerate(
-            (state / "calls").read_text(encoding="utf-8").splitlines()
-        )
-        if i
-        and (state / "calls").read_text(encoding="utf-8").splitlines()[i - 1]
-        == "--session"
-    ]
+    sessions = _g7_session_args((state / "calls").read_text(encoding="utf-8"))
     assert "bar" in sessions
     assert "foo" not in sessions
+    assert "foo workers" not in sessions
 
 
-def test_g7_name_collision_uses_workers_suffix(tmp_path: Path) -> None:
-    """Dispatch from seat foo for repo foo → host 'foo workers', not foo."""
+def test_g7_seat_named_like_repo_uses_the_same_workers_host(tmp_path: Path) -> None:
+    """Dispatch from seat foo for repo foo → host 'foo workers', not foo.
+
+    Once the suffix became unconditional this stopped being a special case; the
+    test stays as the seat==repo corner of the same single rule.
+    """
     project = tmp_path / "foo"
     project.mkdir()
     launcher = project / "launch.sh"
@@ -3345,11 +3360,7 @@ def test_g7_name_collision_uses_workers_suffix(tmp_path: Path) -> None:
     calls = (state / "calls").read_text(encoding="utf-8")
     assert "foo workers" in calls
     # Worker action must not target the bare operator seat name as host.
-    session_args = []
-    lines = calls.splitlines()
-    for i, line in enumerate(lines):
-        if line == "--session" and i + 1 < len(lines):
-            session_args.append(lines[i + 1])
+    session_args = _g7_session_args(calls)
     assert "foo workers" in session_args
     assert session_args.count("foo") == 0
 
@@ -3362,7 +3373,7 @@ def test_g7_receipt_operator_session_is_worker_host(tmp_path: Path) -> None:
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     launcher.chmod(0o755)
     fake_bin, _state, _ = _g7_fake_vc_frame(
-        tmp_path, live_sessions=["proj-bar [Created]"]
+        tmp_path, live_sessions=["proj-bar workers [Created]"]
     )
 
     result = _bash(
@@ -3378,7 +3389,7 @@ def test_g7_receipt_operator_session_is_worker_host(tmp_path: Path) -> None:
         printf 'receipt=%s\\n' "${{VIBECRAFTED_OPERATOR_SESSION}}"
         '''
     )
-    assert "receipt=proj-bar" in result.stdout
+    assert "receipt=proj-bar workers" in result.stdout
 
 
 def _reserve_run_id(skill: str) -> str:

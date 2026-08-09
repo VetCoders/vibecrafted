@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -613,14 +614,15 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     assert payload["accepted"] is True
     assert payload["pid"] == 4242
     assert payload["transport"] == "vc-frame"
+    worker_host = f"{tmp_path.name} workers"
     assert captured["command"][:5] == [
         str(vc_frame),
         "--session",
-        tmp_path.name,
+        worker_host,
         "action",
         "new-tab",
     ]
-    assert payload["operator_session"] == tmp_path.name
+    assert payload["operator_session"] == worker_host
     assert "--name" in captured["command"]
     assert (
         captured["command"][captured["command"].index("--name") + 1]
@@ -634,14 +636,161 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     assert "vibecrafted_core.dispatcher" in script_body
     assert f"export PYTHONPATH={workflow._core_package_root()}" in script_body
     assert "export PYTHONDONTWRITEBYTECODE=1" in script_body
-    assert f"export VIBECRAFTED_WORKER_SESSION={tmp_path.name}" in script_body
-    assert f"export VIBECRAFTED_OPERATOR_SESSION={tmp_path.name}" in script_body
+    assert (
+        f"export VIBECRAFTED_WORKER_SESSION={shlex.quote(worker_host)}" in script_body
+    )
+    assert (
+        f"export VIBECRAFTED_OPERATOR_SESSION={shlex.quote(worker_host)}" in script_body
+    )
     assert "--tee-output" in script_body
     assert "--quiet" in script_body
     assert "--json" not in script_body
     assert payload["command"] == captured["command"]
     assert payload["dispatch_command"] != payload["command"]
     assert payload["control"].endswith(f"{payload['run_id']}.json")
+
+
+def test_headless_launch_opens_live_bucket_viewer_and_stamps_origin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Cut C axis (a): the viewer lands in ``Live runs`` and stamps the origin.
+
+    The worker itself must stay detached headless — the LIVE tab is a viewer,
+    so it carries the run's transcript, never the dispatcher.
+    """
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setenv("VIBECRAFTED_LIVE_VIEWER", "1")
+    source = _source_dir(tmp_path)
+    vc_frame = tmp_path / "bin" / "vc-frame"
+    vc_frame.parent.mkdir()
+    vc_frame.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    spec = workflow.WorkflowLaunchSpec(
+        agent="codex",
+        mode="implement",
+        skill="implement",
+        prompt="go",
+        file="",
+        runtime="headless",
+        root=str(tmp_path),
+    )
+    monkeypatch.setattr(
+        workflow, "_stdin_command", lambda _agent: [sys.executable, "-c", "pass"]
+    )
+    monkeypatch.setattr(
+        workflow.shutil,
+        "which",
+        lambda name, path=None: str(vc_frame) if name == "vc-frame" else None,
+    )
+
+    captured: dict[str, Any] = {}
+
+    def fake_host_action(
+        command: list[str], *, operator_session: str, timeout: float = 45.0
+    ) -> workflow._HostActionResult:
+        captured["command"] = command
+        captured["operator_session"] = operator_session
+        return workflow._HostActionResult(True, 909, "", "", False)
+
+    monkeypatch.setattr(workflow, "_vc_frame_run_host_action", fake_host_action)
+
+    payload = workflow.launch_workflow(spec, source)
+    run_id = payload["run_id"]
+
+    # The worker never bought a tab: headless transport, no worker host.
+    assert payload["accepted"] is True
+    assert payload["transport"] == "headless"
+    assert payload["operator_session"] == ""
+
+    # The viewer did, and it went to the LIVE bucket under the run's own name.
+    assert captured["operator_session"] == "Live runs"
+    assert captured["command"][:6] == [
+        str(vc_frame),
+        "--session",
+        "Live runs",
+        "action",
+        "new-tab",
+        "--name",
+    ]
+    assert captured["command"][6] == run_id
+    viewer_script = Path(captured["command"][-1])
+    assert viewer_script.is_file()
+    body = viewer_script.read_text(encoding="utf-8")
+    assert 'exec tail -n +1 -F "$transcript"' in body
+    assert payload["transcript"] in body
+    assert f"codex observe --run-id {run_id}" in body
+    # A viewer tails; it must never carry the dispatcher itself.
+    assert "vibecrafted_core.dispatcher" not in body
+
+    assert payload["live_viewer"]["status"] == "opened"
+    assert payload["live_viewer"]["session"] == "Live runs"
+    assert payload["live_viewer"]["tab"] == run_id
+
+    # The stamp is what lets the existing triage hook empty this bucket later.
+    meta = json.loads(Path(payload["meta"]).read_text(encoding="utf-8"))
+    assert meta["origin_session"] == "Live runs"
+    assert meta["origin_tab"] == run_id
+    assert meta["live_viewer"]["status"] == "opened"
+
+
+def test_headless_launch_fails_open_when_vc_frame_binary_is_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Cut C axis (b): no binary → receipt, headless run continues, no origin.
+
+    Fail-open mirrors triage: the viewer is a convenience on top of a launch
+    that already succeeded, so it degrades to a recorded receipt and never an
+    exception. Crucially it must not stamp an origin it did not create —
+    triage would then try to capture and close a tab that never existed.
+    """
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setenv("VIBECRAFTED_LIVE_VIEWER", "1")
+    source = _source_dir(tmp_path)
+
+    spec = workflow.WorkflowLaunchSpec(
+        agent="codex",
+        mode="implement",
+        skill="implement",
+        prompt="go",
+        file="",
+        runtime="headless",
+        root=str(tmp_path),
+    )
+    monkeypatch.setattr(
+        workflow, "_stdin_command", lambda _agent: [sys.executable, "-c", "pass"]
+    )
+    monkeypatch.setattr(workflow.shutil, "which", lambda name, path=None: None)
+
+    def refuse_host_action(*args: Any, **kwargs: Any) -> workflow._HostActionResult:
+        raise AssertionError("no binary must never reach a vc-frame host action")
+
+    monkeypatch.setattr(workflow, "_vc_frame_run_host_action", refuse_host_action)
+
+    payload = workflow.launch_workflow(spec, source)
+
+    assert payload["accepted"] is True
+    assert isinstance(payload["pid"], int)
+    assert payload["live_viewer"] == {
+        "schema": workflow.LIVE_VIEWER_SCHEMA,
+        "status": "skipped",
+        "reason": "no_binary",
+        "session": "Live runs",
+        "tab": payload["run_id"],
+        "command": [],
+    }
+
+    meta = json.loads(Path(payload["meta"]).read_text(encoding="utf-8"))
+    assert meta["live_viewer"]["reason"] == "no_binary"
+    assert not str(meta.get("origin_session") or "").strip()
+    assert not str(meta.get("origin_tab") or "").strip()
+
+    log_lines = Path(payload["launch_log"]).read_text(encoding="utf-8").splitlines()
+    receipts = [
+        json.loads(line)
+        for line in log_lines
+        if json.loads(line).get("event") == "live_viewer"
+    ]
+    assert receipts and receipts[0]["status"] == "skipped"
 
 
 def test_terminal_runtime_resurrects_missing_host_session(
@@ -803,15 +952,16 @@ def test_vc_frame_session_active_parses_list_sessions(tmp_path: Path) -> None:
 def test_effective_operator_session_g7_worker_host_routing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # G7: worker host is per-project / override; never the dispatcher seat.
+    # G7: worker host is override → "<repo> workers", unconditionally. The bare
+    # repo basename is the operator's interactive card and is never a target.
     # Liveness is G3's job (create-background); resolution always returns host.
     root = "/Users/x/work/vibecrafted"
     root_foo = "/Users/x/work/foo"
 
-    # 1. Outside any pane → basename(root).
+    # 1. Outside any pane → "<basename(root)> workers".
     assert (
         workflow._effective_operator_session(root=root, run_id="r1", env={})
-        == "vibecrafted"
+        == "vibecrafted workers"
     )
 
     # 2. Ambient VIBECRAFTED_OPERATOR_SESSION (human seat) is ignored as target.
@@ -821,20 +971,22 @@ def test_effective_operator_session_g7_worker_host_routing(
             run_id="r2",
             env={"VIBECRAFTED_OPERATOR_SESSION": "vc-workspace"},
         )
-        == "vibecrafted"
+        == "vibecrafted workers"
     )
 
-    # 3. Dispatch from seat X for repo foo → host foo (not X).
+    # 3. Dispatch from a seat named unlike the repo → still "<repo> workers".
+    #    Regression for 2026-08-09: the old collision-only rule returned bare
+    #    "foo" here, i.e. the operator's own card for repo foo.
     assert (
         workflow._effective_operator_session(
             root=root_foo,
             run_id="r3",
             env={"VC_FRAME_SESSION_NAME": "operator-X"},
         )
-        == "foo"
+        == "foo workers"
     )
 
-    # 4. Name collision: seat == basename → "<repo> workers".
+    # 4. Seat name == repo basename → same host, no special case left.
     assert (
         workflow._effective_operator_session(
             root=root,
@@ -844,11 +996,21 @@ def test_effective_operator_session_g7_worker_host_routing(
         == "vibecrafted workers"
     )
 
-    # 5. Explicit worker-session override wins (even over collision).
+    # 5. Legacy ZELLIJ_SESSION_NAME seat is equally irrelevant to the host.
+    assert (
+        workflow._effective_operator_session(
+            root=root_foo,
+            run_id="r5",
+            env={"ZELLIJ_SESSION_NAME": "foo"},
+        )
+        == "foo workers"
+    )
+
+    # 6. Explicit worker-session override wins over every derived name.
     assert (
         workflow._effective_operator_session(
             root=root,
-            run_id="r5",
+            run_id="r6",
             env={
                 "VC_FRAME_SESSION_NAME": "vibecrafted",
                 "VIBECRAFTED_WORKER_SESSION": "bar",
@@ -915,10 +1077,11 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
     assert payload["report"]
     assert Path(payload["report"]).parent.name == "research"
     command = captured["command"]
+    worker_host = f"{tmp_path.name} workers"
     assert command[:5] == [
         str(vc_frame),
         "--session",
-        tmp_path.name,
+        worker_host,
         "action",
         "new-tab",
     ]
@@ -949,8 +1112,12 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
     assert f"export VIBECRAFTED_CLAIM_DIGEST={digest}" in lane_bodies
     assert "export VIBECRAFTED_CANONICAL_REPORT_DIR=" in lane_bodies
     assert "export VIBECRAFTED_ARTIFACT_SLUG=map-it" in lane_bodies
-    assert f"export VIBECRAFTED_WORKER_SESSION={tmp_path.name}" in lane_bodies
-    assert f"export VIBECRAFTED_OPERATOR_SESSION={tmp_path.name}" in lane_bodies
+    assert (
+        f"export VIBECRAFTED_WORKER_SESSION={shlex.quote(worker_host)}" in lane_bodies
+    )
+    assert (
+        f"export VIBECRAFTED_OPERATOR_SESSION={shlex.quote(worker_host)}" in lane_bodies
+    )
     assert (
         f"export VIBECRAFTED_ARTIFACT_TS={workflow.time.strftime('%Y-%m-%d')}"
         in lane_bodies

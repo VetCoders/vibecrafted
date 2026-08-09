@@ -68,11 +68,18 @@ never a lost report, never an exception that fails an already-finished run.
 Exact session names are a **vc-frame wire contract** (`BucketKind::session_name`).
 Vibecrafted mirrors them for receipts only.
 
-| Rail  | Session name      | Verdict in meta `triage` | `--bucket` flag   |
-| ----- | ----------------- | ------------------------ | ----------------- |
-| **f** | `Finalized runs`  | `finalized`              | `finalized`       |
-| **x** | `Failed runs`     | `failed`                 | `failed`          |
-| **n** | `Needs attention` | `needs_attention`        | `needs-attention` |
+| Rail  | Session name      | Verdict in meta `triage` | `--bucket` flag    |
+| ----- | ----------------- | ------------------------ | ------------------ |
+| **f** | `Finalized runs`  | `finalized`              | `finalized`        |
+| **x** | `Failed runs`     | `failed`                 | `failed`           |
+| **n** | `Needs attention` | `needs_attention`        | `needs-attention`  |
+| **L** | `Live runs`       | — (pre-terminal)         | — (never a target) |
+
+`Live runs` is the **pre-terminal** bucket and the odd one out: no run is ever
+_classified_ as live, so it has no verdict and no `--bucket` flag. See
+[LIVE bucket viewer](#live-bucket-viewer-pre-terminal) below. The rail counter
+`L` is vc-frame-side work (`BucketKind::Live`); until that lands, `Live runs`
+behaves as an ordinary session — the name wire is already compatible.
 
 The names remain a vc-frame compatibility wire for viewer placement. Product
 `f · x · n` counters must instead read the settlement ledger:
@@ -83,6 +90,55 @@ The names remain a vc-frame compatibility wire for viewer placement. Product
 Missing bucket sessions therefore do not make ledger counts zero.
 
 ---
+
+## LIVE bucket viewer (pre-terminal)
+
+Source: `workflow.open_live_viewer` (Python launch path), constant
+`run_triage.BUCKET_LIVE`.
+
+The worker stays a **detached headless process** — that does not change. What
+changed (2026-08-09) is where its visibility comes from. Instead of buying a
+tab for the worker itself (which is what put worker PTYs in the operator's
+interactive card), the runtime opens a **read-only viewer** next to it:
+
+```text
+1. Launch accepted; the dispatcher spawns headless as always.
+2. The runtime opens one tab in session `Live runs`, named by run id, running
+   `vibecrafted <agent> observe --run-id <id>` for the status header and then
+   `tail -F` on the run's transcript. A missing `Live runs` session is
+   resurrected by G3 (`attach --create-background`), same as a worker host.
+3. `origin_session: "Live runs"` / `origin_tab: <run_id>` are stamped into
+   runtime meta immediately — the exact pair `plan_triage` requires.
+4. At finish, the existing hook (`spawn_triage_run` /
+   `dispatcher.triage_finished_run`) transfers that viewer out of `Live runs`
+   into Finalized/Failed/Needs attention. **No new code in triage.**
+```
+
+**The viewer has no authority over the worker.** Closing it loses the view,
+never the run — it holds no pipe the worker writes to and no pid the worker
+depends on (canon §1 point 6).
+
+**Fail-open, exactly like triage.** Missing binary, dead session, refused
+action, or a failed meta write each become a receipt under meta `live_viewer`
+(`vibecrafted.live-viewer.v1`), and the run continues headless without a
+viewer. Nothing here may raise into an already-accepted launch. Status values:
+`opened`, `skipped` (`disabled`, `no_binary`, `transport_vc-frame`), `error`.
+
+A `--runtime terminal` run already owns a tab of its own, so only the headless
+transport gets a viewer. Opt out with `VIBECRAFTED_LIVE_VIEWER` ∈
+`{0, false, no, off}`; the core test suite sets it to `0` by default so a
+hermetic launch test cannot open real tabs on a developer machine.
+
+Known gaps (deliberate, not defects):
+
+- **No shell twin.** The bash deck's headless path
+  (`launcher.sh::spawn_launch` → `spawn_launch_headless`) opens no viewer.
+  Those runs have no origin today either, so triage already skips them
+  (`no_session`); adding a third bash implementation of the viewer would
+  deepen the twin debt on a path the deck-retirement plan is closing.
+- **No viewer-specific rate limit.** `spawn_acquire_vc_frame_launch_slot`
+  already staggers tab creation. N parallel launches means N viewers in
+  `Live runs`; if that proves too many, cap it there, not with a second limiter.
 
 ## Terminal projection classification (where a viewer lands)
 
@@ -343,8 +399,9 @@ origin alone — do not invent origin fields.
 
 ## Change log (docs)
 
-| Date       | Note                                                                                                                                                                                                     |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-07-22 | Initial canon from runtime land (`run_triage` + dispatcher hook + origin stamp) and field proof: many completed runs + `f·x·n=0` when tools home lagged checkout and origin/triage receipts were absent. |
+| Date       | Note                                                                                                                                                                                                                            |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-08-09 | LIVE bucket viewer (`Live runs`, `BUCKET_LIVE`, `workflow.open_live_viewer`): headless workers get a read-only viewer + origin stamp at launch, so the existing finish hook transfers them out with no change to triage itself. |
+| 2026-07-22 | Initial canon from runtime land (`run_triage` + dispatcher hook + origin stamp) and field proof: many completed runs + `f·x·n=0` when tools home lagged checkout and origin/triage receipts were absent.                        |
 
 _𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

@@ -62,6 +62,7 @@ from .runtime_transcript import validate_runtime_transcript
 __all__ = [
     "BUCKET_FAILED",
     "BUCKET_FINALIZED",
+    "BUCKET_LIVE",
     "BUCKET_NEEDS_ATTENTION",
     "MINIMAL_REPORT_BYTES",
     "MINIMAL_TRANSCRIPT_BYTES",
@@ -102,6 +103,16 @@ __all__ = [
 BUCKET_FINALIZED = "Finalized runs"
 BUCKET_FAILED = "Failed runs"
 BUCKET_NEEDS_ATTENTION = "Needs attention"
+
+#: The pre-terminal bucket. Unlike the three above it is not a triage
+#: destination and never appears in ``_BUCKET_FOR_VERDICT`` — a run is never
+#: *classified* as live. It hosts the read-only viewer tab that
+#: ``workflow.open_live_viewer`` opens at launch for a detached headless
+#: worker, and triage is what empties it: the viewer's ``origin_session`` is
+#: this bucket, so the ordinary transfer moves it into Finalized/Failed/Needs
+#: attention when the run settles. Same wire contract as the other three
+#: (a vc-frame session name); vc-frame still owns the rail UI.
+BUCKET_LIVE = "Live runs"
 
 # The three verdicts. Also the receipt values written to meta.json under
 # "triage" — the headline of a receipt is where the run went.

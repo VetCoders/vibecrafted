@@ -55,7 +55,7 @@ _reset='\033[0m'
 
 _agents=(claude codex agy junie grok)
 _modes=(implement research review plan prompt observe await stop)
-_skills=(audit decorate delegate dou followup hydrate implement intents justdo marbles ownership partner polarize prune release research review scaffold workflow)
+_skills=(audit decorate delegate dou followup guard hydrate implement intents justdo marbles ownership partner polarize prune release research review scaffold trust workflow)
 
 _script_repo_root() {
   local script_dir
@@ -509,6 +509,7 @@ _skill_summary() {
     delegate) printf 'Native in-session subagent delegation.\n' ;;
     dou) printf 'Definition of Undone audit across the product surface.\n' ;;
     followup) printf 'Post-implementation direction audit for gaps, drift, regressions, and next leverage.\n' ;;
+    guard) printf 'In-flight enforcer: inventory gates and refuse continuation on trust block.\n' ;;
     hydrate) printf 'Packaging and go-to-market hydration.\n' ;;
     implement) printf 'Ship WRITE stage: autonomous end-to-end implementation with followup and marbles built in.\n' ;;
     intents) printf 'Plan-to-runtime truth audit across prior intent and present repo state.\n' ;;
@@ -522,6 +523,7 @@ _skill_summary() {
     research) printf 'Triple-agent research pass for ground truth before implementation.\n' ;;
     review) printf 'Bounded PR, branch, commit-range, or artifact-pack review with findings-first output.\n' ;;
     scaffold) printf 'Founder-first architecture planning from a vague idea.\n' ;;
+    trust) printf 'READ-only post-hoc falsification of commit claims on the Living Tree.\n' ;;
     workflow) printf 'Examine -> Research -> Implement pipeline.\n' ;;
     *) printf 'Framework skill.\n' ;;
   esac
@@ -560,6 +562,7 @@ _print_skill_specific_flags() {
       printf '  --session <id>                 Session ID to resume (optional)\n'
       printf '  -p, --prompt <text>            Continue with extra prompt text\n'
       printf '  -f, --file <path.md>           Continue with prompt context from file\n'
+      printf '  --fork-session                 Branch into a NEW session id, base untouched (claude only)\n'
       printf '  (no --session)                 AICX 48h multi-agent continuity fallback\n'
       ;;
   esac
@@ -4111,7 +4114,7 @@ cmd_help() {
       cmd_skill_help "implement"
       return
       ;;
-    audit|decorate|delegate|dou|followup|hydrate|intents|justdo|marbles|ownership|partner|polarize|prune|release|research|review|scaffold|workflow)
+    audit|decorate|delegate|dou|followup|guard|hydrate|intents|justdo|marbles|ownership|partner|polarize|prune|release|research|review|scaffold|trust|workflow)
       cmd_skill_help "$topic"
       return
       ;;
@@ -4238,6 +4241,8 @@ cmd_help_full() {
   printf '  %bresearch%b   Triple-agent research (claude + codex + junie)\n' "$_copper" "$_reset"
   printf '  %breview%b     (vc-review v2.0.0) Bounded PR, branch, commit-range, or artifact-pack review\n' "$_copper" "$_reset"
   printf '  %bprune%b      Runtime/publish cone extraction\n' "$_copper" "$_reset"
+  printf '  %btrust%b      Post-hoc commit-claim falsification with f/x/n settlement projection\n' "$_copper" "$_reset"
+  printf '  %bguard%b      In-flight gate enforcer: refuses continuation on trust block\n' "$_copper" "$_reset"
   printf '\n'
   printf '%b=== MANAGEMENT ===%b\n' "$_bold" "$_reset"
   printf '\n'
@@ -5420,7 +5425,7 @@ main() {
       run_mode "$cmd" "$mode" "$@"
       ;;
     implement) run_skill "implement" "$@" ;;
-    audit|decorate|delegate|dou|followup|hydrate|intents|justdo|marbles|ownership|partner|polarize|prune|release|research|review|scaffold|workflow)
+    audit|decorate|delegate|dou|followup|guard|hydrate|intents|justdo|marbles|ownership|partner|polarize|prune|release|research|review|scaffold|trust|workflow)
       run_skill "$cmd" "$@"
       ;;
     *)

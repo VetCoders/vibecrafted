@@ -3,6 +3,56 @@
 All notable changes to 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## 3.7.1 — 2026-08-08
+
+> **The bootstrap onion.** Patch release that took the root `curl | bash`
+> install path from seven stacked failure layers to a green matrix on every
+> runner — and sealed the P0 class where a test stub could lose to the
+> operator's live launcher and fire a real dispatch.
+
+### Fixed
+
+- **Deck resolution gate** — single `_vetcoders_resolve_deck_bin` for every
+  shell path that reaches the installed deck: `VIBECRAFTED_DECK_BIN` wins
+  verbatim, `VIBECRAFTED_TEST_MODE=1` never discovers a live deck, no deck
+  reports a clean 127; wrapper fallback restores spawn/marbles/help on bare
+  hosts. Kills the measured stub-escape (a pytest run had launched a live
+  `--dangerously-skip-permissions` worker).
+- **Launcher twin parity** — forward-ported both one-sided hunks
+  (product-entry choke, trusted pane-id predicate); `scripts/vibecrafted`
+  and the packaged deck are byte-equal again.
+- **`vc-polarize --task`** routes through the shell band gate again
+  (abort/memo/pass/doctrine + prism.json); the python deck rejects the flag
+  (port-debt: `docs/RC_RUNTIME_POLARIZE.md`).
+- **Bootstrap layers** — vc-frame cockpit install defers loudly while its
+  release does not exist (`REQUIRE_FOUNDATIONS=1` re-arms); server shell
+  defers without cargo-leptos while CI provisions the full leptos toolchain
+  and builds it for real; uv sh-wrapper entrypoints under long venv paths
+  are recognized as uv-owned (kernel shebang limit); doctor runs from a
+  neutral cwd (no living-tree shadowing) with persistent `safe.directory`
+  in containers; `vc-frame:truth` compares against a fresh host-adapted
+  materialization instead of raw hashes; unpublished slack provider defers.
+- **Portable rc contract** — asserts the PATH-only guard and the absence of
+  retired `vc-skills.sh` sourcing.
+- **Shell gate** honestly skips files whose interpreter is missing on the
+  host, and Linux CI installs zsh so `.zsh` sources are really checked.
+- **Research arity keywords** — `uno|duo|trio` expand to exact agent lists
+  and fail closed on wrong lane counts; public variadic argv preserved.
+
+### Added
+
+- **Ownership canary catalog** — 17-agent sweep cataloged 2842
+  def/class/module units across 103 production python files and added 1999
+  docstrings where none existed (comment-content preserved; zero logic
+  changes); catalog artifact shipped to the operator artifact store.
+
+### Notes
+
+- Verdict source: gate colours on main (Portable, Skill Loader, Install
+  Matrix after #35, vibecrafted-server, docker+doctor). Site channel
+  (`make site-release`) and the vc-frame release remain manual operator
+  actions.
+
 ## 3.7.0 — 2026-07-27
 
 > **Runtime truth recovery.** The release where a killed supervisor, a stale
