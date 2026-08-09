@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod control;
+pub mod run_detail;
 pub mod scaffold;
 pub mod theme;
 

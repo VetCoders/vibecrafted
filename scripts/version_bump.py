@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """CLI: bump VERSION and mirror the new semver into every packaged declaration
-(vibecrafted-core/vibecrafted-mcp pyproject.toml + packaged VERSION files)."""
+(vibecrafted-core/vibecrafted-mcp pyproject.toml + packaged VERSION files +
+the server crates' Cargo.toml [package] versions)."""
 
 from __future__ import annotations
 
@@ -22,6 +23,13 @@ PYPROJECT_RELATIVES = (
 PACKAGED_VERSION_RELATIVES = (
     Path("vibecrafted-core/vibecrafted_core/VERSION"),
     Path("vibecrafted-mcp/vibecrafted_mcp/VERSION"),
+)
+# Server crates version like the rest of the product: their `[package]`
+# version mirrors VERSION so `vc-server --version` (build.rs stamps VERSION +
+# git sha on top) agrees with `vibecrafted --version`.
+CARGO_RELATIVES = (
+    Path("vibecrafted-server/web/Cargo.toml"),
+    Path("vibecrafted-server/control-core/Cargo.toml"),
 )
 
 
@@ -56,32 +64,33 @@ def resolve_next_version(current: str, requested: str) -> str:
     return f"{major}.{minor}.{patch}"
 
 
-def _project_version(text: str) -> str:
-    """Extract the ``version = "..."`` value from a pyproject.toml ``[project]``
-    table; raise ValueError if that table or its version key is absent."""
-    in_project = False
+def _table_version(text: str, table: str) -> str:
+    """Extract the ``version = "..."`` value from a TOML ``[table]`` section
+    (``[project]`` for pyproject, ``[package]`` for Cargo); raise ValueError if
+    that table or its version key is absent."""
+    in_table = False
     for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
-            in_project = stripped == "[project]"
+            in_table = stripped == f"[{table}]"
             continue
-        if in_project and (match := PROJECT_VERSION_RE.match(line)):
+        if in_table and (match := PROJECT_VERSION_RE.match(line)):
             return match.group("version")
-    raise ValueError("pyproject.toml has no [project] version declaration")
+    raise ValueError(f"TOML file has no [{table}] version declaration")
 
 
-def _replace_project_version(text: str, version: str) -> str:
-    """Return ``text`` with the first ``[project]`` ``version = "..."`` line
+def _replace_table_version(text: str, version: str, table: str) -> str:
+    """Return ``text`` with the first ``[table]`` ``version = "..."`` line
     rewritten to ``version``, preserving line endings; raise ValueError if no
     such declaration is found."""
-    in_project = False
+    in_table = False
     output: list[str] = []
     replaced = False
     for line in text.splitlines(keepends=True):
         stripped = line.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
-            in_project = stripped == "[project]"
-        if in_project and not replaced:
+            in_table = stripped == f"[{table}]"
+        if in_table and not replaced:
             body = line.rstrip("\r\n")
             newline = line[len(body) :]
             if match := PROJECT_VERSION_RE.match(body):
@@ -91,31 +100,41 @@ def _replace_project_version(text: str, version: str) -> str:
                 replaced = True
         output.append(line)
     if not replaced:
-        raise ValueError("pyproject.toml has no [project] version declaration")
+        raise ValueError(f"TOML file has no [{table}] version declaration")
     return "".join(output)
 
 
 def _version_projections(
     version_file: Path,
-) -> tuple[tuple[Path, ...], tuple[Path, ...]] | None:
-    """Locate the sibling pyproject.toml/VERSION files this VERSION mirrors into.
+) -> tuple[tuple[Path, ...], tuple[Path, ...], tuple[Path, ...]] | None:
+    """Locate the sibling pyproject.toml/VERSION/Cargo.toml files this VERSION
+    mirrors into.
 
-    Returns None when none of the projection paths exist (VERSION stands alone).
-    Raises ValueError if only some of them exist (partial/inconsistent layout).
+    Returns None when none of the python projection paths exist (VERSION stands
+    alone). Raises ValueError if only some of a group exist (partial layout).
+    The Cargo group is optional as a whole — a python-only layout stays valid —
+    but must be internally complete when any crate manifest is present.
     """
     project_root = version_file.parent
     pyprojects = tuple(project_root / path for path in PYPROJECT_RELATIVES)
     packaged = tuple(project_root / path for path in PACKAGED_VERSION_RELATIVES)
+    cargos = tuple(project_root / path for path in CARGO_RELATIVES)
     projections = pyprojects + packaged
     existing = tuple(path.exists() for path in projections)
-    if not any(existing):
+    cargo_existing = tuple(path.exists() for path in cargos)
+    if not any(existing) and not any(cargo_existing):
         return None
-    if not all(existing):
+    if any(existing) and not all(existing):
         missing = [
             str(path) for path, present in zip(projections, existing) if not present
         ]
         raise ValueError(f"version declaration missing: {', '.join(missing)}")
-    return pyprojects, packaged
+    if any(cargo_existing) and not all(cargo_existing):
+        missing = [
+            str(path) for path, present in zip(cargos, cargo_existing) if not present
+        ]
+        raise ValueError(f"version declaration missing: {', '.join(missing)}")
+    return pyprojects, packaged, cargos if all(cargo_existing) else ()
 
 
 def update_version_declarations(version_file: Path, requested: str) -> tuple[str, str]:
@@ -131,13 +150,23 @@ def update_version_declarations(version_file: Path, requested: str) -> tuple[str
 
     updates = {version_file: next_version + "\n"}
     if projections is not None:
-        pyprojects, packaged_versions = projections
+        pyprojects, packaged_versions, cargos = projections
         pyproject_texts = {
             path: path.read_text(encoding="utf-8") for path in pyprojects
         }
+        cargo_texts = {path: path.read_text(encoding="utf-8") for path in cargos}
         declared = {version_file: current}
         declared.update(
-            {path: _project_version(text) for path, text in pyproject_texts.items()}
+            {
+                path: _table_version(text, "project")
+                for path, text in pyproject_texts.items()
+            }
+        )
+        declared.update(
+            {
+                path: _table_version(text, "package")
+                for path, text in cargo_texts.items()
+            }
         )
         declared.update(
             {
@@ -153,8 +182,14 @@ def update_version_declarations(version_file: Path, requested: str) -> tuple[str
             )
         updates.update(
             {
-                path: _replace_project_version(text, next_version)
+                path: _replace_table_version(text, next_version, "project")
                 for path, text in pyproject_texts.items()
+            }
+        )
+        updates.update(
+            {
+                path: _replace_table_version(text, next_version, "package")
+                for path, text in cargo_texts.items()
             }
         )
         updates.update({path: next_version + "\n" for path in packaged_versions})
