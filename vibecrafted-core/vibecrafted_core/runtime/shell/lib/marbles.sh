@@ -671,6 +671,13 @@ _vetcoders_resume_agent() {
   local tool="$1"
   shift
   _vetcoders_parse_contract "$@" || return 1
+  # --fork-session maps onto claude's verified `--resume … --fork-session`
+  # compose (continuity capabilities kernel); other providers have no proven
+  # equivalent, so anything else fails closed instead of dropping the flag.
+  if [[ -n "${_vetcoders_contract_fork_session:-}" && "$tool" != claude ]]; then
+    printf -- '--fork-session is only supported for claude resume (no verified equivalent for %s).\n' "$tool" >&2
+    return 1
+  fi
   # Positional form: `vc-resume <agent> <session_id> [prompt words...]`.
   # Without --session the shared parser routes positionals into tail/prompt.
   # Promote the first tail token only when it looks like a session id (not a
@@ -680,7 +687,10 @@ _vetcoders_resume_agent() {
     read -r -a _resume_positional <<<"$_vetcoders_contract_tail"
     local _maybe_session="${_resume_positional[0]:-}"
     # UUIDs / long hex / codex-style tokens; short words stay as prompt text.
-    if [[ "$_maybe_session" =~ ^[0-9a-fA-F-]{8,}$ || "$_maybe_session" =~ ^[0-9a-zA-Z_-]{16,}$ ]]; then
+    # A dash-leading token is never a session id — long flags like
+    # --dangerously-skip-permissions would otherwise satisfy the length regex.
+    if [[ "$_maybe_session" != -* ]] &&
+      [[ "$_maybe_session" =~ ^[0-9a-fA-F-]{8,}$ || "$_maybe_session" =~ ^[0-9a-zA-Z_-]{16,}$ ]]; then
       _vetcoders_contract_session="$_maybe_session"
       local _resume_rest="${_vetcoders_contract_tail#"${_resume_positional[0]}"}"
       _resume_rest="${_resume_rest# }"
@@ -778,8 +788,14 @@ _vetcoders_resume_agent() {
   fi
 
   if [[ -n "$_vetcoders_contract_session" ]]; then
-    resume_cmd="$(_vetcoders_resume_command "$tool" "$_vetcoders_contract_session" "$resume_prompt" "$resume_mode")" || return 1
+    resume_cmd="$(_vetcoders_resume_command "$tool" "$_vetcoders_contract_session" "$resume_prompt" "$resume_mode" "${_vetcoders_contract_fork_session:-}")" || return 1
   else
+    # A fork needs a base session to branch from; a silent fresh session would
+    # betray the operator's "keep the original untouched" intent.
+    if [[ -n "${_vetcoders_contract_fork_session:-}" ]]; then
+      echo "--fork-session needs a base session (--session <id> or an AICX same-agent candidate); none found." >&2
+      return 1
+    fi
     # NEW session: continuity pack only (explicitly not a native resume).
     resume_cmd="$(_vetcoders_fresh_session_command "$tool" "$resume_prompt" "$resume_mode")" || return 1
     aicx_fallback_mode="${aicx_fallback_mode:-new_session}"
@@ -864,6 +880,13 @@ _vetcoders_resume_agent() {
   # No vc-frame surface: core owns the detached lifetime, control-plane record,
   # transcript, and Guardian-visible process identity. There is deliberately no
   # raw nohup/setsid fallback when core cannot prove the launch contract.
+  if [[ -n "${_vetcoders_contract_fork_session:-}" ]]; then
+    # The tracked core path (resume-session / workflow launcher) has no fork
+    # contract yet; dropping the flag here would silently mutate the original
+    # session the operator asked to preserve.
+    echo "--fork-session is not supported on the tracked core resume path yet; run inside vc-frame or use a bare (interactive) resume." >&2
+    return 1
+  fi
   _vetcoders_launch_tracked_resume \
     "$tool" \
     "$_vetcoders_contract_session" \
@@ -878,6 +901,9 @@ _vetcoders_resume_command() {
   # (direct eval / async-supervisor baton-pass — no tty). Per-agent resume flags
   # differ; the headless invocations were verified against each agent's --help.
   local mode="${4:-interactive}"
+  # fork_session: non-empty branches the resume into a NEW provider session id,
+  # leaving the base session untouched (claude-only; callers gate other agents).
+  local fork_session="${5:-}"
   local quoted_session quoted_prompt
   quoted_session="$(_vetcoders_shell_quote "$session_id")"
   if [[ -n "$resume_prompt" ]]; then
@@ -888,16 +914,18 @@ _vetcoders_resume_command() {
     claude)
       # headless resume needs --print (+ skip-permissions); plain --resume opens
       # an interactive session and would hang under eval with no tty.
+      local claude_fork_flag=""
+      [[ -z "$fork_session" ]] || claude_fork_flag=" --fork-session"
       if [[ "$mode" == headless ]]; then
         if [[ -n "$resume_prompt" ]]; then
-          printf 'claude --print --dangerously-skip-permissions --resume %s %s\n' "$quoted_session" "$quoted_prompt"
+          printf 'claude --print --dangerously-skip-permissions --resume %s%s %s\n' "$quoted_session" "$claude_fork_flag" "$quoted_prompt"
         else
-          printf 'claude --print --dangerously-skip-permissions --resume %s\n' "$quoted_session"
+          printf 'claude --print --dangerously-skip-permissions --resume %s%s\n' "$quoted_session" "$claude_fork_flag"
         fi
       elif [[ -n "$resume_prompt" ]]; then
-        printf 'claude --resume %s %s\n' "$quoted_session" "$quoted_prompt"
+        printf 'claude --resume %s%s %s\n' "$quoted_session" "$claude_fork_flag" "$quoted_prompt"
       else
-        printf 'claude --resume %s\n' "$quoted_session"
+        printf 'claude --resume %s%s\n' "$quoted_session" "$claude_fork_flag"
       fi
       ;;
     codex)

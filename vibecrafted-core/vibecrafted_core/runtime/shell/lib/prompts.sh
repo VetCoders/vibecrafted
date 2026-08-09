@@ -37,6 +37,7 @@ _vetcoders_contract_reset() {
   _vetcoders_contract_dry_run=""
   _vetcoders_contract_no_aicx=""
   _vetcoders_contract_no_context_corpus=""
+  _vetcoders_contract_fork_session=""
 }
 
 _vetcoders_append_tail() {
@@ -81,6 +82,9 @@ _vetcoders_parse_contract() {
       --dry-run)
         _vetcoders_contract_dry_run=1
         ;;
+      --fork-session)
+        _vetcoders_contract_fork_session=1
+        ;;
       --session)
         shift
         [[ $# -gt 0 ]] || { echo "Missing value for --session" >&2; return 1; }
@@ -115,6 +119,14 @@ _vetcoders_parse_contract() {
         break
         ;;
       *)
+        # Fail closed on unknown flags: a mistyped or unsupported flag must
+        # never become silent prompt text (a leaked `--fork-session` once
+        # launched a fresh worker whose entire job description was the flag).
+        # Literal dash-leading prompt text still has the `--` escape hatch.
+        if [[ "$1" == -?* ]]; then
+          printf 'Unknown flag: %s (flags go before --prompt; use -- for literal text)\n' "$1" >&2
+          return 1
+        fi
         _vetcoders_append_tail "$1"
         ;;
     esac
