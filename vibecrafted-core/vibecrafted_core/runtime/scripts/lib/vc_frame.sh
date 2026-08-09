@@ -23,12 +23,6 @@ spawn_current_vc_frame_session_name() {
   printf '%s\n' "${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
 }
 
-# Session the dispatcher is attached to (pane env). Empty when outside vc-frame.
-# G7: this seat must NEVER receive worker tabs.
-spawn_dispatcher_session_name() {
-  printf '%s\n' "${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
-}
-
 # A vc-frame session is a usable spawn target only when it is actually live.
 # Guards against the dispatcher's per-run tracking id (operator_session_name() =
 # "<repo>-<run_id>", see control_plane.py) being treated as a real session.
@@ -64,9 +58,12 @@ spawn_session_is_live() {
 #
 # Rules (exact order):
 #   1. VIBECRAFTED_WORKER_SESSION if set — explicit override wins.
-#   2. basename of SPAWN_ROOT / VIBECRAFTED_ROOT / cwd = per-project host.
-#   3. If host == dispatcher seat (VC_FRAME_SESSION_NAME / ZELLIJ_SESSION_NAME),
-#      use "<repo> workers" so the operator session never gets a worker tab.
+#   2. Else "<basename of SPAWN_ROOT / VIBECRAFTED_ROOT / cwd> workers" — the
+#      per-project worker host, ALWAYS suffixed. Bare basename(root) is the
+#      operator's interactive card in the rail; it is never a worker target.
+# 2026-08-09: the suffix used to be conditional on host == dispatcher seat.
+# That guarded only seat==repo, so dispatch from any other seat landed worker
+# tabs in the operator's card. Unconditional invariant → unconditional rule.
 # Missing host sessions are resurrected by G3 (attach --create-background).
 spawn_effective_operator_session() {
   spawn_normalize_ambient_context
@@ -85,13 +82,7 @@ spawn_effective_operator_session() {
   fi
   [[ -n "$host" ]] || return 1
 
-  local dispatcher=""
-  dispatcher="$(spawn_dispatcher_session_name)"
-  if [[ -n "$dispatcher" && "$host" == "$dispatcher" ]]; then
-    host="${host} workers"
-  fi
-
-  printf '%s\n' "$host"
+  printf '%s workers\n' "$host"
 }
 
 spawn_in_target_vc_frame_session() {

@@ -965,10 +965,17 @@ def _effective_operator_session(*, root: str, run_id: str, env: dict[str, str]) 
     Rules (exact order):
 
     1. ``VIBECRAFTED_WORKER_SESSION`` if set — explicit override wins.
-    2. ``basename(root)`` — per-project host session for workers.
-    3. If that equals the dispatcher seat (``VC_FRAME_SESSION_NAME`` /
-       ``ZELLIJ_SESSION_NAME``), use ``"<repo> workers"`` so the operator
-       session never receives a worker tab — even when repo name == seat name.
+    2. Else ``"<basename(root)> workers"`` — the per-project worker host,
+       **always** suffixed. Bare ``basename(root)`` is the operator's own
+       interactive seat in the rail and is never a worker-tab target.
+
+    2026-08-09: the suffix used to be conditional on ``basename(root)``
+    colliding with the dispatcher seat (``VC_FRAME_SESSION_NAME`` /
+    ``ZELLIJ_SESSION_NAME``). That guarded only the seat==repo case, so a
+    dispatch fired from any other seat routed worker tabs straight into the
+    operator's interactive card (20 runs stamped ``operator_session:
+    "vibecrafted"``). The declared invariant is unconditional, so the rule is
+    too — the dispatcher seat no longer participates in host resolution.
 
     Missing hosts are resurrected by G3 (``attach --create-background``). The
     ``run_id`` argument is retained for call-site compatibility only.
@@ -978,14 +985,7 @@ def _effective_operator_session(*, root: str, run_id: str, env: dict[str, str]) 
     if override:
         return override
 
-    host = Path(root or ".").name or "vibecrafted"
-    dispatcher = (
-        str(env.get("VC_FRAME_SESSION_NAME") or "").strip()
-        or str(env.get("ZELLIJ_SESSION_NAME") or "").strip()
-    )
-    if dispatcher and host == dispatcher:
-        return f"{host} workers"
-    return host
+    return f"{Path(root or '.').name or 'vibecrafted'} workers"
 
 
 def _run_is_terminal(run: dict[str, Any]) -> bool:
