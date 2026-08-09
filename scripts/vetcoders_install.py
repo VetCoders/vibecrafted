@@ -2438,6 +2438,7 @@ SKILL_WRAPPER_NAMES = [
     "delegate",
     "dou",
     "followup",
+    "guard",
     "hydrate",
     "implement",
     "intents",
@@ -2451,6 +2452,7 @@ SKILL_WRAPPER_NAMES = [
     "research",
     "review",
     "scaffold",
+    "trust",
     "workflow",
 ]
 
@@ -2478,6 +2480,7 @@ PYTHON_ENTRYPOINT_LAUNCHERS = [
     "vc-delegate",
     "vc-dou",
     "vc-followup",
+    "vc-guard",
     "vc-hydrate",
     "vc-implement",
     "vc-intents",
@@ -2496,6 +2499,7 @@ PYTHON_ENTRYPOINT_LAUNCHERS = [
     "vc-sandbox",
     "vc-scaffold",
     "vc-ship",
+    "vc-trust",
     "vc-workflow",
     "vibecrafted",
     "vibecrafted-compact-hook",
