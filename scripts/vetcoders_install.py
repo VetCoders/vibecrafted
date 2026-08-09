@@ -4116,7 +4116,12 @@ def _runtime_service_pair_state(
     detail = (
         result.stderr.strip() or result.stdout.strip() or f"exit={result.returncode}"
     )
-    raise OSError(
+    # A mixed pair (one member live, the other stopped/unverified) is the
+    # normal mid-start and mid-stop shape of a supervised pair — the
+    # activation wait loop must be allowed to observe it again.  Raising the
+    # convergent transition keeps every non-polling caller fail-closed
+    # (it is still an OSError) while letting activation retry to its deadline.
+    raise _RuntimeServiceTransition(
         "runtime server/guardian identity is uncertain; refusing install handoff "
         f"({detail})"
     )
@@ -4151,11 +4156,21 @@ def _runtime_service_snapshot(
         # Reclaimable supervisors still report Server/Guardian STOPPED while
         # an orphan may hold the port; only true RUNNING disagreement is fatal.
         if status.reclaimable and pair_state == "running":
-            raise OSError(
+            # A single snapshot cannot tell a stable degrade (supervisor in
+            # backoff over an orphan pair) from a pair that is mid-start and
+            # about to flip pair_healthy.  Only time separates them: raise the
+            # convergent transition so the activation wait loop keeps
+            # observing until its deadline, which then fails closed with the
+            # last observation.  One-shot callers still see an OSError.
+            raise _RuntimeServiceTransition(
                 "runtime service reports a non-healthy running pair; "
                 "refusing install handoff until the pair is stopped or healthy"
             )
-        raise OSError(
+        # The two probes above are taken at different moments; across a
+        # launchd (re)start they can legitimately disagree for an instant.
+        # Convergent transition: still fail-closed for one-shot callers,
+        # retryable inside the activation wait loop.
+        raise _RuntimeServiceTransition(
             "runtime service and server/guardian observations disagree; "
             "refusing install handoff"
         )
