@@ -95,3 +95,31 @@ Receipt = supervisor-written `tracker.md` (single writer, baseline branch +
 head) plus the first worker's run_id in the control plane. Then spanko:
 await through artifacts and the task/await notification — no pane staring,
 no hedge pollers.
+
+## Substrate contract pair + recovery (field-learned, flights 2–4)
+
+`require_commit` WRITE cuts sit between **two symmetric gates**
+(`dispatch/supervisor.py::_run_cut`): the cut refuses to START from a dirty
+worktree, and refuses to END with uncommitted changes. A worker that edits,
+passes verification, then dies before committing (gate-nap: waiting on a
+Monitor/wakeup instead of committing — Class 3, `AGENT_OPS.md`) therefore
+deadlocks the line: the orphan delivery blocks every refire.
+
+- **Dispatcher recovery**: review the orphan diff against the brief (the
+  orphan often delivers), commit it yourself with the cut id in the subject
+  and the orphan run's provenance in the body, THEN resume. Never discard.
+- **`repair_rounds` does not fire** on `CellContractError` — repair covers
+  red verifiers, not substrate contract breaks.
+- **A failed resume clobbers the tracker**: every dispatch run rewrites
+  `tracker.md` at start, so a resume that dies on a substrate gate erases
+  prior `[x]` states and the NEXT resume restarts from the first cut. Keep
+  the delivered commit SHAs in the journal/notes — you will need them.
+- **Idempotent settle needs explicit proof**
+  (`supervisor.py::_existing_delivery_commit`): a worker that finds the work
+  already landed must put a standalone line `commit: <sha>` in its report;
+  the supervisor accepts it only if the sha resolves, is an ancestor of
+  HEAD, and the commit message identifies the cut (keep `[<cut-id>]` in
+  delivery commit subjects). Bake this clause into `[common]` from the
+  start — "nothing to do" without the proof line is a contract failure, and
+  a full-line idempotent resume is also the clean way to re-settle a
+  clobbered tracker.
