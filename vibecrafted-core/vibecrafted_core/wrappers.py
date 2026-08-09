@@ -425,6 +425,16 @@ def workflow_main(argv: Sequence[str] | None = None) -> int:
     return _lifecycle_main("vc-workflow", argv)
 
 
+def trust_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted trust` / shell `vc-trust`."""
+    return supervised_skill_main("trust", argv)
+
+
+def guard_main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for `vibecrafted guard` / shell `vc-guard`."""
+    return supervised_skill_main("guard", argv)
+
+
 def _prepare_research(args: Sequence[str], run_id: str) -> tuple[int, str]:
     """Run the deck's research-preparation step and capture its combined output.
 

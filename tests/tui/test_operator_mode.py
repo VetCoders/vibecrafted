@@ -488,6 +488,7 @@ def test_helper_exports_vc_skill_wrappers() -> None:
         "vc-delegate",
         "vc-dou",
         "vc-followup",
+        "vc-guard",
         "vc-hydrate",
         "vc-init",
         "vc-intents",
@@ -499,6 +500,7 @@ def test_helper_exports_vc_skill_wrappers() -> None:
         "vc-release",
         "vc-review",
         "vc-scaffold",
+        "vc-trust",
         "vc-workflow",
     ]
     command = f'source "{HELPER_SCRIPT}"; ' + " ".join(
