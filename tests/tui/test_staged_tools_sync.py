@@ -2862,6 +2862,57 @@ def test_runtime_service_probe_honors_transaction_deadline(
     assert time.monotonic() - started < 1
 
 
+@pytest.mark.parametrize(
+    "pair_lines",
+    (
+        (
+            "Server: PID-MISMATCH (43426 is live but identity is unverified)\n"
+            "Guardian: STOPPED\n"
+        ),
+        (
+            "Server: RUNNING (PID 92141, listening on http://100.82.232.70:3025)\n"
+            "Guardian: STOPPED\n"
+        ),
+        (
+            "Server: RUNNING (PID 45721, listening on http://100.82.232.70:3025)\n"
+            "Guardian: PID-MISMATCH (46050 is live but identity is unverified)\n"
+        ),
+    ),
+)
+def test_partial_runtime_pair_retries_only_during_bounded_activation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pair_lines: str,
+) -> None:
+    output = (
+        "Supervision: LAUNCHD (installed=yes, loaded=yes, supervisor PID 43242)\n"
+        + pair_lines
+    )
+    monkeypatch.setattr(
+        installer,
+        "_run_runtime_service_command",
+        lambda _launcher, _shared_home, *arguments: subprocess.CompletedProcess(
+            list(arguments),
+            0,
+            output,
+            "",
+        ),
+    )
+
+    with pytest.raises(OSError, match="refusing install handoff"):
+        installer._runtime_service_pair_state(tmp_path / "launcher", tmp_path)
+
+    token = installer._RUNTIME_SERVICE_COMMAND_DEADLINE.set(time.monotonic() + 1)
+    try:
+        with pytest.raises(
+            installer._RuntimeServiceTransition,
+            match="still converging during bounded activation",
+        ):
+            installer._runtime_service_pair_state(tmp_path / "launcher", tmp_path)
+    finally:
+        installer._RUNTIME_SERVICE_COMMAND_DEADLINE.reset(token)
+
+
 def test_activation_rejects_healthy_service_with_stale_endpoint_arguments(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

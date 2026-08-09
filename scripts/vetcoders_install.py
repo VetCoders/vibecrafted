@@ -4116,12 +4116,27 @@ def _runtime_service_pair_state(
     detail = (
         result.stderr.strip() or result.stdout.strip() or f"exit={result.returncode}"
     )
-    # A mixed pair (one member live, the other stopped/unverified) is the
-    # normal mid-start and mid-stop shape of a supervised pair — the
-    # activation wait loop must be allowed to observe it again.  Raising the
-    # convergent transition keeps every non-polling caller fail-closed
-    # (it is still an OSError) while letting activation retry to its deadline.
-    raise _RuntimeServiceTransition(
+    if (
+        _RUNTIME_SERVICE_COMMAND_DEADLINE.get() is not None
+        and "Supervision: LAUNCHD" in result.stdout
+        and any(
+            marker in result.stdout
+            for marker in ("Server: RUNNING", "Server: STOPPED", "Server: PID-MISMATCH")
+        )
+        and any(
+            marker in result.stdout
+            for marker in (
+                "Guardian: RUNNING",
+                "Guardian: STOPPED",
+                "Guardian: PID-MISMATCH",
+            )
+        )
+    ):
+        raise _RuntimeServiceTransition(
+            "runtime server identity is still converging during bounded activation "
+            f"({detail})"
+        )
+    raise OSError(
         "runtime server/guardian identity is uncertain; refusing install handoff "
         f"({detail})"
     )

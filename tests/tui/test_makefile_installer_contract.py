@@ -502,6 +502,14 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
     assert "cargo leptos build --release" in server_build_block
     assert '--bin-cargo-args="--locked"' in server_build_block
     assert '--lib-cargo-args="--locked"' in server_build_block
+    assert "cargo tree --locked -p wasm-bindgen --depth 0 --prefix none" in (
+        server_build_block
+    )
+    assert "tomllib" not in server_build_block
+    assert "$(PYTHON)" not in server_build_block
+    assert "could not resolve wasm-bindgen version from Cargo.lock" in (
+        server_build_block
+    )
     assert "wasm-bindgen CLI $$cli_version does not match Cargo.lock" in (
         server_build_block
     )

@@ -45,7 +45,7 @@ jobs:
           curl -L --proto '=https' --tlsv1.2 -sSf -o /tmp/install-binstall.sh https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh
           bash /tmp/install-binstall.sh
           cargo binstall -y cargo-leptos
-          lock_version="$(python3 -c 'import pathlib, tomllib; packages = tomllib.loads(pathlib.Path("vibecrafted-server/Cargo.lock").read_text())["package"]; print(next(item["version"] for item in packages if item["name"] == "wasm-bindgen"))')"
+          lock_version="$(cargo tree --locked --manifest-path vibecrafted-server/Cargo.toml -p wasm-bindgen --depth 0 --prefix none | awk 'NR == 1 { sub(/^v/, "", $2); print $2 }')"
           cargo binstall -y "wasm-bindgen-cli@${lock_version}"
       - name: Install shellcheck on Linux
         if: matrix.os == 'Linux'
@@ -119,7 +119,7 @@ jobs:
           curl -L --proto '=https' --tlsv1.2 -sSf -o /tmp/install-binstall.sh https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh
           bash /tmp/install-binstall.sh
           cargo binstall -y cargo-leptos
-          lock_version="$(python3 -c 'import pathlib, tomllib; packages = tomllib.loads(pathlib.Path("vibecrafted-server/Cargo.lock").read_text())["package"]; print(next(item["version"] for item in packages if item["name"] == "wasm-bindgen"))')"
+          lock_version="$(cargo tree --locked --manifest-path vibecrafted-server/Cargo.toml -p wasm-bindgen --depth 0 --prefix none | awk 'NR == 1 { sub(/^v/, "", $2); print $2 }')"
           cargo binstall -y "wasm-bindgen-cli@${lock_version}"
       - name: Serve install.sh locally and bootstrap
         run: |
