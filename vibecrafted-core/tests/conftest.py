@@ -33,3 +33,8 @@ def _isolate_vibecrafted_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
         if name.startswith(("VIBECRAFTED_", "VC_FRAME", "ZELLIJ"))
     ]:
         monkeypatch.delenv(key, raising=False)
+    # The LIVE bucket viewer is on by default in the product, which means a
+    # launch test run on a developer machine with vc-frame on PATH would open
+    # real tabs in the operator's terminal. Hermetic by default; the tests that
+    # exercise the viewer switch it back on explicitly.
+    monkeypatch.setenv("VIBECRAFTED_LIVE_VIEWER", "0")
