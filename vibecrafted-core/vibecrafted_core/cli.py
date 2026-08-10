@@ -35,6 +35,7 @@ AGENTS = {"claude", "codex", "agy", "junie", "grok", "swarm"}
 RESEARCH_ARITY = {"uno": 1, "duo": 2, "trio": 3}
 LAUNCHERS = (
     "audit",
+    "canary",
     "decorate",
     "delegate",
     "dou",
