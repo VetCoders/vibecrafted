@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-PYTHON   ?= python3
+PYTHON   ?= $(CURDIR)/scripts/project-python
 INSTALLER := scripts/vetcoders_install.py
 GUI_INSTALLER := scripts/installer_gui.py
 MANIFEST := install.toml

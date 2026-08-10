@@ -11,6 +11,26 @@ from scripts import vetcoders_install as installer
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_makefile_python_runner_rejects_xcode_python_39() -> None:
+    """The Make front door must not trust macOS's ambient `python3`."""
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    runner = REPO_ROOT / "scripts" / "project-python"
+
+    assert "PYTHON   ?= $(CURDIR)/scripts/project-python" in makefile
+    assert runner.stat().st_mode & 0o111
+
+    result = subprocess.run(
+        [str(runner), "-c", "import sys, tomllib; print(sys.version_info[:2])"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().startswith("(3, 1")
+
+
 def test_makefile_keeps_install_as_terminal_first_front_door() -> None:
     """Contract: `make install` is the terminal-native human front door — a
     compact, log-quiet step runner that greets, walks the canonical install
