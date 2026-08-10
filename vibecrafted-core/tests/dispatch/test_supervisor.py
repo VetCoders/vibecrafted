@@ -1061,3 +1061,65 @@ prompt = "must identify the cut"
     assert result.states == {"c1": STATE_FAILED}
     assert result.baton.last is not None
     assert any("does not identify" in failure for failure in result.baton.last.failures)
+
+
+def test_fleet_worktree_cut_delivery_commit_comes_from_cut_branch(
+    tmp_path: Path,
+) -> None:
+    """Living Tree Rule v3, Mode B: a WRITE cut delivered in its own worktree on
+    ``cut/<id>`` never moves the main checkout's HEAD. The supervisor must judge
+    and record the CUT BRANCH tip, not the baseline HEAD.
+
+    Field bug (2026-08-10, stt-live-first-v2): the tracker showed the baseline
+    sha as w1-b's evidence while the real delivery commit sat on
+    ``cut/w1-b-apple-utterance-eater``; with ``require_commit = true`` the same
+    blindness would have refused the green cut outright ("no new commit").
+    """
+    repo_dir = tmp_path / "repo"
+    init_git_repo(repo_dir)
+    baseline = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    worktree_bash = (
+        f"cd {shlex.quote(str(repo_dir))}"
+        " && git worktree add -q -b cut/wt-cut .claude/worktrees/wt-cut"
+        " && cd .claude/worktrees/wt-cut"
+        " && printf 'delivered\\n' > delivered.txt"
+        " && git add delivered.txt"
+        " && git -c user.email=agents@vetcoders.io -c user.name=fake"
+        " commit -qm '[codex/vc-implement] feat: wt-cut delivered'"
+    )
+    dispatch, reports_dir, artifacts_dir = build_dispatch(
+        tmp_path,
+        """
+[[cuts]]
+id = "wt-cut"
+agent = "codex"
+workflow = "implement"
+prompt = "deliver in a fleet worktree"
+  [[cuts.verify]]
+  run = "echo ok"
+  expect = { contains = "ok" }
+""",
+        repo=repo_dir,
+        policy="repair_rounds = 0\nrequire_commit = true",
+    )
+    cells = FakeCells(reports_dir=reports_dir)
+    cells.cells[("wt-cut", "initial")] = FakeCell(bash=worktree_bash)
+
+    result = run_dispatch(dispatch, launcher=cells, artifacts_dir=artifacts_dir)
+
+    branch_tip = subprocess.run(
+        ["git", "rev-parse", "cut/wt-cut"],
+        cwd=repo_dir,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert branch_tip != baseline
+    assert result.states == {"wt-cut": STATE_VERIFIED}
+    assert result.cuts[0]["commit"] == branch_tip

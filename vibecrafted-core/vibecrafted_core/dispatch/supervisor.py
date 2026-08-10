@@ -290,6 +290,7 @@ class DispatchSupervisor:
         prompt = render_cell_prompt(self.dispatch, cut, baton=baton)
         self._materialize_prompt(cut, "initial", prompt)
         git_before = self._git_state()
+        fleet_before = self._cut_delivery_head(cut)
         if cut.mode != "read" and self.policy.require_commit and git_before[1]:
             raise CellContractError(
                 f"[{cut.id}] WRITE cut started from a dirty worktree: {git_before[1]}"
@@ -417,34 +418,64 @@ class DispatchSupervisor:
             outcome = outcome2
             verdict = self._verify(cut)
 
-        delivery_commit = self._git_head()
+        fleet_after = self._cut_delivery_head(cut)
+        delivery_commit = fleet_after or self._git_head()
         if cut.mode != "read" and self.policy.require_commit:
-            head_before = git_before[0]
-            head_after, status_after = self._git_state()
-            if verdict.ok and status_after:
-                raise CellContractError(
-                    f"[{cut.id}] WRITE cut left uncommitted changes after verification:"
-                    f" {status_after}"
-                )
-            if verdict.ok and (
-                not head_before or not head_after or head_after == head_before
-            ):
-                existing = self._existing_delivery_commit(cut, outcome.report_text)
-                if not existing:
+            if fleet_after or fleet_before:
+                # Fleet Worktrees formation: the cut's evidence surface is its
+                # own worktree/branch — the main checkout's HEAD never moves
+                # and must not be judged.
+                wt_status = self._cut_worktree_status(cut)
+                if verdict.ok and wt_status:
                     raise CellContractError(
-                        f"[{cut.id}] WRITE cut produced no new commit and supplied"
-                        " no valid idempotent existing-commit proof:"
-                        f" HEAD remained {head_after[:8] or '<unknown>'}"
+                        f"[{cut.id}] WRITE cut left uncommitted changes in its"
+                        f" worktree after verification: {wt_status}"
                     )
-                delivery_commit = existing
-                self._journal(
-                    f"[{cut.id}] accepted idempotent existing commit {existing[:8]}"
-                )
-            elif verdict.ok and not self._commit_matches_cut(cut, head_after):
-                raise CellContractError(
-                    f"[{cut.id}] new HEAD {head_after[:8]} does not identify"
-                    " the delivered cut"
-                )
+                if verdict.ok and (not fleet_after or fleet_after == fleet_before):
+                    existing = self._existing_delivery_commit(cut, outcome.report_text)
+                    if not existing:
+                        raise CellContractError(
+                            f"[{cut.id}] WRITE cut produced no new commit on its"
+                            " cut branch and supplied no valid idempotent"
+                            " existing-commit proof: tip remained"
+                            f" {fleet_after[:8] or '<unknown>'}"
+                        )
+                    delivery_commit = existing
+                    self._journal(
+                        f"[{cut.id}] accepted idempotent existing commit {existing[:8]}"
+                    )
+                elif verdict.ok and not self._commit_matches_cut(cut, fleet_after):
+                    raise CellContractError(
+                        f"[{cut.id}] cut-branch tip {fleet_after[:8]} does not"
+                        " identify the delivered cut"
+                    )
+            else:
+                head_before = git_before[0]
+                head_after, status_after = self._git_state()
+                if verdict.ok and status_after:
+                    raise CellContractError(
+                        f"[{cut.id}] WRITE cut left uncommitted changes after"
+                        f" verification: {status_after}"
+                    )
+                if verdict.ok and (
+                    not head_before or not head_after or head_after == head_before
+                ):
+                    existing = self._existing_delivery_commit(cut, outcome.report_text)
+                    if not existing:
+                        raise CellContractError(
+                            f"[{cut.id}] WRITE cut produced no new commit and"
+                            " supplied no valid idempotent existing-commit proof:"
+                            f" HEAD remained {head_after[:8] or '<unknown>'}"
+                        )
+                    delivery_commit = existing
+                    self._journal(
+                        f"[{cut.id}] accepted idempotent existing commit {existing[:8]}"
+                    )
+                elif verdict.ok and not self._commit_matches_cut(cut, head_after):
+                    raise CellContractError(
+                        f"[{cut.id}] new HEAD {head_after[:8]} does not identify"
+                        " the delivered cut"
+                    )
 
         return replace(
             verdict,
@@ -873,6 +904,37 @@ class DispatchSupervisor:
     def _git_head(self) -> str:
         """Return the repo's current HEAD sha, or "" if it cannot be resolved."""
         return self._git(["rev-parse", "HEAD"])
+
+    def _cut_worktree_dir(self, cut: Cut) -> Path:
+        """The Fleet Worktrees (Living Tree Rule v3, Mode B) geometry for this cut."""
+        return Path(self.repo) / ".claude" / "worktrees" / cut.id
+
+    def _cut_delivery_head(self, cut: Cut) -> str:
+        """Resolve the cut's OWN delivery tip under the Fleet Worktrees formation.
+
+        Mode B puts each cut on ``cut/<id>`` inside ``.claude/worktrees/<id>``;
+        the worker's commit never moves the main checkout's HEAD, so the main
+        HEAD is the wrong evidence surface there (field bug 2026-08-10: the
+        tracker recorded the baseline sha as a verified cut's evidence).
+        Prefers the cut worktree's HEAD, falls back to the ``cut/<id>`` branch
+        tip, and returns "" when neither exists — Living Tree mode, where the
+        caller keeps judging the main HEAD.
+        """
+        worktree = self._cut_worktree_dir(cut)
+        if worktree.is_dir():
+            head = self._git(["-C", str(worktree), "rev-parse", "HEAD"])
+            if head:
+                return head
+        return self._git(
+            ["rev-parse", "--verify", "--quiet", f"cut/{cut.id}^{{commit}}"]
+        )
+
+    def _cut_worktree_status(self, cut: Cut) -> str:
+        """Porcelain status inside the cut's worktree; "" when it does not exist."""
+        worktree = self._cut_worktree_dir(cut)
+        if not worktree.is_dir():
+            return ""
+        return self._git(["-C", str(worktree), "status", "--porcelain"])
 
     def _git(self, args: list[str]) -> str:
         """Run a git command in the dispatch repo; return trimmed stdout, or "" on failure."""
