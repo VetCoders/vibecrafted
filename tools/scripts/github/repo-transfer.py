@@ -29,7 +29,7 @@ Usage:
     ./repo-transfer.py --transfer owner/repo --to NewOwner --yes
     ./repo-transfer.py --transfer owner/repo --to NewOwner --clean --yes
 
-Created by vetcoders (c)2026
+Created by Vetcoders (c)2026
 """
 
 from __future__ import annotations
@@ -782,7 +782,7 @@ Examples:
   ./repo-transfer.py --transfer owner/repo --to NewOwner/new-name --yes
   ./repo-transfer.py --transfer owner/repo --to NewOwner --clean --yes
 
-Created by vetcoders (c)2024-2026
+Created by Vetcoders (c)2024-2026
 """,
     )
 

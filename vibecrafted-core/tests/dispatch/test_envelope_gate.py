@@ -22,8 +22,8 @@ from vibecrafted_core.dispatch.schema import DispatchSchemaError, parse_dispatch
 from vibecrafted_core.dispatch.supervisor import CellRun, DispatchSupervisor
 
 FAST_AWAIT = "await = { poll_s = 0.02, timeout_min = 1.0 }"
-ORIGIN_URL = "git@github.com:Vetcoders/fixture.git"
-ORIGIN_IDENTITY = "Vetcoders/fixture"
+ORIGIN_URL = "git@github.com:vetcoders/fixture.git"
+ORIGIN_IDENTITY = "vetcoders/fixture"
 
 
 @dataclass
@@ -230,7 +230,7 @@ id = "dpk-w5b-envelope-gate"
 delivery_scope = "checkout"
 unknowable_future_field = "must survive untouched"
   [proof.subject]
-  producer_id = "Vetcoders/vibecrafted"
+  producer_id = "vetcoders/vibecrafted"
   expected_exit = 0
 """
     dispatch = parse(
@@ -242,7 +242,7 @@ unknowable_future_field = "must survive untouched"
         "id": "dpk-w5b-envelope-gate",
         "delivery_scope": "checkout",
         "unknowable_future_field": "must survive untouched",
-        "subject": {"producer_id": "Vetcoders/vibecrafted", "expected_exit": 0},
+        "subject": {"producer_id": "vetcoders/vibecrafted", "expected_exit": 0},
     }
 
 
@@ -300,7 +300,7 @@ def test_brief_digest_mismatch_blocks_before_spawn(gate_env: dict[str, Path]) ->
     ("field_name", "declared"),
     [
         ("agent", "codex"),
-        ("repo", "Vetcoders/other-repo"),
+        ("repo", "vetcoders/other-repo"),
         ("root", "/nonexistent/other-root"),
         ("branch", "feat/other-branch"),
         ("expected_head", "0" * 40),

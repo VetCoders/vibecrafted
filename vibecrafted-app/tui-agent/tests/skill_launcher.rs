@@ -297,7 +297,7 @@ fn polarize_intent_discovery_does_not_follow_symlinked_directories() {
         .join("artifacts/vetcoders/vc-tui/2026_0508/polarize/polr-valid/prism.json");
     let escaped_prism = escaped
         .path()
-        .join("Vetcoders/vc-tui/2026_0508/polarize/polr-escaped/prism.json");
+        .join("vetcoders/vc-tui/2026_0508/polarize/polr-escaped/prism.json");
     fs::create_dir_all(valid_prism.parent().unwrap()).unwrap();
     fs::create_dir_all(escaped_prism.parent().unwrap()).unwrap();
     fs::write(

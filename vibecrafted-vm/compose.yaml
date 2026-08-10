@@ -31,7 +31,7 @@ services:
     environment:
       - TAILSCALE_AUTHKEY=${TAILSCALE_AUTHKEY:-}
       - TAILSCALE_HOSTNAME=${TAILSCALE_HOSTNAME:-vc-workspace}
-      # Empty by default: tag:devbox is NOT defined in the vetcoders tailnet ACL,
+      # Empty by default: tag:devbox is NOT defined in the Vetcoders tailnet ACL,
       # and tagging would break the `autogroup:self` SSH rule. Leave blank → the
       # node is user-owned (your auth key) and the existing ssh rule matches.
       - TAILSCALE_TAGS=${TAILSCALE_TAGS:-}

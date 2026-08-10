@@ -100,7 +100,7 @@ const GOLDEN_RUN_WITH_DELIVERY_AXES: &str = r#"{
     "lifecycle_id": "",
     "cut_id": "cut-1",
     "proof_id": "proof-1",
-    "repo": "Vetcoders/vibecrafted",
+    "repo": "vetcoders/vibecrafted",
     "branch": "feat/reduce-wrong-assumptions",
     "final_head": "deadbeef",
     "report_sha256": "sha256:abc"
@@ -778,7 +778,7 @@ fn seal_ref_deserialises_kernel_subset() {
           "lifecycle_id": "life-1",
           "cut_id": "c1",
           "proof_id": "p1",
-          "repo": "Vetcoders/vibecrafted",
+          "repo": "vetcoders/vibecrafted",
           "branch": "main",
           "final_head": "abc",
           "report_sha256": "sha256:x"

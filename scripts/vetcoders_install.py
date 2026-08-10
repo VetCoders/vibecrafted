@@ -2225,7 +2225,7 @@ def _clean_legacy_rc_entries(content: str) -> tuple[str, int]:
                 any(
                     x in lower_comment
                     for x in [
-                        "vetcoders shell helpers",
+                        "Vetcoders shell helpers",
                         "vibecraft shell helpers",
                         "vibecrafted shell helpers",
                         "vibecraft launcher",

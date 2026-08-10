@@ -58,7 +58,7 @@ _vetcoders_source_runtime_helpers() {
     return 0
   done < <(_vetcoders_runtime_helper_candidates)
 
-  printf '%s\n' "Missing vetcoders runtime helpers in:" >&2
+  printf '%s\n' "Missing Vetcoders runtime helpers in:" >&2
   _vetcoders_runtime_helper_candidates >&2
   return 1
 }

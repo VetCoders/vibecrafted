@@ -264,7 +264,7 @@ def test_print_doctor_failure_hint_uses_vibecrafted_not_old_brand(
     output = capsys.readouterr().out
     assert "store: missing" in output
     assert "vibecrafted doctor --fix-rc --fix-launchers" in output
-    assert "vetcoders install" not in output
+    assert "Vetcoders install" not in output
 
 
 def test_run_doctor_includes_dashboard_smoke(tmp_path: Path, monkeypatch) -> None:

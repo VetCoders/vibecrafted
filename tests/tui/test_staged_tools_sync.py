@@ -5027,7 +5027,7 @@ def test_runtime_generation_pointer_swap_never_removes_current(
         "VIBECRAFTED_SOURCE_REVISION",
         "0123456789abcdef0123456789abcdef01234567",
     )
-    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "Vetcoders/vibecrafted")
+    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "vetcoders/vibecrafted")
     source, old_target, current = _runtime_pointer_fixture(tmp_path)
     original_replace = installer.os.replace
     observations: list[tuple[bool, bool, bool]] = []
@@ -5080,7 +5080,7 @@ def test_runtime_generation_pointer_swap_never_removes_current(
     assert manifest["entrypoint"] == (
         "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
     )
-    assert manifest["owner_repo"] == "Vetcoders/vibecrafted"
+    assert manifest["owner_repo"] == "vetcoders/vibecrafted"
     assert manifest["source_revision"] == ("0123456789abcdef0123456789abcdef01234567")
     assert set(manifest["hashes"]) == {
         "VERSION",
@@ -5134,7 +5134,7 @@ def test_runtime_generation_doctor_verifies_manifest_and_launcher(
         "VIBECRAFTED_SOURCE_REVISION",
         "0123456789abcdef0123456789abcdef01234567",
     )
-    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "Vetcoders/vibecrafted")
+    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "vetcoders/vibecrafted")
 
     generation = installer.sync_control_plane_tree(
         source,
@@ -5184,7 +5184,7 @@ def test_runtime_generation_doctor_rejects_deck_drift_and_incomplete_hashes(
         "VIBECRAFTED_SOURCE_REVISION",
         "0123456789abcdef0123456789abcdef01234567",
     )
-    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "Vetcoders/vibecrafted")
+    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "vetcoders/vibecrafted")
     generation = installer.sync_control_plane_tree(
         source,
         current,
@@ -5234,7 +5234,7 @@ def test_runtime_generation_doctor_rejects_launcher_from_old_generation(
         "VIBECRAFTED_SOURCE_REVISION",
         "0123456789abcdef0123456789abcdef01234567",
     )
-    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "Vetcoders/vibecrafted")
+    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "vetcoders/vibecrafted")
     generation = installer.sync_control_plane_tree(
         source,
         current,

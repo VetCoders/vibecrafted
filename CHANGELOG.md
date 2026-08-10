@@ -122,7 +122,7 @@ operator, research, workflow) welds the session-manager rail into the default ta
 template so a reinstall cannot strip the sidebar the operator hand-welded last week.
 Layouts passed parser dump and live `new-tab` load probes before this line shipped.
 
-The **installer container lane** earned its scars on a real vetcoders container
+The **installer container lane** earned its scars on a real Vetcoders container
 mount: sshfs that dropped executable bits, broke symlinks, and corrupted bytecode
 on copy. The lane is resilient under those conditions — stage, verify, refuse to
 pretend a half-copied tree is an install. That is not marketing; it is wartime

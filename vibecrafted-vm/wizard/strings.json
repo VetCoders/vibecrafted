@@ -19,8 +19,14 @@
       "en": "Wizard language"
     },
     "options": {
-      "pl": ["Polski", "English"],
-      "en": ["Polish", "English"]
+      "pl": [
+        "Polski",
+        "English"
+      ],
+      "en": [
+        "Polish",
+        "English"
+      ]
     }
   },
   "host": {
@@ -171,8 +177,14 @@
       "en": "Skip tailnet (you can join manually later) or provide a key now?"
     },
     "options": {
-      "pl": ["Pomiń — skonfiguruję później", "Podam klucz teraz"],
-      "en": ["Skip — I'll set it up later", "Provide key now"]
+      "pl": [
+        "Pomiń — skonfiguruję później",
+        "Podam klucz teraz"
+      ],
+      "en": [
+        "Skip — I'll set it up later",
+        "Provide key now"
+      ]
     },
     "auth_key_prompt": {
       "pl": "Wklej tailscale auth key (tskey-auth-...)",
@@ -197,8 +209,16 @@
       "en": "Everything ready. Launch the container?"
     },
     "options": {
-      "pl": ["Tak — buduj + uruchom", "Tylko zapisz konfigurację", "Anuluj"],
-      "en": ["Yes — build + run", "Save config only", "Cancel"]
+      "pl": [
+        "Tak — buduj + uruchom",
+        "Tylko zapisz konfigurację",
+        "Anuluj"
+      ],
+      "en": [
+        "Yes — build + run",
+        "Save config only",
+        "Cancel"
+      ]
     }
   },
   "actions": {
