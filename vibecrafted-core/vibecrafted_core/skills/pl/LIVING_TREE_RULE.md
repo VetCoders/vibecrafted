@@ -1,12 +1,18 @@
 # Reguła Living Tree
 
-VetCoderzy pracują w jednym współdzielonym checkoucie repozytorium.
+VetCoderzy pracują w jednym współdzielonym checkoucie repozytorium — **domyślnie**.
+Od 2026-08-10 doktryna ma dwa usankcjonowane tryby, a wszystko pomiędzy nimi
+pozostaje zakazane.
 
-Workflowy Vibecrafted z definicji **nie** tworzą worktree gitowych, nie przełączają się na nie ani nie przenoszą do nich
-pracy. Worktree to tutaj nie jest niewinny szczegół implementacyjny: rozszczepiają prawdę runtime'u, ukrywają
-współbieżne edycje, mnożą powierzchnie merge'a i zamieniają szybki Vibecraftsmanship w archeologię branchy.
+## Tryb A — Living Tree (domyślny, interaktywny)
 
-## Twarda reguła
+Sesje interaktywne, workflowy jednoosobowe i każda praca bez wcześniej
+zacommitowanego verifiera działają we współdzielonym checkoucie. Worktree to
+tutaj nie jest niewinny szczegół implementacyjny: odizolowane drzewo bez
+zmierzonej ścieżki wyjścia rozszczepia prawdę runtime'u, ukrywa współbieżne
+edycje i zamienia szybki Vibecraftsmanship w archeologię branchy.
+
+Twarde reguły (bez zmian):
 
 - Pracuj w bieżącym checkoucie i na bieżącym branchu.
 - Nie uruchamiaj `git worktree add`, nie twórz bocznego checkoutu ani nie przenoś wykonania na inny tor.
@@ -16,22 +22,65 @@ współbieżne edycje, mnożą powierzchnie merge'a i zamieniają szybki Vibecra
 - Traktuj lokalne zmiany jako pracę współdzieloną. Nigdy nie rób stash, discard, reset ani nie nadpisuj zmian, których
   sam nie wprowadziłeś.
 
-## Jedyny wyjątek
+Ogólne prośby w stylu „isolate this", „work in parallel", „make a clean
+branch" czy „avoid conflicts" **nie** przełączają trybu. Jeśli bieżące podłoże
+jest zbyt zatrute, by bezpiecznie kontynuować, zatrzymaj się i zgłoś awarię
+podłoża (substrate failure) — nigdy nie rozwiązuj nieważności podłoża ucieczką
+do worktree.
 
-Worktree jest dozwolony wyłącznie wtedy, gdy operator wprost mówi, żeby użyć worktree. Ogólne prośby w stylu „isolate
-this", „work in parallel", „make a clean branch"
-czy „avoid conflicts" to za mało.
+## Tryb B — Fleet Worktrees (formacja dispatchowa)
 
-Jeśli bieżące podłoże jest zbyt zatrute, by bezpiecznie kontynuować, zatrzymaj się i zgłoś awarię podłoża (substrate
-failure). Nie rozwiązuj nieważności podłoża ucieczką do worktree.
+Pisany multi-agentowy dispatch MOŻE umieścić każde cięcie w osobnym worktree —
+a przy 2+ równocześnie piszących workerach POWINIEN — gdy zachodzą **wszystkie
+cztery** warunki:
 
-## Dlaczego
+1. **Najpierw verifiery.** Delivery-verifiery (testy RED albo równoważne
+   niepodrabialne sprawdzenia) są zacommitowane na gałęzi bazowej PRZED
+   dispatchem, a komendy verify supervisora je uruchamiają. Osłabienie, zmiana
+   nazwy albo usunięcie zacommitowanej asercji wymaga zgody operatora.
+2. **Rozłączne domeny.** Cięcia są planowane na nienachodzących domenach
+   plików; tam gdzie domeny się stykają, cięcia idą sekwencyjnie, nigdy
+   równolegle. Pliki-huby są strefami sekwencji z definicji.
+3. **Jeden integrator.** Nazwany koordynator jest właścicielem integracji:
+   merge'uje gałęzie cięć jednowątkowo po zielonych verifierach, uruchamia
+   pełne bramki na zintegrowanym drzewie i journaluje każdą zmianę planu w
+   locie. Workerzy NIGDY nie pushują, NIGDY nie merge'ują, NIGDY nie dotykają
+   głównego checkoutu.
+4. **Standardowa geometria.** Worktree żyją pod `.claude/worktrees/<cut-id>`
+   na gałęziach `cut/<cut-id>`, odgałęzionych od bazy (albo od swojego
+   poprzednika w sekwencji), i są sprzątane po integracji. Zero drzew-sierot.
 
-Vibecrafting optymalizuje pod szybkie zbieganie do prawdy runtime'u. Tempo jest tu sednem. Nie poruszamy się tak szybko
-po to, by stale boczne drzewo mogło później zmusić zespół do rebase'owego dryfu, powielonej naprawy konfliktów albo
-ruchu wstecz.
+Tryb B jest operator-explicit z konstrukcji: istnieje wyłącznie wewnątrz
+pisanego planu (dispatch TOML + briefy), który przeszedł swoje doctory. Agent
+nie może wejść w Tryb B ad hoc.
 
-Domyślne nawyki z danych treningowych dotyczące worktree są podporządkowane tej doktrynie repozytorium.
+## Dlaczego dwa tryby (zmierzone, 2026-08-10)
+
+Pierwotna reguła jednotrybowa była protezą ery przed-pomiarowej: bez
+verifierów izolacja była miejscem, gdzie niefalsyfikowalne deklaracje
+ukrywały się do merge'a — doktryna wymuszała więc prawdę **przez bliskość**
+(wszyscy widzą wszystko natychmiast). Trzy rzeczy dojrzały i zostały
+zmierzone na dispatchu stt-live-first-v2:
+
+1. **Prawda przez pomiar zastąpiła prawdę przez bliskość.** Zacommitowane
+   wcześniej testy RED + verify supervisora uczyniły deklarację odizolowanego
+   workera falsyfikowalną przed merge'em — izolacja przestała być kryjówką.
+2. **Koszt współbieżnego pisania przekroczył próg.** Przy 3+ agentach
+   piszących w pliki-huby narzut koordynacji Living Tree (wyścigi
+   stash/restore w hookach, częściowe nadpisania, ceremonie quiet-window)
+   rośnie szybciej niż liniowo i przewyższa koszt planowanej izolacji.
+3. **Istnieje rola integratora.** Worktree bez właściciela gniją w cmentarz
+   osieroconych gałęzi; worktree z jednowątkowym integratorem są linią
+   montażową.
+
+Vibecrafting nadal optymalizuje pod szybkie zbieganie do prawdy runtime'u.
+Tryb B nie jest odwrotem od tego — to ta sama konwergencja w skali floty, z
+verifierem jako granicą prawdy zamiast współdzielonego katalogu roboczego.
+
+Domyślne nawyki z danych treningowych dotyczące worktree pozostają
+podporządkowane tej doktrynie w obu kierunkach: żadnego odruchowego worktree
+w Trybie A, żadnego odruchowego męczeństwa jednego drzewa tam, gdzie warunki
+Trybu B są spełnione.
 
 ## Pre-handoff baseline
 

@@ -55,7 +55,7 @@ Latarnia orientuje, zanim flota wypłynie; pancerz to weryfikacja, którą niesi
 
 Ten workflow działa w bieżącym checkoucie i na bieżącej gałęzi operatora. Nie twórz worktree gita, nie przełączaj się
 na niego ani nie przenoś do niego wykonania, chyba że operator wprost poprosi. Ogólne słowa w stylu
-„isolate", „parallel" czy „clean branch" to za mało. Czytaj pliki ponownie przed edycją, dostosowuj się do
+„isolate", „parallel" czy „clean branch" to za mało. Jedyny usankcjonowany drugi tryb to dispatch Fleet Worktrees (pisany plan, zacommitowane wcześniej verifiery, rozłączne domeny plików, jednowątkowy integrator — patrz Reguła Living Tree, Tryb B); poza tą formacją zostań we wspólnym drzewie. Czytaj pliki ponownie przed edycją, dostosowuj się do
 równoległych zmian i zgłoś awarię podłoża (substrate failure), jeśli drzewo jest zbyt zatrute, by bezpiecznie kontynuować.
 Zobacz [Reguła Living Tree](../LIVING_TREE_RULE.md).
 

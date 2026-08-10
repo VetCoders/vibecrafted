@@ -69,7 +69,7 @@ dogfooding: "required for repo-impacting work"
 Działa w bieżącym checkoucie i na bieżącej gałęzi operatora. Nie twórz
 worktree gita, nie przełączaj się na niego ani nie przenoś do niego
 wykonania, chyba że operator wprost o to poprosi. Ogólne słowa w stylu
-„isolate", „parallel" czy „clean branch" to za mało. Czytaj pliki
+„isolate", „parallel" czy „clean branch" to za mało. Jedyny usankcjonowany drugi tryb to dispatch Fleet Worktrees (pisany plan, zacommitowane wcześniej verifiery, rozłączne domeny plików, jednowątkowy integrator — patrz Reguła Living Tree, Tryb B); poza tą formacją zostań we wspólnym drzewie. Czytaj pliki
 ponownie przed oceną stanu finalnego, dostosowuj się do równoległych
 zmian i zgłoś awarię podłoża (substrate failure), jeśli drzewo jest zbyt
 zatrute, by bezpiecznie kontynuować.

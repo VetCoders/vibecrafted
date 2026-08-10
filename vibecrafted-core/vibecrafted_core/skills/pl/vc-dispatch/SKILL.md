@@ -143,11 +143,14 @@ wieloworkerową równoległość — uruchamianie jednego workera naraz ze strac
 jest przeciwwskazane. Sekwencjonuj WYŁĄCZNIE twarde nakładania plików (ten sam plik/region).
 
 Strach, że „dirty tree = konflikty", to inwersja obserwowanej rzeczywistości:
-merge hell rodzi się w worktree i izolacji bocznych gałęzi, gdzie niezależne
-wizje workerów rozjeżdżają się i muszą zostać pogodzone na końcu. Living Tree
-(zob. vc-marbles, LIVING_TREE_RULE.md) trzyma każdą rękę nieprzerwanie wyrównaną do żywego
-baseline'u — ktoś zawsze dostosowuje się na miejscu, ryzyko merge-conflict
-zbliża się do zera. Workerowe sweepy `git add -A` zachowują współbieżną pracę
+merge hell rodzi się w NIEZARZĄDZANEJ izolacji — worktree bez verifierów i bez
+integratora, gdzie niezależne wizje workerów rozjeżdżają się i muszą zostać
+pogodzone na końcu. Living Tree (zob. vc-marbles, LIVING_TREE_RULE.md) trzyma
+każdą rękę nieprzerwanie wyrównaną do żywego baseline'u — ktoś zawsze
+dostosowuje się na miejscu, ryzyko merge-conflict zbliża się do zera. Formacja
+Fleet Worktrees (Tryb B kanonu) usuwa to ryzyko inną drogą: rozłącznymi
+domenami plików i jednowątkowym integratorem — wybór trybu zapisuje plan,
+nie odruch workera. Workerowe sweepy `git add -A` zachowują współbieżną pracę
 (odnotuj w journalu, czyje linie pojechały na piggyback); sweep to commitment, nie
 destrukcja.
 
