@@ -1,1 +1,103 @@
-/Users/polyversai/.local/share/vibecrafted/tools/vibecrafted-current/config/vc-frame/layouts/operator.kdl
+// operator — launch alias for the vibecrafted operator entrypoint
+// Path kept as operator.kdl for: vibecrafted start | dashboard operator
+// Content CANON = built-in default_layout "vibecrafted"
+//   (zellij-utils/assets/layouts/vibecrafted.kdl)
+//
+//
+// Tabs:
+//   "Start here"  — first-run map (about mission-control): chrome, rail, keys
+//   "Shell"       — work shell with banner + zsh (not a silent suspended pane)
+//
+// Contract: every tab keeps the left Sessions rail (default_tab_template).
+//
+// 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
+layout {
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="compact-bar" {
+                brand_text " 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. "
+                // 🚥 zone: clear the macOS traffic lights in the native window
+                left_inset "6"
+            }
+        }
+        pane split_direction="vertical" {
+            pane size=24 borderless=true {
+                plugin location="session-manager" {
+                    rail true
+                    pane_title "Sessions"
+                }
+            }
+            pane { children; }
+        }
+        pane size=1 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+
+    tab name="Start here" focus=true {
+        pane name="Start here" {
+            plugin location="about" {
+                guide_mode "mission-control"
+                pane_title "Start here — map of this workspace"
+            }
+        }
+    }
+
+    tab name="Shell" hide_floating_panes=true {
+        // Banner then interactive zsh — wakes immediately (no suspended Enter void).
+        pane command="bash" name="Shell" {
+            args "-lc" "printf '\\n  VIBECRAFTED · Shell\\n\\n  Your work shell — the Guide lives on tab 1.\\n\\n  First commands:\\n    vibecrafted start     open / attach operator flow\\n    vibecrafted help      list CLI surfaces\\n\\n  Chrome, always on screen:\\n    left rail   sessions / agent rooms — click a name to jump\\n    top row     tabs of this session: Start here | Shell\\n    Ctrl+t 1    back to the Guide\\n\\n'; exec zsh -l"
+        }
+    }
+
+    swap_tiled_layout name="vertical" {
+        tab max_panes=5 {
+            pane split_direction="vertical" {
+                pane
+                pane { children; }
+            }
+        }
+        tab max_panes=8 {
+            pane split_direction="vertical" {
+                pane { children; }
+                pane { pane; pane; pane; pane; }
+            }
+        }
+        tab max_panes=12 {
+            pane split_direction="vertical" {
+                pane { children; }
+                pane { pane; pane; pane; pane; }
+                pane { pane; pane; pane; pane; }
+            }
+        }
+    }
+
+    swap_tiled_layout name="horizontal" {
+        tab max_panes=4 {
+            pane
+            pane
+        }
+        tab max_panes=8 {
+            pane split_direction="vertical" {
+                pane { children; }
+                pane { pane; pane; pane; pane; }
+            }
+        }
+        tab max_panes=12 {
+            pane split_direction="vertical" {
+                pane { children; }
+                pane { pane; pane; pane; pane; }
+                pane { pane; pane; pane; pane; }
+            }
+        }
+    }
+
+    swap_tiled_layout name="stacked" {
+        tab min_panes=5 {
+            pane
+            pane stacked=true {
+                children
+            }
+        }
+    }
+}
