@@ -33,6 +33,16 @@ This is the same audit that gates publication of a new generation: what fails a 
 - **Warn (yellow)** — something is weak but operable; the doctor names what to check next. Typical warns: an optional surface not installed, an environment nicety missing.
 - **Fail (red)** — the runtime contract is broken: stale launcher, drifted manifest-bound file, checkout-linked config, or a broken symlink. Treat any fail as "do not trust this install until fixed".
 
+### Running doctor from inside the source checkout
+
+Doctor audits the installed runtime, but the Python process that runs it imports whatever is first on `sys.path`. With the working directory inside a Vibecrafted checkout — or with an editable `.pth` pointing at one — the process loads the unstamped living tree instead of the installed package. Doctor names that case explicitly: a `warn` on `launcher` saying the loaded tree is the living checkout, with the stamped identity the `PATH` launcher itself resolves. It is a working-directory artefact, not a broken install, and nothing should be uninstalled because of it.
+
+```bash
+cd ~ && vibecrafted doctor      # verify the installed launcher, free of the checkout
+```
+
+An unstamped tree loaded from **outside** any checkout is a different verdict: that is a genuine editable/Homebrew shadow winning `PATH`, and it still fails.
+
 Doctor ships targeted repair flags for the most common launcher and shell-config failures:
 
 ```bash
