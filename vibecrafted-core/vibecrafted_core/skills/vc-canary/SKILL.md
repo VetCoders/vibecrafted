@@ -35,6 +35,18 @@ Canary answers: _this repo needs a proper catalog, but first I must know
 `context --full`), spawns **one agent per scope** (variable N), adds missing
 docstrings only, commits once, then reports findings for discussion.
 
+## Canonical Orientation Gate
+
+Before building the repo-atlas, consume fresh `vc-init` evidence for
+the repo. If absent, run `vc-init` first — canary's ownership catalog
+is only as sound as the orientation it starts from. Use
+`Loctree:loctree` (repo-view, focus, slice, impact, find, follow) to
+materialize the Code-Derived Application Map that seeds `scopes.json`
+and the per-scope briefs. Sensing planes via raw grep, docs, or
+"I remember this repo" instead of Loctree organs is a process failure —
+it is exactly the `loct context --full` / `structural.files` shortcut
+this skill already forbids as inventory (see Sense organ below).
+
 ## Sense organ (mandatory)
 
 | Question                     | Organ                      | How                                    |
