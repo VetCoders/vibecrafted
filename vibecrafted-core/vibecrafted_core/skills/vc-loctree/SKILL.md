@@ -67,7 +67,7 @@ candidate discovery. Do not report discovery candidates as literal matches.
   counts (38/38 and 22/22); `where-symbol` narrowed them to the two meaningful
   definition/re-export sites.
 - `slice`, `impact`, and `follow trace` connect a matching line to its role in the
-  larger system. On ScreenScribe, impact exposed 5 direct and 12 transitive
+  larger system. On Screenscribe, impact exposed 5 direct and 12 transitive
   represented consumers and trace joined the frontend/backend handler path.
 
 These are demonstrated examples, not universal latency or coverage promises.

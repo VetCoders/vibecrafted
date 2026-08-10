@@ -34,7 +34,7 @@ The skill assumes:
 - wow effect comes from completeness, not decoration alone
 - green code is not done until read-only perception checks the result
 
-## Relationship To Other VibeCraft Skills
+## Relationship To Other Vibecrafted Skills
 
 This skill often composes with:
 

@@ -67,7 +67,7 @@ AST/parametr/regex/fuzzy. Kandydat discovery nie jest dowodem literalnym.
   licznikami dokładnych słów (38/38 i 22/22), a `where-symbol` zawęził wynik do
   dwóch istotnych miejsc definicji/re-exportu.
 - `slice`, `impact` i `follow trace` łączą znalezioną linię z rolą systemową.
-  Na ScreenScribe impact pokazał 5 bezpośrednich i 12 tranzytywnych
+  Na Screenscribe impact pokazał 5 bezpośrednich i 12 tranzytywnych
   reprezentowanych konsumentów, a trace połączył handler frontend/backend.
 
 To przykłady kontraktu, nie uniwersalne obietnice wydajności ani pokrycia.
