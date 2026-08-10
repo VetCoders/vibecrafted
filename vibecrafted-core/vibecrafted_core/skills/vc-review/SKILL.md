@@ -72,7 +72,7 @@ dogfooding: "required for repo-impacting work"
 
 Runs in the operator's current checkout and current branch. Do not
 move into a worktree unless explicitly asked. Re-read files before
-judging final state. See [Living Tree Rule](../LIVING_TREE_RULE.md).
+judging final state. The one sanctioned second mode is a Fleet Worktree dispatch (written plan, pre-committed verifiers, disjoint domains, single-thread integrator — see Living Tree Rule, Mode B); outside that formation, stay in the shared tree. See [Living Tree Rule](../LIVING_TREE_RULE.md).
 
 ## Canonical Orientation Gate
 

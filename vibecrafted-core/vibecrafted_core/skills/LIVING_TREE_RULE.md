@@ -1,22 +1,27 @@
 ---
 title: Living Tree Rule
 kind: core_rule
-version: 2.0.0
-description: "Single-checkout living tree rule: zero worktrees by default, continuous adaptation to live changes."
+version: 3.0.0
+description: "Two sanctioned modes: Living Tree (interactive default, zero worktrees) and Fleet Worktrees (verifier-gated parallel dispatch with a single-thread integrator)."
 scope: framework
 status: active
 ---
 
 # Living Tree Rule
 
-Vetcoders work in one shared repository checkout.
+Vetcoders work in one shared repository checkout — **by default**. Since
+2026-08-10 the doctrine has two sanctioned modes, and everything between them
+stays forbidden.
 
-Vibecrafted workflows do **not** create, switch to, or move work into git
-worktrees by default. Worktrees are not a harmless implementation detail here:
-they split runtime truth, hide concurrent edits, multiply merge surfaces, and
-turn fast Vibecraftsmanship into branch archaeology.
+## Mode A — Living Tree (interactive default)
 
-## Hard Rule
+Interactive sessions, single-seat workflows, and any work without a
+pre-committed verifier run in the shared checkout. Worktrees are not a
+harmless implementation detail here: an isolated tree without a measured exit
+path splits runtime truth, hides concurrent edits, and turns fast
+Vibecraftsmanship into branch archaeology.
+
+Hard rules (unchanged):
 
 - Work in the current checkout and current branch.
 - Do not run `git worktree add`, create a side checkout, or relocate execution
@@ -28,23 +33,61 @@ turn fast Vibecraftsmanship into branch archaeology.
 - Treat local changes as shared work. Never stash, discard, reset, or overwrite
   changes you did not make.
 
-## Only Exception
+Generic requests like "isolate this", "work in parallel", "make a clean
+branch", or "avoid conflicts" do **not** switch modes. If the current substrate
+is too poisoned to continue safely, stop and report the substrate failure —
+never solve substrate invalidity by escaping into a worktree.
 
-A worktree is allowed only when the operator explicitly says to use a worktree.
-Generic requests like "isolate this", "work in parallel", "make a clean branch",
-or "avoid conflicts" are not enough.
+## Mode B — Fleet Worktrees (dispatch formation)
 
-If the current substrate is too poisoned to continue safely, stop and report the
-substrate failure. Do not solve substrate invalidity by escaping into a worktree.
+A written multi-agent dispatch MAY put each cut in its own worktree — and at
+2+ concurrently-writing workers it SHOULD — when **all four** conditions hold:
 
-## Why
+1. **Verifiers first.** Delivery-verifiers (RED tests or equivalent
+   non-fakeable checks) are committed on the base branch BEFORE dispatch, and
+   the supervisor's verify commands run them. Weakening, renaming or deleting
+   a committed assertion requires operator sign-off.
+2. **Disjoint domains.** Cuts are planned on non-overlapping file domains;
+   where domains collide, cuts are sequenced, never parallelized. Hub files
+   are sequence zones by definition.
+3. **One integrator.** A named coordinator owns integration: merges cut
+   branches back single-threaded after green verifiers, runs full gates on
+   the integrated tree, and journals every mid-plan change. Workers NEVER
+   push, NEVER merge, NEVER touch the main checkout.
+4. **Standard geometry.** Worktrees live under `.claude/worktrees/<cut-id>`
+   on `cut/<cut-id>` branches, branched from the base (or from their
+   sequence predecessor), and are removed after integration. No orphan trees.
 
-Vibecrafting optimizes for rapid convergence on runtime truth. The pace is the
-point. We do not move that fast so that a stale side tree can later force the
-team into rebase drift, duplicate conflict repair, or backwards motion.
+Mode B is operator-explicit by construction: it exists only inside a written
+plan (dispatch TOML + briefs) that passed its doctors. An agent may not enter
+Mode B ad hoc.
 
-Training-data defaults about worktrees are subordinate to this repository
-doctrine.
+## Why two modes (measured, 2026-08-10)
+
+The original single-mode rule was a prosthesis for the pre-measurement era:
+with no verifiers, isolation was a place where unverifiable claims hid until
+merge — so the doctrine forced truth **by proximity** (everyone sees
+everything immediately). Three things matured and were measured on the
+stt-live-first-v2 dispatch:
+
+1. **Truth by measurement replaced truth by proximity.** Pre-committed RED
+   tests + supervisor verify made an isolated worker's claim falsifiable
+   before merge — isolation stopped being a hiding place.
+2. **Concurrent-write cost crossed the threshold.** At 3+ agents writing hub
+   files, Living Tree coordination overhead (stash/restore races in hooks,
+   partial clobbers, quiet-window commit ceremonies) grows faster than
+   linearly and exceeds the cost of planned isolation.
+3. **The integrator role exists.** Worktrees without an owner rot into
+   orphan-branch graveyards; worktrees with a single-thread integrator are an
+   assembly line.
+
+Vibecrafting still optimizes for rapid convergence on runtime truth. Mode B is
+not a retreat from that — it is the same convergence at fleet scale, with the
+verifier as the truth boundary instead of the shared working directory.
+
+Training-data defaults about worktrees remain subordinate to this doctrine in
+both directions: no reflexive worktree in Mode A, no reflexive single-tree
+martyrdom where Mode B's conditions are met.
 
 ## Pre-handoff baseline
 

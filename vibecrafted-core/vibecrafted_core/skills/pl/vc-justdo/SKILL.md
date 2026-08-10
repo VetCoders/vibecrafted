@@ -68,7 +68,8 @@ runtime ze skill id `justdo`.
 
 Działa w bieżącym checkout i branchu operatora. Nie twórz/nie przełączaj
 worktree, chyba że operator jawnie o to prosi w tym prompcie. Re-read przed
-edycją; substrate-failure jeśli drzewo zatrute.
+edycją; substrate-failure jeśli drzewo zatrute. Jedyny usankcjonowany drugi tryb to dispatch Fleet Worktrees (pisany plan, zacommitowane wcześniej verifiery, rozłączne domeny, jednowątkowy integrator — patrz Living Tree Rule, Mode B); poza tą formacją zostań we wspólnym drzewie.
+
 See [Living Tree Rule](../../LIVING_TREE_RULE.md).
 
 ## Canonical Orientation Gate (no-question ≠ no-orientation)
