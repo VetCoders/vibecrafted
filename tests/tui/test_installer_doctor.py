@@ -1228,6 +1228,63 @@ def test_public_launcher_contract_accepts_packaged_provider(
     assert finding.component == "public-launchers"
 
 
+def test_public_launcher_contract_ignores_foreign_checkout_launcher(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # `vc-tools` belongs to vetcoders-hooks, whose own installer publishes a
+    # symlink straight into its checkout. Sharing the `vc-*` prefix and the
+    # launcher bin does not make it ours to police.
+    home = tmp_path / "home"
+    launcher_bin = home / ".local" / "bin"
+    checkout_bin = tmp_path / "vetcoders-hooks" / "tui"
+    launcher_bin.mkdir(parents=True)
+    checkout_bin.mkdir(parents=True)
+    (checkout_bin.parent / ".git").mkdir()
+    _write_executable(checkout_bin / "vc-tools", "#!/bin/sh\nexit 0\n")
+    (launcher_bin / "vc-tools").symlink_to(checkout_bin / "vc-tools")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LAUNCHER_BIN", str(launcher_bin))
+
+    assert "vc-tools" not in installer._vibecrafted_owned_launcher_names()
+
+    [finding] = installer._public_launcher_contract_findings()
+
+    assert finding.level == "ok"
+    assert finding.component == "public-launchers"
+    assert "vc-tools" not in finding.message
+
+
+def test_public_launcher_contract_rejects_owned_launcher_beside_foreign_one(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Narrowing the scope must not soften the contract: an owned launcher in a
+    # checkout still fails even when a foreign checkout launcher sits next to it.
+    home = tmp_path / "home"
+    launcher_bin = home / ".local" / "bin"
+    foreign_bin = tmp_path / "vetcoders-hooks" / "tui"
+    owned_bin = tmp_path / "checkout" / "bin"
+    launcher_bin.mkdir(parents=True)
+    foreign_bin.mkdir(parents=True)
+    owned_bin.mkdir(parents=True)
+    (foreign_bin.parent / ".git").mkdir()
+    (owned_bin.parent / ".git").mkdir()
+    _write_executable(foreign_bin / "vc-tools", "#!/bin/sh\nexit 0\n")
+    _write_executable(owned_bin / "vc-ship", "#!/bin/sh\nexit 0\n")
+    (launcher_bin / "vc-tools").symlink_to(foreign_bin / "vc-tools")
+    (launcher_bin / "vc-ship").symlink_to(owned_bin / "vc-ship")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LAUNCHER_BIN", str(launcher_bin))
+
+    assert "vc-ship" in installer._vibecrafted_owned_launcher_names()
+
+    [finding] = installer._public_launcher_contract_findings()
+
+    assert finding.level == "fail"
+    assert finding.component == "public-launchers"
+    assert "vc-ship" in finding.message
+    assert "vc-tools" not in finding.message
+
+
 def test_slack_provider_contract_defers_when_provider_was_never_published(
     tmp_path: Path, monkeypatch
 ) -> None:

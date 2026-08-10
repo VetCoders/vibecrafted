@@ -2303,6 +2303,24 @@ def _installer_managed_launcher_names() -> list[str]:
     ]
 
 
+def _vibecrafted_owned_launcher_names() -> set[str]:
+    """Lowercased basenames of every launcher Vibecrafted itself publishes.
+
+    Ownership — not the ``vc-*`` naming prefix — is what scopes operator-facing
+    launcher contracts. Foreign products legitimately publish ``vc-*`` symlinks
+    into the same ``~/.local/bin`` (``vc-tools`` from vetcoders-hooks, whose own
+    installer links straight into its checkout by design); their provenance is
+    not ours to police.
+    """
+    return {
+        name.lower()
+        for name in (
+            *_installer_managed_launcher_names(),
+            *PROVIDER_PUBLISHED_LAUNCHER_NAMES,
+        )
+    }
+
+
 def _snapshot_helper_file(path: Path) -> bool:
     """True if `path` is a real (non-symlink) file carrying the helper shim marker comment."""
     if not path.exists():
@@ -2510,6 +2528,14 @@ PYTHON_ENTRYPOINT_LAUNCHERS = [
 LEGACY_LAUNCHER_NAMES = [
     "marble-pack",
     "aicx-pack",
+]
+
+# Launchers Vibecrafted publishes through a provider payload instead of its own
+# wrapper/entrypoint generation (slack_provider symlinks `vc-slack` into the
+# launcher bin). Still Vibecrafted-owned, so operator-facing launcher contracts
+# apply to them.
+PROVIDER_PUBLISHED_LAUNCHER_NAMES = [
+    "vc-slack",
 ]
 
 FRAMEWORK_LAUNCHER_MARKERS = (
@@ -9161,13 +9187,18 @@ def _managed_frontier_contract_findings() -> list[DoctorFinding]:
 
 
 def _public_launcher_contract_findings() -> list[DoctorFinding]:
-    """Reject operator-visible launchers that resolve into a Git checkout.
+    """Reject Vibecrafted-owned launchers that resolve into a Git checkout.
 
     Packaged providers may legitimately live outside the immutable runtime
     generation (for example uv or Cargo tools). A repository checkout is the
     forbidden boundary: exposing one through ``~/.local/bin`` creates a second
     runtime identity with no installed provenance.
+
+    Scope is ownership, not naming: only launchers Vibecrafted publishes itself
+    are judged. A foreign product sharing the launcher bin — and the ``vc-*``
+    prefix — keeps its own installation contract.
     """
+    owned_names = _vibecrafted_owned_launcher_names()
     unsafe: list[str] = []
     for launcher_bin_dir in _launcher_bin_dirs():
         if not launcher_bin_dir.is_dir():
@@ -9175,11 +9206,7 @@ def _public_launcher_contract_findings() -> list[DoctorFinding]:
         for entry in sorted(launcher_bin_dir.iterdir()):
             if not entry.is_symlink():
                 continue
-            name = entry.name.lower()
-            if not (
-                name.startswith(("vc-", "vibecraft"))
-                or name in {"marble-pack", "aicx-pack"}
-            ):
+            if entry.name.lower() not in owned_names:
                 continue
             try:
                 resolved = entry.resolve(strict=True)
@@ -9196,7 +9223,7 @@ def _public_launcher_contract_findings() -> list[DoctorFinding]:
             DoctorFinding(
                 "fail",
                 "public-launchers",
-                "operator launcher(s) resolve into a source checkout: "
+                "Vibecrafted launcher(s) resolve into a source checkout: "
                 + ", ".join(unsafe[:5])
                 + (" ..." if len(unsafe) > 5 else ""),
             )
@@ -9205,7 +9232,7 @@ def _public_launcher_contract_findings() -> list[DoctorFinding]:
         DoctorFinding(
             "ok",
             "public-launchers",
-            "operator launchers are checkout-free",
+            "Vibecrafted-owned launchers are checkout-free",
         )
     ]
 
