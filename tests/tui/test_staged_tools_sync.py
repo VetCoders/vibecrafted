@@ -2509,6 +2509,66 @@ def test_reclaimable_degraded_service_status_is_known_not_transition() -> None:
     assert not mid_start.needs_drain
 
 
+def test_reclaimable_orphaned_guardian_is_drainable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Server down + orphan guardian is a stable degraded pair, not an unknown identity."""
+    launcher = tmp_path / "vibecrafted"
+    launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+    payload = {
+        "installed": True,
+        "loaded": True,
+        "supervisor_live": True,
+        "supervisor_verified": True,
+        "supervisor_service_managed": True,
+        "build_current": True,
+        "pair_healthy": False,
+        "supervisor_pid": 949,
+    }
+    calls = 0
+
+    monkeypatch.setattr(
+        installer,
+        "_runtime_service_launcher",
+        lambda _shared_home: launcher,
+    )
+
+    def service_command(
+        _launcher: Path,
+        _shared_home: Path,
+        *arguments: str,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        if arguments == ("service", "status", "--json"):
+            return subprocess.CompletedProcess(
+                list(arguments),
+                1,
+                json.dumps(payload) + "\n",
+                "",
+            )
+        if arguments == ("status",):
+            return subprocess.CompletedProcess(
+                list(arguments),
+                1,
+                "Supervision: LAUNCHD (installed=yes, loaded=yes, supervisor PID 949)\n"
+                "Server: STOPPED\n"
+                "Guardian: ORPHANED (PID 95934 is live without a healthy managed server)\n",
+                "",
+            )
+        raise AssertionError(arguments)
+
+    monkeypatch.setattr(installer, "_run_runtime_service_command", service_command)
+
+    snapshot = installer._runtime_service_snapshot(tmp_path)
+
+    assert snapshot is not None
+    assert snapshot[1].reclaimable
+    assert snapshot[2] == "orphaned"
+    assert calls == 2
+
+
 def test_install_drains_reclaimable_degraded_supervisor_before_publish(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2585,7 +2645,7 @@ def test_install_drains_reclaimable_degraded_supervisor_before_publish(
 
     def snapshot(_shared_home: Path):
         if mode == "degraded":
-            return launcher, degraded, "stopped"
+            return launcher, degraded, "orphaned"
         if mode == "stopped":
             return launcher, quiescent, "stopped"
         return launcher, healthy, "running"

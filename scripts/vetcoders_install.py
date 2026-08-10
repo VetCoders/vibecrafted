@@ -4097,7 +4097,7 @@ def _runtime_service_pair_state(
     launcher: Path,
     shared_home: Path,
 ) -> str:
-    """Determine 'running'/'stopped' from the old launcher's plain-text `service status` output."""
+    """Determine the managed pair state from the old launcher's text status."""
     result = _run_runtime_service_command(launcher, shared_home, "status")
     running = (
         result.returncode == 0
@@ -4109,10 +4109,18 @@ def _runtime_service_pair_state(
         and "Server: STOPPED" in result.stdout
         and "Guardian: STOPPED" in result.stdout
     )
+    orphaned = (
+        result.returncode != 0
+        and "Supervision: LAUNCHD" in result.stdout
+        and "Server: STOPPED" in result.stdout
+        and "Guardian: ORPHANED" in result.stdout
+    )
     if running:
         return "running"
     if stopped:
         return "stopped"
+    if orphaned:
+        return "orphaned"
     detail = (
         result.stderr.strip() or result.stdout.strip() or f"exit={result.returncode}"
     )
@@ -4167,6 +4175,12 @@ def _runtime_service_snapshot(
     if status.healthy:
         return launcher, status, "running"
     pair_state = _runtime_service_pair_state(launcher, shared_home)
+    if status.reclaimable and pair_state == "orphaned":
+        # The verified managed supervisor owns the lifecycle, while a guardian
+        # from that degraded pair remains alive after its server disappeared.
+        # This is exactly the reclaimable state that service stop is designed
+        # to drain before publication.
+        return launcher, status, pair_state
     if pair_state != "stopped":
         # Reclaimable supervisors still report Server/Guardian STOPPED while
         # an orphan may hold the port; only true RUNNING disagreement is fatal.
