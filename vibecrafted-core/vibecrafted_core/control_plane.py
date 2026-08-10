@@ -1815,6 +1815,14 @@ def _normalize_agent_meta(path: Path) -> RunStatus | None:
         "operator_stop_at",
         "stop_reason",
         "trust_receipt",
+        # Cut A — durable Vibecrafted Workspace identity (projections/readers only).
+        "workspace_id",
+        "vibecrafted_session_id",
+        "workspace_instance_id",
+        "build_id",
+        "workspace_display_label",
+        "worker_host_session",
+        "worker_host_display",
     ):
         if key in payload and payload.get(key) not in (None, ""):
             extra[key] = payload[key]

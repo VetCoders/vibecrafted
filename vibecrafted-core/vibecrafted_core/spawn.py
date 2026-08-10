@@ -589,6 +589,19 @@ def write_meta(
     if str(model_requested or "").strip():
         payload["model_requested"] = str(model_requested).strip()
 
+    # Cut A: durable workspace identity on every new run meta (best-effort).
+    try:
+        from .workspace_catalog import resolve_run_workspace_identity
+
+        identity = resolve_run_workspace_identity(root=root, create_if_missing=True)
+        payload.update(identity.to_meta_fields())
+    except Exception as exc:  # noqa: BLE001 — meta write must not fail closed on catalog
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "workspace identity stamp skipped: %s", exc, exc_info=False
+        )
+
     _write_meta(meta, payload)
     if run_id:
         append_event(

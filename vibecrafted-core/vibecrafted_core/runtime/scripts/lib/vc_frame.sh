@@ -58,9 +58,11 @@ spawn_session_is_live() {
 #
 # Rules (exact order):
 #   1. VIBECRAFTED_WORKER_SESSION if set — explicit override wins.
-#   2. Else "<basename of SPAWN_ROOT / VIBECRAFTED_ROOT / cwd> workers" — the
-#      per-project worker host, ALWAYS suffixed. Bare basename(root) is the
-#      operator's interactive card in the rail; it is never a worker target.
+#   2. Else workspace-bound host from the control-plane catalog
+#      ("{label}-{workspace_short} workers") via Python twin — two workspaces
+#      with the same root basename never share a host (Cut A, 2026-08-10).
+#   3. Emergency fallback: "<basename(root)> workers" only if Python catalog
+#      resolution is unavailable.
 # 2026-08-09: the suffix used to be conditional on host == dispatcher seat.
 # That guarded only seat==repo, so dispatch from any other seat landed worker
 # tabs in the operator's card. Unconditional invariant → unconditional rule.
@@ -74,14 +76,34 @@ spawn_effective_operator_session() {
   fi
 
   local repo_root="${SPAWN_ROOT:-${VIBECRAFTED_ROOT:-}}"
-  local host=""
-  if [[ -n "$repo_root" ]]; then
-    host="$(basename "$repo_root")"
-  else
-    host="$(basename "$(pwd)")"
+  if [[ -z "$repo_root" ]]; then
+    repo_root="$(pwd)"
   fi
-  [[ -n "$host" ]] || return 1
 
+  # Prefer the Python catalog resolver so shell and Python stay identical.
+  local resolved=""
+  if command -v python3 >/dev/null 2>&1; then
+    resolved="$(
+      SPAWN_ROOT="$repo_root" VIBECRAFTED_ROOT="$repo_root" python3 - <<'PY' 2>/dev/null
+import os
+from pathlib import Path
+root = os.environ.get("SPAWN_ROOT") or os.environ.get("VIBECRAFTED_ROOT") or os.getcwd()
+try:
+    from vibecrafted_core.workspace_catalog import resolve_worker_host_session
+    print(resolve_worker_host_session(root=root, env=os.environ), end="")
+except Exception:
+    print(f"{Path(root).name or 'vibecrafted'} workers", end="")
+PY
+    )" || resolved=""
+  fi
+  if [[ -n "$resolved" ]]; then
+    printf '%s\n' "$resolved"
+    return 0
+  fi
+
+  local host=""
+  host="$(basename "$repo_root")"
+  [[ -n "$host" ]] || return 1
   printf '%s workers\n' "$host"
 }
 

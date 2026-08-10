@@ -1,0 +1,346 @@
+"""Cut A: canonical Vibecrafted Workspace identity and catalog proofs."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+import pytest
+from vibecrafted_core import workflow
+from vibecrafted_core import workspace_catalog as wc
+
+
+@pytest.fixture
+def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    vib_home = tmp_path / ".vibecrafted"
+    vib_home.mkdir()
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(vib_home))
+    monkeypatch.delenv("VIBECRAFTED_WORKER_SESSION", raising=False)
+    monkeypatch.delenv(wc.ENV_WORKSPACE_ID, raising=False)
+    monkeypatch.delenv(wc.ENV_VIBECRAFTED_SESSION_ID, raising=False)
+    monkeypatch.delenv(wc.ENV_WORKSPACE_INSTANCE_ID, raising=False)
+    return vib_home
+
+
+def test_two_explicit_workspaces_same_root_remain_distinct(
+    home: Path, tmp_path: Path
+) -> None:
+    root = tmp_path / "vibecrafted"
+    root.mkdir()
+    a = wc.create_workspace(root=root, display_label="alpha", select=False)
+    b = wc.create_workspace(root=root, display_label="beta", select=False)
+    assert a.workspace_id != b.workspace_id
+    assert a.canonical_root == b.canonical_root
+    host_a = wc.worker_host_session_name(
+        workspace_id=a.workspace_id, display_label=a.display_label
+    )
+    host_b = wc.worker_host_session_name(
+        workspace_id=b.workspace_id, display_label=b.display_label
+    )
+    assert host_a != host_b
+    assert host_a.endswith(" workers")
+    assert host_b.endswith(" workers")
+
+
+def test_same_basename_different_roots_remain_distinct(
+    home: Path, tmp_path: Path
+) -> None:
+    left = tmp_path / "checkouts" / "left" / "vibecrafted"
+    right = tmp_path / "checkouts" / "right" / "vibecrafted"
+    left.mkdir(parents=True)
+    right.mkdir(parents=True)
+    a = wc.create_workspace(root=left, display_label="vibecrafted", select=False)
+    b = wc.create_workspace(root=right, display_label="vibecrafted", select=False)
+    assert a.workspace_id != b.workspace_id
+    assert Path(a.canonical_root).name == Path(b.canonical_root).name == "vibecrafted"
+    assert wc.worker_host_session_name(
+        workspace_id=a.workspace_id, display_label="vibecrafted"
+    ) != wc.worker_host_session_name(
+        workspace_id=b.workspace_id, display_label="vibecrafted"
+    )
+
+
+def test_multiple_active_workspaces_coexist(home: Path, tmp_path: Path) -> None:
+    r1 = tmp_path / "a"
+    r2 = tmp_path / "b"
+    r1.mkdir()
+    r2.mkdir()
+    w1 = wc.create_workspace(root=r1, select=True)
+    w2 = wc.create_workspace(root=r2, select=False)
+    listed = wc.list_workspaces()
+    ids = {r.workspace_id for r in listed}
+    assert w1.workspace_id in ids
+    assert w2.workspace_id in ids
+    assert wc.read_catalog().selected_workspace_id == w1.workspace_id
+
+
+def test_bury_recover_preserves_identity_and_history(
+    home: Path, tmp_path: Path
+) -> None:
+    root = tmp_path / "proj"
+    root.mkdir()
+    created = wc.create_workspace(root=root, display_label="proj", notes="keep-me")
+    buried = wc.bury_workspace(created.workspace_id)
+    assert buried.status == wc.WORKSPACE_STATUS_BURIED
+    assert buried.workspace_id == created.workspace_id
+    assert buried.notes == "keep-me"
+    assert buried.buried_at is not None
+    assert wc.read_catalog().selected_workspace_id is None
+    active = wc.list_workspaces(include_buried=False)
+    assert created.workspace_id not in {r.workspace_id for r in active}
+    recovered = wc.recover_workspace(created.workspace_id, select=True)
+    assert recovered.status == wc.WORKSPACE_STATUS_ACTIVE
+    assert recovered.workspace_id == created.workspace_id
+    assert recovered.recovered_at is not None
+    assert recovered.created_at == created.created_at
+    assert wc.read_catalog().selected_workspace_id == created.workspace_id
+
+
+def test_run_identity_fields_on_resolve(home: Path, tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    created = wc.create_workspace(root=root, display_label="repo", select=True)
+    identity = wc.resolve_run_workspace_identity(root=root)
+    assert identity.workspace_id == created.workspace_id
+    assert wc.is_uuid(identity.vibecrafted_session_id)
+    assert wc.is_uuid(identity.workspace_instance_id)
+    assert identity.build_id.rendered
+    meta = identity.to_meta_fields()
+    for key in (
+        "workspace_id",
+        "vibecrafted_session_id",
+        "workspace_instance_id",
+        "build_id",
+        "worker_host_session",
+    ):
+        assert key in meta
+    assert meta["worker_host_session"].endswith(" workers")
+    assert wc.short_workspace_token(created.workspace_id) in meta["worker_host_session"]
+
+
+def test_instance_build_mismatch_cannot_claim_live(home: Path, tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    ws = wc.create_workspace(root=root, select=True)
+    live = wc.materialize_instance(workspace_id=ws.workspace_id, root=root)
+    other = wc.BuildId(
+        git_commit="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        dirty=False,
+        dirty_digest="",
+        package_version="9.9.9",
+        root=str(root.resolve()),
+    )
+    with pytest.raises(wc.WorkspaceInstanceBuildMismatch):
+        wc.claim_live_instance(
+            workspace_instance_id=live.workspace_instance_id,
+            expected_build_id=other,
+        )
+    # Materializing under a different build detaches the previous live instance.
+    second = wc.materialize_instance(
+        workspace_id=ws.workspace_id, root=root, build_id=other
+    )
+    assert second.workspace_instance_id != live.workspace_instance_id
+    reloaded = wc.WorkspaceInstance.from_payload(
+        json.loads(wc.instance_path(live.workspace_instance_id).read_text())
+    )
+    assert reloaded.status == wc.INSTANCE_STATUS_STALE
+
+
+def test_atomic_write_crash_preserves_previous_catalog(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    first = wc.create_workspace(root=root, display_label="first", select=True)
+    path = wc.catalog_path()
+    before = path.read_text(encoding="utf-8")
+
+    def boom(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(wc.os, "replace", boom)
+    with pytest.raises(OSError):
+        wc.create_workspace(
+            root=tmp_path / "other",
+            display_label="other",
+            select=False,
+        )
+    # Catalog file still parses to the previous valid state.
+    after = path.read_text(encoding="utf-8")
+    assert after == before
+    catalog = wc.read_catalog()
+    assert first.workspace_id in catalog.workspaces
+    assert len(catalog.workspaces) == 1
+
+
+def test_migration_idempotent_and_unassigned_not_guessed(
+    home: Path, tmp_path: Path
+) -> None:
+    from vibecrafted_core.control_plane import control_plane_home
+
+    root_a = (tmp_path / "proj-a").resolve()
+    root_a.mkdir()
+    cp = control_plane_home()
+    runs = cp / "runtime_runs"
+    (runs / "run-clear").mkdir(parents=True)
+    (runs / "run-clear" / "meta.json").write_text(
+        json.dumps({"run_id": "run-clear", "root": str(root_a)}),
+        encoding="utf-8",
+    )
+    (runs / "run-ambiguous").mkdir(parents=True)
+    (runs / "run-ambiguous" / "meta.json").write_text(
+        json.dumps({"run_id": "run-ambiguous", "root": ""}),
+        encoding="utf-8",
+    )
+
+    report1 = wc.migrate_legacy_workspaces()
+    report2 = wc.migrate_legacy_workspaces()
+    assert report1["created_count"] >= 1
+    # Second pass creates no additional workspaces for the same root.
+    assert report2["created_count"] == 0
+    unassigned_ids = {item["run_id"] for item in report1["unassigned_records"]}
+    assert "run-ambiguous" in unassigned_ids
+    catalog = wc.read_catalog()
+    # Original evidence untouched.
+    original = json.loads((runs / "run-ambiguous" / "meta.json").read_text())
+    assert "workspace_id" not in original
+    assert any(r.canonical_root == str(root_a) for r in catalog.workspaces.values())
+
+
+def test_settlement_counts_scoped_to_workspace(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vibecrafted_core.control_plane import run_snapshot_dir
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    ws_a = wc.create_workspace(root=root, display_label="a", select=False)
+    ws_b = wc.create_workspace(root=root, display_label="b", select=False)
+
+    snap = run_snapshot_dir()
+    snap.mkdir(parents=True, exist_ok=True)
+    for run_id, wid, tui in (
+        ("run-a1", ws_a.workspace_id, "f"),
+        ("run-a2", ws_a.workspace_id, "n"),
+        ("run-b1", ws_b.workspace_id, "x"),
+        ("run-u1", None, "f"),
+    ):
+        (snap / f"{run_id}.json").write_text(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "root": str(root),
+                    **({"workspace_id": wid} if wid else {}),
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    ledger = {
+        "records": [
+            {
+                "record_type": "settlement_transition",
+                "run_id": "run-a1",
+                "settlement_revision": 1,
+                "settlement_tui": "f",
+            },
+            {
+                "record_type": "settlement_transition",
+                "run_id": "run-a2",
+                "settlement_revision": 1,
+                "settlement_tui": "n",
+            },
+            {
+                "record_type": "settlement_transition",
+                "run_id": "run-b1",
+                "settlement_revision": 1,
+                "settlement_tui": "x",
+            },
+            {
+                "record_type": "settlement_transition",
+                "run_id": "run-u1",
+                "settlement_revision": 1,
+                "settlement_tui": "f",
+            },
+        ]
+    }
+    scoped = wc.settlement_counts_for_workspace(
+        ws_a.workspace_id, ledger_snapshot=ledger
+    )
+    assert scoped["latest_by_run"] == {"f": 1, "x": 0, "n": 1, "total": 2}
+    assert scoped["excluded_unassigned_run_count"] >= 1
+    scoped_b = wc.settlement_counts_for_workspace(
+        ws_b.workspace_id, ledger_snapshot=ledger
+    )
+    assert scoped_b["latest_by_run"] == {"f": 0, "x": 1, "n": 0, "total": 1}
+
+
+def test_worker_routing_workspace_bound_not_basename(
+    home: Path, tmp_path: Path
+) -> None:
+    root = tmp_path / "vibecrafted"
+    root.mkdir()
+    ws = wc.create_workspace(root=root, display_label="vibecrafted", select=True)
+    host = workflow._effective_operator_session(
+        root=str(root), run_id="r1", env=dict(os.environ)
+    )
+    assert host != "vibecrafted workers"
+    assert host.endswith(" workers")
+    assert wc.short_workspace_token(ws.workspace_id) in host
+    # Explicit override still wins.
+    assert (
+        workflow._effective_operator_session(
+            root=str(root),
+            run_id="r2",
+            env={**os.environ, "VIBECRAFTED_WORKER_SESSION": "forced-host"},
+        )
+        == "forced-host"
+    )
+
+
+def test_snapshot_manifest_contract_roundtrip(home: Path, tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    ws = wc.create_workspace(root=root, select=True)
+    manifest = wc.build_empty_snapshot_manifest(workspace_id=ws.workspace_id, root=root)
+    path = wc.write_snapshot_manifest(manifest)
+    loaded = wc.read_snapshot_manifest(manifest.snapshot_id)
+    assert loaded.workspace_id == ws.workspace_id
+    assert loaded.schema_version == "1"
+    assert loaded.build_id.rendered
+    assert path.is_file()
+    assert loaded.to_payload()["schema"] == wc.SNAPSHOT_MANIFEST_SCHEMA
+
+
+def test_write_meta_stamps_workspace_fields(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vibecrafted_core.spawn import write_meta
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    ws = wc.create_workspace(root=root, select=True)
+    meta_path = tmp_path / "meta.json"
+    # Avoid control-plane event side effects depending on global home.
+    monkeypatch.setattr(
+        "vibecrafted_core.spawn.append_event",
+        lambda *a, **k: None,
+    )
+    write_meta(
+        meta_path,
+        status="active",
+        agent="grok",
+        mode="workflow",
+        root=str(root),
+        input_ref="prompt",
+        report=str(tmp_path / "report.md"),
+        transcript=str(tmp_path / "t.log"),
+        launcher="test",
+        run_id="run-ws-1",
+    )
+    payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert payload["workspace_id"] == ws.workspace_id
+    assert payload["vibecrafted_session_id"]
+    assert payload["workspace_instance_id"]
+    assert isinstance(payload["build_id"], dict)
