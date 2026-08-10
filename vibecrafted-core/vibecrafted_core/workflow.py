@@ -1051,27 +1051,31 @@ def _write_live_viewer_script(
     """Write the read-only viewer command for one run's LIVE tab.
 
     ``vibecrafted <agent> observe`` is a one-shot status print, so it renders
-    the header and the follow is ``tail -F`` — which also covers the fallback
-    the plan asks for when the CLI is not on the viewer's PATH. ``set -e`` is
-    deliberately absent: a failing status print must not kill the tail.
+    the header and the follow is ``tail -F`` over the supervisor's humanized
+    transcript. The raw transcript remains a byte-exact machine contract and
+    must never be projected directly into a terminal. ``set -e`` is deliberately
+    absent: a failing status print must not kill the tail.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     quoted_run = shlex.quote(run_id)
     quoted_agent = shlex.quote(agent)
-    quoted_transcript = shlex.quote(str(transcript_path))
+    human_transcript_path = transcript_path.with_name(
+        transcript_path.stem + ".human" + transcript_path.suffix
+    )
+    quoted_human_transcript = shlex.quote(str(human_transcript_path))
     path.write_text(
         "#!/usr/bin/env bash\n"
         f"# LIVE viewer for {run_id} — read-only.\n"
         "# This tab observes a detached headless worker. Closing it loses the\n"
         "# view, never the run.\n"
         "set -uo pipefail\n"
-        f"transcript={quoted_transcript}\n"
+        f"human_transcript={quoted_human_transcript}\n"
         "if command -v vibecrafted >/dev/null 2>&1; then\n"
         f"  vibecrafted {quoted_agent} observe --run-id {quoted_run} || true\n"
         "fi\n"
-        'mkdir -p "$(dirname "$transcript")" 2>/dev/null || true\n'
-        'touch "$transcript" 2>/dev/null || true\n'
-        'exec tail -n +1 -F "$transcript"\n',
+        'mkdir -p "$(dirname "$human_transcript")" 2>/dev/null || true\n'
+        'touch "$human_transcript" 2>/dev/null || true\n'
+        'exec tail -n +1 -F "$human_transcript"\n',
         encoding="utf-8",
     )
     path.chmod(0o755)

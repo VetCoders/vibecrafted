@@ -716,8 +716,10 @@ def test_headless_launch_opens_live_bucket_viewer_and_stamps_origin(
     viewer_script = Path(captured["command"][-1])
     assert viewer_script.is_file()
     body = viewer_script.read_text(encoding="utf-8")
-    assert 'exec tail -n +1 -F "$transcript"' in body
-    assert payload["transcript"] in body
+    assert 'exec tail -n +1 -F "$human_transcript"' in body
+    assert 'exec tail -n +1 -F "$transcript"' not in body
+    assert "transcript.human.log" in body
+    assert payload["transcript"] not in body
     assert f"codex observe --run-id {run_id}" in body
     # A viewer tails; it must never carry the dispatcher itself.
     assert "vibecrafted_core.dispatcher" not in body
