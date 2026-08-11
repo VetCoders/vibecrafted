@@ -13,14 +13,17 @@ import hashlib
 import json
 import os
 import plistlib
+import pwd
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
 
@@ -52,6 +55,18 @@ WALKAROUND_SEAL_ISSUER = "vc-ship"
 WALKAROUND_RUNNER_ID = "io.vetcoders.vibecrafted.walkaround-runner.v1"
 WALKAROUND_RUNNER_EXECUTABLE = "verify-vibecrafted-walkaround"
 OUTER_BUNDLE_CODE_IDENTITY = "outer-bundle-codesign-v1"
+MACHO_CODE_IDENTITY = "macho-code-v1"
+TRUSTED_RUNNER_PUBLIC_KEY_NAME = "vibecrafted-walkaround-runner.pub"
+
+_MACHO_CODE_DOMAIN = b"io.vetcoders.vibecrafted.macho-code-v1\0"
+_MACHO_MAX_BYTES = 512 * 1024 * 1024
+_MACHO_MAX_COMMANDS = 4096
+_MACHO_MAX_COMMAND_BYTES = 16 * 1024 * 1024
+_MH_MAGIC_64 = 0xFEEDFACF
+_CPU_TYPE_ARM64 = 0x0100000C
+_MH_EXECUTE = 2
+_LC_SEGMENT_64 = 0x19
+_LC_CODE_SIGNATURE = 0x1D
 
 E_JSON = 20
 E_SCHEMA = 21
@@ -385,6 +400,123 @@ def _codesign_identifier(path: Path) -> str:
     if match is None:
         _fail(E_PROOF, f"bundle signature has no Identifier: {path}")
     return match.group(1).strip()
+
+
+def _macho_code_sha256(path: Path) -> str:
+    """Hash the immutable code image while excluding only signature bookkeeping."""
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        _fail(E_MISSING, f"outer Mach-O is unavailable: {exc}")
+    if size > _MACHO_MAX_BYTES:
+        _fail(E_SIZE, "outer Mach-O exceeds the 512 MiB identity limit")
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        _fail(E_MISSING, f"outer Mach-O cannot be read: {exc}")
+    if len(data) < 32:
+        _fail(E_PROOF, "outer Mach-O header is truncated")
+    try:
+        magic, cpu_type, _, file_type, ncmds, sizeofcmds, _, _ = struct.unpack_from(
+            "<IiiIIIII", data, 0
+        )
+    except struct.error as exc:  # pragma: no cover - guarded by the size check.
+        _fail(E_PROOF, f"outer Mach-O header is malformed: {exc}")
+    if magic != _MH_MAGIC_64 or cpu_type != _CPU_TYPE_ARM64 or file_type != _MH_EXECUTE:
+        _fail(
+            E_PLATFORM,
+            "outer code identity requires thin little-endian arm64 MH_EXECUTE",
+        )
+    if ncmds > _MACHO_MAX_COMMANDS or sizeofcmds > _MACHO_MAX_COMMAND_BYTES:
+        _fail(E_SIZE, "outer Mach-O load-command limits exceeded")
+    commands_end = 32 + sizeofcmds
+    if commands_end > len(data):
+        _fail(E_PROOF, "outer Mach-O load commands are out of bounds")
+
+    segments: list[tuple[str, int, int, int, int, int, int]] = []
+    code_signatures: list[tuple[int, int, int]] = []
+    offset = 32
+    for index in range(ncmds):
+        if offset % 8 or offset + 8 > commands_end:
+            _fail(E_PROOF, "outer Mach-O has an unaligned or truncated load command")
+        cmd, cmdsize = struct.unpack_from("<II", data, offset)
+        if cmdsize < 8 or cmdsize % 8 or offset + cmdsize > commands_end:
+            _fail(E_PROOF, "outer Mach-O has a malformed load command")
+        if cmd == _LC_SEGMENT_64:
+            if cmdsize < 72:
+                _fail(E_PROOF, "outer Mach-O has a truncated LC_SEGMENT_64")
+            raw_name = data[offset + 8 : offset + 24].split(b"\0", 1)[0]
+            try:
+                name = raw_name.decode("ascii")
+            except UnicodeDecodeError:
+                _fail(E_PROOF, "outer Mach-O has a non-ASCII segment name")
+            vmaddr, vmsize, fileoff, filesize = struct.unpack_from(
+                "<QQQQ", data, offset + 24
+            )
+            nsects = struct.unpack_from("<I", data, offset + 64)[0]
+            if cmdsize != 72 + nsects * 80:
+                _fail(E_PROOF, f"outer Mach-O segment {name!r} has malformed sections")
+            segments.append((name, offset, vmaddr, vmsize, fileoff, filesize, nsects))
+        elif cmd == _LC_CODE_SIGNATURE:
+            if cmdsize != 16:
+                _fail(E_PROOF, "outer Mach-O has a malformed LC_CODE_SIGNATURE")
+            dataoff, datasize = struct.unpack_from("<II", data, offset + 8)
+            code_signatures.append((offset, dataoff, datasize))
+            if index != ncmds - 1:
+                _fail(E_PROOF, "outer Mach-O LC_CODE_SIGNATURE is not terminal")
+        offset += cmdsize
+    if offset != commands_end:
+        _fail(E_PROOF, "outer Mach-O load-command size does not match its header")
+
+    names = [segment[0] for segment in segments]
+    if len(names) != len(set(names)):
+        _fail(E_PROOF, "outer Mach-O contains duplicate segments")
+    linkedit = [segment for segment in segments if segment[0] == "__LINKEDIT"]
+    if len(linkedit) != 1 or not segments or segments[-1][0] != "__LINKEDIT":
+        _fail(E_PROOF, "outer Mach-O requires one final __LINKEDIT segment")
+    if len(code_signatures) != 1:
+        _fail(E_PROOF, "outer Mach-O requires one LC_CODE_SIGNATURE")
+
+    file_ranges: list[tuple[int, int, str]] = []
+    vm_ranges: list[tuple[int, int, str]] = []
+    for name, _, vmaddr, vmsize, fileoff, filesize, _ in segments:
+        if fileoff + filesize > len(data):
+            _fail(E_PROOF, f"outer Mach-O segment {name!r} is out of file bounds")
+        if filesize:
+            file_ranges.append((fileoff, fileoff + filesize, name))
+        if vmsize:
+            vm_ranges.append((vmaddr, vmaddr + vmsize, name))
+    for ranges, label in ((file_ranges, "file"), (vm_ranges, "virtual-memory")):
+        ordered = sorted(ranges)
+        for previous, current in pairwise(ordered):
+            if current[0] < previous[1]:
+                _fail(E_PROOF, f"outer Mach-O has overlapping {label} segments")
+
+    _, linkedit_command, _, _, linkedit_fileoff, linkedit_filesize, nsects = linkedit[0]
+    if nsects != 0:
+        _fail(E_PROOF, "outer Mach-O __LINKEDIT must not contain sections")
+    signature_command, dataoff, datasize = code_signatures[0]
+    if dataoff % 16 or datasize == 0:
+        _fail(E_PROOF, "outer Mach-O code signature is missing or unaligned")
+    expected_end = dataoff + datasize
+    if (
+        expected_end != len(data)
+        or linkedit_fileoff + linkedit_filesize != len(data)
+        or dataoff < linkedit_fileoff
+    ):
+        _fail(E_PROOF, "outer Mach-O code signature or __LINKEDIT is non-terminal")
+
+    canonical = bytearray(data[:dataoff])
+    canonical[linkedit_command + 32 : linkedit_command + 40] = b"\0" * 8
+    canonical[linkedit_command + 48 : linkedit_command + 56] = b"\0" * 8
+    canonical[signature_command + 8 : signature_command + 16] = b"\0" * 8
+    return hashlib.sha256(_MACHO_CODE_DOMAIN + canonical).hexdigest()
+
+
+def _trusted_runner_public_key() -> Path:
+    """Resolve the operator-owned trust root from fixed release policy, never receipt input."""
+    operator_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    return operator_home / ".keys" / TRUSTED_RUNNER_PUBLIC_KEY_NAME
 
 
 def _version_tuple(value: str) -> tuple[int, int]:
@@ -804,6 +936,8 @@ def _validate_outer_bundle_code(
         "architecture",
         "minimum_macos",
         "dylibs",
+        "code_identity",
+        "code_sha256",
         "info_plist_sha256",
         "codesign_identifier",
     }
@@ -835,11 +969,18 @@ def _validate_outer_bundle_code(
         _fail(E_PLATFORM, "outer bundle executable is not Mach-O code")
     if sorted(observed.dependencies) != sorted(dylibs):
         _fail(E_DEPENDENCY, "outer bundle dylibs do not match measured load commands")
+    if raw["code_identity"] != MACHO_CODE_IDENTITY:
+        _fail(E_SCHEMA, f"{context}.code_identity must be {MACHO_CODE_IDENTITY}")
     _verify_macho_platform(
         {relative: observed},
         architecture=architecture,
         minimum_macos=minimum_macos,
     )
+    expected_code_hash = _expect_sha256(
+        raw["code_sha256"], field=f"{context}.code_sha256"
+    )
+    if _macho_code_sha256(executable) != expected_code_hash:
+        _fail(E_HASH, "outer bundle Mach-O code identity does not match manifest")
     if _expect_sha256(
         raw["info_plist_sha256"], field=f"{context}.info_plist_sha256"
     ) != _sha256(plist_path):
@@ -1366,6 +1507,22 @@ def _validate_identity(
     )
     if manifest.get("schema") != expected_schema:
         _fail(E_TRANSACTION, f"{field} manifest referent has the wrong schema")
+    expected_relative = f"manifests/{artifact}-manifest.json"
+    if relative != expected_relative:
+        _fail(
+            E_TRANSACTION,
+            f"{field} manifest referent must use canonical path {expected_relative}",
+        )
+    if artifact == "product":
+        try:
+            validate_schema_document(manifest)
+        except ProductContractError as exc:
+            _fail(E_TRANSACTION, f"{field} product manifest is incomplete: {exc}")
+    else:
+        try:
+            _validate_runtime_generation_manifest(manifest, field=field)
+        except ProductContractError as exc:
+            _fail(E_TRANSACTION, f"{field} runtime manifest is incomplete: {exc}")
     version = _expect_string(value["version"], field=f"{field}.version")
     if manifest.get("version") != version:
         _fail(E_TRANSACTION, f"{field} version does not match manifest referent")
@@ -1383,6 +1540,46 @@ def _validate_identity(
         digest_field: expected_hash,
         "source_revision": source_revision,
     }
+
+
+def _validate_runtime_generation_manifest(
+    manifest: Mapping[str, Any], *, field: str
+) -> None:
+    required = {
+        "schema",
+        "version",
+        "source_fingerprint",
+        "owner_repo",
+        "source_revision",
+        "entrypoint",
+        "hashes",
+    }
+    _expect_keys(manifest, required=required, context=f"{field} runtime manifest")
+    fingerprint = _expect_sha256(
+        manifest["source_fingerprint"], field=f"{field}.source_fingerprint"
+    )
+    if not fingerprint:  # pragma: no cover - _expect_sha256 either returns or fails.
+        _fail(E_TRANSACTION, f"{field} runtime source fingerprint is missing")
+    owner_repo = _expect_string(manifest["owner_repo"], field=f"{field}.owner_repo")
+    if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", owner_repo) is None:
+        _fail(E_TRANSACTION, f"{field} runtime owner_repo is invalid")
+    entrypoint = _relative_path(
+        manifest["entrypoint"], field=f"{field}.entrypoint"
+    ).as_posix()
+    if entrypoint != "vibecrafted-core/vibecrafted_core/deck/vibecrafted":
+        _fail(E_TRANSACTION, f"{field} runtime entrypoint is not canonical")
+    hashes = manifest["hashes"]
+    required_hashes = {
+        "VERSION",
+        "scripts/vibecrafted",
+        "runtime/generated/vc-frame/config.kdl",
+        "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
+    }
+    if not isinstance(hashes, dict) or set(hashes) != required_hashes:
+        _fail(E_TRANSACTION, f"{field} runtime hash inventory is incomplete")
+    for relative, digest in hashes.items():
+        _relative_path(relative, field=f"{field}.hashes.path")
+        _expect_sha256(digest, field=f"{field}.hashes.{relative}")
 
 
 def _validate_release_state(
@@ -1940,12 +2137,12 @@ def _verify_walkaround(
 
 
 def verify_walkaround(
-    receipt_path: str | Path, *, trusted_runner_public_key: str | Path
+    receipt_path: str | Path,
 ) -> dict[str, Any]:
-    """Verify evidence and independently re-check one mounted release DMG."""
+    """Verify evidence against the release-policy trust root and mounted DMG."""
     return _verify_walkaround(
         Path(receipt_path),
-        trusted_runner_public_key=Path(trusted_runner_public_key),
+        trusted_runner_public_key=_trusted_runner_public_key(),
         attached_mounts=_attached_image_mounts(),
         run_live_checks=True,
     )
@@ -2181,6 +2378,8 @@ def _self_test() -> int:
                 "architecture": "arm64",
                 "minimum_macos": "14.0",
                 "dylibs": list(observed_outer.dependencies),
+                "code_identity": MACHO_CODE_IDENTITY,
+                "code_sha256": _macho_code_sha256(app_executable),
                 "info_plist_sha256": _sha256(plist_path),
                 "codesign_identifier": PRODUCT_BUNDLE_ID,
             },
@@ -2205,7 +2404,7 @@ def _self_test() -> int:
         }
         _write_json(app / "Contents/Resources/product-manifest.json", product_manifest)
         _run_tool(
-            [codesign, "--force", "--deep", "--sign", "-", str(app)],
+            [codesign, "--force", "--sign", "-", str(app)],
             failure_code=E_PROOF,
             context="self-test could not sign outer app bundle",
         )
@@ -2213,16 +2412,24 @@ def _self_test() -> int:
 
         transaction_product = root / "manifests/product-manifest.json"
         transaction_runtime = root / "manifests/runtime-manifest.json"
-        _write_json(
-            transaction_product,
-            {"schema": PRODUCT_SCHEMA, "version": "1.0.0", "git_sha": "c" * 40},
-        )
+        transaction_product_payload = dict(product_manifest)
+        transaction_product_payload["git_sha"] = "c" * 40
+        _write_json(transaction_product, transaction_product_payload)
         _write_json(
             transaction_runtime,
             {
                 "schema": "vibecrafted.runtime-generation.v1",
                 "version": "1.0.0",
+                "source_fingerprint": "d" * 64,
+                "owner_repo": "vetcoders/vibecrafted",
                 "source_revision": "e" * 40,
+                "entrypoint": "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
+                "hashes": {
+                    "VERSION": "1" * 64,
+                    "scripts/vibecrafted": "2" * 64,
+                    "runtime/generated/vc-frame/config.kdl": "3" * 64,
+                    "vibecrafted-core/vibecrafted_core/deck/vibecrafted": "4" * 64,
+                },
             },
         )
         new = {
@@ -2518,7 +2725,6 @@ def _parser() -> argparse.ArgumentParser:
         "walkaround", help="verify a mounted-DMG walk-around receipt"
     )
     walkaround.add_argument("path", type=Path)
-    walkaround.add_argument("--trusted-runner-public-key", type=Path, required=True)
     return parser
 
 
@@ -2542,10 +2748,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "schema":
             validate_schema_document(_load_json(args.path))
         elif args.command == "walkaround":
-            verify_walkaround(
-                args.path,
-                trusted_runner_public_key=args.trusted_runner_public_key,
-            )
+            verify_walkaround(args.path)
         else:  # pragma: no cover - argparse owns the command set.
             _fail(E_SCHEMA, f"unsupported command: {args.command}")
     except ProductContractError as exc:

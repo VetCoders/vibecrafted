@@ -7,6 +7,7 @@ import os
 import plistlib
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 from collections.abc import Callable
@@ -126,7 +127,7 @@ def _codesign_macho(path: Path) -> None:
 
 def _codesign_app(app: Path) -> None:
     result = subprocess.run(
-        ["codesign", "--force", "--deep", "--sign", "-", str(app)],
+        ["codesign", "--force", "--sign", "-", str(app)],
         check=False,
         capture_output=True,
         text=True,
@@ -306,6 +307,10 @@ def _app_fixture(app: Path, macho_executable: Path) -> dict[str, Any]:
             "architecture": "arm64",
             "minimum_macos": "14.0",
             "dylibs": _macho_dependencies(app / "Contents/MacOS/Vibecrafted"),
+            "code_identity": contract.MACHO_CODE_IDENTITY,
+            "code_sha256": contract._macho_code_sha256(
+                app / "Contents/MacOS/Vibecrafted"
+            ),
             "info_plist_sha256": _sha256(plist),
             "codesign_identifier": contract.PRODUCT_BUNDLE_ID,
         },
@@ -344,23 +349,28 @@ def _identity(
     }
 
 
-def _transaction_fixture(path: Path) -> dict[str, Any]:
+def _transaction_fixture(path: Path, macho_executable: Path) -> dict[str, Any]:
     product_manifest = path.parent / "manifests/product-manifest.json"
     runtime_manifest = path.parent / "manifests/runtime-manifest.json"
-    _write_json(
-        product_manifest,
-        {
-            "schema": contract.PRODUCT_SCHEMA,
-            "version": "1.0.0",
-            "git_sha": "6" * 40,
-        },
-    )
+    transaction_app = path.parent / "transaction-product/Vibecrafted.app"
+    product_payload = _app_fixture(transaction_app, macho_executable)
+    product_payload["git_sha"] = "6" * 40
+    _write_json(product_manifest, product_payload)
     _write_json(
         runtime_manifest,
         {
             "schema": "vibecrafted.runtime-generation.v1",
             "version": "1.0.0",
+            "source_fingerprint": "7" * 64,
+            "owner_repo": "vetcoders/vibecrafted",
             "source_revision": "8" * 40,
+            "entrypoint": "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
+            "hashes": {
+                "VERSION": "1" * 64,
+                "scripts/vibecrafted": "2" * 64,
+                "runtime/generated/vc-frame/config.kdl": "3" * 64,
+                "vibecrafted-core/vibecrafted_core/deck/vibecrafted": "4" * 64,
+            },
         },
     )
     product_relative = product_manifest.relative_to(path.parent).as_posix()
@@ -660,6 +670,8 @@ def _patch_walkaround_runtime(
             live_calls.append((app, artifact))
 
     monkeypatch.setattr(contract, "_run_live_release_checks", record)
+    policy_key = Path(payload["dmg_path"]).parent / "trusted-runner-public.pem"
+    monkeypatch.setattr(contract, "_trusted_runner_public_key", lambda: policy_key)
 
 
 def _assert_error(code: int, call: Callable[[], Any]) -> None:
@@ -700,7 +712,7 @@ def test_versioned_json_schema_accepts_every_valid_contract_fixture(
         _module_fixture(tmp_path / "terminal", macho_executable, "vc-terminal"),
         _module_fixture(tmp_path / "frame", macho_executable, "vc-frame"),
         _app_fixture(tmp_path / "Vibecrafted.app", macho_executable),
-        _transaction_fixture(tmp_path / "transaction.json"),
+        _transaction_fixture(tmp_path / "transaction.json", macho_executable),
         _walkaround_fixture(tmp_path / "walkaround.json", macho_executable),
     ]
 
@@ -953,13 +965,67 @@ def test_valid_app_has_one_bundle_identity_and_three_bound_entrypoints(
     assert contract.verify_app(app) == expected
     outer = expected["outer_bundle_code"]
     assert outer["identity"] == contract.OUTER_BUNDLE_CODE_IDENTITY
+    assert outer["code_identity"] == contract.MACHO_CODE_IDENTITY
     assert "sha256" not in outer and "size" not in outer
+    assert outer["code_sha256"] == contract._macho_code_sha256(app / outer["path"])
+    for entry in expected["files"]:
+        if entry["kind"] in {"executable", "dylib"}:
+            assert _sha256(app / entry["path"]) == entry["sha256"]
     subprocess.run(
         ["codesign", "--verify", "--deep", "--strict", str(app)],
         check=True,
         capture_output=True,
         text=True,
     )
+
+
+def test_outer_macho_code_digest_rejects_substitution_after_resigning(
+    tmp_path: Path, macho_executable: Path
+) -> None:
+    app = tmp_path / "Vibecrafted.app"
+    manifest = _app_fixture(app, macho_executable)
+    executable = app / manifest["outer_bundle_code"]["path"]
+    replacement = tmp_path / "replacement"
+    _compile_macho(replacement, source="int main(void) { return 73; }\n")
+    assert (
+        contract._macho_code_sha256(replacement)
+        != manifest["outer_bundle_code"]["code_sha256"]
+    )
+
+    shutil.copy2(replacement, executable)
+    _codesign_app(app)
+
+    _assert_error(contract.E_HASH, lambda: contract.verify_app(app))
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    [
+        ("wrong_magic", contract.E_PLATFORM),
+        ("too_many_commands", contract.E_SIZE),
+        ("oversized_command_table", contract.E_SIZE),
+        ("truncated_commands", contract.E_PROOF),
+    ],
+)
+def test_macho_code_digest_fails_closed_on_invalid_container_shapes(
+    tmp_path: Path,
+    macho_executable: Path,
+    mutation: str,
+    expected_code: int,
+) -> None:
+    candidate = tmp_path / mutation
+    data = bytearray(macho_executable.read_bytes())
+    if mutation == "wrong_magic":
+        struct.pack_into("<I", data, 0, 0xCFFAEDFE)
+    elif mutation == "too_many_commands":
+        struct.pack_into("<I", data, 16, contract._MACHO_MAX_COMMANDS + 1)
+    elif mutation == "oversized_command_table":
+        struct.pack_into("<I", data, 20, contract._MACHO_MAX_COMMAND_BYTES + 1)
+    else:
+        data = data[:40]
+    candidate.write_bytes(data)
+
+    _assert_error(expected_code, lambda: contract._macho_code_sha256(candidate))
 
 
 def test_app_rejects_byte_identical_macho_identity_transformation(
@@ -1204,9 +1270,10 @@ def test_schema_and_runtime_reject_the_same_module_and_binding_shapes(
 
 def test_transaction_receipt_binds_app_and_runtime_as_one_active_pair(
     tmp_path: Path,
+    macho_executable: Path,
 ) -> None:
     receipt = tmp_path / "transaction.json"
-    expected = _transaction_fixture(receipt)
+    expected = _transaction_fixture(receipt, macho_executable)
 
     assert contract.verify_transaction(receipt) == expected
 
@@ -1230,6 +1297,36 @@ def test_transaction_receipt_binds_app_and_runtime_as_one_active_pair(
     _assert_error(contract.E_HASH, lambda: contract.verify_transaction(receipt))
 
 
+@pytest.mark.parametrize("artifact", ["app", "runtime"])
+def test_transaction_rejects_minimal_manifest_lookalikes(
+    tmp_path: Path, macho_executable: Path, artifact: str
+) -> None:
+    receipt = tmp_path / "transaction.json"
+    payload = _transaction_fixture(receipt, macho_executable)
+    identity = payload["new"][artifact]
+    manifest = tmp_path / identity["manifest_path"]
+    if artifact == "app":
+        lookalike = {
+            "schema": contract.PRODUCT_SCHEMA,
+            "version": identity["version"],
+            "git_sha": identity["source_revision"],
+        }
+        digest_field = "product_manifest_sha256"
+    else:
+        lookalike = {
+            "schema": "vibecrafted.runtime-generation.v1",
+            "version": identity["version"],
+            "source_revision": identity["source_revision"],
+        }
+        digest_field = "runtime_manifest_sha256"
+    _write_json(manifest, lookalike)
+    identity[digest_field] = _sha256(manifest)
+    payload["active"] = copy.deepcopy(payload["new"])
+    _write_json(receipt, payload)
+
+    _assert_error(contract.E_TRANSACTION, lambda: contract.verify_transaction(receipt))
+
+
 def test_walkaround_receipt_requires_exact_artifact_and_every_proof(
     tmp_path: Path,
     macho_executable: Path,
@@ -1239,12 +1336,7 @@ def test_walkaround_receipt_requires_exact_artifact_and_every_proof(
     expected = _walkaround_fixture(receipt, macho_executable)
     live_calls: list[tuple[Path, Path]] = []
     _patch_walkaround_runtime(monkeypatch, expected, live_calls=live_calls)
-    trusted_key = tmp_path / "trusted-runner-public.pem"
-
-    assert (
-        contract.verify_walkaround(receipt, trusted_runner_public_key=trusted_key)
-        == expected
-    )
+    assert contract.verify_walkaround(receipt) == expected
     assert live_calls == [(Path(expected["app_path"]), Path(expected["dmg_path"]))]
 
     failed = copy.deepcopy(expected)
@@ -1252,9 +1344,7 @@ def test_walkaround_receipt_requires_exact_artifact_and_every_proof(
     _write_json(receipt, failed)
     _assert_error(
         contract.E_PROOF,
-        lambda: contract.verify_walkaround(
-            receipt, trusted_runner_public_key=trusted_key
-        ),
+        lambda: contract.verify_walkaround(receipt),
     )
 
     wrong_command = copy.deepcopy(expected)
@@ -1262,9 +1352,7 @@ def test_walkaround_receipt_requires_exact_artifact_and_every_proof(
     _write_json(receipt, wrong_command)
     _assert_error(
         contract.E_PROOF,
-        lambda: contract.verify_walkaround(
-            receipt, trusted_runner_public_key=trusted_key
-        ),
+        lambda: contract.verify_walkaround(receipt),
     )
 
     unbound_product = copy.deepcopy(expected)
@@ -1272,9 +1360,7 @@ def test_walkaround_receipt_requires_exact_artifact_and_every_proof(
     _write_json(receipt, unbound_product)
     _assert_error(
         contract.E_HASH,
-        lambda: contract.verify_walkaround(
-            receipt, trusted_runner_public_key=trusted_key
-        ),
+        lambda: contract.verify_walkaround(receipt),
     )
 
     tampered_proof = copy.deepcopy(expected)
@@ -1285,18 +1371,14 @@ def test_walkaround_receipt_requires_exact_artifact_and_every_proof(
     _write_json(receipt, tampered_proof)
     _assert_error(
         contract.E_SIZE,
-        lambda: contract.verify_walkaround(
-            receipt, trusted_runner_public_key=trusted_key
-        ),
+        lambda: contract.verify_walkaround(receipt),
     )
 
     _write_json(receipt, expected)
     Path(expected["dmg_path"]).write_bytes(b"tampered\n")
     _assert_error(
         contract.E_SIZE,
-        lambda: contract.verify_walkaround(
-            receipt, trusted_runner_public_key=trusted_key
-        ),
+        lambda: contract.verify_walkaround(receipt),
     )
 
 
@@ -1323,9 +1405,7 @@ def test_walkaround_proof_artifacts_cannot_escape_through_symlinked_parent(
 
     _assert_error(
         contract.E_DEPENDENCY,
-        lambda: contract.verify_walkaround(
-            receipt, trusted_runner_public_key=tmp_path / "trusted-runner-public.pem"
-        ),
+        lambda: contract.verify_walkaround(receipt),
     )
 
 
@@ -1340,15 +1420,13 @@ def test_walkaround_requires_sealed_probe_identity_and_real_state_transition(
 
     payload["proofs"]["start_here"]["command"] = ["fabricated-check", "passed"]
     _write_json(receipt, payload)
-    trusted_key = tmp_path / "trusted-runner-public.pem"
     _assert_error(
         contract.E_PROOF,
-        lambda: contract.verify_walkaround(
-            receipt, trusted_runner_public_key=trusted_key
-        ),
+        lambda: contract.verify_walkaround(receipt),
     )
 
     payload = _walkaround_fixture(receipt, macho_executable)
+    _patch_walkaround_runtime(monkeypatch, payload)
     attestation_path = tmp_path / payload["trusted_runner"]["attestation"]["path"]
     attestation = json.loads(attestation_path.read_text(encoding="utf-8"))
     attestation["runner_id"] = "io.attacker.forged"
@@ -1359,12 +1437,11 @@ def test_walkaround_requires_sealed_probe_identity_and_real_state_transition(
     _write_json(receipt, payload)
     _assert_error(
         contract.E_PROOF,
-        lambda: contract.verify_walkaround(
-            receipt, trusted_runner_public_key=trusted_key
-        ),
+        lambda: contract.verify_walkaround(receipt),
     )
 
     payload = _walkaround_fixture(receipt, macho_executable)
+    _patch_walkaround_runtime(monkeypatch, payload)
     before_path = tmp_path / payload["proofs"]["update"]["before"]["path"]
     after_path = tmp_path / payload["proofs"]["update"]["after"]["path"]
     after_path.write_bytes(before_path.read_bytes())
@@ -1372,22 +1449,41 @@ def test_walkaround_requires_sealed_probe_identity_and_real_state_transition(
     _write_json(receipt, payload)
     _assert_error(
         contract.E_PROOF,
-        lambda: contract.verify_walkaround(
-            receipt, trusted_runner_public_key=trusted_key
-        ),
+        lambda: contract.verify_walkaround(receipt),
     )
 
     payload = _walkaround_fixture(receipt, macho_executable)
+    _patch_walkaround_runtime(monkeypatch, payload)
     (tmp_path / "delivery-run/report.md").write_text(
         "tampered after sealing\n", encoding="utf-8"
     )
     _write_json(receipt, payload)
     _assert_error(
         contract.E_PROOF,
-        lambda: contract.verify_walkaround(
-            receipt, trusted_runner_public_key=trusted_key
-        ),
+        lambda: contract.verify_walkaround(receipt),
     )
+
+
+def test_walkaround_rejects_a_caller_selected_trust_root(
+    tmp_path: Path,
+    macho_executable: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    receipt = tmp_path / "walkaround.json"
+    payload = _walkaround_fixture(receipt, macho_executable)
+    _patch_walkaround_runtime(monkeypatch, payload)
+    pinned_key = tmp_path / "release-policy-runner.pub"
+    pinned_key.write_bytes((tmp_path / "trusted-runner-public.pem").read_bytes())
+    monkeypatch.setattr(contract, "_trusted_runner_public_key", lambda: pinned_key)
+
+    attacker_attestation, attacker_key = _write_trusted_runner_attestation(
+        tmp_path, payload
+    )
+    assert attacker_key.read_bytes() != pinned_key.read_bytes()
+    payload["trusted_runner"] = attacker_attestation
+    _write_json(receipt, payload)
+
+    _assert_error(contract.E_PROOF, lambda: contract.verify_walkaround(receipt))
 
 
 def test_cli_returns_distinct_nonzero_codes_for_hash_and_dylib_failures(
