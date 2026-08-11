@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from vibecrafted_core import walkaround_runner
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = REPO_ROOT / "vibecrafted-core"
@@ -35,6 +36,45 @@ def test_packaged_public_key_matches_release_lineage() -> None:
     )
 
     assert hashlib.sha256(result.stdout).hexdigest() == EXPECTED_SPKI
+
+
+def test_runner_verify_executes_one_bound_walkaround_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    paths = [
+        tmp_path / name
+        for name in ("release.json", "release.sig", "app", "dmg", "walkaround.json")
+    ]
+    calls: list[tuple[Path, dict[str, Path]]] = []
+
+    def verify_walkaround(path: Path, **kwargs: Path) -> dict[str, str]:
+        calls.append((path, kwargs))
+        return {"schema": "fixture"}
+
+    monkeypatch.setattr(
+        walkaround_runner.product_contract, "verify_walkaround", verify_walkaround
+    )
+    monkeypatch.setattr(
+        walkaround_runner.product_contract,
+        "verify_release_output",
+        lambda *_args, **_kwargs: pytest.fail("runner split the release transaction"),
+    )
+
+    assert walkaround_runner.main(["verify", *(str(path) for path in paths)]) == 0
+    assert calls == [
+        (
+            paths[4],
+            {
+                "release_output_path": paths[0],
+                "release_signature_path": paths[1],
+                "app_path": paths[2],
+                "dmg_path": paths[3],
+            },
+        )
+    ]
+    assert capsys.readouterr().out == "verified verify\n"
 
 
 @pytest.mark.skipif(

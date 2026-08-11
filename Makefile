@@ -20,7 +20,7 @@ UV_PROJECT_ENVIRONMENT ?= $(INSTALLER_CACHE_HOME)/vibecrafted/venvs/installer-$(
 # in-tree cache is never read or written by install lanes.
 export PYTHONPYCACHEPREFIX ?= $(INSTALLER_CACHE_HOME)/vibecrafted/pycache-$(INSTALLER_HOST_TAG)
 
-.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-core test-skills test-install test-parity test-vc-frame test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-python-tools install-bundle-tools install-tools install-tools-held install-vendored-binaries install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build build-server-release server-check server-test install-server install-server-payload install-server-service server-smoke
+.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-core test-skills test-install test-parity test-vc-frame test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test unified-product-contract-gate install install-auto install-all install-python-tools install-bundle-tools install-tools install-tools-held install-vendored-binaries install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build build-server-release server-check server-test install-server install-server-payload install-server-service server-smoke
 
 help:
 	@printf "\n"
@@ -56,6 +56,25 @@ help-dev:
 	@printf "\n"
 
 vibecrafted: install
+
+unified-product-contract-gate:
+	@set -eu; \
+	uv run --project vibecrafted-core --with pytest python -m pytest \
+		tests/tui/test_unified_app_contract.py \
+		tests/tui/test_makefile_installer_contract.py -q; \
+	uv run --project vibecrafted-core --with pytest python -m pytest \
+		vibecrafted-core/tests/test_walkaround_distribution.py \
+		vibecrafted-core/tests/test_package_layout.py -q; \
+	bash scripts/verify-vibecrafted-product.sh --self-test; \
+	$(PYTHON) -m json.tool vibecrafted-core/vibecrafted_core/schemas/unified_product.schema.v1.json >/dev/null; \
+	$(PYTHON) -m json.tool vibecrafted-core/vibecrafted_core/trust/release-policy.v1.json >/dev/null; \
+	bash -n scripts/verify-vibecrafted-product.sh; \
+	tmp="$$(mktemp -d "$${TMPDIR:-/tmp}/vibecrafted-contract-wheel.XXXXXX")"; \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	uv build --wheel --project vibecrafted-core --out-dir "$$tmp/dist" >/dev/null; \
+	uv venv "$$tmp/venv" >/dev/null; \
+	uv pip install --python "$$tmp/venv/bin/python" "$$tmp"/dist/vibecrafted-*.whl >/dev/null; \
+	(cd / && env -u PYTHONPATH PYTHONNOUSERSITE=1 "$$tmp/venv/bin/verify-vibecrafted-walkaround" --help >/dev/null)
 
 tui-installer: init-hooks
 	@if ! command -v uv >/dev/null 2>&1; then \

@@ -123,6 +123,12 @@ def test_release_workflow_proves_every_payload_before_publication() -> None:
     signing_step = workflow.split(
         "- name: Stage release payloads and sign with existing RSA key", 1
     )[1].split("- name: Verify exact release payloads", 1)[0]
+    assert "derived_spki" in signing_step
+    assert "packaged_spki" in signing_step
+    assert (
+        "521ed59d3c446c540afe1557c2dbc39c9c190775f99896b2b65206c32814b25b"
+        in signing_step
+    )
     for payload in (
         '"vibecrafted-${{ steps.version.outputs.version }}.tar.gz"',
         '"vibecrafted-framework.plugin"',

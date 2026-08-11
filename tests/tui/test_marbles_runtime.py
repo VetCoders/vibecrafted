@@ -373,7 +373,7 @@ def test_vc_marbles_preserves_prompt_as_single_argument_inside_vc_frame(
         crafted_home
         / "artifacts"
         / _org_repo()
-        / datetime.now(timezone.utc).strftime("%Y_%m%d")
+        / datetime.now().astimezone().strftime("%Y_%m%d")
         / "tmp"
     )
 
@@ -385,7 +385,14 @@ def test_vc_marbles_preserves_prompt_as_single_argument_inside_vc_frame(
     assert "weź i vc-justdo wszystko co marbles znajdzie" in payload
     assert "new-pane" in vc_frame_payload
     assert any("vibecrafted-marbles." in line for line in vc_frame_payload)
-    assert any(str(expected_tmp_root) in line for line in vc_frame_payload)
+    expected_tmp_spellings = {
+        str(expected_tmp_root),
+        str(expected_tmp_root).removeprefix("/private"),
+    }
+    assert any(
+        any(spelling in line for spelling in expected_tmp_spellings)
+        for line in vc_frame_payload
+    )
     assert not any("//vibecrafted-marbles." in line for line in vc_frame_payload)
     assert not any(
         "weź i vc-justdo wszystko co marbles znajdzie" in line
@@ -512,7 +519,7 @@ def test_vc_marbles_preserves_prompt_as_single_argument_in_operator_session(
         crafted_home
         / "artifacts"
         / _org_repo()
-        / datetime.now(timezone.utc).strftime("%Y_%m%d")
+        / datetime.now().astimezone().strftime("%Y_%m%d")
         / "tmp"
     )
 
@@ -524,7 +531,14 @@ def test_vc_marbles_preserves_prompt_as_single_argument_in_operator_session(
     assert "weź i vc-justdo wszystko co marbles znajdzie" in payload
     assert "new-tab" in vc_frame_payload
     assert any("vc-spawn-cmd." in line for line in vc_frame_payload)
-    assert any(str(expected_tmp_root) in line for line in vc_frame_payload)
+    expected_tmp_spellings = {
+        str(expected_tmp_root),
+        str(expected_tmp_root).removeprefix("/private"),
+    }
+    assert any(
+        any(spelling in line for spelling in expected_tmp_spellings)
+        for line in vc_frame_payload
+    )
     assert not any("//vc-spawn-cmd." in line for line in vc_frame_payload)
     assert not any(
         "weź i vc-justdo wszystko co marbles znajdzie" in line

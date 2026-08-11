@@ -68,6 +68,17 @@ jobs:
           test -s "$signing_key"
           openssl rsa -in "$signing_key" -check -noout
 
+          derived_spki="$(openssl rsa -in "$signing_key" -pubout 2>/dev/null \
+            | openssl pkey -pubin -outform DER 2>/dev/null \
+            | sha256sum | awk '{print $1}')"
+          packaged_key="vibecrafted-core/vibecrafted_core/trust/vibecrafted-signing-v1.pub"
+          packaged_spki="$(openssl pkey -pubin -in "$packaged_key" -outform DER 2>/dev/null \
+            | sha256sum | awk '{print $1}')"
+          expected_spki="521ed59d3c446c540afe1557c2dbc39c9c190775f99896b2b65206c32814b25b"
+          test "$derived_spki" = "$expected_spki"
+          test "$packaged_spki" = "$expected_spki"
+          test "$derived_spki" = "$packaged_spki"
+
           install -m 0755 install.sh dist/install.sh
           cd dist
           payloads=(

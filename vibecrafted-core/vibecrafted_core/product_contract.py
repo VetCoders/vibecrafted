@@ -135,6 +135,9 @@ _LAUNCH_TERMINAL = "Contents/Helpers/vc-terminal"
 _LAUNCH_FRAME = "Contents/Helpers/vc-frame"
 _LAUNCH_CONFIG = "Contents/Resources/terminal/vibecrafted.toml"
 _LAUNCH_SHELL = "Contents/Resources/runtime/bin/vc-start"
+PRODUCT_MANIFEST_REFERENT = "manifests/product-manifest.json"
+RUNTIME_MANIFEST_REFERENT = "manifests/runtime-manifest.json"
+_MAX_SIGNED_PAYLOAD_BYTES = 64 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -270,11 +273,19 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not path.is_file():
         _fail(E_MISSING, f"missing manifest or receipt: {path}")
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raw = path.read_bytes()
+    except OSError as exc:
         _fail(E_JSON, f"invalid JSON at {path}: {exc}")
+    return _load_json_bytes(raw, source=path)
+
+
+def _load_json_bytes(raw: bytes, *, source: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        _fail(E_JSON, f"invalid JSON at {source}: {exc}")
     if not isinstance(payload, dict):
-        _fail(E_SCHEMA, f"top-level JSON must be an object: {path}")
+        _fail(E_SCHEMA, f"top-level JSON must be an object: {source}")
     return payload
 
 
@@ -602,17 +613,47 @@ def _public_key_spki_sha256(public_key: Path) -> str:
     return hashlib.sha256(result.stdout).hexdigest()
 
 
-def _verify_release_signature(payload: Path, signature: Path) -> None:
+def _read_regular_file_once(path: Path, *, context: str) -> bytes:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        _fail(E_MISSING, f"{context} is unreadable: {exc}")
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            _fail(E_MISSING, f"{context} is not a regular file")
+        if before.st_size > _MAX_SIGNED_PAYLOAD_BYTES:
+            _fail(E_SIZE, f"{context} exceeds the 64 MiB signed-payload limit")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            payload = handle.read(_MAX_SIGNED_PAYLOAD_BYTES + 1)
+        after = os.fstat(descriptor)
+        if len(payload) > _MAX_SIGNED_PAYLOAD_BYTES:
+            _fail(E_SIZE, f"{context} exceeds the 64 MiB signed-payload limit")
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        ) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+            _fail(E_PROOF, f"{context} changed while it was captured")
+        return payload
+    except OSError as exc:
+        _fail(E_MISSING, f"{context} is unreadable: {exc}")
+    finally:
+        os.close(descriptor)
+
+
+def _verify_release_signature(payload: Path, signature: Path) -> bytes:
     policy = _release_policy()
     public_key = _trusted_runner_public_key()
     if not public_key.is_file() or public_key.is_symlink():
         _fail(E_MISSING, "packaged release public key is missing")
     if _public_key_spki_sha256(public_key) != policy["public_key_spki_sha256"]:
         _fail(E_PROOF, "packaged release public key fingerprint is not policy-pinned")
-    if not payload.is_file() or payload.is_symlink():
-        _fail(E_MISSING, "signed release payload is missing")
     if not signature.is_file() or signature.is_symlink():
         _fail(E_MISSING, "detached release signature is missing")
+    payload_bytes = _read_regular_file_once(payload, context="signed release payload")
     openssl = _release_openssl()
     result = subprocess.run(
         [
@@ -623,14 +664,14 @@ def _verify_release_signature(payload: Path, signature: Path) -> None:
             str(public_key),
             "-signature",
             str(signature),
-            str(payload),
         ],
         check=False,
         capture_output=True,
-        text=True,
+        input=payload_bytes,
     )
     if result.returncode != 0:
         _fail(E_PROOF, "detached release signature is invalid")
+    return payload_bytes
 
 
 def _release_openssl() -> str:
@@ -645,8 +686,8 @@ def verify_trust_probe(
 ) -> dict[str, Any]:
     """Verify a narrowly scoped challenge through the installed production trust root."""
     challenge = Path(challenge_path)
-    _verify_release_signature(challenge, Path(signature_path))
-    payload = _load_json(challenge)
+    challenge_bytes = _verify_release_signature(challenge, Path(signature_path))
+    payload = _load_json_bytes(challenge_bytes, source=challenge)
     _expect_keys(payload, required={"schema", "domain", "nonce"}, context="trust probe")
     if (
         payload["schema"] != TRUST_PROBE_SCHEMA
@@ -1283,7 +1324,13 @@ def build_launch_environment(
     host_environment: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     """Verify the product and build its closed child environment."""
-    app = Path(app_path).resolve(strict=True)
+    raw_app = Path(app_path)
+    if raw_app.is_symlink():
+        _fail(E_PATH, "app bundle root must not be a symlink")
+    try:
+        app = raw_app.resolve(strict=True)
+    except OSError as exc:
+        _fail(E_PATH, f"app bundle path cannot be resolved: {exc}")
     payload = verify_app(app)
     host = dict(os.environ if host_environment is None else host_environment)
     explicit = host.get("VIBECRAFTED_RUNTIME_HOME")
@@ -1299,14 +1346,25 @@ def build_launch_environment(
         _fail(E_PATH, "launch environment cannot resolve VIBECRAFTED_RUNTIME_HOME")
     if not runtime_home.is_absolute():
         _fail(E_PATH, "VIBECRAFTED_RUNTIME_HOME must resolve to an absolute path")
-    runtime_home = runtime_home.resolve(strict=False)
+    try:
+        runtime_home = runtime_home.resolve(strict=False)
+    except OSError as exc:
+        _fail(E_PATH, f"VIBECRAFTED_RUNTIME_HOME cannot be resolved: {exc}")
     if runtime_home == app or app in runtime_home.parents:
         _fail(E_PATH, "VIBECRAFTED_RUNTIME_HOME must not descend from the app bundle")
-    writable_parent = runtime_home
-    while not writable_parent.exists() and writable_parent != writable_parent.parent:
-        writable_parent = writable_parent.parent
-    if not writable_parent.is_dir() or not os.access(writable_parent, os.W_OK):
-        _fail(E_PATH, "VIBECRAFTED_RUNTIME_HOME is not writable or creatable")
+    try:
+        runtime_home.mkdir(parents=True, exist_ok=True)
+        if not runtime_home.is_dir() or runtime_home.is_symlink():
+            _fail(E_PATH, "VIBECRAFTED_RUNTIME_HOME must be an exact directory")
+        descriptor, probe = tempfile.mkstemp(
+            prefix=".vibecrafted-write-probe-", dir=runtime_home
+        )
+        os.close(descriptor)
+        Path(probe).unlink()
+    except ProductContractError:
+        raise
+    except OSError as exc:
+        _fail(E_PATH, f"VIBECRAFTED_RUNTIME_HOME cannot be created or written: {exc}")
     child = {name: host[name] for name in _LAUNCH_INHERITED_ENV if host.get(name)}
     child.update(
         {
@@ -1809,16 +1867,33 @@ def _codesign_release_evidence(app: Path) -> dict[str, Any]:
     )
     if requirement_match is None:
         _fail(E_PROOF, "final app has no designated requirement")
+    policy_requirement = _release_policy()["designated_requirement"]
+    requirement_test = subprocess.run(
+        [
+            codesign,
+            "--verify",
+            "--strict",
+            "--test-requirement",
+            f"={policy_requirement}",
+            str(app),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if requirement_test.returncode != 0:
+        _fail(E_PROOF, "final app does not satisfy the designated requirement policy")
     entitlements_result = subprocess.run(
         [codesign, "--display", "--entitlements", ":-", str(app)],
         check=False,
         capture_output=True,
     )
-    entitlement_bytes = entitlements_result.stdout + entitlements_result.stderr
-    plist_start = entitlement_bytes.find(b"<?xml")
-    if plist_start >= 0:
+    if entitlements_result.returncode != 0:
+        _fail(E_PROOF, "final app entitlements are unreadable")
+    entitlement_bytes = entitlements_result.stdout.strip()
+    if entitlement_bytes:
         try:
-            entitlements = plistlib.loads(entitlement_bytes[plist_start:])
+            entitlements = plistlib.loads(entitlement_bytes)
         except plistlib.InvalidFileException as exc:
             _fail(E_PROOF, f"final app entitlements are malformed: {exc}")
     else:
@@ -1828,7 +1903,7 @@ def _codesign_release_evidence(app: Path) -> dict[str, Any]:
     return {
         "cdhash": field(r"^CDHash=([0-9a-f]+)$", "CDHash"),
         "team_id": field(r"^TeamIdentifier=(.+)$", "TeamIdentifier"),
-        "designated_requirement": requirement_match.group(1).strip(),
+        "designated_requirement": policy_requirement,
         "hardened_runtime": re.search(
             r"^CodeDirectory .*flags=.*\(runtime\)", metadata, re.MULTILINE
         )
@@ -1846,8 +1921,8 @@ def verify_release_output(
 ) -> dict[str, Any]:
     """Verify W4's one external signed release identity against live artifacts."""
     receipt = Path(receipt_path)
-    _verify_release_signature(receipt, Path(signature_path))
-    payload = _load_json(receipt)
+    actual_receipt = _verify_release_signature(receipt, Path(signature_path))
+    payload = _load_json_bytes(actual_receipt, source=receipt)
     canonical = (
         json.dumps(
             payload,
@@ -1858,10 +1933,6 @@ def verify_release_output(
         ).encode("utf-8")
         + b"\n"
     )
-    try:
-        actual_receipt = receipt.read_bytes()
-    except OSError as exc:
-        _fail(E_MISSING, f"release output cannot be read: {exc}")
     if actual_receipt != canonical:
         _fail(E_PROOF, "release output must be canonical JSON")
     required = {
@@ -1947,7 +2018,13 @@ def verify_release_output(
     _expect_keys(raw_dmg, required={"sha256", "size"}, context="release output dmg")
     if not dmg.is_file() or dmg.is_symlink():
         _fail(E_MISSING, "release DMG is missing")
-    if raw_dmg["size"] != dmg.stat().st_size or isinstance(raw_dmg["size"], bool):
+    dmg_size = raw_dmg["size"]
+    if (
+        isinstance(dmg_size, bool)
+        or not isinstance(dmg_size, int)
+        or dmg_size <= 0
+        or dmg_size != dmg.stat().st_size
+    ):
         _fail(E_SIZE, "release output DMG size mismatch")
     if _expect_sha256(raw_dmg["sha256"], field="dmg.sha256") != _sha256(dmg):
         _fail(E_HASH, "release output DMG hash mismatch")
@@ -1981,6 +2058,7 @@ def verify_release_output(
         _fail(E_PROOF, "release output source revisions do not match the product")
     for name, revision in expected_revisions.items():
         _expect_git_sha(revision, field=f"source_revisions.{name}")
+    validate_schema_document(payload)
     return payload
 
 
@@ -2012,7 +2090,11 @@ def _validate_identity(
     )
     if manifest.get("schema") != expected_schema:
         _fail(E_TRANSACTION, f"{field} manifest referent has the wrong schema")
-    expected_relative = f"manifests/{artifact}-manifest.json"
+    expected_relative = (
+        PRODUCT_MANIFEST_REFERENT
+        if artifact == "product"
+        else RUNTIME_MANIFEST_REFERENT
+    )
     if relative != expected_relative:
         _fail(
             E_TRANSACTION,
@@ -2021,6 +2103,19 @@ def _validate_identity(
     if artifact == "product":
         try:
             validate_schema_document(manifest)
+            files = {
+                item["path"]: item
+                for item in manifest.get("files", [])
+                if isinstance(item, dict) and isinstance(item.get("path"), str)
+            }
+            entrypoints = manifest.get("entrypoints")
+            if not isinstance(entrypoints, dict):
+                _fail(E_ENTRYPOINT, "product referent has no complete entrypoints")
+            _validate_launch_contract(
+                manifest.get("launch_contract"),
+                files=files,
+                entrypoints=entrypoints,
+            )
         except ProductContractError as exc:
             _fail(E_TRANSACTION, f"{field} product manifest is incomplete: {exc}")
     else:
@@ -2528,6 +2623,7 @@ def _verify_walkaround(
     attached_mounts: set[tuple[Path, Path]],
     run_live_checks: bool,
     release_output_verifier: Any = None,
+    expected_artifacts: Mapping[str, Path] | None = None,
 ) -> dict[str, Any]:
     path = receipt_path
     payload = _load_json(path)
@@ -2583,6 +2679,22 @@ def _verify_walkaround(
         or signature_relative != "release-output.json.sig"
     ):
         _fail(E_PROOF, "walk-around must reference canonical release-output artifacts")
+    if expected_artifacts is not None:
+        actual_artifacts = {
+            "release_output": (path.parent / release_relative).resolve(strict=False),
+            "release_signature": (path.parent / signature_relative).resolve(
+                strict=False
+            ),
+            "app": app_resolved,
+            "dmg": dmg_resolved,
+        }
+        expected_keys = set(actual_artifacts)
+        if set(expected_artifacts) != expected_keys:
+            _fail(E_SCHEMA, "walk-around expected artifact tuple is incomplete")
+        for name, actual in actual_artifacts.items():
+            expected = expected_artifacts[name]
+            if not expected.is_absolute() or expected.resolve(strict=False) != actual:
+                _fail(E_PROOF, f"walk-around {name} does not match requested release")
     verifier = release_output_verifier or verify_release_output
     release_payload = verifier(
         path.parent / release_relative,
@@ -2622,13 +2734,32 @@ def _verify_walkaround(
 
 def verify_walkaround(
     receipt_path: str | Path,
+    *,
+    release_output_path: str | Path | None = None,
+    release_signature_path: str | Path | None = None,
+    app_path: str | Path | None = None,
+    dmg_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Verify evidence against the release-policy trust root and mounted DMG."""
+    supplied = {
+        "release_output": release_output_path,
+        "release_signature": release_signature_path,
+        "app": app_path,
+        "dmg": dmg_path,
+    }
+    if any(value is not None for value in supplied.values()) and any(
+        value is None for value in supplied.values()
+    ):
+        _fail(E_SCHEMA, "walk-around expected release tuple must be complete")
+    expected_artifacts = {
+        name: Path(value) for name, value in supplied.items() if value is not None
+    } or None
     return _verify_walkaround(
         Path(receipt_path),
         trusted_runner_public_key=_trusted_runner_public_key(),
         attached_mounts=_attached_image_mounts(),
         run_live_checks=True,
+        expected_artifacts=expected_artifacts,
     )
 
 

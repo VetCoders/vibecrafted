@@ -37,13 +37,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "trust-probe":
             product_contract.verify_trust_probe(args.challenge, args.signature)
         else:
-            product_contract.verify_release_output(
-                args.release_output,
-                args.release_signature,
+            product_contract.verify_walkaround(
+                args.walkaround,
+                release_output_path=args.release_output,
+                release_signature_path=args.release_signature,
                 app_path=args.app,
                 dmg_path=args.dmg,
             )
-            product_contract.verify_walkaround(args.walkaround)
     except product_contract.ProductContractError as exc:
         print(f"VCPC{exc.code:03d}: {exc}", file=sys.stderr)
         return exc.code

@@ -401,7 +401,7 @@
           "type": "string",
           "minLength": 1
         },
-        "manifest_path": { "$ref": "#/$defs/relativePath" },
+        "manifest_path": { "const": "manifests/product-manifest.json" },
         "product_manifest_sha256": { "$ref": "#/$defs/sha256" },
         "source_revision": { "$ref": "#/$defs/gitSha" }
       }
@@ -417,7 +417,7 @@
       ],
       "properties": {
         "version": { "type": "string", "minLength": 1 },
-        "manifest_path": { "$ref": "#/$defs/relativePath" },
+        "manifest_path": { "const": "manifests/runtime-manifest.json" },
         "runtime_manifest_sha256": { "$ref": "#/$defs/sha256" },
         "source_revision": { "$ref": "#/$defs/gitSha" }
       }

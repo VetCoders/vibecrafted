@@ -42,6 +42,16 @@ def test_installer_smokes_the_packaged_walkaround_entrypoint() -> None:
     )
 
 
+def test_unified_product_contract_gate_executes_installed_runner() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    gate = makefile.split("unified-product-contract-gate:", 1)[1].split("\n\n", 1)[0]
+
+    assert "verify-vibecrafted-product.sh --self-test" in gate
+    assert "uv build --wheel --project vibecrafted-core" in gate
+    assert 'bin/verify-vibecrafted-walkaround" --help' in gate
+    assert "PYTHONNOUSERSITE=1" in gate
+
+
 def test_makefile_keeps_install_as_terminal_first_front_door() -> None:
     """Contract: `make install` is the terminal-native human front door — a
     compact, log-quiet step runner that greets, walks the canonical install
