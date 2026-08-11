@@ -25,6 +25,8 @@ vibecrafted doctor --verbose      # list every check, including passing ones
 | Symlink census      | No installed symlink is broken or resolves outside its generation                                                                                                   |
 | Foundations         | Product-managed foundation binaries (loct, aicx, prview, screenscribe) are present and are never silently replaced with stale copies                                |
 
+Launcher audits are scoped by **ownership, not naming**: doctor judges only the launchers Vibecrafted publishes itself (the installer's wrappers and Python entrypoints, the legacy packs, and the provider-published `vc-slack`). Another product that shares `~/.local/bin` and the `vc-` prefix — and legitimately links into its own checkout — keeps its own installation contract and is left alone.
+
 This is the same audit that gates publication of a new generation: what fails a publish also fails doctor afterward.
 
 ## Reading the output
