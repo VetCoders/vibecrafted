@@ -21,9 +21,22 @@ fn repo_version(manifest_dir: &Path) -> Option<String> {
 }
 
 fn git_short_sha(manifest_dir: &Path) -> Option<String> {
-    let head = manifest_dir.parent()?.parent()?.join(".git/HEAD");
+    let git_dir = manifest_dir.parent()?.parent()?.join(".git");
+    let head = git_dir.join("HEAD");
     if head.exists() {
         println!("cargo:rerun-if-changed={}", head.display());
+        if let Ok(contents) = std::fs::read_to_string(&head)
+            && let Some(reference) = contents.trim().strip_prefix("ref: ")
+        {
+            let reference_path = git_dir.join(reference);
+            if reference_path.exists() {
+                println!("cargo:rerun-if-changed={}", reference_path.display());
+            }
+        }
+    }
+    let packed_refs = git_dir.join("packed-refs");
+    if packed_refs.exists() {
+        println!("cargo:rerun-if-changed={}", packed_refs.display());
     }
     let output = Command::new("git")
         .args(["rev-parse", "--short=8", "HEAD"])
