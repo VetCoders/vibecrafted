@@ -5,6 +5,7 @@ description = "Core Python library for Vibecrafted runtime and synthesis surface
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "jsonschema>=4.23,<5",
     "PyYAML>=6.0,<7",
 ]
 

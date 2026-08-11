@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
 
+from jsonschema import Draft202012Validator, ValidationError, validators
+
 from .delivery.model import (
     ContractError,
     DeliveryProofContract,
@@ -47,6 +49,9 @@ SUPPORTED_ARCHITECTURES = frozenset({"arm64"})
 MINIMUM_MACOS = (14, 0)
 WALKAROUND_SCOPE = "unified-vibecrafted-app-walkaround-v1"
 WALKAROUND_SEAL_ISSUER = "vc-ship"
+WALKAROUND_RUNNER_ID = "io.vetcoders.vibecrafted.walkaround-runner.v1"
+WALKAROUND_RUNNER_EXECUTABLE = "verify-vibecrafted-walkaround"
+OUTER_BUNDLE_CODE_IDENTITY = "outer-bundle-codesign-v1"
 
 E_JSON = 20
 E_SCHEMA = 21
@@ -148,6 +153,77 @@ def _canonical_digest(payload: Any) -> str:
         allow_nan=False,
     ).encode("utf-8")
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _validate_unique_keys(
+    _validator: Any,
+    keys: Any,
+    instance: Any,
+    _schema: Any,
+) -> Sequence[ValidationError]:
+    errors: list[ValidationError] = []
+    if not isinstance(keys, list) or not isinstance(instance, list):
+        return errors
+    for key in keys:
+        if not isinstance(key, str):
+            continue
+        seen: dict[Any, int] = {}
+        for index, item in enumerate(instance):
+            if not isinstance(item, dict) or key not in item:
+                continue
+            value = item[key]
+            if value in seen:
+                errors.append(
+                    ValidationError(
+                        f"duplicate {key} at indexes {seen[value]} and {index}"
+                    )
+                )
+            else:
+                seen[value] = index
+    return errors
+
+
+def _validate_canonical_relative_path(
+    _validator: Any,
+    enabled: Any,
+    instance: Any,
+    _schema: Any,
+) -> Sequence[ValidationError]:
+    if enabled is not True or not isinstance(instance, str):
+        return ()
+    pure = PurePosixPath(instance)
+    if (
+        pure.is_absolute()
+        or pure in {PurePosixPath("."), PurePosixPath("..")}
+        or ".." in pure.parts
+        or "\\" in instance
+        or pure.as_posix() != instance
+    ):
+        return (ValidationError("path is not canonical relative POSIX spelling"),)
+    return ()
+
+
+UnifiedProductValidator = validators.extend(
+    Draft202012Validator,
+    {
+        "x-vibecrafted-uniqueKeys": _validate_unique_keys,
+        "x-vibecrafted-canonicalRelativePath": _validate_canonical_relative_path,
+    },
+)
+
+
+def validate_schema_document(payload: Mapping[str, Any]) -> None:
+    """Validate one public product-contract document with supported semantics."""
+    schema_path = Path(__file__).parent / "schemas/unified_product.schema.v1.json"
+    schema = _load_json(schema_path)
+    errors = sorted(
+        UnifiedProductValidator(schema).iter_errors(payload),
+        key=lambda item: tuple(str(part) for part in item.absolute_path),
+    )
+    if errors:
+        error = errors[0]
+        location = ".".join(str(part) for part in error.absolute_path) or "<root>"
+        _fail(E_SCHEMA, f"schema validation failed at {location}: {error.message}")
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -292,6 +368,23 @@ def _verify_assembler_signed_macho(path: Path, *, relative: str) -> None:
             E_PROOF,
             f"signed transformation retained only a linker signature: {relative}",
         )
+
+
+def _codesign_identifier(path: Path) -> str:
+    codesign = _required_tool("codesign", failure_code=E_PROOF)
+    result = subprocess.run(
+        [codesign, "--display", "--verbose=4", str(path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        _fail(E_PROOF, f"bundle has no readable code signature: {path}")
+    metadata = f"{result.stdout}\n{result.stderr}"
+    match = re.search(r"^Identifier=(.+)$", metadata, flags=re.MULTILINE)
+    if match is None:
+        _fail(E_PROOF, f"bundle signature has no Identifier: {path}")
+    return match.group(1).strip()
 
 
 def _version_tuple(value: str) -> tuple[int, int]:
@@ -692,6 +785,84 @@ def _validate_files(
     return _ValidatedFiles(entries=entries, machos=machos)
 
 
+def _validate_outer_bundle_code(
+    app: Path,
+    raw: Any,
+    *,
+    architecture: str,
+    minimum_macos: str,
+    plist_path: Path,
+) -> tuple[str, Mapping[str, Any], _MachOInfo]:
+    context = "outer_bundle_code"
+    if not isinstance(raw, dict):
+        _fail(E_SCHEMA, f"{context} must be an object")
+    required = {
+        "identity",
+        "path",
+        "mode",
+        "kind",
+        "architecture",
+        "minimum_macos",
+        "dylibs",
+        "info_plist_sha256",
+        "codesign_identifier",
+    }
+    _expect_keys(raw, required=required, context=context)
+    if raw["identity"] != OUTER_BUNDLE_CODE_IDENTITY:
+        _fail(E_SCHEMA, f"{context}.identity must be {OUTER_BUNDLE_CODE_IDENTITY}")
+    relative = _relative_path(raw["path"], field=f"{context}.path").as_posix()
+    expected_relative = f"Contents/MacOS/{PRODUCT_EXECUTABLE}"
+    if relative != expected_relative or raw["kind"] != "executable":
+        _fail(E_ENTRYPOINT, f"{context} must describe {expected_relative}")
+    mode = _expect_string(raw["mode"], field=f"{context}.mode")
+    if not _MODE_RE.fullmatch(mode):
+        _fail(E_SCHEMA, f"{context}.mode must be a four-digit octal string")
+    if raw["architecture"] != architecture or raw["minimum_macos"] != minimum_macos:
+        _fail(E_PLATFORM, f"{context} platform does not match product")
+    dylibs = raw["dylibs"]
+    if not isinstance(dylibs, list) or not all(
+        isinstance(item, str) and item for item in dylibs
+    ):
+        _fail(E_SCHEMA, f"{context}.dylibs must be an array of strings")
+    executable = app / relative
+    if not executable.is_file() or executable.is_symlink():
+        _fail(E_MISSING, f"outer bundle executable is missing: {relative}")
+    actual_mode = f"{stat.S_IMODE(executable.stat().st_mode):04o}"
+    if actual_mode != mode:
+        _fail(E_MODE, f"outer bundle executable mode mismatch: {relative}")
+    observed = _observed_macho(executable, relative=relative, kind="executable")
+    if observed is None:
+        _fail(E_PLATFORM, "outer bundle executable is not Mach-O code")
+    if sorted(observed.dependencies) != sorted(dylibs):
+        _fail(E_DEPENDENCY, "outer bundle dylibs do not match measured load commands")
+    _verify_macho_platform(
+        {relative: observed},
+        architecture=architecture,
+        minimum_macos=minimum_macos,
+    )
+    if _expect_sha256(
+        raw["info_plist_sha256"], field=f"{context}.info_plist_sha256"
+    ) != _sha256(plist_path):
+        _fail(E_HASH, "outer bundle identity does not bind Info.plist")
+    identifier = _expect_string(
+        raw["codesign_identifier"], field=f"{context}.codesign_identifier"
+    )
+    if identifier != PRODUCT_BUNDLE_ID:
+        _fail(E_BUNDLE, "outer bundle codesign Identifier is not canonical")
+    return relative, raw, observed
+
+
+def _verify_outer_bundle_signature(app: Path, *, expected_identifier: str) -> None:
+    codesign = _required_tool("codesign", failure_code=E_PROOF)
+    _run_tool(
+        [codesign, "--verify", "--deep", "--strict", "--verbose=2", str(app)],
+        failure_code=E_PROOF,
+        context="outer bundle strict code signature is invalid",
+    )
+    if _codesign_identifier(app) != expected_identifier:
+        _fail(E_PROOF, "outer bundle signature Identifier does not match manifest")
+
+
 def _validate_entrypoints(
     root: Path,
     raw_entrypoints: Any,
@@ -1011,6 +1182,11 @@ def _verify_product_module_receipts(
                 _fail(E_PROOF, f"signed product hash mismatch: {name}:{module_path}")
             transformation = mapping["transformation"]
             if transformation == "identity":
+                if module_entry["kind"] in {"executable", "dylib"}:
+                    _fail(
+                        E_PROOF,
+                        f"Mach-O module file requires codesign transform: {name}:{module_path}",
+                    )
                 for field in ("sha256", "mode", "kind", "size", "dylibs"):
                     if module_entry[field] != product_entry[field]:
                         _fail(
@@ -1065,6 +1241,7 @@ def verify_app(app_path: str | Path, *, require_clean: bool = False) -> dict[str
         "architecture",
         "minimum_macos",
         "modules",
+        "outer_bundle_code",
         "files",
         "entrypoints",
     }
@@ -1086,13 +1263,29 @@ def verify_app(app_path: str | Path, *, require_clean: bool = False) -> dict[str
         _fail(E_PROOF, "release policy rejects a dirty product receipt")
     architecture, minimum_macos = _validate_platform(payload, context="product")
     modules = _validate_product_modules(payload["modules"])
+    plist_path = app / "Contents/Info.plist"
+    outer_relative, outer_entry, outer_macho = _validate_outer_bundle_code(
+        app,
+        payload["outer_bundle_code"],
+        architecture=architecture,
+        minimum_macos=minimum_macos,
+        plist_path=plist_path,
+    )
     validated = _validate_files(
         app,
         payload["files"],
         manifest_relative=manifest_relative,
         architecture=architecture,
         minimum_macos=minimum_macos,
-        exclusions=(Path("Contents/_CodeSignature"), Path("Contents/CodeResources")),
+        exclusions=(
+            Path("Contents/_CodeSignature"),
+            Path("Contents/CodeResources"),
+            Path(outer_relative),
+        ),
+    )
+    validated = _ValidatedFiles(
+        entries={**validated.entries, outer_relative: outer_entry},
+        machos={**validated.machos, outer_relative: outer_macho},
     )
     entrypoints = _validate_entrypoints(
         app,
@@ -1103,7 +1296,6 @@ def verify_app(app_path: str | Path, *, require_clean: bool = False) -> dict[str
     if entrypoints["app"] != f"Contents/MacOS/{PRODUCT_EXECUTABLE}":
         _fail(E_ENTRYPOINT, "app entrypoint must be Contents/MacOS/Vibecrafted")
 
-    plist_path = app / "Contents/Info.plist"
     try:
         with plist_path.open("rb") as handle:
             plist = plistlib.load(handle)
@@ -1139,30 +1331,86 @@ def verify_app(app_path: str | Path, *, require_clean: bool = False) -> dict[str
         validated.machos,
         entrypoints=entrypoints,
     )
+    _verify_outer_bundle_signature(
+        app,
+        expected_identifier=str(payload["outer_bundle_code"]["codesign_identifier"]),
+    )
     return payload
 
 
-def _validate_identity(value: Any, *, field: str) -> dict[str, str]:
+def _validate_identity(
+    value: Any,
+    *,
+    field: str,
+    receipt_root: Path,
+    artifact: str,
+) -> dict[str, str]:
     if not isinstance(value, dict):
         _fail(E_SCHEMA, f"{field} must be an object")
-    required = {"version", "sha256", "source_revision"}
+    digest_field = f"{artifact}_manifest_sha256"
+    required = {"version", "manifest_path", digest_field, "source_revision"}
     _expect_keys(value, required=required, context=field)
+    relative = _relative_path(
+        value["manifest_path"], field=f"{field}.manifest_path"
+    ).as_posix()
+    manifest_path = receipt_root / relative
+    _inside_payload(receipt_root, manifest_path, context=f"{field}.manifest_path")
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        _fail(E_MISSING, f"{field} manifest referent is missing: {relative}")
+    expected_hash = _expect_sha256(value[digest_field], field=f"{field}.{digest_field}")
+    if _sha256(manifest_path) != expected_hash:
+        _fail(E_HASH, f"{field} manifest referent hash mismatch")
+    manifest = _load_json(manifest_path)
+    expected_schema = (
+        PRODUCT_SCHEMA if artifact == "product" else "vibecrafted.runtime-generation.v1"
+    )
+    if manifest.get("schema") != expected_schema:
+        _fail(E_TRANSACTION, f"{field} manifest referent has the wrong schema")
+    version = _expect_string(value["version"], field=f"{field}.version")
+    if manifest.get("version") != version:
+        _fail(E_TRANSACTION, f"{field} version does not match manifest referent")
+    source_revision = _expect_git_sha(
+        value["source_revision"], field=f"{field}.source_revision"
+    )
+    revision_field = "git_sha" if artifact == "product" else "source_revision"
+    if manifest.get(revision_field) != source_revision:
+        _fail(
+            E_TRANSACTION, f"{field} source revision does not match manifest referent"
+        )
     return {
-        "version": _expect_string(value["version"], field=f"{field}.version"),
-        "sha256": _expect_sha256(value["sha256"], field=f"{field}.sha256"),
-        "source_revision": _expect_git_sha(
-            value["source_revision"], field=f"{field}.source_revision"
-        ),
+        "version": version,
+        "manifest_path": relative,
+        digest_field: expected_hash,
+        "source_revision": source_revision,
     }
 
 
-def _validate_release_pair(value: Any, *, field: str) -> dict[str, dict[str, str]]:
+def _validate_release_state(
+    value: Any, *, field: str, receipt_root: Path
+) -> dict[str, Any]:
     if not isinstance(value, dict):
         _fail(E_SCHEMA, f"{field} must be an object")
-    _expect_keys(value, required={"app", "runtime"}, context=field)
+    state = value.get("state")
+    if state == "absent":
+        _expect_keys(value, required={"state"}, context=field)
+        return {"state": "absent"}
+    if state != "present":
+        _fail(E_SCHEMA, f"{field}.state must be present or absent")
+    _expect_keys(value, required={"state", "app", "runtime"}, context=field)
     return {
-        "app": _validate_identity(value["app"], field=f"{field}.app"),
-        "runtime": _validate_identity(value["runtime"], field=f"{field}.runtime"),
+        "state": "present",
+        "app": _validate_identity(
+            value["app"],
+            field=f"{field}.app",
+            receipt_root=receipt_root,
+            artifact="product",
+        ),
+        "runtime": _validate_identity(
+            value["runtime"],
+            field=f"{field}.runtime",
+            receipt_root=receipt_root,
+            artifact="runtime",
+        ),
     }
 
 
@@ -1175,9 +1423,15 @@ def verify_transaction(receipt_path: str | Path) -> dict[str, Any]:
     if payload["schema"] != TRANSACTION_SCHEMA:
         _fail(E_SCHEMA, f"transaction schema must be {TRANSACTION_SCHEMA}")
     _expect_string(payload["transaction_id"], field="transaction_id")
-    previous = _validate_release_pair(payload["previous"], field="previous")
-    new = _validate_release_pair(payload["new"], field="new")
-    active = _validate_release_pair(payload["active"], field="active")
+    previous = _validate_release_state(
+        payload["previous"], field="previous", receipt_root=path.parent
+    )
+    new = _validate_release_state(payload["new"], field="new", receipt_root=path.parent)
+    active = _validate_release_state(
+        payload["active"], field="active", receipt_root=path.parent
+    )
+    if new["state"] != "present":
+        _fail(E_TRANSACTION, "transaction new release must be present")
     if previous == new:
         _fail(E_TRANSACTION, "transaction previous and new releases are identical")
     outcome = payload["outcome"]
@@ -1329,6 +1583,69 @@ def _walkaround_assertion_digest(proof_digests: Sequence[str]) -> str:
     return _canonical_digest({"proofs": list(proof_digests)})
 
 
+def _verify_trusted_runner_attestation(
+    receipt_root: Path,
+    value: Any,
+    *,
+    trusted_public_key: Path,
+    payload: Mapping[str, Any],
+    proof_digests: Sequence[str],
+) -> None:
+    if not isinstance(value, dict):
+        _fail(E_SCHEMA, "trusted_runner must be an object")
+    _expect_keys(value, required={"attestation", "signature"}, context="trusted_runner")
+    attestation_relative, _ = _validate_proof_artifact(
+        receipt_root, value["attestation"], field="trusted_runner.attestation"
+    )
+    signature_relative, _ = _validate_proof_artifact(
+        receipt_root, value["signature"], field="trusted_runner.signature"
+    )
+    attestation_path = receipt_root / attestation_relative
+    signature_path = receipt_root / signature_relative
+    attestation = _load_json(attestation_path)
+    required = {
+        "schema",
+        "runner_id",
+        "subject_sha256",
+        "assertion_sha256",
+        "probe_ids",
+    }
+    _expect_keys(attestation, required=required, context="trusted runner attestation")
+    if attestation["schema"] != WALKAROUND_RUNNER_ID:
+        _fail(E_PROOF, "trusted runner attestation has the wrong schema")
+    if attestation["runner_id"] != WALKAROUND_RUNNER_ID:
+        _fail(E_PROOF, "trusted runner attestation has the wrong runner identity")
+    if attestation["subject_sha256"] != _walkaround_subject_digest(payload):
+        _fail(E_PROOF, "trusted runner attestation does not bind release subject")
+    if attestation["assertion_sha256"] != _walkaround_assertion_digest(proof_digests):
+        _fail(E_PROOF, "trusted runner attestation does not bind proof set")
+    expected_probe_ids = [
+        _walkaround_probe_id(name) for name in sorted(_WALKAROUND_CHECKS)
+    ]
+    if attestation["probe_ids"] != expected_probe_ids:
+        _fail(E_PROOF, "trusted runner attestation does not bind canonical probes")
+    if not trusted_public_key.is_file() or trusted_public_key.is_symlink():
+        _fail(E_MISSING, "explicit trusted runner public key is missing")
+    openssl = _required_tool("openssl", failure_code=E_PROOF)
+    result = subprocess.run(
+        [
+            openssl,
+            "dgst",
+            "-sha256",
+            "-verify",
+            str(trusted_public_key),
+            "-signature",
+            str(signature_path),
+            str(attestation_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        _fail(E_PROOF, "walk-around runner attestation signature is invalid")
+
+
 def _verify_walkaround_delivery_seal(
     receipt_root: Path,
     seal_artifact: Any,
@@ -1452,7 +1769,21 @@ def _attached_image_mounts() -> set[tuple[Path, Path]]:
     return mounts
 
 
-def _expected_live_commands(app: Path, dmg: Path) -> dict[str, list[str]]:
+def _expected_runner_commands(app: Path, dmg: Path) -> dict[str, list[str]]:
+    return {
+        name: [
+            WALKAROUND_RUNNER_EXECUTABLE,
+            name,
+            "--app",
+            str(app),
+            "--dmg",
+            str(dmg),
+        ]
+        for name in sorted(_WALKAROUND_CHECKS)
+    }
+
+
+def _live_release_commands(app: Path, dmg: Path) -> dict[str, list[str]]:
     return {
         "codesign": [
             "codesign",
@@ -1478,7 +1809,7 @@ def _expected_live_commands(app: Path, dmg: Path) -> dict[str, list[str]]:
 def _verify_recorded_live_commands(
     proofs: Mapping[str, Mapping[str, Any]], *, app: Path, dmg: Path
 ) -> None:
-    for name, expected in _expected_live_commands(app, dmg).items():
+    for name, expected in _expected_runner_commands(app, dmg).items():
         recorded = list(proofs[name]["command"])
         normalized = [Path(recorded[0]).name, *recorded[1:]]
         if normalized != expected:
@@ -1486,7 +1817,7 @@ def _verify_recorded_live_commands(
 
 
 def _run_live_release_checks(app: Path, dmg: Path) -> None:
-    for name, command in _expected_live_commands(app, dmg).items():
+    for name, command in _live_release_commands(app, dmg).items():
         executable = _required_tool(command[0], failure_code=E_PROOF)
         _run_tool(
             [executable, *command[1:]],
@@ -1498,6 +1829,7 @@ def _run_live_release_checks(app: Path, dmg: Path) -> None:
 def _verify_walkaround(
     receipt_path: Path,
     *,
+    trusted_runner_public_key: Path,
     attached_mounts: set[tuple[Path, Path]],
     run_live_checks: bool,
 ) -> dict[str, Any]:
@@ -1513,6 +1845,7 @@ def _verify_walkaround(
         "product_manifest_sha256",
         "source_revisions",
         "proofs",
+        "trusted_runner",
         "delivery_seal",
     }
     _expect_keys(payload, required=required, context="walk-around receipt")
@@ -1588,6 +1921,13 @@ def _verify_walkaround(
         product_manifest_sha256=expected_product_hash,
     )
     _verify_recorded_live_commands(proofs, app=app_path, dmg=dmg_path)
+    _verify_trusted_runner_attestation(
+        path.parent,
+        payload["trusted_runner"],
+        trusted_public_key=trusted_runner_public_key,
+        payload=payload,
+        proof_digests=proof_digests,
+    )
     _verify_walkaround_delivery_seal(
         path.parent,
         payload["delivery_seal"],
@@ -1599,10 +1939,13 @@ def _verify_walkaround(
     return payload
 
 
-def verify_walkaround(receipt_path: str | Path) -> dict[str, Any]:
+def verify_walkaround(
+    receipt_path: str | Path, *, trusted_runner_public_key: str | Path
+) -> dict[str, Any]:
     """Verify evidence and independently re-check one mounted release DMG."""
     return _verify_walkaround(
         Path(receipt_path),
+        trusted_runner_public_key=Path(trusted_runner_public_key),
         attached_mounts=_attached_image_mounts(),
         run_live_checks=True,
     )
@@ -1811,6 +2154,13 @@ def _self_test() -> int:
             entrypoint="frame",
             product_entry=frame_product_entry,
         )
+        observed_outer = _observed_macho(
+            app_executable,
+            relative="Contents/MacOS/Vibecrafted",
+            kind="executable",
+        )
+        if observed_outer is None:
+            _fail(E_PLATFORM, "self-test outer executable is not Mach-O")
         product_manifest: dict[str, Any] = {
             "schema": PRODUCT_SCHEMA,
             "product": PRODUCT_NAME,
@@ -1823,9 +2173,19 @@ def _self_test() -> int:
             "architecture": "arm64",
             "minimum_macos": "14.0",
             "modules": [terminal_binding, frame_binding],
+            "outer_bundle_code": {
+                "identity": OUTER_BUNDLE_CODE_IDENTITY,
+                "path": "Contents/MacOS/Vibecrafted",
+                "mode": "0755",
+                "kind": "executable",
+                "architecture": "arm64",
+                "minimum_macos": "14.0",
+                "dylibs": list(observed_outer.dependencies),
+                "info_plist_sha256": _sha256(plist_path),
+                "codesign_identifier": PRODUCT_BUNDLE_ID,
+            },
             "files": [
                 _fixture_entry(app, "Contents/Info.plist", kind="config"),
-                _fixture_entry(app, "Contents/MacOS/Vibecrafted", kind="executable"),
                 terminal_product_entry,
                 frame_product_entry,
                 _fixture_entry(app, terminal_binding["manifest_path"], kind="config"),
@@ -1844,22 +2204,41 @@ def _self_test() -> int:
             },
         }
         _write_json(app / "Contents/Resources/product-manifest.json", product_manifest)
+        _run_tool(
+            [codesign, "--force", "--deep", "--sign", "-", str(app)],
+            failure_code=E_PROOF,
+            context="self-test could not sign outer app bundle",
+        )
         verify_app(app)
 
-        def identity(version: str, digest: str, revision: str) -> dict[str, str]:
-            return {
-                "version": version,
-                "sha256": digest,
-                "source_revision": revision,
-            }
-
-        previous = {
-            "app": identity("0.9.0", "7" * 64, "8" * 40),
-            "runtime": identity("0.9.0", "9" * 64, "a" * 40),
-        }
+        transaction_product = root / "manifests/product-manifest.json"
+        transaction_runtime = root / "manifests/runtime-manifest.json"
+        _write_json(
+            transaction_product,
+            {"schema": PRODUCT_SCHEMA, "version": "1.0.0", "git_sha": "c" * 40},
+        )
+        _write_json(
+            transaction_runtime,
+            {
+                "schema": "vibecrafted.runtime-generation.v1",
+                "version": "1.0.0",
+                "source_revision": "e" * 40,
+            },
+        )
         new = {
-            "app": identity("1.0.0", "b" * 64, "c" * 40),
-            "runtime": identity("1.0.0", "d" * 64, "e" * 40),
+            "state": "present",
+            "app": {
+                "version": "1.0.0",
+                "manifest_path": "manifests/product-manifest.json",
+                "product_manifest_sha256": _sha256(transaction_product),
+                "source_revision": "c" * 40,
+            },
+            "runtime": {
+                "version": "1.0.0",
+                "manifest_path": "manifests/runtime-manifest.json",
+                "runtime_manifest_sha256": _sha256(transaction_runtime),
+                "source_revision": "e" * 40,
+            },
         }
         transaction = root / "transaction.json"
         _write_json(
@@ -1867,7 +2246,7 @@ def _self_test() -> int:
             {
                 "schema": TRANSACTION_SCHEMA,
                 "transaction_id": "self-test",
-                "previous": previous,
+                "previous": {"state": "absent"},
                 "new": new,
                 "active": new,
                 "outcome": "activated",
@@ -1879,7 +2258,7 @@ def _self_test() -> int:
         dmg.write_bytes(b"synthetic-dmg\n")
         walkaround = root / "walkaround.json"
         proofs: dict[str, Any] = {}
-        expected_commands = _expected_live_commands(app, dmg)
+        expected_commands = _expected_runner_commands(app, dmg)
         for name in sorted(_WALKAROUND_CHECKS):
             before = root / f"proofs/{name}.before"
             after = root / f"proofs/{name}.after"
@@ -1901,7 +2280,7 @@ def _self_test() -> int:
             proofs[name] = {
                 "producer": WALKAROUND_SEAL_ISSUER,
                 "probe_id": _walkaround_probe_id(name),
-                "command": expected_commands.get(name, [f"verify-{name}", str(app)]),
+                "command": expected_commands[name],
                 "exit_code": 0,
                 "inputs": {
                     "dmg_sha256": _sha256(dmg),
@@ -1935,6 +2314,68 @@ def _self_test() -> int:
             _walkaround_proof_digest(name, proofs[name])
             for name in sorted(_WALKAROUND_CHECKS)
         )
+        openssl = _required_tool("openssl", failure_code=E_PROOF)
+        runner_private_key = root / "trusted-runner-private.pem"
+        runner_public_key = root / "trusted-runner-public.pem"
+        _run_tool(
+            [
+                openssl,
+                "genpkey",
+                "-algorithm",
+                "RSA",
+                "-pkeyopt",
+                "rsa_keygen_bits:2048",
+                "-out",
+                str(runner_private_key),
+            ],
+            failure_code=E_PROOF,
+            context="self-test could not create trusted runner key",
+        )
+        _run_tool(
+            [
+                openssl,
+                "pkey",
+                "-in",
+                str(runner_private_key),
+                "-pubout",
+                "-out",
+                str(runner_public_key),
+            ],
+            failure_code=E_PROOF,
+            context="self-test could not export trusted runner key",
+        )
+        runner_attestation = root / "trusted-runner/attestation.json"
+        runner_signature = root / "trusted-runner/attestation.sig"
+        _write_json(
+            runner_attestation,
+            {
+                "schema": WALKAROUND_RUNNER_ID,
+                "runner_id": WALKAROUND_RUNNER_ID,
+                "subject_sha256": _walkaround_subject_digest(walkaround_payload),
+                "assertion_sha256": _walkaround_assertion_digest(proof_digests),
+                "probe_ids": [
+                    _walkaround_probe_id(name) for name in sorted(_WALKAROUND_CHECKS)
+                ],
+            },
+        )
+        _run_tool(
+            [
+                openssl,
+                "dgst",
+                "-sha256",
+                "-sign",
+                str(runner_private_key),
+                "-out",
+                str(runner_signature),
+                str(runner_attestation),
+            ],
+            failure_code=E_PROOF,
+            context="self-test could not sign trusted runner attestation",
+        )
+        walkaround_payload["trusted_runner"] = {
+            "attestation": proof_artifact(runner_attestation),
+            "signature": proof_artifact(runner_signature),
+        }
         seal_root = root / "delivery-run"
         seal_artifacts = {
             "execution_envelope_sha256": seal_root / "execution-envelope.json",
@@ -2043,6 +2484,7 @@ def _self_test() -> int:
         _write_json(walkaround, walkaround_payload)
         _verify_walkaround(
             walkaround,
+            trusted_runner_public_key=runner_public_key,
             attached_mounts={(dmg.resolve(), mount.resolve())},
             run_live_checks=False,
         )
@@ -2070,10 +2512,13 @@ def _parser() -> argparse.ArgumentParser:
         "transaction", help="verify an app/runtime activation receipt"
     )
     transaction.add_argument("path", type=Path)
+    schema = commands.add_parser("schema", help="validate one public contract JSON")
+    schema.add_argument("path", type=Path)
     walkaround = commands.add_parser(
         "walkaround", help="verify a mounted-DMG walk-around receipt"
     )
     walkaround.add_argument("path", type=Path)
+    walkaround.add_argument("--trusted-runner-public-key", type=Path, required=True)
     return parser
 
 
@@ -2094,8 +2539,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             verify_app(args.path, require_clean=args.require_clean)
         elif args.command == "transaction":
             verify_transaction(args.path)
+        elif args.command == "schema":
+            validate_schema_document(_load_json(args.path))
         elif args.command == "walkaround":
-            verify_walkaround(args.path)
+            verify_walkaround(
+                args.path,
+                trusted_runner_public_key=args.trusted_runner_public_key,
+            )
         else:  # pragma: no cover - argparse owns the command set.
             _fail(E_SCHEMA, f"unsupported command: {args.command}")
     except ProductContractError as exc:
