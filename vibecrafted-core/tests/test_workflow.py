@@ -614,7 +614,11 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     assert payload["accepted"] is True
     assert payload["pid"] == 4242
     assert payload["transport"] == "vc-frame"
-    worker_host = f"{tmp_path.name} workers"
+    from vibecrafted_core.workspace_catalog import resolve_worker_host_session
+
+    worker_host = resolve_worker_host_session(root=str(tmp_path), env=dict(os.environ))
+    assert worker_host.endswith(" workers")
+    assert worker_host != f"{tmp_path.name} workers" or "-" in worker_host
     assert captured["command"][:5] == [
         str(vc_frame),
         "--session",
@@ -952,18 +956,42 @@ def test_vc_frame_session_active_parses_list_sessions(tmp_path: Path) -> None:
 
 
 def test_effective_operator_session_g7_worker_host_routing(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # G7: worker host is override → "<repo> workers", unconditionally. The bare
-    # repo basename is the operator's interactive card and is never a target.
-    # Liveness is G3's job (create-background); resolution always returns host.
-    root = "/Users/x/work/vibecrafted"
-    root_foo = "/Users/x/work/foo"
+    # G7 + Cut A: worker host is override → workspace-bound host.
+    # Bare repo basename remains the operator interactive card and is never a
+    # target. Liveness is G3's job; resolution always returns a host.
+    from vibecrafted_core import workspace_catalog as wc
 
-    # 1. Outside any pane → "<basename(root)> workers".
+    vib_home = tmp_path / ".vibecrafted"
+    vib_home.mkdir()
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(vib_home))
+    monkeypatch.delenv("VIBECRAFTED_WORKER_SESSION", raising=False)
+
+    root_dir = tmp_path / "work" / "vibecrafted"
+    root_foo_dir = tmp_path / "work" / "foo"
+    root_dir.mkdir(parents=True)
+    root_foo_dir.mkdir(parents=True)
+    root = str(root_dir)
+    root_foo = str(root_foo_dir)
+
+    ws = wc.create_workspace(root=root, display_label="vibecrafted", select=True)
+    ws_foo = wc.create_workspace(root=root_foo, display_label="foo", select=False)
+    expected = wc.worker_host_session_name(
+        workspace_id=ws.workspace_id, display_label="vibecrafted"
+    )
+    expected_foo = wc.worker_host_session_name(
+        workspace_id=ws_foo.workspace_id, display_label="foo"
+    )
+    assert expected != "vibecrafted workers"
+    assert expected_foo != "foo workers"
+
+    env_base = {"VIBECRAFTED_HOME": str(vib_home)}
+
+    # 1. Outside any pane → workspace-bound host (not bare basename).
     assert (
-        workflow._effective_operator_session(root=root, run_id="r1", env={})
-        == "vibecrafted workers"
+        workflow._effective_operator_session(root=root, run_id="r1", env=dict(env_base))
+        == expected
     )
 
     # 2. Ambient VIBECRAFTED_OPERATOR_SESSION (human seat) is ignored as target.
@@ -971,31 +999,29 @@ def test_effective_operator_session_g7_worker_host_routing(
         workflow._effective_operator_session(
             root=root,
             run_id="r2",
-            env={"VIBECRAFTED_OPERATOR_SESSION": "vc-workspace"},
+            env={**env_base, "VIBECRAFTED_OPERATOR_SESSION": "vc-workspace"},
         )
-        == "vibecrafted workers"
+        == expected
     )
 
-    # 3. Dispatch from a seat named unlike the repo → still "<repo> workers".
-    #    Regression for 2026-08-09: the old collision-only rule returned bare
-    #    "foo" here, i.e. the operator's own card for repo foo.
+    # 3. Dispatch from a seat named unlike the repo → still workspace-bound host.
     assert (
         workflow._effective_operator_session(
             root=root_foo,
             run_id="r3",
-            env={"VC_FRAME_SESSION_NAME": "operator-X"},
+            env={**env_base, "VC_FRAME_SESSION_NAME": "operator-X"},
         )
-        == "foo workers"
+        == expected_foo
     )
 
-    # 4. Seat name == repo basename → same host, no special case left.
+    # 4. Seat name == repo basename → still workspace-bound, no special case.
     assert (
         workflow._effective_operator_session(
             root=root,
             run_id="r4",
-            env={"VC_FRAME_SESSION_NAME": "vibecrafted"},
+            env={**env_base, "VC_FRAME_SESSION_NAME": "vibecrafted"},
         )
-        == "vibecrafted workers"
+        == expected
     )
 
     # 5. Legacy ZELLIJ_SESSION_NAME seat is equally irrelevant to the host.
@@ -1003,9 +1029,9 @@ def test_effective_operator_session_g7_worker_host_routing(
         workflow._effective_operator_session(
             root=root_foo,
             run_id="r5",
-            env={"ZELLIJ_SESSION_NAME": "foo"},
+            env={**env_base, "ZELLIJ_SESSION_NAME": "foo"},
         )
-        == "foo workers"
+        == expected_foo
     )
 
     # 6. Explicit worker-session override wins over every derived name.
@@ -1014,6 +1040,7 @@ def test_effective_operator_session_g7_worker_host_routing(
             root=root,
             run_id="r6",
             env={
+                **env_base,
                 "VC_FRAME_SESSION_NAME": "vibecrafted",
                 "VIBECRAFTED_WORKER_SESSION": "bar",
             },
@@ -1079,7 +1106,9 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
     assert payload["report"]
     assert Path(payload["report"]).parent.name == "research"
     command = captured["command"]
-    worker_host = f"{tmp_path.name} workers"
+    from vibecrafted_core.workspace_catalog import resolve_worker_host_session
+
+    worker_host = resolve_worker_host_session(root=str(tmp_path), env=dict(os.environ))
     assert command[:5] == [
         str(vc_frame),
         "--session",

@@ -9,12 +9,15 @@ from scripts import slack_provider
 def _write_source(root: Path) -> None:
     files = {
         "package.json": '{"name":"vc-slack-agent","version":"0.1.0"}\n',
-        "package-lock.json": '{"name":"vc-slack-agent","lockfileVersion":3,"packages":{}}\n',
+        "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+        "pnpm-workspace.yaml": "packages:\n  - console\n",
         "README.md": "# Slack\n",
         "bin/vc-slack": "#!/usr/bin/env bash\nexit 0\n",
         "src/index.js": "export {};\n",
         "src/observer.js": "export {};\n",
         "src/runtime-env.js": "export {};\n",
+        "console/package.json": '{"name":"vc-slack-console","scripts":{"build":"vite build"}}\n',
+        "console/server.mjs": "#!/usr/bin/env node\n",
         "scripts/doctor-bridge.sh": "#!/usr/bin/env bash\nexit 0\n",
         "scripts/install-launchagent.sh": "#!/usr/bin/env bash\nexit 0\n",
         "scripts/resolve-server-url.mjs": "#!/usr/bin/env node\n",
@@ -27,11 +30,15 @@ def _write_source(root: Path) -> None:
     (root / "bin" / "vc-slack").chmod(0o755)
 
 
-def _write_fake_npm(path: Path) -> None:
+def _write_fake_pnpm(path: Path) -> None:
     path.write_text(
         "#!/usr/bin/env python3\n"
+        "import sys\n"
         "from pathlib import Path\n"
-        "Path('node_modules/@slack/bolt').mkdir(parents=True)\n",
+        "Path('node_modules/@slack/bolt').mkdir(parents=True, exist_ok=True)\n"
+        "if 'build' in sys.argv:\n"
+        "    Path('console/dist').mkdir(parents=True, exist_ok=True)\n"
+        "    Path('console/dist/index.html').write_text('<main>console</main>')\n",
         encoding="utf-8",
     )
     path.chmod(0o755)
@@ -41,8 +48,8 @@ def test_install_publishes_immutable_provider_and_secure_env(tmp_path: Path) -> 
     source = tmp_path / "vc-slack-agent"
     _write_source(source)
     (source / ".env").write_text("SLACK_BOT_TOKEN=secret\n", encoding="utf-8")
-    npm = tmp_path / "npm"
-    _write_fake_npm(npm)
+    pnpm = tmp_path / "pnpm"
+    _write_fake_pnpm(pnpm)
     provider_root = tmp_path / "runtime" / "providers" / "vc-slack-agent"
     bin_dir = tmp_path / "bin"
     config = tmp_path / "config"
@@ -52,12 +59,13 @@ def test_install_publishes_immutable_provider_and_secure_env(tmp_path: Path) -> 
         provider_root=provider_root,
         bin_dir=bin_dir,
         user_config_home=config,
-        npm=str(npm),
+        pnpm=str(pnpm),
     )
 
     assert (provider_root / "current").resolve() == generation
     assert (bin_dir / "vc-slack").resolve() == generation / "bin" / "vc-slack"
     assert not (generation / ".env").exists()
+    assert (generation / "console" / "dist" / "index.html").is_file()
     assert (config / "slack.env").stat().st_mode & 0o777 == 0o600
     manifest = json.loads((generation / "provider-manifest.json").read_text())
     assert manifest["schema"] == "vibecrafted.slack-provider.v1"

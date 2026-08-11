@@ -41,8 +41,9 @@ Push ≠ install. Layout ≠ ledger.
    artifacts (report/meta/transcript), then reaps orphan processes.
 4. A V2 settlement event is appended to
    `control_plane/settlement_ledger.jsonl` before its bounded notification is
-   published. Guardian and UI consumers must derive `f · x · n` from this
-   ledger.
+   published. The ledger remains immutable settlement history. Operator
+   snapshot surfaces (`vc-server` and the vc-frame rail) display the canonical
+   `retained_control_plane_snapshots` aggregate from `/api/control/state`.
 5. For an explicit `--runtime terminal` compatibility run only, runtime may call
    triage and `vc-frame triage-run` may:
    - capture scrollback + run identity
@@ -81,13 +82,17 @@ _classified_ as live, so it has no verdict and no `--bucket` flag. See
 `L` is vc-frame-side work (`BucketKind::Live`); until that lands, `Live runs`
 behaves as an ordinary session — the name wire is already compatible.
 
-The names remain a vc-frame compatibility wire for viewer placement. Product
-`f · x · n` counters must instead read the settlement ledger:
+The names remain a vc-frame compatibility wire for viewer placement. Historical
+settlement queries read the settlement ledger:
 
 - `counts.historical_transitions` for every immutable transition;
 - `counts.latest_by_run` for one current verdict per run.
 
-Missing bucket sessions therefore do not make ledger counts zero.
+The live vc-frame rail does not display either ledger aggregate. Guardian pipes
+the server's exact `settlement_counts.f/x/n` values through the legacy envelope;
+the ledger fields in that envelope exist only to satisfy the current monotonic
+vc-frame transport validator. Missing bucket sessions therefore do not make
+either the ledger or the canonical server board zero.
 
 ---
 

@@ -66,7 +66,7 @@ from .settlement import (
     SettlementEventV2,
     TrustReceiptV1,
 )
-from .settlement_history import SettlementHistoryPublisher
+from .settlement_board import SettlementBoardPublisher
 
 LOGGER = logging.getLogger(__name__)
 
@@ -665,7 +665,7 @@ class PendingRecord:
 Notifier = Callable[[GuardianNotification], None]
 Reconciler = Callable[[SettlementRevision], ReconcileDecision]
 ResumeCallback = Callable[[SettlementRevision, str], object]
-HistoryPublisher = Callable[[], object]
+BoardPublisher = Callable[[], object]
 TriageScheduler = Callable[[str], bool]
 UrlOpener = Callable[..., Any]
 ReadyCallback = Callable[[], None]
@@ -674,8 +674,8 @@ NativeResumer = Callable[..., Mapping[str, object]]
 CursorParser = Callable[[str], CursorToken | None]
 
 
-def _ignore_history_publish() -> None:
-    """Default no-op history publisher used when no rail projection is wired."""
+def _ignore_board_publish() -> None:
+    """Default no-op board publisher used when no rail projection is wired."""
     return
 
 
@@ -2749,7 +2749,7 @@ class GuardianWorker:
         replay_heartbeats: int = DEFAULT_REPLAY_HEARTBEATS,
         ready_callback: ReadyCallback | None = None,
         pending_pass_limit: int = DEFAULT_PENDING_PASS_LIMIT,
-        history_publisher: HistoryPublisher = _ignore_history_publish,
+        board_publisher: BoardPublisher = _ignore_board_publish,
         triage_scheduler: TriageScheduler = _ignore_triage_schedule,
         clock: Callable[[], float] = time.time,
         cursor_parser: CursorParser = _parse_event_cursor,
@@ -2772,20 +2772,20 @@ class GuardianWorker:
         self.replay_heartbeats = replay_heartbeats
         self.ready_callback = ready_callback
         self.pending_pass_limit = pending_pass_limit
-        self.history_publisher = history_publisher
+        self.board_publisher = board_publisher
         self.triage_scheduler = triage_scheduler
         self.clock = clock
         self.cursor_parser = cursor_parser
         self.control_parser = control_parser
         self._ready_announced = False
 
-    def _publish_history_safely(self) -> None:
+    def _publish_board_safely(self) -> None:
         """Refresh the rail projection without owning or blocking settlement."""
 
         try:
-            self.history_publisher()
+            self.board_publisher()
         except Exception:
-            LOGGER.exception("guardian settlement-history publication failed")
+            LOGGER.exception("guardian server settlement-board publication failed")
 
     def _request(self) -> urllib.request.Request:
         """Build the SSE GET request, resuming from the persisted cursor when known."""
@@ -2856,7 +2856,7 @@ class GuardianWorker:
 
                     if isinstance(item, SSEStreamGap):
                         latest_cursor = item.cursor
-                        self._publish_history_safely()
+                        self._publish_board_safely()
                         try:
                             self.state.reset_for_gap(
                                 item.cursor,
@@ -2877,7 +2877,7 @@ class GuardianWorker:
 
                     if isinstance(item, SSEStreamCaughtUp):
                         latest_cursor = item.cursor
-                        self._publish_history_safely()
+                        self._publish_board_safely()
                         try:
                             if self.state.complete_baseline(
                                 item.cursor,
@@ -2962,7 +2962,7 @@ class GuardianWorker:
                     # Projection publication is independent of settlement
                     # recovery and notification. A broken viewer must never
                     # block the durable Guardian cursor.
-                    self._publish_history_safely()
+                    self._publish_board_safely()
                     baseline_was_complete = self.state.baseline_complete
                     try:
                         claimed = (
@@ -3495,7 +3495,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             server_url=args.server_url,
             timeout=args.recovery_timeout,
         )
-        settlement_history = SettlementHistoryPublisher()
+        settlement_board = SettlementBoardPublisher(server_url=args.server_url)
         worker = GuardianWorker(
             server_url=args.server_url,
             state=state,
@@ -3505,7 +3505,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             connect_timeout=args.connect_timeout,
             replay_heartbeats=args.replay_heartbeats,
             ready_callback=ready_callback,
-            history_publisher=settlement_history.request_refresh,
+            board_publisher=settlement_board.request_refresh,
             triage_scheduler=_schedule_terminal_triage_run,
         )
         backoff = BoundedBackoff(args.backoff_initial, args.backoff_max)
@@ -3521,7 +3521,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "terminal triage startup sweep could not be queued; "
                         "periodic durable recovery remains active"
                     )
-                settlement_history.start_periodic_refresh()
+                settlement_board.start_periodic_refresh()
                 LOGGER.info(
                     "guardian attaching to %s/api/control/events; "
                     "guarded native recovery adapter active",
@@ -3529,7 +3529,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 worker.run_forever(backoff=backoff)
             finally:
-                settlement_history.stop_periodic_refresh()
+                settlement_board.stop_periodic_refresh()
                 if args.ready_file is not None and args.ready_nonce is not None:
                     remove_ready_receipt_if_owned(
                         args.ready_file,

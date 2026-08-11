@@ -922,15 +922,25 @@ class AsyncSupervisor:
             text = report.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return
-        from .report_contract import parse_report_text, stamp_launcher_report_identity
+        from .report_contract import (
+            parse_report_text,
+            stamp_launcher_report_identity,
+            worker_authored_report,
+        )
 
-        fields, _, has_frontmatter = parse_report_text(text)
+        fields, body, has_frontmatter = parse_report_text(text)
+        # `launcher_template` is a PRESERVED machine key: the worker contract
+        # tells workers to keep seeded frontmatter, so its presence is not
+        # evidence that the worker stayed silent. Only substance decides —
+        # otherwise a fully authored report gets replaced by a transcript
+        # salvage (observed: a complete review report destroyed on resume).
         if (
             handle.exit_code == 0
             and (handle.agent == "grok" or salvage_report_from_stream)
             and has_frontmatter
             and fields.get("launcher_template", "").strip().lower()
             in {"1", "true", "yes", "on"}
+            and not worker_authored_report(fields, body)
         ):
             transcript_text = ""
             if handle.transcript_path is not None and handle.transcript_path.exists():

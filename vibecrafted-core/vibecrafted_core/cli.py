@@ -294,6 +294,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="count would-rewrite only; do not write snapshots",
     )
     settle.add_argument("--json", action="store_true")
+    workspace = sub.add_parser(
+        "workspace",
+        help=(
+            "canonical Vibecrafted Workspace catalog "
+            "(create|list|select|show|bury|recover|migrate|materialize|"
+            "settlement-counts)"
+        ),
+    )
+    workspace.add_argument(
+        "workspace_argv",
+        nargs=argparse.REMAINDER,
+        help="workspace subcommand args (see vibecrafted workspace --help)",
+    )
     settlements = sub.add_parser(
         "settlements",
         help=(
@@ -307,6 +320,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="durable f/x/n lower-bound plus revalidation inventory",
     )
     settlements_summary.add_argument("--json", action="store_true")
+    settlements_summary.add_argument(
+        "--workspace-id",
+        default="",
+        help="scope f/x/n projection to one workspace_id (Cut A)",
+    )
     settlements_list = settlements_sub.add_parser(
         "list",
         help="list or group latest-by-run settlements",
@@ -1150,6 +1168,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
         return _cmd_resettle(args)
+    if args.command == "workspace":
+        from .workspace_catalog import workspace_cli_main
+
+        argv = list(getattr(args, "workspace_argv", []) or [])
+        # argparse REMAINDER may keep a leading "--".
+        if argv and argv[0] == "--":
+            argv = argv[1:]
+        return workspace_cli_main(argv)
     if args.command == "settlements":
         from .settlements_query import (
             SettlementsQueryError,
@@ -1164,7 +1190,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         action = getattr(args, "settlements_action", None)
         if action is None:
             print(
-                "usage: vibecrafted settlements summary [--json]\n"
+                "usage: vibecrafted settlements summary [--json] [--workspace-id UUID]\n"
                 "       vibecrafted settlements list "
                 "[--bucket f|x|n] [--revalidatable] "
                 "[--group agent,skill,reason,root] [--limit N] [--json]\n"
@@ -1174,6 +1200,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         try:
             if action == "summary":
+                workspace_id = str(getattr(args, "workspace_id", "") or "").strip()
+                if workspace_id:
+                    from .workspace_catalog import settlement_counts_for_workspace
+
+                    payload = settlement_counts_for_workspace(workspace_id)
+                    print(json.dumps(payload, ensure_ascii=False, indent=2))
+                    return 0
                 payload = settlements_summary()
                 if getattr(args, "json", False):
                     print(json.dumps(payload, ensure_ascii=False, indent=2))

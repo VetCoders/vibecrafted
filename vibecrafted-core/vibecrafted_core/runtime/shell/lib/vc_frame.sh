@@ -238,10 +238,11 @@ _vetcoders_operator_session_name() {
 }
 
 # G7 twin of spawn_effective_operator_session (scripts/lib/vc_frame.sh).
-# Worker host session: override → "<basename(root)> workers", always suffixed.
-# The bare basename is the human operator's interactive card and never hosts a
-# worker tab (2026-08-09: was a seat-collision suffix that only fired when the
-# dispatcher happened to sit in a session named after the repo).
+# Worker host session: override → workspace-bound catalog host → basename
+# fallback. Cut A (2026-08-10): basename-only hosts collide across checkouts
+# with the same name; catalog workspace_id is the durable ownership key.
+# The bare basename remains the human operator's interactive card and never
+# hosts a worker tab.
 _vetcoders_effective_worker_session() {
   if [[ -n "${VIBECRAFTED_WORKER_SESSION:-}" ]]; then
     printf '%s\n' "${VIBECRAFTED_WORKER_SESSION}"
@@ -251,6 +252,27 @@ _vetcoders_effective_worker_session() {
   if [[ -z "$root_dir" ]]; then
     root_dir="$(_vetcoders_repo_root 2>/dev/null || pwd)"
   fi
+
+  local resolved=""
+  if command -v python3 >/dev/null 2>&1; then
+    resolved="$(
+      SPAWN_ROOT="$root_dir" VIBECRAFTED_ROOT="$root_dir" python3 - <<'PY' 2>/dev/null
+import os
+from pathlib import Path
+root = os.environ.get("SPAWN_ROOT") or os.environ.get("VIBECRAFTED_ROOT") or os.getcwd()
+try:
+    from vibecrafted_core.workspace_catalog import resolve_worker_host_session
+    print(resolve_worker_host_session(root=root, env=os.environ), end="")
+except Exception:
+    print(f"{Path(root).name or 'vibecrafted'} workers", end="")
+PY
+    )" || resolved=""
+  fi
+  if [[ -n "$resolved" ]]; then
+    printf '%s\n' "$resolved"
+    return 0
+  fi
+
   local host=""
   host="$(basename "$root_dir")"
   [[ -n "$host" ]] || return 1

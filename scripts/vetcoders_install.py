@@ -2949,6 +2949,7 @@ _TOOLS_GENERATIONS_TO_KEEP = 3
 _RUNTIME_SERVICE_LABEL = "io.vetcoders.vibecrafted.server"
 _RUNTIME_SERVICE_COMMAND_TIMEOUT_SECONDS = 45.0
 _RUNTIME_SERVICE_ACTIVATION_TIMEOUT_SECONDS = 120.0
+_RUNTIME_SERVICE_SETTLEMENT_TIMEOUT_SECONDS = 30.0
 _SERVICE_LIFECYCLE_LOCK_MARKER = (
     b"readonly VIBECRAFTED_SERVICE_LIFECYCLE_LOCK_CONTRACT=1"
 )
@@ -4123,7 +4124,7 @@ def _runtime_service_pair_state(
     launcher: Path,
     shared_home: Path,
 ) -> str:
-    """Determine 'running'/'stopped' from the old launcher's plain-text `service status` output."""
+    """Determine the managed pair state from the old launcher's text status."""
     result = _run_runtime_service_command(launcher, shared_home, "status")
     running = (
         result.returncode == 0
@@ -4135,10 +4136,18 @@ def _runtime_service_pair_state(
         and "Server: STOPPED" in result.stdout
         and "Guardian: STOPPED" in result.stdout
     )
+    orphaned = (
+        result.returncode != 0
+        and "Supervision: LAUNCHD" in result.stdout
+        and "Server: STOPPED" in result.stdout
+        and "Guardian: ORPHANED" in result.stdout
+    )
     if running:
         return "running"
     if stopped:
         return "stopped"
+    if orphaned:
+        return "orphaned"
     detail = (
         result.stderr.strip() or result.stdout.strip() or f"exit={result.returncode}"
     )
@@ -4193,6 +4202,12 @@ def _runtime_service_snapshot(
     if status.healthy:
         return launcher, status, "running"
     pair_state = _runtime_service_pair_state(launcher, shared_home)
+    if status.reclaimable and pair_state == "orphaned":
+        # The verified managed supervisor owns the lifecycle, while a guardian
+        # from that degraded pair remains alive after its server disappeared.
+        # This is exactly the reclaimable state that service stop is designed
+        # to drain before publication.
+        return launcher, status, pair_state
     if pair_state != "stopped":
         # Reclaimable supervisors still report Server/Guardian STOPPED while
         # an orphan may hold the port; only true RUNNING disagreement is fatal.
@@ -4216,6 +4231,65 @@ def _runtime_service_snapshot(
             "refusing install handoff"
         )
     return launcher, status, pair_state
+
+
+def _wait_for_runtime_service_settlement(
+    shared_home: Path,
+    *,
+    allow_healthy: bool,
+    timeout_seconds: float = _RUNTIME_SERVICE_SETTLEMENT_TIMEOUT_SECONDS,
+) -> tuple[Path, _RuntimeServiceStatus, str]:
+    """Wait for an owned service mutation to reach a terminal observable state.
+
+    This is intentionally used only after ownership was proved and a stop was
+    attempted. Preflight identity remains fail-closed. launchd and the managed
+    pair do not publish their teardown state atomically, so a bounded sequence
+    of structurally valid transitions must not turn a successful drain into an
+    unrecoverable installer handoff.
+    """
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    last_observation = "no runtime service observation"
+    while True:
+        deadline_token = _RUNTIME_SERVICE_COMMAND_DEADLINE.set(deadline)
+        try:
+            try:
+                snapshot = _runtime_service_snapshot(shared_home)
+            finally:
+                _RUNTIME_SERVICE_COMMAND_DEADLINE.reset(deadline_token)
+        except (
+            _RuntimeServiceTransition,
+            subprocess.TimeoutExpired,
+            TimeoutError,
+        ) as exc:
+            last_observation = str(exc)
+        else:
+            if snapshot is None:
+                raise OSError(
+                    "runtime launcher disappeared while waiting for service settlement"
+                )
+            _, status, pair_state = snapshot
+            if status.quiescent and pair_state == "stopped":
+                return snapshot
+            if allow_healthy and status.healthy and pair_state == "running":
+                return snapshot
+            if status.healthy:
+                raise OSError(
+                    "runtime service became healthy while waiting for a verified stop"
+                )
+            last_observation = (
+                f"installed={status.installed}, loaded={status.loaded}, "
+                f"supervisor_live={status.supervisor_live}, "
+                f"supervisor_verified={status.supervisor_verified}, "
+                f"service_managed={status.supervisor_service_managed}, "
+                f"build_current={status.build_current}, "
+                f"pair_healthy={status.pair_healthy}, pair={pair_state}"
+            )
+        if time.monotonic() >= deadline:
+            raise OSError(
+                "runtime service did not settle within "
+                f"{timeout_seconds:g}s (last observation: {last_observation})"
+            )
+        time.sleep(0.2)
 
 
 def runtime_service_active_for_install(shared_home: Path) -> bool:
@@ -4272,17 +4346,16 @@ def prepare_runtime_service_for_install(
                 "old launcher refused the verified service drain before runtime "
                 f"swap ({detail})"
             )
-        stopped = _runtime_service_snapshot(shared_home)
-        if stopped is None or not stopped[1].quiescent or stopped[2] != "stopped":
-            raise OSError(
-                "old launcher returned from service stop without proving "
-                "supervisor, server, and guardian are all stopped"
-            )
+        _wait_for_runtime_service_settlement(
+            shared_home,
+            allow_healthy=False,
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         try:
-            observed = _runtime_service_snapshot(shared_home)
-            if observed is None:
-                raise OSError("legacy service recovery has no verified launcher")
+            observed = _wait_for_runtime_service_settlement(
+                shared_home,
+                allow_healthy=True,
+            )
             if observed[1].healthy:
                 if not _assert_runtime_launchd_job_owned(shared_home):
                     raise OSError(
@@ -4306,16 +4379,10 @@ def prepare_runtime_service_for_install(
                             "raced legacy service could not be stopped for exact "
                             f"LaunchAgent recovery ({detail})"
                         )
-                    stopped = _runtime_service_snapshot(shared_home)
-                    if (
-                        stopped is None
-                        or not stopped[1].quiescent
-                        or stopped[2] != "stopped"
-                    ):
-                        raise OSError(
-                            "raced legacy service did not become quiescent for "
-                            "exact LaunchAgent recovery"
-                        )
+                    _wait_for_runtime_service_settlement(
+                        shared_home,
+                        allow_healthy=False,
+                    )
                     _bootout_owned_runtime_launchd_job(shared_home)
                     _activate_runtime_service_from_backup(shared_home, backup)
             else:
@@ -4324,11 +4391,12 @@ def prepare_runtime_service_for_install(
                 _activate_runtime_service_from_backup(shared_home, backup)
         except (OSError, subprocess.SubprocessError) as recovery_exc:
             raise OSError(
-                "legacy runtime drain failed and automatic service recovery "
-                f"also failed: {recovery_exc}"
+                f"legacy runtime drain failed ({exc}) and automatic service "
+                f"recovery also failed: {recovery_exc}"
             ) from exc
         raise OSError(
-            "legacy runtime drain failed; previous service ownership was recovered"
+            f"legacy runtime drain failed ({exc}); previous service ownership "
+            "was recovered"
         ) from exc
     return True
 
