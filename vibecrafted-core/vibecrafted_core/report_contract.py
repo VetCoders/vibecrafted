@@ -407,6 +407,31 @@ def materialize_launcher_report_template(
     return True
 
 
+def worker_authored_report(fields: Mapping[str, str], body: str) -> bool:
+    """True when a worker wrote real evidence over the launcher template.
+
+    The launcher seeds frontmatter and an EMPTY body. Workers are instructed to
+    *preserve* machine-owned frontmatter, so the mere presence of
+    ``launcher_template`` proves nothing about whether the worker wrote — only
+    substance does. Any of these is proof of authorship: a non-empty body, an
+    explicit ``finalized``, a non-empty ``claim``, or a status moved off the
+    pending-template placeholder.
+
+    Callers use this to decide whether a report may be replaced by a transcript
+    salvage. Keying that decision on the preserved marker alone destroys
+    authored reports.
+    """
+    return any(
+        (
+            bool(body.strip()),
+            fields.get("finalized", "").strip().lower() in _TRUTHY,
+            bool(fields.get("claim", "").strip()),
+            fields.get("status", "").strip().lower()
+            not in {"", _PENDING_TEMPLATE_STATUS},
+        )
+    )
+
+
 def stamp_launcher_report_identity(
     path: str | Path,
     *,
@@ -452,15 +477,7 @@ def stamp_launcher_report_identity(
         fields["finalized"] = "false"
 
     template_pending = fields.get(_LAUNCHER_TEMPLATE_KEY, "").strip().lower() in _TRUTHY
-    worker_touched = any(
-        (
-            bool(body.strip()),
-            fields.get("finalized", "").strip().lower() in _TRUTHY,
-            bool(fields.get("claim", "").strip()),
-            fields.get("status", "").strip().lower()
-            not in {"", _PENDING_TEMPLATE_STATUS},
-        )
-    )
+    worker_touched = worker_authored_report(fields, body)
     if template_pending and worker_touched:
         fields.pop(_LAUNCHER_TEMPLATE_KEY, None)
 

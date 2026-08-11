@@ -22,11 +22,14 @@ from pathlib import Path
 PROVIDER_NAME = "vc-slack-agent"
 REQUIRED_FILES = (
     "package.json",
-    "package-lock.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
     "bin/vc-slack",
     "src/index.js",
     "src/observer.js",
     "src/runtime-env.js",
+    "console/package.json",
+    "console/server.mjs",
     "scripts/doctor-bridge.sh",
     "scripts/install-launchagent.sh",
     "scripts/resolve-server-url.mjs",
@@ -34,12 +37,14 @@ REQUIRED_FILES = (
 )
 COPY_PATHS = (
     "package.json",
-    "package-lock.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
     "README.md",
     "bin",
     "src",
     "scripts",
     "deploy",
+    "console",
 )
 
 
@@ -100,12 +105,8 @@ def discover_source(
     return None
 
 
-def _source_digest(source: Path) -> str:
-    """Hash the runtime-relevant files under source (path + content) to a content id.
-
-    Excludes symlinks and the local, machine-specific rendered plist so the
-    digest only reflects files that actually get copied and published.
-    """
+def _tree_digest(source: Path, *, include_console_dist: bool) -> str:
+    """Hash runtime files while excluding dependencies and checkout build residue."""
     digest = hashlib.sha256()
     for relative_root in COPY_PATHS:
         root = source / relative_root
@@ -114,6 +115,10 @@ def _source_digest(source: Path) -> str:
             if not path.is_file() or path.is_symlink():
                 continue
             relative = path.relative_to(source)
+            if "node_modules" in relative.parts:
+                continue
+            if not include_console_dist and relative.parts[:2] == ("console", "dist"):
+                continue
             if relative.name == "com.vetcoders.vibecrafted-slack-bridge.plist":
                 continue
             digest.update(relative.as_posix().encode("utf-8"))
@@ -121,6 +126,21 @@ def _source_digest(source: Path) -> str:
             digest.update(path.read_bytes())
             digest.update(b"\0")
     return digest.hexdigest()
+
+
+def _source_digest(source: Path) -> str:
+    """Hash source inputs to the immutable generation id.
+
+    Excludes symlinks and the local, machine-specific rendered plist so the
+    digest only reflects files that participate in the reproducible build.
+    Existing console build output is excluded because staging rebuilds it.
+    """
+    return _tree_digest(source, include_console_dist=False)
+
+
+def _content_digest(generation: Path) -> str:
+    """Hash the published runtime payload, including built console assets."""
+    return _tree_digest(generation, include_console_dist=True)
 
 
 def _copy_runtime(source: Path, destination: Path) -> None:
@@ -210,14 +230,15 @@ def install(
     provider_root: Path | None = None,
     bin_dir: Path | None = None,
     user_config_home: Path | None = None,
-    npm: str | None = None,
+    pnpm: str | None = None,
 ) -> Path:
     """Install source as an immutable, content-addressed Slack provider generation.
 
     Content-addressed by ``_source_digest``: an existing generation for the
-    same digest is reused rather than rebuilt. Runs `npm ci` for production
-    deps, writes a provider manifest, publishes the `current` pointer and the
-    public `vc-slack` launcher symlink, and migrates any legacy `.env`.
+    same digest is reused rather than rebuilt. Runs a frozen pnpm workspace
+    install and builds the operator console inside staging, writes a provider
+    manifest, publishes the `current` pointer and the public `vc-slack`
+    launcher symlink, and migrates any legacy `.env`.
     Returns the generation directory.
     """
     source = source.resolve(strict=True)
@@ -236,24 +257,32 @@ def install(
         staging.mkdir(mode=0o755)
         try:
             _copy_runtime(source, staging)
-            npm_bin = npm or shutil.which("npm")
-            if not npm_bin:
-                raise ProviderError("npm is required to install the Slack provider")
+            pnpm_bin = pnpm or shutil.which("pnpm")
+            if not pnpm_bin:
+                raise ProviderError("pnpm is required to install the Slack provider")
             subprocess.run(
                 [
-                    npm_bin,
-                    "ci",
-                    "--omit=dev",
+                    pnpm_bin,
+                    "install",
+                    "--frozen-lockfile",
                     "--ignore-scripts",
-                    "--no-audit",
-                    "--no-fund",
                 ],
                 cwd=staging,
                 check=True,
             )
+            subprocess.run(
+                [pnpm_bin, "--dir", "console", "run", "build"],
+                cwd=staging,
+                check=True,
+            )
+            if not (staging / "console" / "dist" / "index.html").is_file():
+                raise ProviderError(
+                    "Slack console build did not produce dist/index.html"
+                )
             manifest = {
                 "schema": "vibecrafted.slack-provider.v1",
-                "content_sha256": digest,
+                "source_sha256": digest,
+                "content_sha256": _content_digest(staging),
                 "entrypoint": "bin/vc-slack",
             }
             (staging / "provider-manifest.json").write_text(
@@ -312,7 +341,7 @@ def doctor(
     expected_digest = payload.get("content_sha256")
     if (
         not isinstance(expected_digest, str)
-        or _source_digest(generation) != expected_digest
+        or _content_digest(generation) != expected_digest
     ):
         return False, "Slack provider runtime files drifted after publication"
     return True, f"vc-slack -> {generation.name}"
