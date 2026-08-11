@@ -1351,21 +1351,26 @@ def test_runtime_cutover_failed_legacy_stop_recovers_previous_service(
     )
     events: list[str] = []
     mode = "active"
+    recovery_transition_observed = False
     plist = _write_runtime_launch_agent(home, shared_home, launcher)
     old_plist = plist.read_bytes()
 
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
     monkeypatch.setattr(installer.sys, "platform", "darwin")
-    monkeypatch.setattr(
-        installer,
-        "_runtime_service_snapshot",
-        lambda _shared_home: (
-            launcher,
-            healthy if mode == "active" else quiescent,
-            "running" if mode == "active" else "stopped",
-        ),
-    )
+
+    def snapshot(_shared_home: Path):
+        nonlocal recovery_transition_observed
+        if mode == "active":
+            return launcher, healthy, "running"
+        if not recovery_transition_observed:
+            recovery_transition_observed = True
+            raise installer._RuntimeServiceTransition(
+                "runtime service identity is uncertain while transition is in progress"
+            )
+        return launcher, quiescent, "stopped"
+
+    monkeypatch.setattr(installer, "_runtime_service_snapshot", snapshot)
     monkeypatch.setattr(
         installer,
         "_assert_runtime_launchd_job_owned",
@@ -1405,10 +1410,122 @@ def test_runtime_cutover_failed_legacy_stop_recovers_previous_service(
         operation="test-failed-drain-compensation",
     ) as descriptor:
         monkeypatch.setenv(installer._TOOLS_INSTALL_LEASE_ENV, str(descriptor))
-        with pytest.raises(OSError, match="previous service ownership was recovered"):
+        with pytest.raises(
+            OSError,
+            match=r"legacy runtime drain failed \(.*stop failed.*\); previous",
+        ):
             installer.prepare_runtime_service_for_install(shared_home)
 
     assert events == ["service stop", "restore exact LaunchAgent"]
+    assert recovery_transition_observed
+
+
+def test_runtime_drain_waits_for_launchd_transition_to_become_quiescent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An owned post-stop transition is convergence, not lost identity."""
+    home = tmp_path / "home"
+    shared_home = home / ".vibecrafted"
+    tools = tmp_path / "tools"
+    current = tools / "vibecrafted-current"
+    launcher = tmp_path / "old-vibecrafted"
+    current.parent.mkdir(parents=True)
+    _write_executable(launcher, "#!/usr/bin/env bash\nexit 0\n")
+    degraded = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=True,
+        supervisor_live=True,
+        supervisor_verified=True,
+        supervisor_service_managed=True,
+        build_current=True,
+        pair_healthy=False,
+        supervisor_pid=8181,
+    )
+    quiescent = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=False,
+        supervisor_live=False,
+        supervisor_verified=False,
+        supervisor_service_managed=False,
+        build_current=False,
+        pair_healthy=False,
+        supervisor_pid=None,
+    )
+    phase = "degraded"
+    transition_observed = False
+    plist = _write_runtime_launch_agent(home, shared_home, launcher)
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    monkeypatch.setattr(installer.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        installer,
+        "_assert_runtime_launchd_job_owned",
+        lambda _shared_home: True,
+    )
+
+    def snapshot(_shared_home: Path):
+        nonlocal transition_observed
+        if phase == "degraded":
+            return launcher, degraded, "orphaned"
+        if not transition_observed:
+            transition_observed = True
+            raise installer._RuntimeServiceTransition(
+                "runtime service identity is uncertain while transition is in progress"
+            )
+        return launcher, quiescent, "stopped"
+
+    monkeypatch.setattr(installer, "_runtime_service_snapshot", snapshot)
+
+    def command(
+        _launcher: Path,
+        _shared_home: Path,
+        *arguments: str,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal phase
+        assert arguments == ("service", "stop")
+        phase = "stopping"
+        return subprocess.CompletedProcess(list(arguments), 0, "", "")
+
+    monkeypatch.setattr(installer, "_run_runtime_service_command", command)
+    with installer._tools_install_lease(
+        current,
+        operation="test-transitioning-drain",
+    ) as descriptor:
+        monkeypatch.setenv(installer._TOOLS_INSTALL_LEASE_ENV, str(descriptor))
+        assert installer.prepare_runtime_service_for_install(
+            shared_home,
+            launch_agent_backup=installer._RuntimeLaunchAgentBackup(
+                plist,
+                plist.read_bytes(),
+                0o600,
+                (),
+            ),
+        )
+
+    assert transition_observed
+
+
+def test_runtime_service_settlement_timeout_reports_last_transition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        installer,
+        "_runtime_service_snapshot",
+        lambda _shared_home: (_ for _ in ()).throw(
+            installer._RuntimeServiceTransition("launchd is still converging")
+        ),
+    )
+
+    with pytest.raises(OSError, match="last observation: launchd is still converging"):
+        installer._wait_for_runtime_service_settlement(
+            tmp_path,
+            allow_healthy=False,
+            timeout_seconds=0,
+        )
 
 
 def test_failed_legacy_stop_replaces_raced_plist_with_exact_previous_service(
