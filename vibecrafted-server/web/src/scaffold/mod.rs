@@ -74,6 +74,7 @@ pub mod api {
             .route("/scaffold", get(editor))
             .route("/scaffold/", get(editor))
             .route("/scaffold/editor", get(editor))
+            .route("/scaffold/library", get(library))
             .route("/api/scaffold/plans", get(plans))
             .route("/api/scaffold/artifacts", get(artifacts))
             .route("/api/scaffold/export", get(export))
@@ -83,11 +84,24 @@ pub mod api {
             .route("/api/scaffold/status", post(save_status))
     }
 
-    async fn editor(Query(query): Query<ScaffoldQuery>) -> impl IntoResponse {
+    async fn editor(Query(mut query): Query<ScaffoldQuery>) -> impl IntoResponse {
+        let store = ScaffoldArtifactStore::new(vibecrafted_home());
+        if query.org.is_none()
+            && query.repo.is_none()
+            && query.day.is_none()
+            && query.plan_id.is_none()
+            && let Some(plan) = store.catalog().into_iter().find(|plan| {
+                store.is_plan_reviewable(&plan.org, &plan.repo, &plan.day, &plan.plan_id)
+            })
+        {
+            query.org = Some(plan.org);
+            query.repo = Some(plan.repo);
+            query.day = Some(plan.day);
+            query.plan_id = Some(plan.plan_id);
+        }
         match load_workspace(query.clone()) {
             Ok(workspace) => Html(render_editor(&workspace)).into_response(),
             Err(ScaffoldError::SelectionRequired { plan_ids }) => {
-                let store = ScaffoldArtifactStore::new(vibecrafted_home());
                 let detailed = store.catalog_detailed();
                 let plans = matching_plans(&store, &query, &plan_ids);
                 // Keep skipped list only when not filtering to a single plan_id.
@@ -99,7 +113,6 @@ pub mod api {
                 Html(render_plan_picker(&plan_card_views(&store, plans), &skips)).into_response()
             }
             Err(error) => {
-                let store = ScaffoldArtifactStore::new(vibecrafted_home());
                 if let Some(plan) = selected_plan(&store, &query) {
                     let report = store
                         .doctor(&plan.org, &plan.repo, &plan.day, &plan.plan_id)
@@ -121,6 +134,15 @@ pub mod api {
                 }
             }
         }
+    }
+
+    async fn library() -> impl IntoResponse {
+        let store = ScaffoldArtifactStore::new(vibecrafted_home());
+        let detailed = store.catalog_detailed();
+        Html(render_plan_picker(
+            &plan_card_views(&store, detailed.plans),
+            &detailed.skipped,
+        ))
     }
 
     async fn plans(Query(query): Query<ScaffoldQuery>) -> impl IntoResponse {
@@ -479,7 +501,7 @@ pub mod api {
       <a href="/activity" target="_top">Activity</a>
       <a class="is-active" href="/scaffold" target="_top">Scaffold</a>
     </nav>
-    <a class="studio-back-link" href="/" target="_top">← Back to console</a>
+    <a class="studio-back-link" href="/scaffold/library">All plans</a>
   </header>
 
 <main class="review-shell" data-first-artifact="{}">
@@ -820,7 +842,7 @@ pub mod api {
     </a>
     <div class="library-nav-links">
       <a href="/" target="_top">Overview</a>
-      <a class="back-link" href="/scaffold">← Scaffold library</a>
+      <a class="back-link" href="/scaffold/library">← Scaffold library</a>
     </div>
   </nav>
   <header class="blocked-plan-head">
@@ -2323,7 +2345,8 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
             );
             assert!(html.contains(r#"class="studio-navbar""#));
             assert!(html.contains(r#"href="/" target="_top""#));
-            assert!(html.contains("← Back to console"));
+            assert!(html.contains(r#"href="/scaffold/library""#));
+            assert!(html.contains("All plans"));
             assert!(html.contains(r#"href="/runs" target="_top""#));
             assert!(html.contains(r##""#artifact/" + encodeURIComponent(panel.id)"##));
         }
