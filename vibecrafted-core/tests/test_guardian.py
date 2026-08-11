@@ -1577,7 +1577,7 @@ def test_full_quarantine_backpressures_corrupt_triage_outbox(
     assert not guardian_module._terminal_triage_outbox_path("run-real").exists()
 
 
-def test_settlement_history_publish_runs_for_caught_up_and_settlement(
+def test_server_settlement_board_publish_runs_for_caught_up_and_settlement(
     tmp_path: Path,
 ) -> None:
     state = GuardianState(
@@ -1591,7 +1591,7 @@ def test_settlement_history_publish_runs_for_caught_up_and_settlement(
         state=state,
         notifier=lambda _notification: None,
         reconciler=lambda _event: ReconcileDecision(request_resume=False),
-        history_publisher=lambda: published.append("publish"),
+        board_publisher=lambda: published.append("publish"),
         opener=QueueOpener(
             FakeResponse(
                 [
@@ -1611,7 +1611,7 @@ def test_settlement_history_publish_runs_for_caught_up_and_settlement(
     assert published == ["publish", "publish"]
 
 
-def test_settlement_history_publish_failure_never_blocks_settlement(
+def test_server_settlement_board_publish_failure_never_blocks_settlement(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1629,7 +1629,7 @@ def test_settlement_history_publish_failure_never_blocks_settlement(
         state=state,
         notifier=lambda _notification: None,
         reconciler=lambda _event: ReconcileDecision(request_resume=False),
-        history_publisher=publish,
+        board_publisher=publish,
         opener=QueueOpener(
             FakeResponse(
                 [
@@ -1647,7 +1647,7 @@ def test_settlement_history_publish_failure_never_blocks_settlement(
         stats = worker.consume_connection()
 
     assert stats.completed_actions == 1
-    assert "settlement-history publication failed" in caplog.text
+    assert "server settlement-board publication failed" in caplog.text
 
 
 def test_recovery_adapter_obeys_vc_guard_block(tmp_path: Path) -> None:
@@ -3237,7 +3237,10 @@ def test_main_recovers_trust_outbox_under_lock_before_sse_attach(
             assert backoff is not None
             order.append("attach")
 
-    class StubSettlementHistoryPublisher:
+    class StubSettlementBoardPublisher:
+        def __init__(self, *, server_url: str) -> None:
+            assert server_url == "http://127.0.0.1:3024"
+
         def request_refresh(self) -> bool:
             return True
 
@@ -3278,8 +3281,8 @@ def test_main_recovers_trust_outbox_under_lock_before_sse_attach(
     )
     monkeypatch.setattr(
         guardian_module,
-        "SettlementHistoryPublisher",
-        StubSettlementHistoryPublisher,
+        "SettlementBoardPublisher",
+        StubSettlementBoardPublisher,
     )
     monkeypatch.setattr(guardian_module, "single_instance_lock", fake_lock)
     monkeypatch.setattr(
@@ -3295,6 +3298,8 @@ def test_main_recovers_trust_outbox_under_lock_before_sse_attach(
 
     result = guardian_module.main(
         [
+            "--server-url",
+            "http://127.0.0.1:3024",
             "--state",
             str(tmp_path / "state.json"),
             "--lock",

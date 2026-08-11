@@ -966,9 +966,11 @@ def _effective_operator_session(*, root: str, run_id: str, env: dict[str, str]) 
     Rules (exact order):
 
     1. ``VIBECRAFTED_WORKER_SESSION`` if set — explicit override wins.
-    2. Else ``"<basename(root)> workers"`` — the per-project worker host,
-       **always** suffixed. Bare ``basename(root)`` is the operator's own
-       interactive seat in the rail and is never a worker-tab target.
+    2. Else workspace-bound host from the control-plane catalog
+       (``{label}-{workspace_short} workers``). Two workspaces that share the
+       same root basename never share a worker host.
+    3. Emergency fallback only: ``"<basename(root)> workers"`` when the
+       catalog cannot be opened.
 
     2026-08-09: the suffix used to be conditional on ``basename(root)``
     colliding with the dispatcher seat (``VC_FRAME_SESSION_NAME`` /
@@ -978,15 +980,16 @@ def _effective_operator_session(*, root: str, run_id: str, env: dict[str, str]) 
     "vibecrafted"``). The declared invariant is unconditional, so the rule is
     too — the dispatcher seat no longer participates in host resolution.
 
+    2026-08-10 Cut A: basename-only hosts collide across checkouts with the
+    same name. Worker ownership is now bound to ``workspace_id``.
+
     Missing hosts are resurrected by G3 (``attach --create-background``). The
     ``run_id`` argument is retained for call-site compatibility only.
     """
     _ = run_id  # call-site compatibility; not part of G7 host rules
-    override = str(env.get("VIBECRAFTED_WORKER_SESSION") or "").strip()
-    if override:
-        return override
+    from .workspace_catalog import resolve_worker_host_session
 
-    return f"{Path(root or '.').name or 'vibecrafted'} workers"
+    return resolve_worker_host_session(root=root or ".", env=env)
 
 
 # --------------------------------------------------------------------------
