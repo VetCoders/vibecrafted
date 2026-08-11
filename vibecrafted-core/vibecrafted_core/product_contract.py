@@ -24,7 +24,17 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
 
+from .delivery.model import (
+    ContractError,
+    DeliveryProofContract,
+    DeliverySeal,
+    ProofResult,
+    ProofState,
+)
+from .delivery.seal import reconstruct_seal
+
 MODULE_SCHEMA = "io.vetcoders.vibecrafted.module.v1"
+ASSEMBLY_SCHEMA = "io.vetcoders.vibecrafted.module-assembly.v1"
 PRODUCT_SCHEMA = "io.vetcoders.vibecrafted.product.v1"
 TRANSACTION_SCHEMA = "io.vetcoders.vibecrafted.transaction.v1"
 WALKAROUND_SCHEMA = "io.vetcoders.vibecrafted.walkaround.v1"
@@ -35,6 +45,8 @@ PRODUCT_EXECUTABLE = "Vibecrafted"
 SUPPORTED_MODULES = frozenset({"vc-terminal", "vc-frame"})
 SUPPORTED_ARCHITECTURES = frozenset({"arm64"})
 MINIMUM_MACOS = (14, 0)
+WALKAROUND_SCOPE = "unified-vibecrafted-app-walkaround-v1"
+WALKAROUND_SEAL_ISSUER = "vc-ship"
 
 E_JSON = 20
 E_SCHEMA = 21
@@ -77,6 +89,7 @@ _WALKAROUND_CHECKS = frozenset(
         "one_outer_writer",
     }
 )
+_STATE_TRANSITION_CHECKS = frozenset({"update", "rollback", "reattach"})
 
 
 @dataclass(frozen=True)
@@ -124,6 +137,17 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _canonical_digest(payload: Any) -> str:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -246,6 +270,30 @@ def _run_tool(command: Sequence[str], *, failure_code: int, context: str) -> str
     return result.stdout
 
 
+def _verify_assembler_signed_macho(path: Path, *, relative: str) -> None:
+    """Require a post-link code signature, not the linker-generated ad-hoc placeholder."""
+    codesign = _required_tool("codesign", failure_code=E_PROOF)
+    _run_tool(
+        [codesign, "--verify", "--strict", "--verbose=2", str(path)],
+        failure_code=E_PROOF,
+        context=f"signed transformation has an invalid code signature: {relative}",
+    )
+    result = subprocess.run(
+        [codesign, "--display", "--verbose=4", str(path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    metadata = f"{result.stdout}\n{result.stderr}"
+    if result.returncode != 0:
+        _fail(E_PROOF, f"signed transformation has no valid code signature: {relative}")
+    if "linker-signed" in metadata:
+        _fail(
+            E_PROOF,
+            f"signed transformation retained only a linker signature: {relative}",
+        )
+
+
 def _version_tuple(value: str) -> tuple[int, int]:
     match = _MACOS_RE.fullmatch(value)
     if match is None:
@@ -318,6 +366,12 @@ def _observed_macho(path: Path, *, relative: str, kind: str) -> _MachOInfo | Non
         ):
             minimum_versions.append(_version_tuple(stripped.split()[1]))
 
+    absolute_rpaths = sorted(rpath for rpath in rpaths if rpath.startswith("/"))
+    if absolute_rpaths:
+        _fail(
+            E_DEPENDENCY,
+            f"absolute LC_RPATH is forbidden for {relative}: {absolute_rpaths[0]}",
+        )
     if not minimum_versions:
         _fail(E_PLATFORM, f"Mach-O has no macOS deployment target: {relative}")
     return _MachOInfo(
@@ -484,9 +538,17 @@ def _verify_macho_closure(
                 inherited_rpaths=effective_rpaths,
             )
 
+    executable_roots = sorted(
+        relative for relative, entry in files.items() if entry["kind"] == "executable"
+    )
+    if not executable_roots:
+        _fail(E_PLATFORM, "payload contains no declared executable roots")
     for relative in entrypoints.values():
+        if relative not in executable_roots:
+            _fail(E_ENTRYPOINT, f"entrypoint is not a declared executable: {relative}")
+    for relative in executable_roots:
         if relative not in machos:
-            _fail(E_PLATFORM, f"entrypoint is not Mach-O code: {relative}")
+            _fail(E_PLATFORM, f"declared executable is not Mach-O code: {relative}")
         visit(relative, executable_relative=relative, inherited_rpaths=())
 
     unreachable = sorted(
@@ -761,7 +823,14 @@ def _validate_product_modules(raw_modules: Any) -> dict[str, Mapping[str, Any]]:
     if not isinstance(raw_modules, list) or len(raw_modules) != 2:
         _fail(E_SCHEMA, "product modules must contain terminal and frame receipts")
     modules: dict[str, Mapping[str, Any]] = {}
-    required = {"module", "manifest_path", "manifest_sha256", "git_sha", "files"}
+    required = {
+        "module",
+        "manifest_path",
+        "manifest_sha256",
+        "assembly_receipt_path",
+        "assembly_receipt_sha256",
+        "git_sha",
+    }
     for index, item in enumerate(raw_modules):
         if not isinstance(item, dict):
             _fail(E_SCHEMA, f"modules[{index}] must be an object")
@@ -773,35 +842,78 @@ def _validate_product_modules(raw_modules: Any) -> dict[str, Mapping[str, Any]]:
         _expect_sha256(
             item["manifest_sha256"], field=f"modules[{index}].manifest_sha256"
         )
+        _relative_path(
+            item["assembly_receipt_path"],
+            field=f"modules[{index}].assembly_receipt_path",
+        )
+        _expect_sha256(
+            item["assembly_receipt_sha256"],
+            field=f"modules[{index}].assembly_receipt_sha256",
+        )
         _expect_git_sha(item["git_sha"], field="git_sha")
-        mappings = item["files"]
-        if not isinstance(mappings, list) or not mappings:
-            _fail(E_SCHEMA, f"modules[{index}].files must be a non-empty array")
-        module_paths: set[str] = set()
-        product_paths: set[str] = set()
-        for mapping_index, mapping in enumerate(mappings):
-            context = f"modules[{index}].files[{mapping_index}]"
-            if not isinstance(mapping, dict):
-                _fail(E_SCHEMA, f"{context} must be an object")
-            _expect_keys(
-                mapping,
-                required={"module_path", "product_path"},
-                context=context,
-            )
-            module_path = _relative_path(
-                mapping["module_path"], field=f"{context}.module_path"
-            ).as_posix()
-            product_path = _relative_path(
-                mapping["product_path"], field=f"{context}.product_path"
-            ).as_posix()
-            if module_path in module_paths or product_path in product_paths:
-                _fail(E_INVENTORY, f"duplicate module file mapping in {name}")
-            module_paths.add(module_path)
-            product_paths.add(product_path)
         modules[name] = item
     if set(modules) != SUPPORTED_MODULES:
         _fail(E_SCHEMA, "product must bind vc-terminal and vc-frame")
     return modules
+
+
+def _validate_assembly_receipt(
+    payload: Mapping[str, Any], *, module: str, manifest_sha256: str
+) -> list[Mapping[str, Any]]:
+    required = {"schema", "module", "module_manifest_sha256", "files"}
+    _expect_keys(payload, required=required, context=f"{module} assembly receipt")
+    if payload["schema"] != ASSEMBLY_SCHEMA:
+        _fail(E_SCHEMA, f"assembly schema must be {ASSEMBLY_SCHEMA}")
+    if payload["module"] != module:
+        _fail(E_PROOF, f"assembly receipt identity mismatch: {module}")
+    if (
+        _expect_sha256(
+            payload["module_manifest_sha256"],
+            field=f"{module}.assembly.module_manifest_sha256",
+        )
+        != manifest_sha256
+    ):
+        _fail(E_PROOF, f"assembly receipt does not bind module manifest: {module}")
+    raw_files = payload["files"]
+    if not isinstance(raw_files, list) or not raw_files:
+        _fail(E_SCHEMA, f"{module} assembly files must be a non-empty array")
+    files: list[Mapping[str, Any]] = []
+    module_paths: set[str] = set()
+    product_paths: set[str] = set()
+    for index, mapping in enumerate(raw_files):
+        context = f"{module}.assembly.files[{index}]"
+        if not isinstance(mapping, dict):
+            _fail(E_SCHEMA, f"{context} must be an object")
+        _expect_keys(
+            mapping,
+            required={
+                "module_path",
+                "product_path",
+                "unsigned_sha256",
+                "product_sha256",
+                "transformation",
+            },
+            context=context,
+        )
+        module_path = _relative_path(
+            mapping["module_path"], field=f"{context}.module_path"
+        ).as_posix()
+        product_path = _relative_path(
+            mapping["product_path"], field=f"{context}.product_path"
+        ).as_posix()
+        _expect_sha256(mapping["unsigned_sha256"], field=f"{context}.unsigned_sha256")
+        _expect_sha256(mapping["product_sha256"], field=f"{context}.product_sha256")
+        transformation = _expect_string(
+            mapping["transformation"], field=f"{context}.transformation"
+        )
+        if transformation not in {"identity", "codesign"}:
+            _fail(E_SCHEMA, f"{context}.transformation is unsupported")
+        if module_path in module_paths or product_path in product_paths:
+            _fail(E_INVENTORY, f"duplicate assembly file mapping in {module}")
+        module_paths.add(module_path)
+        product_paths.add(product_path)
+        files.append(mapping)
+    return files
 
 
 def _verify_product_module_receipts(
@@ -850,7 +962,32 @@ def _verify_product_module_receipts(
         if require_clean and receipt.dirty:
             _fail(E_PROOF, f"release policy rejects dirty embedded module: {name}")
 
-        mappings = binding["files"]
+        assembly_path = _relative_path(
+            binding["assembly_receipt_path"],
+            field=f"modules.{name}.assembly_receipt_path",
+        ).as_posix()
+        assembly_entry = product_files.get(assembly_path)
+        if assembly_entry is None or assembly_entry["kind"] not in {
+            "config",
+            "resource",
+        }:
+            _fail(
+                E_PROOF,
+                f"assembly receipt is not product-manifest-bound: {assembly_path}",
+            )
+        assembly_receipt_path = app / assembly_path
+        expected_assembly_hash = _expect_sha256(
+            binding["assembly_receipt_sha256"],
+            field=f"modules.{name}.assembly_receipt_sha256",
+        )
+        if _sha256(assembly_receipt_path) != expected_assembly_hash:
+            _fail(E_PROOF, f"embedded assembly receipt hash mismatch: {name}")
+        assembly_payload = _load_json(assembly_receipt_path)
+        mappings = _validate_assembly_receipt(
+            assembly_payload,
+            module=name,
+            manifest_sha256=expected_hash,
+        )
         mapped_module_paths: set[str] = set()
         entrypoint_name = "terminal" if name == "vc-terminal" else "frame"
         mapped_entrypoint = ""
@@ -868,12 +1005,39 @@ def _verify_product_module_receipts(
                 )
             claimed_product_paths.add(product_path)
             mapped_module_paths.add(module_path)
-            for field in ("sha256", "mode", "kind", "size", "dylibs"):
-                if module_entry[field] != product_entry[field]:
+            if mapping["unsigned_sha256"] != module_entry["sha256"]:
+                _fail(E_PROOF, f"unsigned module hash mismatch: {name}:{module_path}")
+            if mapping["product_sha256"] != product_entry["sha256"]:
+                _fail(E_PROOF, f"signed product hash mismatch: {name}:{module_path}")
+            transformation = mapping["transformation"]
+            if transformation == "identity":
+                for field in ("sha256", "mode", "kind", "size", "dylibs"):
+                    if module_entry[field] != product_entry[field]:
+                        _fail(
+                            E_PROOF,
+                            f"identity transform changed {field}: {name}:{module_path}",
+                        )
+            else:
+                if module_entry["kind"] not in {"executable", "dylib"}:
                     _fail(
                         E_PROOF,
-                        f"copied module file {field} mismatch: {name}:{module_path}",
+                        f"codesign transform applied to non-code file: {name}:{module_path}",
                     )
+                for field in ("mode", "kind", "dylibs"):
+                    if module_entry[field] != product_entry[field]:
+                        _fail(
+                            E_PROOF,
+                            f"codesign transform changed {field}: {name}:{module_path}",
+                        )
+                if module_entry["sha256"] == product_entry["sha256"]:
+                    _fail(
+                        E_PROOF,
+                        f"codesign transform did not change bytes: {name}:{module_path}",
+                    )
+                _verify_assembler_signed_macho(
+                    app / product_path,
+                    relative=product_path,
+                )
             if module_path == receipt.entrypoints[entrypoint_name]:
                 mapped_entrypoint = product_path
         if mapped_module_paths != set(receipt.files):
@@ -1052,23 +1216,50 @@ def _validate_proof_artifact(root: Path, value: Any, *, field: str) -> tuple[str
     return relative, expected_hash
 
 
+def _walkaround_probe_id(name: str) -> str:
+    return f"io.vetcoders.vibecrafted.walkaround.{name}.v1"
+
+
+def _walkaround_proof_digest(name: str, proof: Mapping[str, Any]) -> str:
+    return _canonical_digest({"name": name, "proof": proof})
+
+
 def _validate_walkaround_proofs(
-    raw_proofs: Any, *, receipt_root: Path
-) -> dict[str, Mapping[str, Any]]:
+    raw_proofs: Any,
+    *,
+    receipt_root: Path,
+    dmg_sha256: str,
+    product_manifest_sha256: str,
+) -> tuple[dict[str, Mapping[str, Any]], tuple[str, ...]]:
     if not isinstance(raw_proofs, dict):
         _fail(E_SCHEMA, "walk-around proofs must be an object")
     _expect_keys(raw_proofs, required=_WALKAROUND_CHECKS, context="proofs")
     artifacts: set[str] = set()
     proofs: dict[str, Mapping[str, Any]] = {}
+    proof_digests: list[str] = []
     for name in sorted(_WALKAROUND_CHECKS):
         proof = raw_proofs[name]
         if not isinstance(proof, dict):
             _fail(E_SCHEMA, f"proofs.{name} must be an object")
         _expect_keys(
             proof,
-            required={"command", "exit_code", "stdout", "stderr"},
+            required={
+                "producer",
+                "probe_id",
+                "command",
+                "exit_code",
+                "inputs",
+                "before",
+                "after",
+                "stdout",
+                "stderr",
+            },
             context=f"proofs.{name}",
         )
+        if proof["producer"] != WALKAROUND_SEAL_ISSUER:
+            _fail(E_PROOF, f"walk-around proof has untrusted producer: {name}")
+        if proof["probe_id"] != _walkaround_probe_id(name):
+            _fail(E_PROOF, f"walk-around proof has wrong probe identity: {name}")
         command = proof["command"]
         if (
             not isinstance(command, list)
@@ -1078,17 +1269,153 @@ def _validate_walkaround_proofs(
             _fail(E_SCHEMA, f"proofs.{name}.command must be a non-empty argv array")
         if proof["exit_code"] != 0 or isinstance(proof["exit_code"], bool):
             _fail(E_PROOF, f"walk-around proof failed: {name}")
-        for stream in ("stdout", "stderr"):
-            relative, _ = _validate_proof_artifact(
+        inputs = proof["inputs"]
+        if not isinstance(inputs, dict):
+            _fail(E_SCHEMA, f"proofs.{name}.inputs must be an object")
+        _expect_keys(
+            inputs,
+            required={"dmg_sha256", "product_manifest_sha256"},
+            context=f"proofs.{name}.inputs",
+        )
+        if (
+            _expect_sha256(
+                inputs["dmg_sha256"], field=f"proofs.{name}.inputs.dmg_sha256"
+            )
+            != dmg_sha256
+            or _expect_sha256(
+                inputs["product_manifest_sha256"],
+                field=f"proofs.{name}.inputs.product_manifest_sha256",
+            )
+            != product_manifest_sha256
+        ):
+            _fail(E_PROOF, f"walk-around proof inputs do not bind release: {name}")
+        state_hashes: dict[str, str] = {}
+        for artifact_name in ("before", "after", "stdout", "stderr"):
+            relative, artifact_hash = _validate_proof_artifact(
                 receipt_root,
-                proof[stream],
-                field=f"proofs.{name}.{stream}",
+                proof[artifact_name],
+                field=f"proofs.{name}.{artifact_name}",
             )
             if relative in artifacts:
                 _fail(E_PROOF, f"walk-around proof artifact reused: {relative}")
             artifacts.add(relative)
+            state_hashes[artifact_name] = artifact_hash
+        if (
+            name in _STATE_TRANSITION_CHECKS
+            and state_hashes["before"] == state_hashes["after"]
+        ):
+            _fail(E_PROOF, f"walk-around state transition did not change state: {name}")
         proofs[name] = proof
-    return proofs
+        proof_digests.append(_walkaround_proof_digest(name, proof))
+    return proofs, tuple(proof_digests)
+
+
+def _walkaround_subject_digest(payload: Mapping[str, Any]) -> str:
+    return _canonical_digest(
+        {
+            "schema": payload["schema"],
+            "dmg_path": payload["dmg_path"],
+            "dmg_sha256": payload["dmg_sha256"],
+            "dmg_size": payload["dmg_size"],
+            "mount_path": payload["mount_path"],
+            "app_path": payload["app_path"],
+            "product_manifest_sha256": payload["product_manifest_sha256"],
+            "source_revisions": payload["source_revisions"],
+        }
+    )
+
+
+def _walkaround_assertion_digest(proof_digests: Sequence[str]) -> str:
+    return _canonical_digest({"proofs": list(proof_digests)})
+
+
+def _verify_walkaround_delivery_seal(
+    receipt_root: Path,
+    seal_artifact: Any,
+    *,
+    payload: Mapping[str, Any],
+    proof_digests: tuple[str, ...],
+) -> DeliverySeal:
+    relative, _ = _validate_proof_artifact(
+        receipt_root,
+        seal_artifact,
+        field="delivery_seal",
+    )
+    seal_path = receipt_root / relative
+    if seal_path.name != "delivery-seal.json":
+        _fail(
+            E_PROOF, "walk-around seal must use the canonical delivery-seal.json name"
+        )
+    reconstruction = reconstruct_seal(seal_path.parent)
+    if not reconstruction.verified or reconstruction.seal is None:
+        detail = ", ".join(
+            str(item.get("component", "unknown")) for item in reconstruction.mismatches
+        )
+        _fail(E_PROOF, f"walk-around delivery seal is stale: {detail or 'unknown'}")
+    seal = reconstruction.seal
+    if seal.issuer != WALKAROUND_SEAL_ISSUER:
+        _fail(E_PROOF, "walk-around delivery seal has the wrong issuer")
+    if seal.cut_id != WALKAROUND_SCOPE:
+        _fail(E_PROOF, "walk-around delivery seal has the wrong cut identity")
+    if (
+        seal.declared_scope != WALKAROUND_SCOPE
+        or seal.checked_scope != WALKAROUND_SCOPE
+    ):
+        _fail(E_PROOF, "walk-around delivery seal did not check the declared scope")
+    if seal.unverified_surfaces:
+        _fail(E_PROOF, "walk-around delivery seal carries unverified surfaces")
+    if tuple(seal.runtime_probe_sha256) != proof_digests:
+        _fail(E_PROOF, "walk-around proofs are not bound by the delivery seal")
+    if seal.subject_evidence_sha256 != _walkaround_subject_digest(payload):
+        _fail(E_PROOF, "walk-around release subject is not bound by the delivery seal")
+    if seal.assertion_evidence_sha256 != _walkaround_assertion_digest(proof_digests):
+        _fail(E_PROOF, "walk-around assertion set is not bound by the delivery seal")
+    try:
+        proof_contract = DeliveryProofContract.from_payload(
+            _load_json(seal_path.parent / "delivery-proof-contract.json")
+        )
+        proof_result = ProofResult.from_payload(
+            _load_json(seal_path.parent / "proof/result.json")
+        )
+    except ContractError as exc:
+        _fail(E_PROOF, f"walk-around delivery proof contract is invalid: {exc}")
+    if proof_contract.id != seal.proof_id or proof_result.proof_id != seal.proof_id:
+        _fail(E_PROOF, "walk-around delivery proof identity does not match the seal")
+    if (
+        proof_contract.delivery_scope != WALKAROUND_SCOPE
+        or proof_contract.integration_target != payload["app_path"]
+    ):
+        _fail(E_PROOF, "walk-around delivery proof targets the wrong product scope")
+    expected_runtime_probes = tuple(
+        {
+            "id": name,
+            "probe_id": _walkaround_probe_id(name),
+            "evidence_sha256": digest,
+        }
+        for name, digest in zip(sorted(_WALKAROUND_CHECKS), proof_digests, strict=True)
+    )
+    if tuple(proof_contract.runtime_probes) != expected_runtime_probes:
+        _fail(E_PROOF, "walk-around delivery proof does not declare every sealed probe")
+    if proof_result.contract_sha256 != proof_contract.content_digest():
+        _fail(E_PROOF, "walk-around proof result does not bind its proof contract")
+    if (
+        proof_result.state is not ProofState.PASSED
+        or not proof_result.subject_executed
+        or not proof_result.assertion_consumed_subject_output
+        or proof_result.refusal_reasons
+    ):
+        _fail(E_PROOF, "walk-around delivery proof did not reach a clean PASS")
+    if not proof_result.assertion_results or not all(
+        result.get("passed") is True and result.get("valid") is True
+        for result in proof_result.assertion_results
+    ):
+        _fail(E_PROOF, "walk-around delivery proof assertions are incomplete")
+    if not proof_result.negative_control_results or not all(
+        result.get("detected_falsehood") is True and result.get("valid") is True
+        for result in proof_result.negative_control_results
+    ):
+        _fail(E_PROOF, "walk-around delivery proof negative controls are incomplete")
+    return seal
 
 
 def _attached_image_mounts() -> set[tuple[Path, Path]]:
@@ -1186,6 +1513,7 @@ def _verify_walkaround(
         "product_manifest_sha256",
         "source_revisions",
         "proofs",
+        "delivery_seal",
     }
     _expect_keys(payload, required=required, context="walk-around receipt")
     if payload["schema"] != WALKAROUND_SCHEMA:
@@ -1253,8 +1581,19 @@ def _verify_walkaround(
     if revisions != expected_revisions:
         _fail(E_PROOF, "walk-around source revisions do not match mounted product")
 
-    proofs = _validate_walkaround_proofs(payload["proofs"], receipt_root=path.parent)
+    proofs, proof_digests = _validate_walkaround_proofs(
+        payload["proofs"],
+        receipt_root=path.parent,
+        dmg_sha256=expected_hash,
+        product_manifest_sha256=expected_product_hash,
+    )
     _verify_recorded_live_commands(proofs, app=app_path, dmg=dmg_path)
+    _verify_walkaround_delivery_seal(
+        path.parent,
+        payload["delivery_seal"],
+        payload=payload,
+        proof_digests=proof_digests,
+    )
     if run_live_checks:
         _run_live_release_checks(app_path, dmg_path)
     return payload
@@ -1369,6 +1708,11 @@ def _self_test() -> int:
             verify_module(module)
         except ProductContractError as exc:
             expected_failures.append(exc.code)
+        module_manifest["files"] = [
+            _fixture_entry(module, "bin/vc-terminal", kind="executable")
+        ]
+        _write_json(manifest_path, module_manifest)
+        verify_module(module)
 
         mount = root / "mounted"
         app = mount / "Vibecrafted.app"
@@ -1378,6 +1722,13 @@ def _self_test() -> int:
         for target in (app_executable, terminal, frame):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(executable, target)
+        codesign = _required_tool("codesign", failure_code=E_PROOF)
+        for target in (terminal, frame):
+            _run_tool(
+                [codesign, "--force", "--sign", "-", str(target)],
+                failure_code=E_PROOF,
+                context=f"self-test could not sign {target.name}",
+            )
         plist_path = app / "Contents/Info.plist"
         plist_path.parent.mkdir(parents=True, exist_ok=True)
         with plist_path.open("wb") as handle:
@@ -1397,15 +1748,15 @@ def _self_test() -> int:
             app, "Contents/Helpers/vc-frame", kind="executable"
         )
 
-        def module_receipt(
+        def module_binding(
             *,
             module_name: str,
             git_sha: str,
             entrypoint: str,
             product_entry: Mapping[str, Any],
-        ) -> tuple[str, dict[str, Any]]:
+        ) -> dict[str, Any]:
             source_path = f"bin/{module_name}"
-            source_entry = dict(product_entry)
+            source_entry = dict(module_manifest["files"][0])
             source_entry["path"] = source_path
             receipt = {
                 "schema": MODULE_SCHEMA,
@@ -1422,15 +1773,39 @@ def _self_test() -> int:
                 f"Contents/Resources/module-receipts/{module_name}/module-manifest.json"
             )
             _write_json(app / receipt_relative, receipt)
-            return receipt_relative, receipt
+            receipt_hash = _sha256(app / receipt_relative)
+            assembly = {
+                "schema": ASSEMBLY_SCHEMA,
+                "module": module_name,
+                "module_manifest_sha256": receipt_hash,
+                "files": [
+                    {
+                        "module_path": source_path,
+                        "product_path": product_entry["path"],
+                        "unsigned_sha256": source_entry["sha256"],
+                        "product_sha256": product_entry["sha256"],
+                        "transformation": "codesign",
+                    }
+                ],
+            }
+            assembly_relative = f"Contents/Resources/module-receipts/{module_name}/assembly-receipt.json"
+            _write_json(app / assembly_relative, assembly)
+            return {
+                "module": module_name,
+                "manifest_path": receipt_relative,
+                "manifest_sha256": receipt_hash,
+                "assembly_receipt_path": assembly_relative,
+                "assembly_receipt_sha256": _sha256(app / assembly_relative),
+                "git_sha": git_sha,
+            }
 
-        terminal_receipt_path, _ = module_receipt(
+        terminal_binding = module_binding(
             module_name="vc-terminal",
             git_sha="4" * 40,
             entrypoint="terminal",
             product_entry=terminal_product_entry,
         )
-        frame_receipt_path, _ = module_receipt(
+        frame_binding = module_binding(
             module_name="vc-frame",
             git_sha="6" * 40,
             entrypoint="frame",
@@ -1447,39 +1822,20 @@ def _self_test() -> int:
             "dirty": False,
             "architecture": "arm64",
             "minimum_macos": "14.0",
-            "modules": [
-                {
-                    "module": "vc-terminal",
-                    "manifest_path": terminal_receipt_path,
-                    "manifest_sha256": _sha256(app / terminal_receipt_path),
-                    "git_sha": "4" * 40,
-                    "files": [
-                        {
-                            "module_path": "bin/vc-terminal",
-                            "product_path": "Contents/Helpers/vc-terminal",
-                        }
-                    ],
-                },
-                {
-                    "module": "vc-frame",
-                    "manifest_path": frame_receipt_path,
-                    "manifest_sha256": _sha256(app / frame_receipt_path),
-                    "git_sha": "6" * 40,
-                    "files": [
-                        {
-                            "module_path": "bin/vc-frame",
-                            "product_path": "Contents/Helpers/vc-frame",
-                        }
-                    ],
-                },
-            ],
+            "modules": [terminal_binding, frame_binding],
             "files": [
                 _fixture_entry(app, "Contents/Info.plist", kind="config"),
                 _fixture_entry(app, "Contents/MacOS/Vibecrafted", kind="executable"),
                 terminal_product_entry,
                 frame_product_entry,
-                _fixture_entry(app, terminal_receipt_path, kind="config"),
-                _fixture_entry(app, frame_receipt_path, kind="config"),
+                _fixture_entry(app, terminal_binding["manifest_path"], kind="config"),
+                _fixture_entry(app, frame_binding["manifest_path"], kind="config"),
+                _fixture_entry(
+                    app, terminal_binding["assembly_receipt_path"], kind="config"
+                ),
+                _fixture_entry(
+                    app, frame_binding["assembly_receipt_path"], kind="config"
+                ),
             ],
             "entrypoints": {
                 "app": "Contents/MacOS/Vibecrafted",
@@ -1525,45 +1881,166 @@ def _self_test() -> int:
         proofs: dict[str, Any] = {}
         expected_commands = _expected_live_commands(app, dmg)
         for name in sorted(_WALKAROUND_CHECKS):
+            before = root / f"proofs/{name}.before"
+            after = root / f"proofs/{name}.after"
             stdout = root / f"proofs/{name}.stdout"
             stderr = root / f"proofs/{name}.stderr"
             stdout.parent.mkdir(parents=True, exist_ok=True)
+            before.write_text(f"{name}: before\n", encoding="utf-8")
+            after.write_text(f"{name}: after\n", encoding="utf-8")
             stdout.write_text(f"{name}: passed\n", encoding="utf-8")
             stderr.write_text("", encoding="utf-8")
+
+            def proof_artifact(artifact: Path) -> dict[str, Any]:
+                return {
+                    "path": artifact.relative_to(root).as_posix(),
+                    "sha256": _sha256(artifact),
+                    "size": artifact.stat().st_size,
+                }
+
             proofs[name] = {
+                "producer": WALKAROUND_SEAL_ISSUER,
+                "probe_id": _walkaround_probe_id(name),
                 "command": expected_commands.get(name, [f"verify-{name}", str(app)]),
                 "exit_code": 0,
-                "stdout": {
-                    "path": stdout.relative_to(root).as_posix(),
-                    "sha256": _sha256(stdout),
-                    "size": stdout.stat().st_size,
+                "inputs": {
+                    "dmg_sha256": _sha256(dmg),
+                    "product_manifest_sha256": _sha256(
+                        app / "Contents/Resources/product-manifest.json"
+                    ),
                 },
-                "stderr": {
-                    "path": stderr.relative_to(root).as_posix(),
-                    "sha256": _sha256(stderr),
-                    "size": stderr.stat().st_size,
-                },
+                "before": proof_artifact(before),
+                "after": proof_artifact(after),
+                "stdout": proof_artifact(stdout),
+                "stderr": proof_artifact(stderr),
             }
-        _write_json(
-            walkaround,
-            {
-                "schema": WALKAROUND_SCHEMA,
-                "dmg_path": str(dmg),
-                "dmg_sha256": _sha256(dmg),
-                "dmg_size": dmg.stat().st_size,
-                "mount_path": str(mount),
-                "app_path": str(app),
-                "product_manifest_sha256": _sha256(
-                    app / "Contents/Resources/product-manifest.json"
-                ),
-                "source_revisions": {
-                    "vibecrafted": "2" * 40,
-                    "vc-terminal": "4" * 40,
-                    "vc-frame": "6" * 40,
-                },
-                "proofs": proofs,
+        walkaround_payload: dict[str, Any] = {
+            "schema": WALKAROUND_SCHEMA,
+            "dmg_path": str(dmg),
+            "dmg_sha256": _sha256(dmg),
+            "dmg_size": dmg.stat().st_size,
+            "mount_path": str(mount),
+            "app_path": str(app),
+            "product_manifest_sha256": _sha256(
+                app / "Contents/Resources/product-manifest.json"
+            ),
+            "source_revisions": {
+                "vibecrafted": "2" * 40,
+                "vc-terminal": "4" * 40,
+                "vc-frame": "6" * 40,
             },
+            "proofs": proofs,
+        }
+        proof_digests = tuple(
+            _walkaround_proof_digest(name, proofs[name])
+            for name in sorted(_WALKAROUND_CHECKS)
         )
+        seal_root = root / "delivery-run"
+        seal_artifacts = {
+            "execution_envelope_sha256": seal_root / "execution-envelope.json",
+            "delivery_proof_contract_sha256": seal_root
+            / "delivery-proof-contract.json",
+            "proof_result_sha256": seal_root / "proof/result.json",
+            "report_sha256": seal_root / "report.md",
+            "transcript_sha256": seal_root / "transcript.log",
+            "control_plane_snapshot_sha256": seal_root / "control-plane-snapshot.json",
+        }
+        runtime_probes = tuple(
+            {
+                "id": name,
+                "probe_id": _walkaround_probe_id(name),
+                "evidence_sha256": digest,
+            }
+            for name, digest in zip(
+                sorted(_WALKAROUND_CHECKS), proof_digests, strict=True
+            )
+        )
+        proof_contract = DeliveryProofContract(
+            schema=DeliveryProofContract.SCHEMA,
+            id="walkaround-proof",
+            execution_envelope_sha256="sha256:" + "0" * 64,
+            subject={"producer_id": "walkaround.subject", "argv": ["walkaround"]},
+            witness={"expected_outcome": "all product checks pass"},
+            oracle=None,
+            assertion={"id": "walkaround", "kind": "sealed-runtime-probes"},
+            negative_controls=({"id": "tamper-proof"},),
+            delivery_scope=WALKAROUND_SCOPE,
+            integration_target=str(app),
+            runtime_probes=runtime_probes,
+        )
+        proof_result = ProofResult(
+            schema=ProofResult.SCHEMA,
+            proof_id=proof_contract.id,
+            state=ProofState.PASSED,
+            evidence=({"role": "subject", "exit_code": 0},),
+            assertion_results=({"id": "walkaround", "passed": True, "valid": True},),
+            negative_control_results=(
+                {"id": "tamper-proof", "detected_falsehood": True, "valid": True},
+            ),
+            subject_executed=True,
+            assertion_consumed_subject_output=True,
+            refusal_reasons=(),
+            contract_sha256=proof_contract.content_digest(),
+            executor_sha256="sha256:" + "1" * 64,
+            evaluated_at="2026-01-01T00:00:00+00:00",
+        )
+        _write_json(
+            seal_artifacts["delivery_proof_contract_sha256"],
+            proof_contract.to_payload(),
+        )
+        _write_json(seal_artifacts["proof_result_sha256"], proof_result.to_payload())
+        for field, artifact in seal_artifacts.items():
+            if field in {"delivery_proof_contract_sha256", "proof_result_sha256"}:
+                continue
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_text(f"self-test {field}\n", encoding="utf-8")
+        artifact_digests = {
+            field: f"sha256:{_sha256(artifact)}"
+            for field, artifact in seal_artifacts.items()
+        }
+        seal = DeliverySeal(
+            schema=DeliverySeal.SCHEMA,
+            seal_id="sha256:" + "a" * 64,
+            issued_at="2026-01-01T00:00:00+00:00",
+            issuer=WALKAROUND_SEAL_ISSUER,
+            run_id="walkaround-self-test",
+            lifecycle_id="unified-product-self-test",
+            cut_id=WALKAROUND_SCOPE,
+            proof_id=proof_contract.id,
+            run_identity_sha256="sha256:" + "b" * 64,
+            liveness_evidence_sha256=(),
+            execution_envelope_sha256=artifact_digests["execution_envelope_sha256"],
+            delivery_proof_contract_sha256=artifact_digests[
+                "delivery_proof_contract_sha256"
+            ],
+            proof_result_sha256=artifact_digests["proof_result_sha256"],
+            executor_source_sha256="sha256:" + "c" * 64,
+            executor_version="self-test",
+            subject_evidence_sha256=_walkaround_subject_digest(walkaround_payload),
+            witness_sha256="sha256:" + "d" * 64,
+            oracle_evidence_sha256=None,
+            assertion_evidence_sha256=_walkaround_assertion_digest(proof_digests),
+            negative_control_evidence_sha256=("sha256:" + "e" * 64,),
+            repo="vetcoders/vibecrafted",
+            branch="self-test",
+            baseline_head="1" * 40,
+            final_head="2" * 40,
+            scoped_dirty_status_sha256="sha256:" + "f" * 64,
+            commit_range="1" * 40 + ".." + "2" * 40,
+            declared_scope=WALKAROUND_SCOPE,
+            checked_scope=WALKAROUND_SCOPE,
+            runtime_probe_sha256=proof_digests,
+            report_sha256=artifact_digests["report_sha256"],
+            transcript_sha256=artifact_digests["transcript_sha256"],
+            control_plane_snapshot_sha256=artifact_digests[
+                "control_plane_snapshot_sha256"
+            ],
+            unverified_surfaces=(),
+        )
+        seal_path = seal_root / "delivery-seal.json"
+        _write_json(seal_path, seal.to_payload())
+        walkaround_payload["delivery_seal"] = proof_artifact(seal_path)
+        _write_json(walkaround, walkaround_payload)
         _verify_walkaround(
             walkaround,
             attached_mounts={(dmg.resolve(), mount.resolve())},

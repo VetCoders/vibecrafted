@@ -5,6 +5,7 @@
   "description": "Fail-closed manifests for unsigned modules, the assembled app, atomic activation, and the mounted-DMG walk-around.",
   "oneOf": [
     { "$ref": "#/$defs/moduleManifest" },
+    { "$ref": "#/$defs/assemblyReceipt" },
     { "$ref": "#/$defs/productManifest" },
     { "$ref": "#/$defs/transactionReceipt" },
     { "$ref": "#/$defs/walkaroundReceipt" }
@@ -90,6 +91,8 @@
         "files": {
           "type": "array",
           "minItems": 1,
+          "uniqueItems": true,
+          "x-vibecrafted-uniqueKeys": ["path"],
           "items": { "$ref": "#/$defs/fileEntry" }
         },
         "entrypoints": {
@@ -124,13 +127,43 @@
         }
       ]
     },
-    "moduleFileMapping": {
+    "signedFileTransformation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["module_path", "product_path"],
+      "required": [
+        "module_path",
+        "product_path",
+        "unsigned_sha256",
+        "product_sha256",
+        "transformation"
+      ],
       "properties": {
         "module_path": { "$ref": "#/$defs/relativePath" },
-        "product_path": { "$ref": "#/$defs/relativePath" }
+        "product_path": { "$ref": "#/$defs/relativePath" },
+        "unsigned_sha256": { "$ref": "#/$defs/sha256" },
+        "product_sha256": { "$ref": "#/$defs/sha256" },
+        "transformation": { "enum": ["identity", "codesign"] }
+      }
+    },
+    "assemblyReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "module", "module_manifest_sha256", "files"],
+      "properties": {
+        "schema": {
+          "const": "io.vetcoders.vibecrafted.module-assembly.v1"
+        },
+        "module": {
+          "enum": ["vc-terminal", "vc-frame"]
+        },
+        "module_manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "x-vibecrafted-uniqueKeys": ["module_path", "product_path"],
+          "items": { "$ref": "#/$defs/signedFileTransformation" }
+        }
       }
     },
     "moduleBinding": {
@@ -140,8 +173,9 @@
         "module",
         "manifest_path",
         "manifest_sha256",
-        "git_sha",
-        "files"
+        "assembly_receipt_path",
+        "assembly_receipt_sha256",
+        "git_sha"
       ],
       "properties": {
         "module": {
@@ -149,12 +183,9 @@
         },
         "manifest_path": { "$ref": "#/$defs/relativePath" },
         "manifest_sha256": { "$ref": "#/$defs/sha256" },
-        "git_sha": { "$ref": "#/$defs/gitSha" },
-        "files": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "$ref": "#/$defs/moduleFileMapping" }
-        }
+        "assembly_receipt_path": { "$ref": "#/$defs/relativePath" },
+        "assembly_receipt_sha256": { "$ref": "#/$defs/sha256" },
+        "git_sha": { "$ref": "#/$defs/gitSha" }
       }
     },
     "productManifest": {
@@ -198,6 +229,11 @@
           "type": "array",
           "minItems": 2,
           "maxItems": 2,
+          "x-vibecrafted-uniqueKeys": [
+            "module",
+            "manifest_path",
+            "assembly_receipt_path"
+          ],
           "items": { "$ref": "#/$defs/moduleBinding" },
           "allOf": [
             {
@@ -223,6 +259,8 @@
         "files": {
           "type": "array",
           "minItems": 1,
+          "uniqueItems": true,
+          "x-vibecrafted-uniqueKeys": ["path"],
           "items": { "$ref": "#/$defs/fileEntry" }
         },
         "entrypoints": {
@@ -299,14 +337,40 @@
     "walkaroundProof": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["command", "exit_code", "stdout", "stderr"],
+      "required": [
+        "producer",
+        "probe_id",
+        "command",
+        "exit_code",
+        "inputs",
+        "before",
+        "after",
+        "stdout",
+        "stderr"
+      ],
       "properties": {
+        "producer": { "const": "vc-ship" },
+        "probe_id": {
+          "type": "string",
+          "pattern": "^io\\.vetcoders\\.vibecrafted\\.walkaround\\.[a-z_]+\\.v1$"
+        },
         "command": {
           "type": "array",
           "minItems": 1,
           "items": { "type": "string", "minLength": 1 }
         },
         "exit_code": { "const": 0 },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dmg_sha256", "product_manifest_sha256"],
+          "properties": {
+            "dmg_sha256": { "$ref": "#/$defs/sha256" },
+            "product_manifest_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "before": { "$ref": "#/$defs/proofArtifact" },
+        "after": { "$ref": "#/$defs/proofArtifact" },
         "stdout": { "$ref": "#/$defs/proofArtifact" },
         "stderr": { "$ref": "#/$defs/proofArtifact" }
       }
@@ -357,7 +421,8 @@
         "app_path",
         "product_manifest_sha256",
         "source_revisions",
-        "proofs"
+        "proofs",
+        "delivery_seal"
       ],
       "properties": {
         "schema": {
@@ -391,7 +456,8 @@
             "vc-frame": { "$ref": "#/$defs/gitSha" }
           }
         },
-        "proofs": { "$ref": "#/$defs/walkaroundProofs" }
+        "proofs": { "$ref": "#/$defs/walkaroundProofs" },
+        "delivery_seal": { "$ref": "#/$defs/proofArtifact" }
       }
     }
   }
