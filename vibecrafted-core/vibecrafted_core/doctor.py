@@ -47,6 +47,25 @@ def _uv_tool_shim() -> Path:
     return Path(data_home) / "uv" / "tools" / "vibecrafted" / "bin" / "vibecrafted"
 
 
+def _loaded_checkout_root(package_dir: Path) -> Path | None:
+    """Return the git checkout root when the loaded package is a living tree.
+
+    A living tree is a monorepo layout (``<root>/vibecrafted-core/vibecrafted_core``
+    plus ``<root>/scripts/vetcoders_install.py``) that still carries ``.git``.
+    Staged generations copy the same layout without ``.git``, so the git probe is
+    what separates "imported from the checkout" (cwd or an editable ``.pth``
+    pointing at the source tree) from a genuine editable install elsewhere.
+    """
+    from .runtime_receipt import find_git_dir
+
+    if package_dir.parent.name != "vibecrafted-core":
+        return None
+    root = package_dir.parent.parent
+    if not (root / "scripts" / "vetcoders_install.py").is_file():
+        return None
+    return root if find_git_dir(package_dir) is not None else None
+
+
 def _launcher_shim_findings(
     which: Callable[[str], str | None] = shutil.which,
 ) -> list[_Finding]:
@@ -131,6 +150,7 @@ def _launcher_shim_findings(
     package_version = read_version_file(package_dir)
     tools_home = vibecrafted_tools_home().resolve()
     package_outside_tools = tools_home not in package_dir.parents
+    checkout_root = _loaded_checkout_root(package_dir)
 
     if not version_is_stamped(resolved_version):
         staged_hint = (
@@ -138,15 +158,23 @@ def _launcher_shim_findings(
             if version_is_stamped(staged)
             else " Run `make install` to stamp tools/vibecrafted-current."
         )
+        cause_hint = (
+            f"Cause: this process imported the living tree at {checkout_root} "
+            f"(cwd inside the checkout, or an editable .pth pointing at it) — "
+            f"re-run doctor from outside the checkout to read the installed "
+            f"launcher."
+            if checkout_root is not None
+            else "Common cause: Homebrew/pip editable install of the living "
+            "tree shadows ~/.local/bin (PATH order). Uninstall the "
+            "editable package or put ~/.local/bin first."
+        )
         findings.append(
             _Finding(
                 "fail",
                 "version",
                 f"vibecrafted --version is unstamped ({resolved_version}) — "
                 f"install identity must be X.Y.Z+gSHORTSHA.{staged_hint} "
-                f"Common cause: Homebrew/pip editable install of the living "
-                f"tree shadows ~/.local/bin (PATH order). Uninstall the "
-                f"editable package or put ~/.local/bin first.",
+                f"{cause_hint}",
             )
         )
     else:
@@ -159,18 +187,52 @@ def _launcher_shim_findings(
         and not version_is_stamped(package_version)
         and version_is_stamped(staged)
     ):
-        findings.append(
-            _Finding(
-                "fail",
-                "launcher",
-                f"loaded package tree is unstamped ({package_version} at "
-                f"{package_dir}) while make-install stamp is {staged}. "
-                f"PATH winner {path} is almost certainly a pip/Homebrew "
-                f"editable living-tree install. Uninstall it "
-                f"(`python3 -m pip uninstall vibecrafted`) or ensure "
-                f"~/.local/bin precedes Homebrew on PATH.",
+        if checkout_root is None:
+            findings.append(
+                _Finding(
+                    "fail",
+                    "launcher",
+                    f"loaded package tree is unstamped ({package_version} at "
+                    f"{package_dir}) while make-install stamp is {staged}. "
+                    f"PATH winner {path} is almost certainly a pip/Homebrew "
+                    f"editable living-tree install. Uninstall it "
+                    f"(`python3 -m pip uninstall vibecrafted`) or ensure "
+                    f"~/.local/bin precedes Homebrew on PATH.",
+                )
             )
-        )
+        else:
+            # Import came from the source checkout, not from a rogue install:
+            # doctor cannot see the installed package while cwd (or an editable
+            # .pth) puts the living tree first on sys.path. Never tell the
+            # operator to uninstall a healthy install over a cwd artefact.
+            launcher_is_installed_owner = any(
+                finding.component == "launcher" and finding.level == "ok"
+                for finding in findings
+            )
+            cwd_shadow_only = launcher_is_installed_owner and version_is_stamped(
+                resolved_version
+            )
+            tail = (
+                f"PATH launcher {path} itself resolves the stamped identity "
+                f"{resolved_version}, so the install looks healthy — re-run "
+                f"doctor from outside the checkout (e.g. `cd ~ && vibecrafted "
+                f"doctor`) to verify the installed launcher. Do not uninstall "
+                f"anything based on this finding."
+                if cwd_shadow_only
+                else f"PATH winner {path} is not a proven installed owner "
+                f"either — re-run doctor from outside the checkout to verify "
+                f"the installed launcher, and reinstall only if it still "
+                f"reports an unstamped identity."
+            )
+            findings.append(
+                _Finding(
+                    "warn" if cwd_shadow_only else "fail",
+                    "launcher",
+                    f"loaded package tree is the living checkout at "
+                    f"{checkout_root} ({package_version} at {package_dir}), "
+                    f"not the make-install stamp {staged}. {tail}",
+                )
+            )
     elif version_is_stamped(staged) and resolved_version != staged:
         findings.append(
             _Finding(
