@@ -93,37 +93,68 @@
           "items": { "$ref": "#/$defs/fileEntry" }
         },
         "entrypoints": {
-          "oneOf": [
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["terminal"],
-              "properties": {
-                "terminal": { "$ref": "#/$defs/relativePath" }
-              }
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["frame"],
-              "properties": {
-                "frame": { "$ref": "#/$defs/relativePath" }
-              }
-            }
-          ]
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "maxProperties": 1,
+          "properties": {
+            "terminal": { "$ref": "#/$defs/relativePath" },
+            "frame": { "$ref": "#/$defs/relativePath" }
+          }
         }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "module": { "const": "vc-terminal" } },
+            "required": ["module"]
+          },
+          "then": {
+            "properties": { "entrypoints": { "required": ["terminal"] } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "module": { "const": "vc-frame" } },
+            "required": ["module"]
+          },
+          "then": {
+            "properties": { "entrypoints": { "required": ["frame"] } }
+          }
+        }
+      ]
+    },
+    "moduleFileMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module_path", "product_path"],
+      "properties": {
+        "module_path": { "$ref": "#/$defs/relativePath" },
+        "product_path": { "$ref": "#/$defs/relativePath" }
       }
     },
     "moduleBinding": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["module", "manifest_sha256", "git_sha"],
+      "required": [
+        "module",
+        "manifest_path",
+        "manifest_sha256",
+        "git_sha",
+        "files"
+      ],
       "properties": {
         "module": {
           "enum": ["vc-terminal", "vc-frame"]
         },
+        "manifest_path": { "$ref": "#/$defs/relativePath" },
         "manifest_sha256": { "$ref": "#/$defs/sha256" },
-        "git_sha": { "$ref": "#/$defs/gitSha" }
+        "git_sha": { "$ref": "#/$defs/gitSha" },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/moduleFileMapping" }
+        }
       }
     },
     "productManifest": {
@@ -135,6 +166,7 @@
         "bundle_id",
         "bundle_executable",
         "version",
+        "build",
         "git_sha",
         "dirty",
         "architecture",
@@ -154,6 +186,10 @@
           "type": "string",
           "minLength": 1
         },
+        "build": {
+          "type": "string",
+          "minLength": 1
+        },
         "git_sha": { "$ref": "#/$defs/gitSha" },
         "dirty": { "type": "boolean" },
         "architecture": { "$ref": "#/$defs/architecture" },
@@ -162,7 +198,27 @@
           "type": "array",
           "minItems": 2,
           "maxItems": 2,
-          "items": { "$ref": "#/$defs/moduleBinding" }
+          "items": { "$ref": "#/$defs/moduleBinding" },
+          "allOf": [
+            {
+              "contains": {
+                "type": "object",
+                "properties": { "module": { "const": "vc-terminal" } },
+                "required": ["module"]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            },
+            {
+              "contains": {
+                "type": "object",
+                "properties": { "module": { "const": "vc-frame" } },
+                "required": ["module"]
+              },
+              "minContains": 1,
+              "maxContains": 1
+            }
+          ]
         },
         "files": {
           "type": "array",
@@ -230,7 +286,32 @@
         }
       }
     },
-    "walkaroundChecks": {
+    "proofArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "size": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "walkaroundProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "exit_code", "stdout", "stderr"],
+      "properties": {
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "exit_code": { "const": 0 },
+        "stdout": { "$ref": "#/$defs/proofArtifact" },
+        "stderr": { "$ref": "#/$defs/proofArtifact" }
+      }
+    },
+    "walkaroundProofs": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -249,19 +330,19 @@
         "one_outer_writer"
       ],
       "properties": {
-        "one_app": { "const": true },
-        "codesign": { "const": true },
-        "app_notarization": { "const": true },
-        "dmg_notarization": { "const": true },
-        "gatekeeper": { "const": true },
-        "sanitized_launch": { "const": true },
-        "mission_control": { "const": true },
-        "bundled_console": { "const": true },
-        "start_here": { "const": true },
-        "update": { "const": true },
-        "rollback": { "const": true },
-        "reattach": { "const": true },
-        "one_outer_writer": { "const": true }
+        "one_app": { "$ref": "#/$defs/walkaroundProof" },
+        "codesign": { "$ref": "#/$defs/walkaroundProof" },
+        "app_notarization": { "$ref": "#/$defs/walkaroundProof" },
+        "dmg_notarization": { "$ref": "#/$defs/walkaroundProof" },
+        "gatekeeper": { "$ref": "#/$defs/walkaroundProof" },
+        "sanitized_launch": { "$ref": "#/$defs/walkaroundProof" },
+        "mission_control": { "$ref": "#/$defs/walkaroundProof" },
+        "bundled_console": { "$ref": "#/$defs/walkaroundProof" },
+        "start_here": { "$ref": "#/$defs/walkaroundProof" },
+        "update": { "$ref": "#/$defs/walkaroundProof" },
+        "rollback": { "$ref": "#/$defs/walkaroundProof" },
+        "reattach": { "$ref": "#/$defs/walkaroundProof" },
+        "one_outer_writer": { "$ref": "#/$defs/walkaroundProof" }
       }
     },
     "walkaroundReceipt": {
@@ -272,9 +353,11 @@
         "dmg_path",
         "dmg_sha256",
         "dmg_size",
+        "mount_path",
+        "app_path",
         "product_manifest_sha256",
         "source_revisions",
-        "checks"
+        "proofs"
       ],
       "properties": {
         "schema": {
@@ -289,6 +372,14 @@
           "type": "integer",
           "minimum": 1
         },
+        "mount_path": {
+          "type": "string",
+          "pattern": "^/"
+        },
+        "app_path": {
+          "type": "string",
+          "pattern": "^/"
+        },
         "product_manifest_sha256": { "$ref": "#/$defs/sha256" },
         "source_revisions": {
           "type": "object",
@@ -300,7 +391,7 @@
             "vc-frame": { "$ref": "#/$defs/gitSha" }
           }
         },
-        "checks": { "$ref": "#/$defs/walkaroundChecks" }
+        "proofs": { "$ref": "#/$defs/walkaroundProofs" }
       }
     }
   }

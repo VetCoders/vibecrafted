@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
 
@@ -54,8 +55,8 @@ _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 _GIT_SHA_RE = re.compile(r"[0-9a-f]{40}")
 _MODE_RE = re.compile(r"0[0-7]{3}")
 _MACOS_RE = re.compile(r"([0-9]+)\.([0-9]+)")
-_HOST_BOUND_PATH_RE = re.compile(
-    rb"(?:^|[\s\"'=:(])(?P<path>/(?:Volumes|Users|Applications|opt/homebrew|usr/local)/[^\s\"'\x00]{0,512})"
+_BUILD_HOST_PATH_RE = re.compile(
+    rb"(?:^|[\s\"'=:(])(?P<path>/(?:Volumes|Users|opt/homebrew|usr/local)/[^\s\"'\x00]{0,512})"
 )
 _FILE_KINDS = frozenset({"executable", "dylib", "resource", "config"})
 _APP_ENTRYPOINTS = frozenset({"app", "terminal", "frame"})
@@ -76,6 +77,33 @@ _WALKAROUND_CHECKS = frozenset(
         "one_outer_writer",
     }
 )
+
+
+@dataclass(frozen=True)
+class _MachOInfo:
+    relative: str
+    dependencies: tuple[str, ...]
+    rpaths: tuple[str, ...]
+    architectures: frozenset[str]
+    minimum_macos: tuple[tuple[int, int], ...]
+
+
+@dataclass(frozen=True)
+class _ValidatedFiles:
+    entries: dict[str, Mapping[str, Any]]
+    machos: dict[str, _MachOInfo]
+
+
+@dataclass(frozen=True)
+class _ModuleManifest:
+    module: str
+    version: str
+    git_sha: str
+    dirty: bool
+    architecture: str
+    minimum_macos: str
+    files: dict[str, Mapping[str, Any]]
+    entrypoints: dict[str, str]
 
 
 class ProductContractError(ValueError):
@@ -169,13 +197,16 @@ def _minimum_macos(value: Any, *, field: str) -> str:
     return text
 
 
-def _validate_platform(payload: Mapping[str, Any], *, context: str) -> None:
+def _validate_platform(payload: Mapping[str, Any], *, context: str) -> tuple[str, str]:
     architecture = _expect_string(
         payload.get("architecture"), field=f"{context}.architecture"
     )
     if architecture not in SUPPORTED_ARCHITECTURES:
         _fail(E_PLATFORM, f"{context} unsupported architecture: {architecture!r}")
-    _minimum_macos(payload.get("minimum_macos"), field=f"{context}.minimum_macos")
+    minimum_macos = _minimum_macos(
+        payload.get("minimum_macos"), field=f"{context}.minimum_macos"
+    )
+    return architecture, minimum_macos
 
 
 def _is_excluded(relative: Path, exclusions: Sequence[Path]) -> bool:
@@ -195,17 +226,34 @@ def _payload_files(root: Path, *, exclusions: Sequence[Path]) -> set[str]:
     return files
 
 
-def _dependency_is_closed(dependency: str, declared_paths: set[str]) -> bool:
-    if dependency.startswith(("/usr/lib/", "/System/Library/")):
-        return True
-    prefixes = ("@executable_path/", "@loader_path/", "@rpath/")
-    if dependency.startswith(prefixes):
-        target_name = PurePosixPath(dependency).name
-        return any(PurePosixPath(path).name == target_name for path in declared_paths)
-    return False
+def _required_tool(name: str, *, failure_code: int) -> str:
+    executable = shutil.which(name)
+    if executable is None:
+        _fail(failure_code, f"{name} is required for product verification")
+    return executable
 
 
-def _observed_macho_dependencies(path: Path, *, kind: str) -> list[str] | None:
+def _run_tool(command: Sequence[str], *, failure_code: int, context: str) -> str:
+    result = subprocess.run(
+        list(command),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
+        _fail(failure_code, f"{context}: {detail}")
+    return result.stdout
+
+
+def _version_tuple(value: str) -> tuple[int, int]:
+    match = _MACOS_RE.fullmatch(value)
+    if match is None:
+        _fail(E_PLATFORM, f"invalid measured macOS version: {value!r}")
+    return int(match.group(1)), int(match.group(2))
+
+
+def _observed_macho(path: Path, *, relative: str, kind: str) -> _MachOInfo | None:
     file_tool = shutil.which("file")
     if file_tool is None:
         _fail(E_DEPENDENCY, "file(1) is required to inspect executable payloads")
@@ -221,32 +269,244 @@ def _observed_macho_dependencies(path: Path, *, kind: str) -> list[str] | None:
         if kind == "dylib":
             _fail(E_DEPENDENCY, f"declared dylib is not Mach-O: {path}")
         return None
-    otool = shutil.which("otool")
-    if otool is None:
-        _fail(E_DEPENDENCY, "otool is required to inspect Mach-O dependencies")
-    result = subprocess.run(
-        [otool, "-L", str(path)],
-        check=False,
-        capture_output=True,
-        text=True,
+
+    lipo = _required_tool("lipo", failure_code=E_PLATFORM)
+    architecture_output = _run_tool(
+        [lipo, "-archs", str(path)],
+        failure_code=E_PLATFORM,
+        context=f"lipo could not inspect {relative}",
     )
-    if result.returncode != 0:
-        _fail(E_DEPENDENCY, f"otool could not inspect {path}")
+    architectures = frozenset(architecture_output.split())
+    if not architectures:
+        _fail(E_PLATFORM, f"no Mach-O architecture slices found for {relative}")
+
+    otool = _required_tool("otool", failure_code=E_DEPENDENCY)
+    dependency_output = _run_tool(
+        [otool, "-L", str(path)],
+        failure_code=E_DEPENDENCY,
+        context=f"otool -L could not inspect {relative}",
+    )
     dependencies: list[str] = []
-    for line in result.stdout.splitlines()[1:]:
+    for line in dependency_output.splitlines()[1:]:
         stripped = line.strip()
         if stripped:
             dependencies.append(stripped.split(" (", 1)[0])
-    return dependencies
+
+    load_output = _run_tool(
+        [otool, "-l", str(path)],
+        failure_code=E_DEPENDENCY,
+        context=f"otool -l could not inspect {relative}",
+    )
+    command = ""
+    rpaths: list[str] = []
+    minimum_versions: list[tuple[int, int]] = []
+    for line in load_output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("cmd "):
+            command = stripped.split(maxsplit=1)[1]
+            continue
+        if command == "LC_RPATH" and stripped.startswith("path "):
+            match = re.match(r"path (.+?) \(offset [0-9]+\)$", stripped)
+            if match is None:
+                _fail(E_DEPENDENCY, f"unparseable LC_RPATH for {relative}: {stripped}")
+            rpaths.append(match.group(1))
+        elif (
+            command == "LC_BUILD_VERSION"
+            and stripped.startswith("minos ")
+            or command == "LC_VERSION_MIN_MACOSX"
+            and stripped.startswith("version ")
+        ):
+            minimum_versions.append(_version_tuple(stripped.split()[1]))
+
+    if not minimum_versions:
+        _fail(E_PLATFORM, f"Mach-O has no macOS deployment target: {relative}")
+    return _MachOInfo(
+        relative=relative,
+        dependencies=tuple(dependencies),
+        rpaths=tuple(rpaths),
+        architectures=architectures,
+        minimum_macos=tuple(minimum_versions),
+    )
 
 
-def _reject_host_bound_paths(path: Path, *, relative: str) -> None:
+def _inside_payload(root: Path, candidate: Path, *, context: str) -> str:
+    try:
+        root_resolved = root.resolve()
+        candidate_resolved = candidate.resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        _fail(E_PATH, f"{context} cannot be resolved inside payload: {exc}")
+    try:
+        relative = candidate_resolved.relative_to(root_resolved)
+    except ValueError:
+        _fail(E_DEPENDENCY, f"{context} escapes payload: {candidate}")
+    return relative.as_posix()
+
+
+def _expanded_dyld_base(
+    value: str,
+    *,
+    loader: Path,
+    executable: Path,
+    context: str,
+) -> Path:
+    if value == "@loader_path":
+        return loader.parent
+    if value.startswith("@loader_path/"):
+        return loader.parent / value.removeprefix("@loader_path/")
+    if value == "@executable_path":
+        return executable.parent
+    if value.startswith("@executable_path/"):
+        return executable.parent / value.removeprefix("@executable_path/")
+    if value.startswith("/"):
+        _fail(E_DEPENDENCY, f"absolute LC_RPATH is forbidden for {context}: {value}")
+    _fail(E_DEPENDENCY, f"unsupported LC_RPATH for {context}: {value}")
+
+
+def _resolve_dependency(
+    dependency: str,
+    *,
+    root: Path,
+    loader: Path,
+    executable: Path,
+    rpaths: Sequence[str],
+    declared_paths: set[str],
+) -> str | None:
+    if dependency.startswith(("/usr/lib/", "/System/Library/")):
+        return None
+    if dependency.startswith("@loader_path/"):
+        candidate = loader.parent / dependency.removeprefix("@loader_path/")
+        relative = _inside_payload(root, candidate, context=dependency)
+    elif dependency.startswith("@executable_path/"):
+        candidate = executable.parent / dependency.removeprefix("@executable_path/")
+        relative = _inside_payload(root, candidate, context=dependency)
+    elif dependency.startswith("@rpath/"):
+        suffix = dependency.removeprefix("@rpath/")
+        relative = ""
+        for rpath in rpaths:
+            base = _expanded_dyld_base(
+                rpath,
+                loader=loader,
+                executable=executable,
+                context=loader.relative_to(root).as_posix(),
+            )
+            candidate = base / suffix
+            candidate_relative = _inside_payload(root, candidate, context=dependency)
+            if candidate_relative in declared_paths and candidate.is_file():
+                relative = candidate_relative
+                break
+        if not relative:
+            _fail(
+                E_DEPENDENCY,
+                f"unresolved @rpath dependency for {loader.relative_to(root)}: {dependency}",
+            )
+    else:
+        _fail(
+            E_DEPENDENCY, f"external dylib for {loader.relative_to(root)}: {dependency}"
+        )
+    if relative not in declared_paths:
+        _fail(
+            E_DEPENDENCY,
+            f"dependency is not manifest-bound for {loader.relative_to(root)}: {dependency}",
+        )
+    return relative
+
+
+def _verify_macho_platform(
+    machos: Mapping[str, _MachOInfo],
+    *,
+    architecture: str,
+    minimum_macos: str,
+) -> None:
+    if not machos:
+        _fail(E_PLATFORM, "payload contains no measurable Mach-O code")
+    expected_architectures = frozenset({architecture})
+    for relative, info in machos.items():
+        if info.architectures != expected_architectures:
+            observed = ",".join(sorted(info.architectures))
+            _fail(
+                E_PLATFORM,
+                f"Mach-O architecture mismatch for {relative}: {observed} != {architecture}",
+            )
+    observed_floor = max(
+        version for info in machos.values() for version in info.minimum_macos
+    )
+    expected_floor = _version_tuple(minimum_macos)
+    if observed_floor != expected_floor:
+        _fail(
+            E_PLATFORM,
+            "Mach-O minimum macOS mismatch: "
+            f"{observed_floor[0]}.{observed_floor[1]} != {minimum_macos}",
+        )
+
+
+def _verify_macho_closure(
+    root: Path,
+    files: Mapping[str, Mapping[str, Any]],
+    machos: Mapping[str, _MachOInfo],
+    *,
+    entrypoints: Mapping[str, str],
+) -> None:
+    declared_paths = set(files)
+    visited: set[tuple[str, str, tuple[str, ...]]] = set()
+    reached: set[str] = set()
+
+    def visit(
+        relative: str,
+        *,
+        executable_relative: str,
+        inherited_rpaths: tuple[str, ...],
+    ) -> None:
+        info = machos[relative]
+        effective_rpaths = tuple(dict.fromkeys((*info.rpaths, *inherited_rpaths)))
+        key = (relative, executable_relative, effective_rpaths)
+        if key in visited:
+            return
+        visited.add(key)
+        reached.add(relative)
+        loader = root / relative
+        executable = root / executable_relative
+        for dependency in info.dependencies:
+            target = _resolve_dependency(
+                dependency,
+                root=root,
+                loader=loader,
+                executable=executable,
+                rpaths=effective_rpaths,
+                declared_paths=declared_paths,
+            )
+            if target is None:
+                continue
+            if target not in machos:
+                _fail(E_DEPENDENCY, f"Mach-O dependency is not code: {target}")
+            visit(
+                target,
+                executable_relative=executable_relative,
+                inherited_rpaths=effective_rpaths,
+            )
+
+    for relative in entrypoints.values():
+        if relative not in machos:
+            _fail(E_PLATFORM, f"entrypoint is not Mach-O code: {relative}")
+        visit(relative, executable_relative=relative, inherited_rpaths=())
+
+    unreachable = sorted(
+        relative
+        for relative, entry in files.items()
+        if entry["kind"] == "dylib" and relative not in reached
+    )
+    if unreachable:
+        _fail(E_DEPENDENCY, f"unreachable declared dylibs: {', '.join(unreachable)}")
+
+
+def _reject_host_bound_paths(path: Path, *, relative: str, kind: str) -> None:
     """Reject payload bytes that silently bind a module to the build host."""
+    if kind == "resource":
+        return
     try:
         content = path.read_bytes()
     except OSError:
         return
-    match = _HOST_BOUND_PATH_RE.search(content)
+    match = _BUILD_HOST_PATH_RE.search(content)
     if match:
         host_path = match.group("path").decode("utf-8", errors="replace")
         _fail(
@@ -255,49 +515,60 @@ def _reject_host_bound_paths(path: Path, *, relative: str) -> None:
         )
 
 
+def _validate_file_entry_shape(
+    raw: Any, *, index: int
+) -> tuple[str, str, str, str, int, list[str]]:
+    context = f"files[{index}]"
+    if not isinstance(raw, dict):
+        _fail(E_SCHEMA, f"{context} must be an object")
+    required = {"path", "sha256", "mode", "kind", "size", "dylibs"}
+    _expect_keys(raw, required=required, context=context)
+    relative = _relative_path(raw["path"], field=f"{context}.path")
+    expected_hash = _expect_sha256(raw["sha256"], field=f"{context}.sha256")
+    mode = _expect_string(raw["mode"], field=f"{context}.mode")
+    if not _MODE_RE.fullmatch(mode):
+        _fail(E_SCHEMA, f"{context}.mode must be a four-digit octal string")
+    kind = _expect_string(raw["kind"], field=f"{context}.kind")
+    if kind not in _FILE_KINDS:
+        _fail(E_SCHEMA, f"{context}.kind is unsupported: {kind!r}")
+    size = raw["size"]
+    if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+        _fail(E_SCHEMA, f"{context}.size must be a non-negative integer")
+    dylibs = raw["dylibs"]
+    if not isinstance(dylibs, list) or not all(
+        isinstance(item, str) and item for item in dylibs
+    ):
+        _fail(E_SCHEMA, f"{context}.dylibs must be an array of strings")
+    if len(dylibs) != len(set(dylibs)):
+        _fail(E_SCHEMA, f"{context}.dylibs must not contain duplicates")
+    return relative.as_posix(), expected_hash, mode, kind, size, dylibs
+
+
 def _validate_files(
     root: Path,
     raw_files: Any,
     *,
     manifest_relative: Path,
+    architecture: str,
+    minimum_macos: str,
     exclusions: Sequence[Path] = (),
-) -> dict[str, Mapping[str, Any]]:
+) -> _ValidatedFiles:
     if not isinstance(raw_files, list) or not raw_files:
         _fail(E_SCHEMA, "files must be a non-empty array")
     entries: dict[str, Mapping[str, Any]] = {}
-    required = {"path", "sha256", "mode", "kind", "size", "dylibs"}
     for index, raw in enumerate(raw_files):
-        context = f"files[{index}]"
-        if not isinstance(raw, dict):
-            _fail(E_SCHEMA, f"{context} must be an object")
-        _expect_keys(raw, required=required, context=context)
-        relative = _relative_path(raw["path"], field=f"{context}.path")
-        relative_text = relative.as_posix()
+        relative_text, expected_hash, mode, kind, size, _ = _validate_file_entry_shape(
+            raw, index=index
+        )
+        relative = Path(*PurePosixPath(relative_text).parts)
         if relative_text in entries:
             _fail(E_INVENTORY, f"duplicate manifest path: {relative_text}")
-        expected_hash = _expect_sha256(raw["sha256"], field=f"{context}.sha256")
-        mode = _expect_string(raw["mode"], field=f"{context}.mode")
-        if not _MODE_RE.fullmatch(mode):
-            _fail(E_SCHEMA, f"{context}.mode must be a four-digit octal string")
-        kind = _expect_string(raw["kind"], field=f"{context}.kind")
-        if kind not in _FILE_KINDS:
-            _fail(E_SCHEMA, f"{context}.kind is unsupported: {kind!r}")
-        size = raw["size"]
-        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
-            _fail(E_SCHEMA, f"{context}.size must be a non-negative integer")
-        dylibs = raw["dylibs"]
-        if not isinstance(dylibs, list) or not all(
-            isinstance(item, str) and item for item in dylibs
-        ):
-            _fail(E_SCHEMA, f"{context}.dylibs must be an array of strings")
-        if len(dylibs) != len(set(dylibs)):
-            _fail(E_SCHEMA, f"{context}.dylibs must not contain duplicates")
         entries[relative_text] = raw
 
         candidate = root / relative
         if not candidate.is_file() or candidate.is_symlink():
             _fail(E_MISSING, f"manifest-bound file is missing: {relative_text}")
-        _reject_host_bound_paths(candidate, relative=relative_text)
+        _reject_host_bound_paths(candidate, relative=relative_text, kind=kind)
         actual_mode = f"{stat.S_IMODE(candidate.stat().st_mode):04o}"
         if actual_mode != mode:
             _fail(
@@ -314,27 +585,35 @@ def _validate_files(
         if actual_hash != expected_hash:
             _fail(E_HASH, f"SHA-256 mismatch for {relative_text}")
 
-    declared_paths = set(entries)
+    machos: dict[str, _MachOInfo] = {}
     for relative_text, raw in entries.items():
         declared_dylibs = list(raw["dylibs"])
-        for dependency in declared_dylibs:
-            if not _dependency_is_closed(dependency, declared_paths):
-                _fail(
-                    E_DEPENDENCY,
-                    f"external dylib for {relative_text}: {dependency}",
-                )
         kind = str(raw["kind"])
         if kind not in {"executable", "dylib"}:
             if declared_dylibs:
                 _fail(E_DEPENDENCY, f"non-code file declares dylibs: {relative_text}")
             continue
-        observed = _observed_macho_dependencies(root / relative_text, kind=kind)
-        if observed is not None and sorted(observed) != sorted(declared_dylibs):
+        observed = _observed_macho(
+            root / relative_text,
+            relative=relative_text,
+            kind=kind,
+        )
+        if observed is None:
+            continue
+        machos[relative_text] = observed
+        if sorted(observed.dependencies) != sorted(declared_dylibs):
             _fail(
                 E_DEPENDENCY,
                 f"declared dylibs do not match otool for {relative_text}",
             )
 
+    _verify_macho_platform(
+        machos,
+        architecture=architecture,
+        minimum_macos=minimum_macos,
+    )
+
+    declared_paths = set(entries)
     actual_paths = _payload_files(
         root,
         exclusions=(manifest_relative, *exclusions),
@@ -348,7 +627,7 @@ def _validate_files(
         if extra:
             details.append(f"undeclared={','.join(extra)}")
         _fail(E_INVENTORY, "payload inventory mismatch: " + " ".join(details))
-    return entries
+    return _ValidatedFiles(entries=entries, machos=machos)
 
 
 def _validate_entrypoints(
@@ -380,13 +659,9 @@ def _validate_entrypoints(
     return entrypoints
 
 
-def verify_module(root: str | Path) -> dict[str, Any]:
-    """Verify one explicit unsigned vc-terminal or vc-frame module directory."""
-    module_root = Path(root)
-    if not module_root.is_dir() or module_root.is_symlink():
-        _fail(E_MISSING, f"module root is not a directory: {module_root}")
-    manifest_relative = Path("module-manifest.json")
-    payload = _load_json(module_root / manifest_relative)
+def _validate_module_manifest(
+    payload: Mapping[str, Any], *, context: str
+) -> _ModuleManifest:
     required = {
         "schema",
         "module",
@@ -398,54 +673,216 @@ def verify_module(root: str | Path) -> dict[str, Any]:
         "files",
         "entrypoints",
     }
-    _expect_keys(payload, required=required, context="module manifest")
+    _expect_keys(payload, required=required, context=context)
     if payload["schema"] != MODULE_SCHEMA:
         _fail(E_SCHEMA, f"module schema must be {MODULE_SCHEMA}")
     module_name = _expect_string(payload["module"], field="module")
     if module_name not in SUPPORTED_MODULES:
         _fail(E_SCHEMA, f"unsupported module: {module_name!r}")
-    _expect_string(payload["version"], field="version")
-    _expect_git_sha(payload["git_sha"], field="git_sha")
+    version = _expect_string(payload["version"], field="version")
+    git_sha = _expect_git_sha(payload["git_sha"], field="git_sha")
     if not isinstance(payload["dirty"], bool):
         _fail(E_SCHEMA, "dirty must be boolean")
-    _validate_platform(payload, context="module")
-    files = _validate_files(
-        module_root,
-        payload["files"],
-        manifest_relative=manifest_relative,
-    )
+    architecture, minimum_macos = _validate_platform(payload, context="module")
+    raw_files = payload["files"]
+    if not isinstance(raw_files, list) or not raw_files:
+        _fail(E_SCHEMA, "files must be a non-empty array")
+    files: dict[str, Mapping[str, Any]] = {}
+    for index, raw in enumerate(raw_files):
+        relative, *_ = _validate_file_entry_shape(raw, index=index)
+        if relative in files:
+            _fail(E_INVENTORY, f"duplicate manifest path: {relative}")
+        files[relative] = raw
     required_entrypoints = frozenset(
         {"terminal"} if module_name == "vc-terminal" else {"frame"}
     )
-    _validate_entrypoints(
+    raw_entrypoints = payload["entrypoints"]
+    if not isinstance(raw_entrypoints, dict):
+        _fail(E_SCHEMA, "entrypoints must be an object")
+    _expect_keys(
+        raw_entrypoints,
+        required=required_entrypoints,
+        context="entrypoints",
+    )
+    entrypoints: dict[str, str] = {}
+    for name in required_entrypoints:
+        relative = _relative_path(
+            raw_entrypoints[name], field=f"entrypoints.{name}"
+        ).as_posix()
+        entry = files.get(relative)
+        if entry is None or entry["kind"] != "executable":
+            _fail(E_ENTRYPOINT, f"module entrypoint is not executable: {relative}")
+        entrypoints[name] = relative
+    return _ModuleManifest(
+        module=module_name,
+        version=version,
+        git_sha=git_sha,
+        dirty=payload["dirty"],
+        architecture=architecture,
+        minimum_macos=minimum_macos,
+        files=files,
+        entrypoints=entrypoints,
+    )
+
+
+def verify_module(root: str | Path, *, require_clean: bool = False) -> dict[str, Any]:
+    """Verify one explicit unsigned vc-terminal or vc-frame module directory."""
+    module_root = Path(root)
+    if not module_root.is_dir() or module_root.is_symlink():
+        _fail(E_MISSING, f"module root is not a directory: {module_root}")
+    manifest_relative = Path("module-manifest.json")
+    payload = _load_json(module_root / manifest_relative)
+    manifest = _validate_module_manifest(payload, context="module manifest")
+    if require_clean and manifest.dirty:
+        _fail(E_PROOF, "release policy rejects a dirty module receipt")
+    validated = _validate_files(
+        module_root,
+        payload["files"],
+        manifest_relative=manifest_relative,
+        architecture=manifest.architecture,
+        minimum_macos=manifest.minimum_macos,
+    )
+    entrypoints = _validate_entrypoints(
         module_root,
         payload["entrypoints"],
-        files,
-        required_names=required_entrypoints,
+        validated.entries,
+        required_names=frozenset(manifest.entrypoints),
+    )
+    _verify_macho_closure(
+        module_root,
+        validated.entries,
+        validated.machos,
+        entrypoints=entrypoints,
     )
     return payload
 
 
-def _validate_product_modules(raw_modules: Any) -> None:
+def _validate_product_modules(raw_modules: Any) -> dict[str, Mapping[str, Any]]:
     if not isinstance(raw_modules, list) or len(raw_modules) != 2:
         _fail(E_SCHEMA, "product modules must contain terminal and frame receipts")
-    names: set[str] = set()
-    required = {"module", "manifest_sha256", "git_sha"}
+    modules: dict[str, Mapping[str, Any]] = {}
+    required = {"module", "manifest_path", "manifest_sha256", "git_sha", "files"}
     for index, item in enumerate(raw_modules):
         if not isinstance(item, dict):
             _fail(E_SCHEMA, f"modules[{index}] must be an object")
         _expect_keys(item, required=required, context=f"modules[{index}]")
         name = _expect_string(item["module"], field=f"modules[{index}].module")
-        if name not in SUPPORTED_MODULES or name in names:
+        if name not in SUPPORTED_MODULES or name in modules:
             _fail(E_SCHEMA, f"invalid or duplicate product module: {name!r}")
-        names.add(name)
-        _expect_sha256(item["manifest_sha256"], field="manifest_sha256")
+        _relative_path(item["manifest_path"], field=f"modules[{index}].manifest_path")
+        _expect_sha256(
+            item["manifest_sha256"], field=f"modules[{index}].manifest_sha256"
+        )
         _expect_git_sha(item["git_sha"], field="git_sha")
-    if names != SUPPORTED_MODULES:
+        mappings = item["files"]
+        if not isinstance(mappings, list) or not mappings:
+            _fail(E_SCHEMA, f"modules[{index}].files must be a non-empty array")
+        module_paths: set[str] = set()
+        product_paths: set[str] = set()
+        for mapping_index, mapping in enumerate(mappings):
+            context = f"modules[{index}].files[{mapping_index}]"
+            if not isinstance(mapping, dict):
+                _fail(E_SCHEMA, f"{context} must be an object")
+            _expect_keys(
+                mapping,
+                required={"module_path", "product_path"},
+                context=context,
+            )
+            module_path = _relative_path(
+                mapping["module_path"], field=f"{context}.module_path"
+            ).as_posix()
+            product_path = _relative_path(
+                mapping["product_path"], field=f"{context}.product_path"
+            ).as_posix()
+            if module_path in module_paths or product_path in product_paths:
+                _fail(E_INVENTORY, f"duplicate module file mapping in {name}")
+            module_paths.add(module_path)
+            product_paths.add(product_path)
+        modules[name] = item
+    if set(modules) != SUPPORTED_MODULES:
         _fail(E_SCHEMA, "product must bind vc-terminal and vc-frame")
+    return modules
 
 
-def verify_app(app_path: str | Path) -> dict[str, Any]:
+def _verify_product_module_receipts(
+    app: Path,
+    modules: Mapping[str, Mapping[str, Any]],
+    product_files: Mapping[str, Mapping[str, Any]],
+    product_entrypoints: Mapping[str, str],
+    *,
+    architecture: str,
+    minimum_macos: str,
+    require_clean: bool,
+) -> None:
+    claimed_product_paths: set[str] = set()
+    for name, binding in modules.items():
+        manifest_path = _relative_path(
+            binding["manifest_path"], field=f"modules.{name}.manifest_path"
+        ).as_posix()
+        manifest_entry = product_files.get(manifest_path)
+        if manifest_entry is None or manifest_entry["kind"] not in {
+            "config",
+            "resource",
+        }:
+            _fail(
+                E_PROOF,
+                f"module receipt is not product-manifest-bound: {manifest_path}",
+            )
+        receipt_path = app / manifest_path
+        expected_hash = _expect_sha256(
+            binding["manifest_sha256"], field=f"modules.{name}.manifest_sha256"
+        )
+        if _sha256(receipt_path) != expected_hash:
+            _fail(E_PROOF, f"embedded module receipt hash mismatch: {name}")
+        receipt_payload = _load_json(receipt_path)
+        receipt = _validate_module_manifest(
+            receipt_payload, context=f"embedded {name} module manifest"
+        )
+        if receipt.module != name:
+            _fail(E_PROOF, f"embedded module receipt identity mismatch: {name}")
+        if receipt.git_sha != binding["git_sha"]:
+            _fail(E_PROOF, f"embedded module Git SHA mismatch: {name}")
+        if (
+            receipt.architecture != architecture
+            or receipt.minimum_macos != minimum_macos
+        ):
+            _fail(E_PLATFORM, f"embedded module platform mismatch: {name}")
+        if require_clean and receipt.dirty:
+            _fail(E_PROOF, f"release policy rejects dirty embedded module: {name}")
+
+        mappings = binding["files"]
+        mapped_module_paths: set[str] = set()
+        entrypoint_name = "terminal" if name == "vc-terminal" else "frame"
+        mapped_entrypoint = ""
+        for mapping in mappings:
+            module_path = str(mapping["module_path"])
+            product_path = str(mapping["product_path"])
+            module_entry = receipt.files.get(module_path)
+            product_entry = product_files.get(product_path)
+            if module_entry is None or product_entry is None:
+                _fail(E_PROOF, f"unbound copied module file: {name}:{module_path}")
+            if product_path in claimed_product_paths:
+                _fail(
+                    E_INVENTORY,
+                    f"product file claimed by multiple modules: {product_path}",
+                )
+            claimed_product_paths.add(product_path)
+            mapped_module_paths.add(module_path)
+            for field in ("sha256", "mode", "kind", "size", "dylibs"):
+                if module_entry[field] != product_entry[field]:
+                    _fail(
+                        E_PROOF,
+                        f"copied module file {field} mismatch: {name}:{module_path}",
+                    )
+            if module_path == receipt.entrypoints[entrypoint_name]:
+                mapped_entrypoint = product_path
+        if mapped_module_paths != set(receipt.files):
+            _fail(E_PROOF, f"module receipt inventory is not fully copied: {name}")
+        if mapped_entrypoint != product_entrypoints[entrypoint_name]:
+            _fail(E_ENTRYPOINT, f"product entrypoint is not bound to {name} receipt")
+
+
+def verify_app(app_path: str | Path, *, require_clean: bool = False) -> dict[str, Any]:
     """Verify one explicit assembled Vibecrafted.app and its product manifest."""
     app = Path(app_path)
     if not app.is_dir() or app.is_symlink() or app.suffix != ".app":
@@ -458,6 +895,7 @@ def verify_app(app_path: str | Path) -> dict[str, Any]:
         "bundle_id",
         "bundle_executable",
         "version",
+        "build",
         "git_sha",
         "dirty",
         "architecture",
@@ -475,22 +913,27 @@ def verify_app(app_path: str | Path) -> dict[str, Any]:
         _fail(E_BUNDLE, f"bundle_id must be {PRODUCT_BUNDLE_ID}")
     if payload["bundle_executable"] != PRODUCT_EXECUTABLE:
         _fail(E_BUNDLE, f"bundle_executable must be {PRODUCT_EXECUTABLE}")
-    _expect_string(payload["version"], field="version")
+    version = _expect_string(payload["version"], field="version")
+    build = _expect_string(payload["build"], field="build")
     _expect_git_sha(payload["git_sha"], field="git_sha")
     if not isinstance(payload["dirty"], bool):
         _fail(E_SCHEMA, "dirty must be boolean")
-    _validate_platform(payload, context="product")
-    _validate_product_modules(payload["modules"])
-    files = _validate_files(
+    if require_clean and payload["dirty"]:
+        _fail(E_PROOF, "release policy rejects a dirty product receipt")
+    architecture, minimum_macos = _validate_platform(payload, context="product")
+    modules = _validate_product_modules(payload["modules"])
+    validated = _validate_files(
         app,
         payload["files"],
         manifest_relative=manifest_relative,
+        architecture=architecture,
+        minimum_macos=minimum_macos,
         exclusions=(Path("Contents/_CodeSignature"), Path("Contents/CodeResources")),
     )
     entrypoints = _validate_entrypoints(
         app,
         payload["entrypoints"],
-        files,
+        validated.entries,
         required_names=_APP_ENTRYPOINTS,
     )
     if entrypoints["app"] != f"Contents/MacOS/{PRODUCT_EXECUTABLE}":
@@ -502,15 +945,36 @@ def verify_app(app_path: str | Path) -> dict[str, Any]:
             plist = plistlib.load(handle)
     except (OSError, plistlib.InvalidFileException) as exc:
         _fail(E_BUNDLE, f"invalid Info.plist: {exc}")
+    if not isinstance(plist, dict):
+        _fail(E_BUNDLE, "Info.plist top level must be a dictionary")
     if plist.get("CFBundleIdentifier") != PRODUCT_BUNDLE_ID:
         _fail(E_BUNDLE, f"Info.plist bundle id must be {PRODUCT_BUNDLE_ID}")
     if plist.get("CFBundleExecutable") != PRODUCT_EXECUTABLE:
         _fail(E_BUNDLE, f"Info.plist executable must be {PRODUCT_EXECUTABLE}")
+    if plist.get("CFBundleShortVersionString") != version:
+        _fail(E_BUNDLE, "Info.plist marketing version does not match product manifest")
+    if plist.get("CFBundleVersion") != build:
+        _fail(E_BUNDLE, "Info.plist build version does not match product manifest")
     nested_apps = sorted(
         path.relative_to(app).as_posix() for path in app.rglob("*.app") if path.is_dir()
     )
     if nested_apps:
         _fail(E_BUNDLE, f"nested customer app bundles are forbidden: {nested_apps}")
+    _verify_product_module_receipts(
+        app,
+        modules,
+        validated.entries,
+        entrypoints,
+        architecture=architecture,
+        minimum_macos=minimum_macos,
+        require_clean=require_clean,
+    )
+    _verify_macho_closure(
+        app,
+        validated.entries,
+        validated.machos,
+        entrypoints=entrypoints,
+    )
     return payload
 
 
@@ -564,18 +1028,164 @@ def verify_transaction(receipt_path: str | Path) -> dict[str, Any]:
     return payload
 
 
-def verify_walkaround(receipt_path: str | Path) -> dict[str, Any]:
-    """Verify the release walk-around receipt bound to one exact DMG and app."""
-    path = Path(receipt_path)
+def _validate_proof_artifact(root: Path, value: Any, *, field: str) -> tuple[str, str]:
+    if not isinstance(value, dict):
+        _fail(E_SCHEMA, f"{field} must be an object")
+    _expect_keys(value, required={"path", "sha256", "size"}, context=field)
+    relative = _relative_path(value["path"], field=f"{field}.path").as_posix()
+    expected_hash = _expect_sha256(value["sha256"], field=f"{field}.sha256")
+    expected_size = value["size"]
+    if (
+        not isinstance(expected_size, int)
+        or isinstance(expected_size, bool)
+        or expected_size < 0
+    ):
+        _fail(E_SCHEMA, f"{field}.size must be a non-negative integer")
+    artifact = root / relative
+    _inside_payload(root, artifact, context=field)
+    if not artifact.is_file() or artifact.is_symlink():
+        _fail(E_MISSING, f"walk-around proof artifact is missing: {relative}")
+    if artifact.stat().st_size != expected_size:
+        _fail(E_SIZE, f"walk-around proof artifact size mismatch: {relative}")
+    if _sha256(artifact) != expected_hash:
+        _fail(E_HASH, f"walk-around proof artifact hash mismatch: {relative}")
+    return relative, expected_hash
+
+
+def _validate_walkaround_proofs(
+    raw_proofs: Any, *, receipt_root: Path
+) -> dict[str, Mapping[str, Any]]:
+    if not isinstance(raw_proofs, dict):
+        _fail(E_SCHEMA, "walk-around proofs must be an object")
+    _expect_keys(raw_proofs, required=_WALKAROUND_CHECKS, context="proofs")
+    artifacts: set[str] = set()
+    proofs: dict[str, Mapping[str, Any]] = {}
+    for name in sorted(_WALKAROUND_CHECKS):
+        proof = raw_proofs[name]
+        if not isinstance(proof, dict):
+            _fail(E_SCHEMA, f"proofs.{name} must be an object")
+        _expect_keys(
+            proof,
+            required={"command", "exit_code", "stdout", "stderr"},
+            context=f"proofs.{name}",
+        )
+        command = proof["command"]
+        if (
+            not isinstance(command, list)
+            or not command
+            or not all(isinstance(item, str) and item for item in command)
+        ):
+            _fail(E_SCHEMA, f"proofs.{name}.command must be a non-empty argv array")
+        if proof["exit_code"] != 0 or isinstance(proof["exit_code"], bool):
+            _fail(E_PROOF, f"walk-around proof failed: {name}")
+        for stream in ("stdout", "stderr"):
+            relative, _ = _validate_proof_artifact(
+                receipt_root,
+                proof[stream],
+                field=f"proofs.{name}.{stream}",
+            )
+            if relative in artifacts:
+                _fail(E_PROOF, f"walk-around proof artifact reused: {relative}")
+            artifacts.add(relative)
+        proofs[name] = proof
+    return proofs
+
+
+def _attached_image_mounts() -> set[tuple[Path, Path]]:
+    hdiutil = _required_tool("hdiutil", failure_code=E_PROOF)
+    result = subprocess.run(
+        [hdiutil, "info", "-plist"],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        _fail(E_PROOF, "hdiutil could not prove the mounted DMG identity")
+    try:
+        payload = plistlib.loads(result.stdout)
+    except plistlib.InvalidFileException as exc:
+        _fail(E_PROOF, f"hdiutil returned invalid mount evidence: {exc}")
+    if not isinstance(payload, dict):
+        _fail(E_PROOF, "hdiutil mount evidence must be a dictionary")
+    mounts: set[tuple[Path, Path]] = set()
+    images = payload.get("images", [])
+    if not isinstance(images, list):
+        _fail(E_PROOF, "hdiutil mount evidence has invalid images")
+    for image in images:
+        if not isinstance(image, dict) or not isinstance(image.get("image-path"), str):
+            continue
+        image_path = Path(image["image-path"]).resolve(strict=False)
+        entities = image.get("system-entities", [])
+        if not isinstance(entities, list):
+            continue
+        for entity in entities:
+            if isinstance(entity, dict) and isinstance(entity.get("mount-point"), str):
+                mounts.add(
+                    (image_path, Path(entity["mount-point"]).resolve(strict=False))
+                )
+    return mounts
+
+
+def _expected_live_commands(app: Path, dmg: Path) -> dict[str, list[str]]:
+    return {
+        "codesign": [
+            "codesign",
+            "--verify",
+            "--deep",
+            "--strict",
+            "--verbose=2",
+            str(app),
+        ],
+        "app_notarization": ["xcrun", "stapler", "validate", str(app)],
+        "dmg_notarization": ["xcrun", "stapler", "validate", str(dmg)],
+        "gatekeeper": [
+            "spctl",
+            "--assess",
+            "--type",
+            "execute",
+            "--verbose=4",
+            str(app),
+        ],
+    }
+
+
+def _verify_recorded_live_commands(
+    proofs: Mapping[str, Mapping[str, Any]], *, app: Path, dmg: Path
+) -> None:
+    for name, expected in _expected_live_commands(app, dmg).items():
+        recorded = list(proofs[name]["command"])
+        normalized = [Path(recorded[0]).name, *recorded[1:]]
+        if normalized != expected:
+            _fail(E_PROOF, f"walk-around proof recorded the wrong {name} command")
+
+
+def _run_live_release_checks(app: Path, dmg: Path) -> None:
+    for name, command in _expected_live_commands(app, dmg).items():
+        executable = _required_tool(command[0], failure_code=E_PROOF)
+        _run_tool(
+            [executable, *command[1:]],
+            failure_code=E_PROOF,
+            context=f"live walk-around check failed ({name})",
+        )
+
+
+def _verify_walkaround(
+    receipt_path: Path,
+    *,
+    attached_mounts: set[tuple[Path, Path]],
+    run_live_checks: bool,
+) -> dict[str, Any]:
+    path = receipt_path
     payload = _load_json(path)
     required = {
         "schema",
         "dmg_path",
         "dmg_sha256",
         "dmg_size",
+        "mount_path",
+        "app_path",
         "product_manifest_sha256",
         "source_revisions",
-        "checks",
+        "proofs",
     }
     _expect_keys(payload, required=required, context="walk-around receipt")
     if payload["schema"] != WALKAROUND_SCHEMA:
@@ -583,11 +1193,17 @@ def verify_walkaround(receipt_path: str | Path) -> dict[str, Any]:
     dmg_path = Path(_expect_string(payload["dmg_path"], field="dmg_path"))
     if not dmg_path.is_absolute():
         _fail(E_PATH, "walk-around dmg_path must be absolute")
+    mount_path = Path(_expect_string(payload["mount_path"], field="mount_path"))
+    app_path = Path(_expect_string(payload["app_path"], field="app_path"))
+    if not mount_path.is_absolute() or not app_path.is_absolute():
+        _fail(E_PATH, "walk-around mount_path and app_path must be absolute")
     expected_hash = _expect_sha256(payload["dmg_sha256"], field="dmg_sha256")
     size = payload["dmg_size"]
     if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
         _fail(E_SCHEMA, "dmg_size must be a positive integer")
-    _expect_sha256(payload["product_manifest_sha256"], field="product_manifest_sha256")
+    expected_product_hash = _expect_sha256(
+        payload["product_manifest_sha256"], field="product_manifest_sha256"
+    )
     revisions = payload["source_revisions"]
     if not isinstance(revisions, dict):
         _fail(E_SCHEMA, "source_revisions must be an object")
@@ -598,20 +1214,59 @@ def verify_walkaround(receipt_path: str | Path) -> dict[str, Any]:
     )
     for name, revision in revisions.items():
         _expect_git_sha(revision, field=f"source_revisions.{name}")
-    checks = payload["checks"]
-    if not isinstance(checks, dict):
-        _fail(E_SCHEMA, "checks must be an object")
-    _expect_keys(checks, required=_WALKAROUND_CHECKS, context="checks")
-    failed = sorted(name for name, value in checks.items() if value is not True)
-    if failed:
-        _fail(E_PROOF, f"walk-around checks are not proven: {', '.join(failed)}")
     if not dmg_path.is_file():
         _fail(E_MISSING, f"walk-around DMG is missing: {dmg_path}")
     if dmg_path.stat().st_size != size:
         _fail(E_SIZE, "walk-around DMG size does not match the artifact")
     if _sha256(dmg_path) != expected_hash:
         _fail(E_HASH, "walk-around DMG hash does not match the artifact")
+    if not mount_path.is_dir() or mount_path.is_symlink():
+        _fail(E_MISSING, f"walk-around mount is missing: {mount_path}")
+    dmg_resolved = dmg_path.resolve()
+    mount_resolved = mount_path.resolve()
+    app_resolved = app_path.resolve(strict=False)
+    expected_app = mount_resolved / "Vibecrafted.app"
+    if app_resolved != expected_app or not app_path.is_dir() or app_path.is_symlink():
+        _fail(E_PATH, "walk-around app must be the mounted top-level Vibecrafted.app")
+    if (dmg_resolved, mount_resolved) not in attached_mounts:
+        _fail(E_PROOF, "walk-around mount is not attached from the exact DMG")
+    mounted_apps = sorted(
+        item.name
+        for item in mount_path.iterdir()
+        if item.is_dir() and item.suffix == ".app"
+    )
+    if mounted_apps != ["Vibecrafted.app"]:
+        _fail(E_BUNDLE, f"mounted DMG customer app set is invalid: {mounted_apps}")
+
+    product_manifest_path = app_path / "Contents/Resources/product-manifest.json"
+    if not product_manifest_path.is_file():
+        _fail(E_MISSING, "mounted app product manifest is missing")
+    if _sha256(product_manifest_path) != expected_product_hash:
+        _fail(E_HASH, "walk-around product manifest hash does not match mounted app")
+    product = verify_app(app_path, require_clean=True)
+    modules = {item["module"]: item for item in product["modules"]}
+    expected_revisions = {
+        "vibecrafted": product["git_sha"],
+        "vc-terminal": modules["vc-terminal"]["git_sha"],
+        "vc-frame": modules["vc-frame"]["git_sha"],
+    }
+    if revisions != expected_revisions:
+        _fail(E_PROOF, "walk-around source revisions do not match mounted product")
+
+    proofs = _validate_walkaround_proofs(payload["proofs"], receipt_root=path.parent)
+    _verify_recorded_live_commands(proofs, app=app_path, dmg=dmg_path)
+    if run_live_checks:
+        _run_live_release_checks(app_path, dmg_path)
     return payload
+
+
+def verify_walkaround(receipt_path: str | Path) -> dict[str, Any]:
+    """Verify evidence and independently re-check one mounted release DMG."""
+    return _verify_walkaround(
+        Path(receipt_path),
+        attached_mounts=_attached_image_mounts(),
+        run_live_checks=True,
+    )
 
 
 def _fixture_entry(
@@ -619,16 +1274,19 @@ def _fixture_entry(
     relative: str,
     *,
     kind: str,
-    dylibs: Sequence[str] = (),
+    dylibs: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     path = root / relative
+    if dylibs is None and kind in {"executable", "dylib"}:
+        observed = _observed_macho(path, relative=relative, kind=kind)
+        dylibs = () if observed is None else observed.dependencies
     return {
         "path": relative,
         "sha256": _sha256(path),
         "mode": f"{stat.S_IMODE(path.stat().st_mode):04o}",
         "kind": kind,
         "size": path.stat().st_size,
-        "dylibs": list(dylibs),
+        "dylibs": list(dylibs or ()),
     }
 
 
@@ -645,13 +1303,40 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     )
 
 
+def _write_fixture_macho(path: Path) -> None:
+    xcrun = _required_tool("xcrun", failure_code=E_PROOF)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        [
+            xcrun,
+            "--sdk",
+            "macosx",
+            "clang",
+            "-arch",
+            "arm64",
+            "-mmacosx-version-min=14.0",
+            "-x",
+            "c",
+            "-",
+            "-o",
+            str(path),
+        ],
+        input="int main(void) { return 0; }\n",
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        _fail(E_PROOF, f"self-test could not compile Mach-O fixture: {result.stderr}")
+
+
 def _self_test() -> int:
     expected_failures: list[int] = []
     with tempfile.TemporaryDirectory(prefix="vibecrafted-product-contract-") as tmp:
         root = Path(tmp)
         module = root / "vc-terminal-module"
         executable = module / "bin/vc-terminal"
-        _write_executable(executable, "#!/bin/sh\nexit 0\n")
+        _write_fixture_macho(executable)
         module_manifest: dict[str, Any] = {
             "schema": MODULE_SCHEMA,
             "module": "vc-terminal",
@@ -674,25 +1359,25 @@ def _self_test() -> int:
         except ProductContractError as exc:
             expected_failures.append(exc.code)
         module_manifest["files"] = [
-            _fixture_entry(
-                module,
-                "bin/vc-terminal",
-                kind="executable",
-                dylibs=("/opt/homebrew/lib/libescape.dylib",),
-            )
+            _fixture_entry(module, "bin/vc-terminal", kind="executable")
         ]
+        module_manifest["files"][0]["dylibs"].append(
+            "/opt/homebrew/lib/libescape.dylib"
+        )
         _write_json(manifest_path, module_manifest)
         try:
             verify_module(module)
         except ProductContractError as exc:
             expected_failures.append(exc.code)
 
-        app = root / "Vibecrafted.app"
+        mount = root / "mounted"
+        app = mount / "Vibecrafted.app"
         app_executable = app / "Contents/MacOS/Vibecrafted"
         terminal = app / "Contents/Helpers/vc-terminal"
         frame = app / "Contents/Helpers/vc-frame"
         for target in (app_executable, terminal, frame):
-            _write_executable(target, "#!/bin/sh\nexit 0\n")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(executable, target)
         plist_path = app / "Contents/Info.plist"
         plist_path.parent.mkdir(parents=True, exist_ok=True)
         with plist_path.open("wb") as handle:
@@ -700,15 +1385,64 @@ def _self_test() -> int:
                 {
                     "CFBundleIdentifier": PRODUCT_BUNDLE_ID,
                     "CFBundleExecutable": PRODUCT_EXECUTABLE,
+                    "CFBundleShortVersionString": "1.0.0",
+                    "CFBundleVersion": "1",
                 },
                 handle,
             )
+        terminal_product_entry = _fixture_entry(
+            app, "Contents/Helpers/vc-terminal", kind="executable"
+        )
+        frame_product_entry = _fixture_entry(
+            app, "Contents/Helpers/vc-frame", kind="executable"
+        )
+
+        def module_receipt(
+            *,
+            module_name: str,
+            git_sha: str,
+            entrypoint: str,
+            product_entry: Mapping[str, Any],
+        ) -> tuple[str, dict[str, Any]]:
+            source_path = f"bin/{module_name}"
+            source_entry = dict(product_entry)
+            source_entry["path"] = source_path
+            receipt = {
+                "schema": MODULE_SCHEMA,
+                "module": module_name,
+                "version": "1.0.0",
+                "git_sha": git_sha,
+                "dirty": False,
+                "architecture": "arm64",
+                "minimum_macos": "14.0",
+                "files": [source_entry],
+                "entrypoints": {entrypoint: source_path},
+            }
+            receipt_relative = (
+                f"Contents/Resources/module-receipts/{module_name}/module-manifest.json"
+            )
+            _write_json(app / receipt_relative, receipt)
+            return receipt_relative, receipt
+
+        terminal_receipt_path, _ = module_receipt(
+            module_name="vc-terminal",
+            git_sha="4" * 40,
+            entrypoint="terminal",
+            product_entry=terminal_product_entry,
+        )
+        frame_receipt_path, _ = module_receipt(
+            module_name="vc-frame",
+            git_sha="6" * 40,
+            entrypoint="frame",
+            product_entry=frame_product_entry,
+        )
         product_manifest: dict[str, Any] = {
             "schema": PRODUCT_SCHEMA,
             "product": PRODUCT_NAME,
             "bundle_id": PRODUCT_BUNDLE_ID,
             "bundle_executable": PRODUCT_EXECUTABLE,
             "version": "1.0.0",
+            "build": "1",
             "git_sha": "2" * 40,
             "dirty": False,
             "architecture": "arm64",
@@ -716,20 +1450,36 @@ def _self_test() -> int:
             "modules": [
                 {
                     "module": "vc-terminal",
-                    "manifest_sha256": "3" * 64,
+                    "manifest_path": terminal_receipt_path,
+                    "manifest_sha256": _sha256(app / terminal_receipt_path),
                     "git_sha": "4" * 40,
+                    "files": [
+                        {
+                            "module_path": "bin/vc-terminal",
+                            "product_path": "Contents/Helpers/vc-terminal",
+                        }
+                    ],
                 },
                 {
                     "module": "vc-frame",
-                    "manifest_sha256": "5" * 64,
+                    "manifest_path": frame_receipt_path,
+                    "manifest_sha256": _sha256(app / frame_receipt_path),
                     "git_sha": "6" * 40,
+                    "files": [
+                        {
+                            "module_path": "bin/vc-frame",
+                            "product_path": "Contents/Helpers/vc-frame",
+                        }
+                    ],
                 },
             ],
             "files": [
                 _fixture_entry(app, "Contents/Info.plist", kind="config"),
                 _fixture_entry(app, "Contents/MacOS/Vibecrafted", kind="executable"),
-                _fixture_entry(app, "Contents/Helpers/vc-terminal", kind="executable"),
-                _fixture_entry(app, "Contents/Helpers/vc-frame", kind="executable"),
+                terminal_product_entry,
+                frame_product_entry,
+                _fixture_entry(app, terminal_receipt_path, kind="config"),
+                _fixture_entry(app, frame_receipt_path, kind="config"),
             ],
             "entrypoints": {
                 "app": "Contents/MacOS/Vibecrafted",
@@ -772,6 +1522,28 @@ def _self_test() -> int:
         dmg = root / "synthetic.dmg"
         dmg.write_bytes(b"synthetic-dmg\n")
         walkaround = root / "walkaround.json"
+        proofs: dict[str, Any] = {}
+        expected_commands = _expected_live_commands(app, dmg)
+        for name in sorted(_WALKAROUND_CHECKS):
+            stdout = root / f"proofs/{name}.stdout"
+            stderr = root / f"proofs/{name}.stderr"
+            stdout.parent.mkdir(parents=True, exist_ok=True)
+            stdout.write_text(f"{name}: passed\n", encoding="utf-8")
+            stderr.write_text("", encoding="utf-8")
+            proofs[name] = {
+                "command": expected_commands.get(name, [f"verify-{name}", str(app)]),
+                "exit_code": 0,
+                "stdout": {
+                    "path": stdout.relative_to(root).as_posix(),
+                    "sha256": _sha256(stdout),
+                    "size": stdout.stat().st_size,
+                },
+                "stderr": {
+                    "path": stderr.relative_to(root).as_posix(),
+                    "sha256": _sha256(stderr),
+                    "size": stderr.stat().st_size,
+                },
+            }
         _write_json(
             walkaround,
             {
@@ -779,16 +1551,24 @@ def _self_test() -> int:
                 "dmg_path": str(dmg),
                 "dmg_sha256": _sha256(dmg),
                 "dmg_size": dmg.stat().st_size,
-                "product_manifest_sha256": "1" * 64,
+                "mount_path": str(mount),
+                "app_path": str(app),
+                "product_manifest_sha256": _sha256(
+                    app / "Contents/Resources/product-manifest.json"
+                ),
                 "source_revisions": {
                     "vibecrafted": "2" * 40,
-                    "vc-terminal": "3" * 40,
-                    "vc-frame": "4" * 40,
+                    "vc-terminal": "4" * 40,
+                    "vc-frame": "6" * 40,
                 },
-                "checks": {name: True for name in _WALKAROUND_CHECKS},
+                "proofs": proofs,
             },
         )
-        verify_walkaround(walkaround)
+        _verify_walkaround(
+            walkaround,
+            attached_mounts={(dmg.resolve(), mount.resolve())},
+            run_live_checks=False,
+        )
 
     if expected_failures != [E_HASH, E_DEPENDENCY]:
         _fail(
@@ -805,8 +1585,10 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     module = commands.add_parser("module", help="verify an unsigned module")
     module.add_argument("path", type=Path)
+    module.add_argument("--require-clean", action="store_true")
     app = commands.add_parser("app", help="verify an assembled app bundle")
     app.add_argument("path", type=Path)
+    app.add_argument("--require-clean", action="store_true")
     transaction = commands.add_parser(
         "transaction", help="verify an app/runtime activation receipt"
     )
@@ -830,9 +1612,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(arguments)
     try:
         if args.command == "module":
-            verify_module(args.path)
+            verify_module(args.path, require_clean=args.require_clean)
         elif args.command == "app":
-            verify_app(args.path)
+            verify_app(args.path, require_clean=args.require_clean)
         elif args.command == "transaction":
             verify_transaction(args.path)
         elif args.command == "walkaround":
