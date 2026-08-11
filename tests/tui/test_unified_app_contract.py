@@ -52,6 +52,15 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     )
 
 
+def _write_canonical_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _clang() -> str:
     if sys.platform != "darwin":
         pytest.skip("unified app contract requires macOS Mach-O tooling")
@@ -199,11 +208,19 @@ def _app_fixture(app: Path, macho_executable: Path) -> dict[str, Any]:
         "Contents/MacOS/Vibecrafted",
         "Contents/Helpers/vc-terminal",
         "Contents/Helpers/vc-frame",
+        "Contents/Resources/runtime/bin/vc-start",
     ):
         (app / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(macho_executable, app / relative)
-    for relative in ("Contents/Helpers/vc-terminal", "Contents/Helpers/vc-frame"):
+    for relative in (
+        "Contents/Helpers/vc-terminal",
+        "Contents/Helpers/vc-frame",
+        "Contents/Resources/runtime/bin/vc-start",
+    ):
         _codesign_macho(app / relative)
+    terminal_config = app / "Contents/Resources/terminal/vibecrafted.toml"
+    terminal_config.parent.mkdir(parents=True, exist_ok=True)
+    terminal_config.write_text("[shell]\nprogram = 'vc-start'\n", encoding="utf-8")
     plist = app / "Contents/Info.plist"
     plist.parent.mkdir(parents=True, exist_ok=True)
     with plist.open("wb") as handle:
@@ -322,12 +339,23 @@ def _app_fixture(app: Path, macho_executable: Path) -> dict[str, Any]:
             _entry(app, frame_binding["manifest_path"], kind="config"),
             _entry(app, terminal_binding["assembly_receipt_path"], kind="config"),
             _entry(app, frame_binding["assembly_receipt_path"], kind="config"),
+            _entry(
+                app,
+                "Contents/Resources/terminal/vibecrafted.toml",
+                kind="config",
+            ),
+            _entry(
+                app,
+                "Contents/Resources/runtime/bin/vc-start",
+                kind="executable",
+            ),
         ],
         "entrypoints": {
             "app": "Contents/MacOS/Vibecrafted",
             "terminal": "Contents/Helpers/vc-terminal",
             "frame": "Contents/Helpers/vc-frame",
         },
+        "launch_contract": copy.deepcopy(contract._canonical_launch_contract()),
     }
     _write_app_manifest(app, manifest, sign=True)
     return manifest
@@ -598,6 +626,9 @@ def _walkaround_fixture(path: Path, macho_executable: Path) -> dict[str, Any]:
     mount = path.parent / "mounted"
     app = mount / "Vibecrafted.app"
     _app_fixture(app, macho_executable)
+    release_output, release_signature, release_payload, _ = _release_output_fixture(
+        path.parent, app, dmg
+    )
     live_commands = contract._expected_runner_commands(app, dmg)
     proofs: dict[str, Any] = {}
     for name in sorted(contract._WALKAROUND_CHECKS):
@@ -616,10 +647,7 @@ def _walkaround_fixture(path: Path, macho_executable: Path) -> dict[str, Any]:
             "command": live_commands[name],
             "exit_code": 0,
             "inputs": {
-                "dmg_sha256": _sha256(dmg),
-                "product_manifest_sha256": _sha256(
-                    app / "Contents/Resources/product-manifest.json"
-                ),
+                "release_output_sha256": _sha256(release_output),
             },
             "before": _proof_artifact(path.parent, before),
             "after": _proof_artifact(path.parent, after),
@@ -629,26 +657,72 @@ def _walkaround_fixture(path: Path, macho_executable: Path) -> dict[str, Any]:
     payload = {
         "schema": contract.WALKAROUND_SCHEMA,
         "dmg_path": str(dmg),
-        "dmg_sha256": _sha256(dmg),
-        "dmg_size": dmg.stat().st_size,
         "mount_path": str(mount),
         "app_path": str(app),
-        "product_manifest_sha256": _sha256(
-            app / "Contents/Resources/product-manifest.json"
-        ),
-        "source_revisions": {
-            "vibecrafted": "2" * 40,
-            "vc-terminal": "4" * 40,
-            "vc-frame": "6" * 40,
-        },
+        "release_output": _proof_artifact(path.parent, release_output),
+        "release_signature": _proof_artifact(path.parent, release_signature),
         "proofs": proofs,
     }
+    # The runtime patch uses this exact live evidence without trusting the walk-around.
+    payload["_fixture_release_payload"] = release_payload
     payload["trusted_runner"], _ = _write_trusted_runner_attestation(
         path.parent, payload
     )
     payload["delivery_seal"] = _write_walkaround_delivery_seal(path.parent, payload)
+    payload.pop("_fixture_release_payload")
     _write_json(path, payload)
     return payload
+
+
+def _release_output_fixture(
+    root: Path,
+    app: Path,
+    dmg: Path,
+    *,
+    signer: dict[str, Any] | None = None,
+) -> tuple[Path, Path, dict[str, Any], dict[str, Any]]:
+    product = json.loads(
+        (app / "Contents/Resources/product-manifest.json").read_text(encoding="utf-8")
+    )
+    modules = {item["module"]: item for item in product["modules"]}
+    signer = signer or {
+        "cdhash": "a" * 40,
+        "team_id": "MW223P3NPX",
+        "designated_requirement": contract._release_policy()["designated_requirement"],
+        "hardened_runtime": True,
+        "entitlements": {},
+    }
+    executable = app / product["outer_bundle_code"]["path"]
+    payload = {
+        "schema": contract.RELEASE_OUTPUT_SCHEMA,
+        "product_manifest_sha256": _sha256(
+            app / "Contents/Resources/product-manifest.json"
+        ),
+        "outer_executable": {
+            "sha256": _sha256(executable),
+            "code_sha256": contract._macho_code_sha256(executable),
+            **signer,
+        },
+        "code_resources_sha256": _sha256(app / "Contents/_CodeSignature/CodeResources"),
+        "dmg": {"sha256": _sha256(dmg), "size": dmg.stat().st_size},
+        "modules": {
+            name: {
+                "manifest_sha256": binding["manifest_sha256"],
+                "assembly_receipt_sha256": binding["assembly_receipt_sha256"],
+            }
+            for name, binding in modules.items()
+        },
+        "source_revisions": {
+            "vibecrafted": product["git_sha"],
+            "vc-terminal": modules["vc-terminal"]["git_sha"],
+            "vc-frame": modules["vc-frame"]["git_sha"],
+        },
+    }
+    receipt = root / "release-output.json"
+    signature = root / "release-output.json.sig"
+    _write_canonical_json(receipt, payload)
+    signature.write_bytes(b"fixture-signature")
+    return receipt, signature, payload, signer
 
 
 def _patch_walkaround_runtime(
@@ -670,6 +744,25 @@ def _patch_walkaround_runtime(
             live_calls.append((app, artifact))
 
     monkeypatch.setattr(contract, "_run_live_release_checks", record)
+    release_payload = json.loads(
+        (Path(payload["dmg_path"]).parent / "release-output.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    def verify_release_fixture(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        dmg = Path(kwargs["dmg_path"])
+        if dmg.stat().st_size != release_payload["dmg"]["size"]:
+            raise contract.ProductContractError(
+                contract.E_SIZE, "fixture DMG size mismatch"
+            )
+        if _sha256(dmg) != release_payload["dmg"]["sha256"]:
+            raise contract.ProductContractError(
+                contract.E_HASH, "fixture DMG hash mismatch"
+            )
+        return release_payload
+
+    monkeypatch.setattr(contract, "verify_release_output", verify_release_fixture)
     policy_key = Path(payload["dmg_path"]).parent / "trusted-runner-public.pem"
     monkeypatch.setattr(contract, "_trusted_runner_public_key", lambda: policy_key)
 
@@ -701,6 +794,9 @@ def test_versioned_json_schema_matches_runtime_contract_ids() -> None:
         schema["$defs"]["walkaroundReceipt"]["properties"]["schema"]["const"]
         == contract.WALKAROUND_SCHEMA
     )
+    assert schema["$defs"]["releaseOutput"]["properties"]["schema"]["const"] == (
+        contract.RELEASE_OUTPUT_SCHEMA
+    )
 
 
 def test_versioned_json_schema_accepts_every_valid_contract_fixture(
@@ -708,12 +804,17 @@ def test_versioned_json_schema_accepts_every_valid_contract_fixture(
 ) -> None:
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     validator = contract.UnifiedProductValidator(schema)
+    walkaround = _walkaround_fixture(tmp_path / "walkaround.json", macho_executable)
+    release_output = json.loads(
+        (tmp_path / "release-output.json").read_text(encoding="utf-8")
+    )
     fixtures = [
         _module_fixture(tmp_path / "terminal", macho_executable, "vc-terminal"),
         _module_fixture(tmp_path / "frame", macho_executable, "vc-frame"),
         _app_fixture(tmp_path / "Vibecrafted.app", macho_executable),
         _transaction_fixture(tmp_path / "transaction.json", macho_executable),
-        _walkaround_fixture(tmp_path / "walkaround.json", macho_executable),
+        release_output,
+        walkaround,
     ]
 
     for fixture in fixtures:
@@ -999,12 +1100,112 @@ def test_outer_macho_code_digest_rejects_substitution_after_resigning(
 
 
 @pytest.mark.parametrize(
+    "mutation",
+    [
+        "login_shell",
+        "ambient_program",
+        "applications_path",
+        "direct_alias_session",
+        "unknown_environment",
+        "undeclared_config",
+    ],
+)
+def test_app_launch_contract_rejects_noncanonical_product_entry(
+    tmp_path: Path,
+    macho_executable: Path,
+    mutation: str,
+) -> None:
+    app = tmp_path / "Vibecrafted.app"
+    manifest = _app_fixture(app, macho_executable)
+    launch = manifest["launch_contract"]
+    if mutation == "login_shell":
+        launch["shell"]["argv"] = ["--login"]
+    elif mutation == "ambient_program":
+        launch["program"] = "vc-terminal"
+    elif mutation == "applications_path":
+        launch["program"] = "/Applications/vc-terminal.app/Contents/MacOS/vc-terminal"
+    elif mutation == "direct_alias_session":
+        launch["shell"]["argv"] = ["attach", "--create", "Start here"]
+    elif mutation == "unknown_environment":
+        launch["environment"]["inject_bundle_paths"]["VC_FRAME_BIN"] = (
+            "Contents/Helpers/vc-frame"
+        )
+    else:
+        launch["config_path"] = "Contents/Resources/terminal/other.toml"
+    _write_app_manifest(app, manifest, sign=True)
+
+    _assert_error(
+        contract.E_ENTRYPOINT
+        if mutation != "unknown_environment"
+        else contract.E_SCHEMA,
+        lambda: contract.verify_app(app),
+    )
+
+
+def test_launch_environment_is_fresh_closed_and_resolves_writable_runtime_home(
+    tmp_path: Path,
+    macho_executable: Path,
+) -> None:
+    app = tmp_path / "Vibecrafted.app"
+    _app_fixture(app, macho_executable)
+    runtime_home = tmp_path / "data/runtime"
+    runtime_home.parent.mkdir()
+    host = {
+        "HOME": str(tmp_path),
+        "USER": "operator",
+        "LANG": "pl_PL.UTF-8",
+        "PATH": "/attacker/bin",
+        "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
+        "VIBECRAFTED_ROOT": "/attacker/root",
+        "VIBECRAFTED_TOOLS_HOME": "/attacker/tools",
+        "VIBECRAFTED_PREFER_REPO_VC_FRAME": "1",
+        "VC_FRAME_BIN": "/attacker/vc-frame",
+    }
+
+    child = contract.build_launch_environment(app, host_environment=host)
+
+    assert child == {
+        "HOME": str(tmp_path),
+        "USER": "operator",
+        "LANG": "pl_PL.UTF-8",
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
+        "VIBECRAFTED_APP_ROOT": str(app.resolve()),
+        "VIBECRAFTED_VC_FRAME_BIN": str(app.resolve() / "Contents/Helpers/vc-frame"),
+    }
+
+
+@pytest.mark.parametrize("runtime_home", ["relative/runtime", "APP_DESCENDANT"])
+def test_launch_environment_rejects_relative_or_bundle_runtime_home(
+    tmp_path: Path,
+    macho_executable: Path,
+    runtime_home: str,
+) -> None:
+    app = tmp_path / "Vibecrafted.app"
+    _app_fixture(app, macho_executable)
+    value = (
+        str(app / "Contents/Resources/runtime-data")
+        if runtime_home == "APP_DESCENDANT"
+        else runtime_home
+    )
+    _assert_error(
+        contract.E_PATH,
+        lambda: contract.build_launch_environment(
+            app,
+            host_environment={"HOME": str(tmp_path), "VIBECRAFTED_RUNTIME_HOME": value},
+        ),
+    )
+
+
+@pytest.mark.parametrize(
     ("mutation", "expected_code"),
     [
         ("wrong_magic", contract.E_PLATFORM),
         ("too_many_commands", contract.E_SIZE),
         ("oversized_command_table", contract.E_SIZE),
         ("truncated_commands", contract.E_PROOF),
+        ("signature_inside_commands", contract.E_PROOF),
+        ("zero_segment_inside_linkedit", contract.E_PROOF),
     ],
 )
 def test_macho_code_digest_fails_closed_on_invalid_container_shapes(
@@ -1021,8 +1222,44 @@ def test_macho_code_digest_fails_closed_on_invalid_container_shapes(
         struct.pack_into("<I", data, 16, contract._MACHO_MAX_COMMANDS + 1)
     elif mutation == "oversized_command_table":
         struct.pack_into("<I", data, 20, contract._MACHO_MAX_COMMAND_BYTES + 1)
-    else:
+    elif mutation == "truncated_commands":
         data = data[:40]
+    else:
+        ncmds = struct.unpack_from("<I", data, 16)[0]
+        offset = 32
+        segments: list[tuple[int, str]] = []
+        signature_command = -1
+        for _ in range(ncmds):
+            command, command_size = struct.unpack_from("<II", data, offset)
+            if command == contract._LC_SEGMENT_64:
+                name = data[offset + 8 : offset + 24].split(b"\0", 1)[0].decode()
+                segments.append((offset, name))
+            elif command == contract._LC_CODE_SIGNATURE:
+                signature_command = offset
+            offset += command_size
+        linkedit_command = next(
+            command for command, name in segments if name == "__LINKEDIT"
+        )
+        linkedit_fileoff = struct.unpack_from("<Q", data, linkedit_command + 40)[0]
+        if mutation == "zero_segment_inside_linkedit":
+            zero_command = next(
+                command
+                for command, name in segments
+                if name != "__LINKEDIT"
+                and struct.unpack_from("<Q", data, command + 48)[0] == 0
+            )
+            struct.pack_into("<Q", data, zero_command + 40, linkedit_fileoff)
+        else:
+            assert signature_command >= 0
+            commands_end = 32 + struct.unpack_from("<I", data, 20)[0]
+            assert commands_end > 32
+            for command, name in segments:
+                if name != "__LINKEDIT":
+                    struct.pack_into("<Q", data, command + 48, 0)
+            struct.pack_into("<Q", data, linkedit_command + 40, 32)
+            struct.pack_into("<Q", data, linkedit_command + 48, len(data) - 32)
+            struct.pack_into("<I", data, signature_command + 8, 32)
+            struct.pack_into("<I", data, signature_command + 12, len(data) - 32)
     candidate.write_bytes(data)
 
     _assert_error(expected_code, lambda: contract._macho_code_sha256(candidate))
@@ -1359,7 +1596,7 @@ def test_walkaround_receipt_requires_exact_artifact_and_every_proof(
     unbound_product["product_manifest_sha256"] = "9" * 64
     _write_json(receipt, unbound_product)
     _assert_error(
-        contract.E_HASH,
+        contract.E_SCHEMA,
         lambda: contract.verify_walkaround(receipt),
     )
 
@@ -1484,6 +1721,92 @@ def test_walkaround_rejects_a_caller_selected_trust_root(
     _write_json(receipt, payload)
 
     _assert_error(contract.E_PROOF, lambda: contract.verify_walkaround(receipt))
+
+
+def test_packaged_release_policy_pins_the_existing_public_key() -> None:
+    policy = contract._release_policy()
+    public_key = contract._trusted_runner_public_key()
+
+    assert public_key.name == "vibecrafted-signing-v1.pub"
+    assert public_key.is_file()
+    assert contract._public_key_spki_sha256(public_key) == (
+        "521ed59d3c446c540afe1557c2dbc39c9c190775f99896b2b65206c32814b25b"
+    )
+    assert policy["public_key_spki_sha256"] == contract.RELEASE_KEY_SPKI_SHA256
+    assert policy["team_id"] == "MW223P3NPX"
+    assert policy["hardened_runtime"] is True
+    assert policy["entitlements"] == {}
+
+
+def test_signed_release_output_binds_live_artifacts_and_signer_policy(
+    tmp_path: Path,
+    macho_executable: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = tmp_path / "Vibecrafted.app"
+    _app_fixture(app, macho_executable)
+    dmg = tmp_path / "Vibecrafted.dmg"
+    dmg.write_bytes(b"synthetic-dmg\n")
+    receipt, signature, payload, signer = _release_output_fixture(tmp_path, app, dmg)
+    monkeypatch.setattr(contract, "_verify_release_signature", lambda *_: None)
+    monkeypatch.setattr(contract, "_codesign_release_evidence", lambda _: signer)
+
+    assert (
+        contract.verify_release_output(
+            receipt,
+            signature,
+            app_path=app.resolve(),
+            dmg_path=dmg.resolve(),
+        )
+        == payload
+    )
+
+
+@pytest.mark.parametrize(
+    "signer_drift",
+    [
+        {"team_id": "ATTACKERTEAM"},
+        {"entitlements": {"com.apple.security.get-task-allow": True}},
+    ],
+)
+def test_release_output_rejects_foreign_signer_or_entitlement_drift_even_with_same_code(
+    tmp_path: Path,
+    macho_executable: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    signer_drift: dict[str, Any],
+) -> None:
+    app = tmp_path / "Vibecrafted.app"
+    product = _app_fixture(app, macho_executable)
+    dmg = tmp_path / "Vibecrafted.dmg"
+    dmg.write_bytes(b"synthetic-dmg\n")
+    signer = {
+        "cdhash": "b" * 40,
+        "team_id": "MW223P3NPX",
+        "designated_requirement": contract._release_policy()["designated_requirement"],
+        "hardened_runtime": True,
+        "entitlements": {},
+        **signer_drift,
+    }
+    receipt, signature, _, _ = _release_output_fixture(
+        tmp_path, app, dmg, signer=signer
+    )
+    original_code_identity = product["outer_bundle_code"]["code_sha256"]
+    assert (
+        contract._macho_code_sha256(app / "Contents/MacOS/Vibecrafted")
+        == original_code_identity
+    )
+    monkeypatch.setattr(contract, "_verify_release_signature", lambda *_: None)
+    monkeypatch.setattr(contract, "_codesign_release_evidence", lambda _: signer)
+
+    _assert_error(
+        contract.E_PROOF,
+        lambda: contract.verify_release_output(
+            receipt,
+            signature,
+            app_path=app.resolve(),
+            dmg_path=dmg.resolve(),
+        ),
+    )
 
 
 def test_cli_returns_distinct_nonzero_codes_for_hash_and_dylib_failures(

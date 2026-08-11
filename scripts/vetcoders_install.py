@@ -2523,6 +2523,7 @@ PYTHON_ENTRYPOINT_LAUNCHERS = [
     "vibecrafted-compact-hook",
     "vibecrafted-mcp",
     "vibecrafted-resume",
+    "verify-vibecrafted-walkaround",
 ]
 
 LEGACY_LAUNCHER_NAMES = [

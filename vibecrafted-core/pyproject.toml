@@ -43,6 +43,7 @@ vc-loop = "vibecrafted_core.loop:main"
 vc-ship = "vibecrafted_core.ship:main"
 vibecrafted-resume = "vibecrafted_core.wrappers:resume_main"
 vibecrafted-compact-hook = "vibecrafted_core.compact_hooks:main"
+verify-vibecrafted-walkaround = "vibecrafted_core.walkaround_runner:main"
 
 [project.optional-dependencies]
 sandbox = ["aiohttp >= 3.9"]
@@ -61,6 +62,7 @@ artifacts = [
     "vibecrafted_core/skills/**",
     "vibecrafted_core/deck/vibecrafted",
     "vibecrafted_core/schemas/**",
+    "vibecrafted_core/trust/**",
     "vibecrafted_core/config/vc-frame/**",
 ]
 

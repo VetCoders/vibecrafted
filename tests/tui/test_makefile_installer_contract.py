@@ -31,6 +31,17 @@ def test_makefile_python_runner_rejects_xcode_python_39() -> None:
     assert result.stdout.strip().startswith("(3, 1")
 
 
+def test_installer_smokes_the_packaged_walkaround_entrypoint() -> None:
+    assert "verify-vibecrafted-walkaround" in installer.PYTHON_ENTRYPOINT_LAUNCHERS
+    pyproject = (REPO_ROOT / "vibecrafted-core/pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        'verify-vibecrafted-walkaround = "vibecrafted_core.walkaround_runner:main"'
+        in pyproject
+    )
+
+
 def test_makefile_keeps_install_as_terminal_first_front_door() -> None:
     """Contract: `make install` is the terminal-native human front door — a
     compact, log-quiet step runner that greets, walks the canonical install

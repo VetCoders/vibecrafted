@@ -13,7 +13,6 @@ import hashlib
 import json
 import os
 import plistlib
-import pwd
 import re
 import shutil
 import stat
@@ -43,6 +42,11 @@ ASSEMBLY_SCHEMA = "io.vetcoders.vibecrafted.module-assembly.v1"
 PRODUCT_SCHEMA = "io.vetcoders.vibecrafted.product.v1"
 TRANSACTION_SCHEMA = "io.vetcoders.vibecrafted.transaction.v1"
 WALKAROUND_SCHEMA = "io.vetcoders.vibecrafted.walkaround.v1"
+LAUNCH_SCHEMA = "io.vetcoders.vibecrafted.launch.v1"
+RELEASE_OUTPUT_SCHEMA = "io.vetcoders.vibecrafted.release-output.v1"
+RELEASE_POLICY_SCHEMA = "io.vetcoders.vibecrafted.release-policy.v1"
+TRUST_PROBE_SCHEMA = "io.vetcoders.vibecrafted.trust-probe.v1"
+TRUST_PROBE_DOMAIN = "io.vetcoders.vibecrafted.release-trust-probe.v1"
 
 PRODUCT_NAME = "Vibecrafted"
 PRODUCT_BUNDLE_ID = "io.vetcoders.vibecrafted"
@@ -56,7 +60,11 @@ WALKAROUND_RUNNER_ID = "io.vetcoders.vibecrafted.walkaround-runner.v1"
 WALKAROUND_RUNNER_EXECUTABLE = "verify-vibecrafted-walkaround"
 OUTER_BUNDLE_CODE_IDENTITY = "outer-bundle-codesign-v1"
 MACHO_CODE_IDENTITY = "macho-code-v1"
-TRUSTED_RUNNER_PUBLIC_KEY_NAME = "vibecrafted-walkaround-runner.pub"
+TRUSTED_RUNNER_PUBLIC_KEY_NAME = "vibecrafted-signing-v1.pub"
+RELEASE_POLICY_NAME = "release-policy.v1.json"
+RELEASE_KEY_SPKI_SHA256 = (
+    "521ed59d3c446c540afe1557c2dbc39c9c190775f99896b2b65206c32814b25b"
+)
 
 _MACHO_CODE_DOMAIN = b"io.vetcoders.vibecrafted.macho-code-v1\0"
 _MACHO_MAX_BYTES = 512 * 1024 * 1024
@@ -110,6 +118,23 @@ _WALKAROUND_CHECKS = frozenset(
     }
 )
 _STATE_TRANSITION_CHECKS = frozenset({"update", "rollback", "reattach"})
+_LAUNCH_INHERITED_ENV = (
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "COLORTERM",
+    "TMPDIR",
+    "SHELL",
+)
+_LAUNCH_SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+_LAUNCH_TERMINAL = "Contents/Helpers/vc-terminal"
+_LAUNCH_FRAME = "Contents/Helpers/vc-frame"
+_LAUNCH_CONFIG = "Contents/Resources/terminal/vibecrafted.toml"
+_LAUNCH_SHELL = "Contents/Resources/runtime/bin/vc-start"
 
 
 @dataclass(frozen=True)
@@ -495,9 +520,21 @@ def _macho_code_sha256(path: Path) -> str:
     _, linkedit_command, _, _, linkedit_fileoff, linkedit_filesize, nsects = linkedit[0]
     if nsects != 0:
         _fail(E_PROOF, "outer Mach-O __LINKEDIT must not contain sections")
+    for name, _, _, _, fileoff, filesize, _ in segments:
+        if name == "__LINKEDIT":
+            continue
+        if fileoff + filesize > linkedit_fileoff or (
+            filesize == 0 and fileoff >= linkedit_fileoff
+        ):
+            _fail(
+                E_PROOF,
+                f"outer Mach-O segment {name!r} reaches into __LINKEDIT",
+            )
     signature_command, dataoff, datasize = code_signatures[0]
     if dataoff % 16 or datasize == 0:
         _fail(E_PROOF, "outer Mach-O code signature is missing or unaligned")
+    if dataoff < commands_end:
+        _fail(E_PROOF, "outer Mach-O code signature overlaps the load-command table")
     expected_end = dataoff + datasize
     if (
         expected_end != len(data)
@@ -514,9 +551,110 @@ def _macho_code_sha256(path: Path) -> str:
 
 
 def _trusted_runner_public_key() -> Path:
-    """Resolve the operator-owned trust root from fixed release policy, never receipt input."""
-    operator_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
-    return operator_home / ".keys" / TRUSTED_RUNNER_PUBLIC_KEY_NAME
+    """Resolve the package-owned public trust root, never receipt or caller input."""
+    return Path(__file__).with_name("trust") / TRUSTED_RUNNER_PUBLIC_KEY_NAME
+
+
+def _release_policy() -> Mapping[str, Any]:
+    policy = _load_json(Path(__file__).with_name("trust") / RELEASE_POLICY_NAME)
+    required = {
+        "schema",
+        "algorithm",
+        "public_key",
+        "public_key_spki_sha256",
+        "bundle_id",
+        "team_id",
+        "designated_requirement",
+        "hardened_runtime",
+        "entitlements",
+    }
+    _expect_keys(policy, required=required, context="release policy")
+    expected = {
+        "schema": RELEASE_POLICY_SCHEMA,
+        "algorithm": "rsa-pkcs1v15-sha256",
+        "public_key": TRUSTED_RUNNER_PUBLIC_KEY_NAME,
+        "public_key_spki_sha256": RELEASE_KEY_SPKI_SHA256,
+        "bundle_id": PRODUCT_BUNDLE_ID,
+        "team_id": "MW223P3NPX",
+        "designated_requirement": (
+            'identifier "io.vetcoders.vibecrafted" and anchor apple generic and '
+            "certificate 1[field.1.2.840.113635.100.6.2.6] exists and "
+            "certificate leaf[field.1.2.840.113635.100.6.1.13] exists and "
+            'certificate leaf[subject.OU] = "MW223P3NPX"'
+        ),
+        "hardened_runtime": True,
+        "entitlements": {},
+    }
+    if policy != expected:
+        _fail(E_PROOF, "packaged release policy does not match the v1 trust contract")
+    return policy
+
+
+def _public_key_spki_sha256(public_key: Path) -> str:
+    openssl = _release_openssl()
+    result = subprocess.run(
+        [openssl, "pkey", "-pubin", "-in", str(public_key), "-outform", "DER"],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        _fail(E_PROOF, "packaged release public key is unreadable")
+    return hashlib.sha256(result.stdout).hexdigest()
+
+
+def _verify_release_signature(payload: Path, signature: Path) -> None:
+    policy = _release_policy()
+    public_key = _trusted_runner_public_key()
+    if not public_key.is_file() or public_key.is_symlink():
+        _fail(E_MISSING, "packaged release public key is missing")
+    if _public_key_spki_sha256(public_key) != policy["public_key_spki_sha256"]:
+        _fail(E_PROOF, "packaged release public key fingerprint is not policy-pinned")
+    if not payload.is_file() or payload.is_symlink():
+        _fail(E_MISSING, "signed release payload is missing")
+    if not signature.is_file() or signature.is_symlink():
+        _fail(E_MISSING, "detached release signature is missing")
+    openssl = _release_openssl()
+    result = subprocess.run(
+        [
+            openssl,
+            "dgst",
+            "-sha256",
+            "-verify",
+            str(public_key),
+            "-signature",
+            str(signature),
+            str(payload),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        _fail(E_PROOF, "detached release signature is invalid")
+
+
+def _release_openssl() -> str:
+    openssl = Path("/usr/bin/openssl")
+    if not openssl.is_file() or openssl.is_symlink() or not os.access(openssl, os.X_OK):
+        _fail(E_PROOF, "fixed system OpenSSL verifier is unavailable")
+    return str(openssl)
+
+
+def verify_trust_probe(
+    challenge_path: str | Path, signature_path: str | Path
+) -> dict[str, Any]:
+    """Verify a narrowly scoped challenge through the installed production trust root."""
+    challenge = Path(challenge_path)
+    _verify_release_signature(challenge, Path(signature_path))
+    payload = _load_json(challenge)
+    _expect_keys(payload, required={"schema", "domain", "nonce"}, context="trust probe")
+    if (
+        payload["schema"] != TRUST_PROBE_SCHEMA
+        or payload["domain"] != TRUST_PROBE_DOMAIN
+    ):
+        _fail(E_PROOF, "trust probe is outside the release trust domain")
+    _expect_string(payload["nonce"], field="trust probe nonce")
+    return payload
 
 
 def _version_tuple(value: str) -> tuple[int, int]:
@@ -1033,6 +1171,160 @@ def _validate_entrypoints(
     return entrypoints
 
 
+def _canonical_launch_contract() -> dict[str, Any]:
+    return {
+        "schema": LAUNCH_SCHEMA,
+        "program": _LAUNCH_TERMINAL,
+        "argv": [
+            "--config-file",
+            _LAUNCH_CONFIG,
+            "-e",
+            _LAUNCH_SHELL,
+            "operator",
+        ],
+        "config_path": _LAUNCH_CONFIG,
+        "shell": {"program": _LAUNCH_SHELL, "argv": ["operator"]},
+        "environment": {
+            "resolver_inputs": ["VIBECRAFTED_RUNTIME_HOME", "XDG_DATA_HOME"],
+            "inherit_exact": list(_LAUNCH_INHERITED_ENV),
+            "inject_literal": {"PATH": _LAUNCH_SYSTEM_PATH},
+            "inject_bundle_paths": {
+                "VIBECRAFTED_APP_ROOT": ".",
+                "VIBECRAFTED_VC_FRAME_BIN": _LAUNCH_FRAME,
+            },
+            "resolve_writable": {
+                "VIBECRAFTED_RUNTIME_HOME": {
+                    "source_order": [
+                        "env:VIBECRAFTED_RUNTIME_HOME",
+                        "env:XDG_DATA_HOME+rel:vibecrafted",
+                        "env:HOME+rel:.local/share/vibecrafted",
+                    ],
+                    "must_be_absolute": True,
+                    "must_be_writable_or_creatable": True,
+                    "must_not_descend_from": "$APP_BUNDLE",
+                    "publish_to_env": "VIBECRAFTED_RUNTIME_HOME",
+                }
+            },
+        },
+    }
+
+
+def _validate_launch_contract(
+    raw: Any,
+    *,
+    files: Mapping[str, Mapping[str, Any]],
+    entrypoints: Mapping[str, str],
+) -> Mapping[str, Any]:
+    if not isinstance(raw, dict):
+        _fail(E_SCHEMA, "launch_contract must be an object")
+    _expect_keys(
+        raw,
+        required={"schema", "program", "argv", "config_path", "shell", "environment"},
+        context="launch_contract",
+    )
+    if raw["schema"] != LAUNCH_SCHEMA:
+        _fail(E_SCHEMA, f"launch_contract.schema must be {LAUNCH_SCHEMA}")
+    shell = raw["shell"]
+    if not isinstance(shell, dict):
+        _fail(E_SCHEMA, "launch_contract.shell must be an object")
+    _expect_keys(shell, required={"program", "argv"}, context="launch_contract.shell")
+    canonical = _canonical_launch_contract()
+    if (
+        raw["program"] != _LAUNCH_TERMINAL
+        or raw["config_path"] != _LAUNCH_CONFIG
+        or raw["argv"] != canonical["argv"]
+        or shell != {"program": _LAUNCH_SHELL, "argv": ["operator"]}
+    ):
+        _fail(
+            E_ENTRYPOINT,
+            "launch_contract does not encode the canonical Start here entry",
+        )
+    environment = raw["environment"]
+    if not isinstance(environment, dict):
+        _fail(E_SCHEMA, "launch_contract.environment must be an object")
+    _expect_keys(
+        environment,
+        required={
+            "resolver_inputs",
+            "inherit_exact",
+            "inject_literal",
+            "inject_bundle_paths",
+            "resolve_writable",
+        },
+        context="launch_contract.environment",
+    )
+    expected_environment = canonical["environment"]
+    if environment != expected_environment:
+        _fail(E_SCHEMA, "launch_contract.environment is not the closed v1 environment")
+    required_files = {
+        _LAUNCH_TERMINAL: "executable",
+        _LAUNCH_FRAME: "executable",
+        _LAUNCH_CONFIG: "config",
+        _LAUNCH_SHELL: "executable",
+    }
+    for relative, kind in required_files.items():
+        entry = files.get(relative)
+        if entry is None or entry.get("kind") != kind:
+            _fail(
+                E_ENTRYPOINT,
+                f"launch_contract path is not exact inventory {kind}: {relative}",
+            )
+    if (
+        entrypoints["terminal"] != _LAUNCH_TERMINAL
+        or entrypoints["frame"] != _LAUNCH_FRAME
+    ):
+        _fail(E_ENTRYPOINT, "launch_contract disagrees with product entrypoints")
+    return raw
+
+
+def build_launch_environment(
+    app_path: str | Path,
+    *,
+    host_environment: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Verify the product and build its closed child environment."""
+    app = Path(app_path).resolve(strict=True)
+    payload = verify_app(app)
+    host = dict(os.environ if host_environment is None else host_environment)
+    explicit = host.get("VIBECRAFTED_RUNTIME_HOME")
+    xdg = host.get("XDG_DATA_HOME")
+    home = host.get("HOME")
+    if explicit:
+        runtime_home = Path(explicit)
+    elif xdg:
+        runtime_home = Path(xdg) / "vibecrafted"
+    elif home:
+        runtime_home = Path(home) / ".local/share/vibecrafted"
+    else:
+        _fail(E_PATH, "launch environment cannot resolve VIBECRAFTED_RUNTIME_HOME")
+    if not runtime_home.is_absolute():
+        _fail(E_PATH, "VIBECRAFTED_RUNTIME_HOME must resolve to an absolute path")
+    runtime_home = runtime_home.resolve(strict=False)
+    if runtime_home == app or app in runtime_home.parents:
+        _fail(E_PATH, "VIBECRAFTED_RUNTIME_HOME must not descend from the app bundle")
+    writable_parent = runtime_home
+    while not writable_parent.exists() and writable_parent != writable_parent.parent:
+        writable_parent = writable_parent.parent
+    if not writable_parent.is_dir() or not os.access(writable_parent, os.W_OK):
+        _fail(E_PATH, "VIBECRAFTED_RUNTIME_HOME is not writable or creatable")
+    child = {name: host[name] for name in _LAUNCH_INHERITED_ENV if host.get(name)}
+    child.update(
+        {
+            "PATH": _LAUNCH_SYSTEM_PATH,
+            "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
+            "VIBECRAFTED_APP_ROOT": str(app),
+            "VIBECRAFTED_VC_FRAME_BIN": str(app / _LAUNCH_FRAME),
+        }
+    )
+    # Accessing the field after verification keeps this builder bound to the manifest.
+    _validate_launch_contract(
+        payload["launch_contract"],
+        files={item["path"]: item for item in payload["files"]},
+        entrypoints=payload["entrypoints"],
+    )
+    return child
+
+
 def _validate_module_manifest(
     payload: Mapping[str, Any], *, context: str
 ) -> _ModuleManifest:
@@ -1385,6 +1677,7 @@ def verify_app(app_path: str | Path, *, require_clean: bool = False) -> dict[str
         "outer_bundle_code",
         "files",
         "entrypoints",
+        "launch_contract",
     }
     _expect_keys(payload, required=required, context="product manifest")
     if payload["schema"] != PRODUCT_SCHEMA:
@@ -1436,6 +1729,11 @@ def verify_app(app_path: str | Path, *, require_clean: bool = False) -> dict[str
     )
     if entrypoints["app"] != f"Contents/MacOS/{PRODUCT_EXECUTABLE}":
         _fail(E_ENTRYPOINT, "app entrypoint must be Contents/MacOS/Vibecrafted")
+    _validate_launch_contract(
+        payload["launch_contract"],
+        files=validated.entries,
+        entrypoints=entrypoints,
+    )
 
     try:
         with plist_path.open("rb") as handle:
@@ -1476,6 +1774,213 @@ def verify_app(app_path: str | Path, *, require_clean: bool = False) -> dict[str
         app,
         expected_identifier=str(payload["outer_bundle_code"]["codesign_identifier"]),
     )
+    return payload
+
+
+def _codesign_release_evidence(app: Path) -> dict[str, Any]:
+    codesign = _required_tool("codesign", failure_code=E_PROOF)
+    display = subprocess.run(
+        [codesign, "--display", "--verbose=4", str(app)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if display.returncode != 0:
+        _fail(E_PROOF, "final app signature metadata is unreadable")
+    metadata = f"{display.stdout}\n{display.stderr}"
+
+    def field(pattern: str, name: str) -> str:
+        match = re.search(pattern, metadata, flags=re.MULTILINE | re.IGNORECASE)
+        if match is None:
+            _fail(E_PROOF, f"final app signature has no {name}")
+        return match.group(1).strip()
+
+    requirement_result = subprocess.run(
+        [codesign, "--display", "--requirements", "-", str(app)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if requirement_result.returncode != 0:
+        _fail(E_PROOF, "final app designated requirement is unreadable")
+    requirement_text = f"{requirement_result.stdout}\n{requirement_result.stderr}"
+    requirement_match = re.search(
+        r"designated\s*=>\s*(.+)$", requirement_text, re.MULTILINE
+    )
+    if requirement_match is None:
+        _fail(E_PROOF, "final app has no designated requirement")
+    entitlements_result = subprocess.run(
+        [codesign, "--display", "--entitlements", ":-", str(app)],
+        check=False,
+        capture_output=True,
+    )
+    entitlement_bytes = entitlements_result.stdout + entitlements_result.stderr
+    plist_start = entitlement_bytes.find(b"<?xml")
+    if plist_start >= 0:
+        try:
+            entitlements = plistlib.loads(entitlement_bytes[plist_start:])
+        except plistlib.InvalidFileException as exc:
+            _fail(E_PROOF, f"final app entitlements are malformed: {exc}")
+    else:
+        entitlements = {}
+    if not isinstance(entitlements, dict):
+        _fail(E_PROOF, "final app entitlements are not a dictionary")
+    return {
+        "cdhash": field(r"^CDHash=([0-9a-f]+)$", "CDHash"),
+        "team_id": field(r"^TeamIdentifier=(.+)$", "TeamIdentifier"),
+        "designated_requirement": requirement_match.group(1).strip(),
+        "hardened_runtime": re.search(
+            r"^CodeDirectory .*flags=.*\(runtime\)", metadata, re.MULTILINE
+        )
+        is not None,
+        "entitlements": entitlements,
+    }
+
+
+def verify_release_output(
+    receipt_path: str | Path,
+    signature_path: str | Path,
+    *,
+    app_path: str | Path,
+    dmg_path: str | Path,
+) -> dict[str, Any]:
+    """Verify W4's one external signed release identity against live artifacts."""
+    receipt = Path(receipt_path)
+    _verify_release_signature(receipt, Path(signature_path))
+    payload = _load_json(receipt)
+    canonical = (
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        + b"\n"
+    )
+    try:
+        actual_receipt = receipt.read_bytes()
+    except OSError as exc:
+        _fail(E_MISSING, f"release output cannot be read: {exc}")
+    if actual_receipt != canonical:
+        _fail(E_PROOF, "release output must be canonical JSON")
+    required = {
+        "schema",
+        "product_manifest_sha256",
+        "outer_executable",
+        "code_resources_sha256",
+        "dmg",
+        "modules",
+        "source_revisions",
+    }
+    _expect_keys(payload, required=required, context="release output")
+    if payload["schema"] != RELEASE_OUTPUT_SCHEMA:
+        _fail(E_SCHEMA, f"release output schema must be {RELEASE_OUTPUT_SCHEMA}")
+    app = Path(app_path)
+    dmg = Path(dmg_path)
+    if not app.is_absolute() or not dmg.is_absolute():
+        _fail(
+            E_PATH, "release verification requires explicit absolute app and DMG paths"
+        )
+    product = verify_app(app, require_clean=True)
+    product_manifest = app / "Contents/Resources/product-manifest.json"
+    if _expect_sha256(
+        payload["product_manifest_sha256"], field="product_manifest_sha256"
+    ) != _sha256(product_manifest):
+        _fail(E_HASH, "release output product manifest hash mismatch")
+    outer = payload["outer_executable"]
+    if not isinstance(outer, dict):
+        _fail(E_SCHEMA, "release output outer_executable must be an object")
+    _expect_keys(
+        outer,
+        required={
+            "sha256",
+            "code_sha256",
+            "cdhash",
+            "team_id",
+            "designated_requirement",
+            "hardened_runtime",
+            "entitlements",
+        },
+        context="release output outer_executable",
+    )
+    executable = app / product["outer_bundle_code"]["path"]
+    if _expect_sha256(outer["sha256"], field="outer_executable.sha256") != _sha256(
+        executable
+    ):
+        _fail(E_HASH, "release output raw outer executable hash mismatch")
+    if _expect_sha256(
+        outer["code_sha256"], field="outer_executable.code_sha256"
+    ) != _macho_code_sha256(executable):
+        _fail(E_HASH, "release output Mach-O code identity mismatch")
+    policy = _release_policy()
+    observed_signer = _codesign_release_evidence(app)
+    expected_signer = {
+        "cdhash": _expect_string(outer["cdhash"], field="outer_executable.cdhash"),
+        "team_id": outer["team_id"],
+        "designated_requirement": outer["designated_requirement"],
+        "hardened_runtime": outer["hardened_runtime"],
+        "entitlements": outer["entitlements"],
+    }
+    if re.fullmatch(r"[0-9a-f]{40,64}", expected_signer["cdhash"]) is None:
+        _fail(E_SCHEMA, "outer_executable.cdhash must be lowercase hexadecimal")
+    if expected_signer != observed_signer:
+        _fail(E_PROOF, "release output signer evidence does not match the final app")
+    if expected_signer != {
+        "cdhash": observed_signer["cdhash"],
+        "team_id": policy["team_id"],
+        "designated_requirement": policy["designated_requirement"],
+        "hardened_runtime": policy["hardened_runtime"],
+        "entitlements": policy["entitlements"],
+    }:
+        _fail(E_PROOF, "final app signer evidence violates packaged release policy")
+    code_resources = app / "Contents/_CodeSignature/CodeResources"
+    if not code_resources.is_file() or code_resources.is_symlink():
+        _fail(E_MISSING, "final app CodeResources is missing")
+    if _expect_sha256(
+        payload["code_resources_sha256"], field="code_resources_sha256"
+    ) != _sha256(code_resources):
+        _fail(E_HASH, "release output CodeResources hash mismatch")
+    raw_dmg = payload["dmg"]
+    if not isinstance(raw_dmg, dict):
+        _fail(E_SCHEMA, "release output dmg must be an object")
+    _expect_keys(raw_dmg, required={"sha256", "size"}, context="release output dmg")
+    if not dmg.is_file() or dmg.is_symlink():
+        _fail(E_MISSING, "release DMG is missing")
+    if raw_dmg["size"] != dmg.stat().st_size or isinstance(raw_dmg["size"], bool):
+        _fail(E_SIZE, "release output DMG size mismatch")
+    if _expect_sha256(raw_dmg["sha256"], field="dmg.sha256") != _sha256(dmg):
+        _fail(E_HASH, "release output DMG hash mismatch")
+    modules = payload["modules"]
+    if not isinstance(modules, dict):
+        _fail(E_SCHEMA, "release output modules must be an object")
+    _expect_keys(modules, required=SUPPORTED_MODULES, context="release output modules")
+    product_modules = {item["module"]: item for item in product["modules"]}
+    for name in sorted(SUPPORTED_MODULES):
+        value = modules[name]
+        if not isinstance(value, dict):
+            _fail(E_SCHEMA, f"release output module {name} must be an object")
+        _expect_keys(
+            value,
+            required={"manifest_sha256", "assembly_receipt_sha256"},
+            context=f"release output module {name}",
+        )
+        binding = product_modules[name]
+        if value != {
+            "manifest_sha256": binding["manifest_sha256"],
+            "assembly_receipt_sha256": binding["assembly_receipt_sha256"],
+        }:
+            _fail(E_PROOF, f"release output module identity mismatch: {name}")
+    revisions = payload["source_revisions"]
+    expected_revisions = {
+        "vibecrafted": product["git_sha"],
+        "vc-terminal": product_modules["vc-terminal"]["git_sha"],
+        "vc-frame": product_modules["vc-frame"]["git_sha"],
+    }
+    if revisions != expected_revisions:
+        _fail(E_PROOF, "release output source revisions do not match the product")
+    for name, revision in expected_revisions.items():
+        _expect_git_sha(revision, field=f"source_revisions.{name}")
     return payload
 
 
@@ -1679,8 +2184,7 @@ def _validate_walkaround_proofs(
     raw_proofs: Any,
     *,
     receipt_root: Path,
-    dmg_sha256: str,
-    product_manifest_sha256: str,
+    release_output_sha256: str,
 ) -> tuple[dict[str, Mapping[str, Any]], tuple[str, ...]]:
     if not isinstance(raw_proofs, dict):
         _fail(E_SCHEMA, "walk-around proofs must be an object")
@@ -1725,19 +2229,15 @@ def _validate_walkaround_proofs(
             _fail(E_SCHEMA, f"proofs.{name}.inputs must be an object")
         _expect_keys(
             inputs,
-            required={"dmg_sha256", "product_manifest_sha256"},
+            required={"release_output_sha256"},
             context=f"proofs.{name}.inputs",
         )
         if (
             _expect_sha256(
-                inputs["dmg_sha256"], field=f"proofs.{name}.inputs.dmg_sha256"
+                inputs["release_output_sha256"],
+                field=f"proofs.{name}.inputs.release_output_sha256",
             )
-            != dmg_sha256
-            or _expect_sha256(
-                inputs["product_manifest_sha256"],
-                field=f"proofs.{name}.inputs.product_manifest_sha256",
-            )
-            != product_manifest_sha256
+            != release_output_sha256
         ):
             _fail(E_PROOF, f"walk-around proof inputs do not bind release: {name}")
         state_hashes: dict[str, str] = {}
@@ -1766,12 +2266,10 @@ def _walkaround_subject_digest(payload: Mapping[str, Any]) -> str:
         {
             "schema": payload["schema"],
             "dmg_path": payload["dmg_path"],
-            "dmg_sha256": payload["dmg_sha256"],
-            "dmg_size": payload["dmg_size"],
             "mount_path": payload["mount_path"],
             "app_path": payload["app_path"],
-            "product_manifest_sha256": payload["product_manifest_sha256"],
-            "source_revisions": payload["source_revisions"],
+            "release_output": payload["release_output"],
+            "release_signature": payload["release_signature"],
         }
     )
 
@@ -1823,7 +2321,7 @@ def _verify_trusted_runner_attestation(
         _fail(E_PROOF, "trusted runner attestation does not bind canonical probes")
     if not trusted_public_key.is_file() or trusted_public_key.is_symlink():
         _fail(E_MISSING, "explicit trusted runner public key is missing")
-    openssl = _required_tool("openssl", failure_code=E_PROOF)
+    openssl = _release_openssl()
     result = subprocess.run(
         [
             openssl,
@@ -2029,18 +2527,17 @@ def _verify_walkaround(
     trusted_runner_public_key: Path,
     attached_mounts: set[tuple[Path, Path]],
     run_live_checks: bool,
+    release_output_verifier: Any = None,
 ) -> dict[str, Any]:
     path = receipt_path
     payload = _load_json(path)
     required = {
         "schema",
         "dmg_path",
-        "dmg_sha256",
-        "dmg_size",
         "mount_path",
         "app_path",
-        "product_manifest_sha256",
-        "source_revisions",
+        "release_output",
+        "release_signature",
         "proofs",
         "trusted_runner",
         "delivery_seal",
@@ -2055,29 +2552,8 @@ def _verify_walkaround(
     app_path = Path(_expect_string(payload["app_path"], field="app_path"))
     if not mount_path.is_absolute() or not app_path.is_absolute():
         _fail(E_PATH, "walk-around mount_path and app_path must be absolute")
-    expected_hash = _expect_sha256(payload["dmg_sha256"], field="dmg_sha256")
-    size = payload["dmg_size"]
-    if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
-        _fail(E_SCHEMA, "dmg_size must be a positive integer")
-    expected_product_hash = _expect_sha256(
-        payload["product_manifest_sha256"], field="product_manifest_sha256"
-    )
-    revisions = payload["source_revisions"]
-    if not isinstance(revisions, dict):
-        _fail(E_SCHEMA, "source_revisions must be an object")
-    _expect_keys(
-        revisions,
-        required={"vibecrafted", "vc-terminal", "vc-frame"},
-        context="source_revisions",
-    )
-    for name, revision in revisions.items():
-        _expect_git_sha(revision, field=f"source_revisions.{name}")
     if not dmg_path.is_file():
         _fail(E_MISSING, f"walk-around DMG is missing: {dmg_path}")
-    if dmg_path.stat().st_size != size:
-        _fail(E_SIZE, "walk-around DMG size does not match the artifact")
-    if _sha256(dmg_path) != expected_hash:
-        _fail(E_HASH, "walk-around DMG hash does not match the artifact")
     if not mount_path.is_dir() or mount_path.is_symlink():
         _fail(E_MISSING, f"walk-around mount is missing: {mount_path}")
     dmg_resolved = dmg_path.resolve()
@@ -2096,26 +2572,34 @@ def _verify_walkaround(
     if mounted_apps != ["Vibecrafted.app"]:
         _fail(E_BUNDLE, f"mounted DMG customer app set is invalid: {mounted_apps}")
 
-    product_manifest_path = app_path / "Contents/Resources/product-manifest.json"
-    if not product_manifest_path.is_file():
-        _fail(E_MISSING, "mounted app product manifest is missing")
-    if _sha256(product_manifest_path) != expected_product_hash:
-        _fail(E_HASH, "walk-around product manifest hash does not match mounted app")
-    product = verify_app(app_path, require_clean=True)
-    modules = {item["module"]: item for item in product["modules"]}
-    expected_revisions = {
-        "vibecrafted": product["git_sha"],
-        "vc-terminal": modules["vc-terminal"]["git_sha"],
-        "vc-frame": modules["vc-frame"]["git_sha"],
-    }
-    if revisions != expected_revisions:
-        _fail(E_PROOF, "walk-around source revisions do not match mounted product")
+    release_relative, release_hash = _validate_proof_artifact(
+        path.parent, payload["release_output"], field="release_output"
+    )
+    signature_relative, _ = _validate_proof_artifact(
+        path.parent, payload["release_signature"], field="release_signature"
+    )
+    if (
+        release_relative != "release-output.json"
+        or signature_relative != "release-output.json.sig"
+    ):
+        _fail(E_PROOF, "walk-around must reference canonical release-output artifacts")
+    verifier = release_output_verifier or verify_release_output
+    release_payload = verifier(
+        path.parent / release_relative,
+        path.parent / signature_relative,
+        app_path=app_path,
+        dmg_path=dmg_path,
+    )
+    _expect_sha256(release_payload["dmg"]["sha256"], field="release_output.dmg.sha256")
+    _expect_sha256(
+        release_payload["product_manifest_sha256"],
+        field="release_output.product_manifest_sha256",
+    )
 
     proofs, proof_digests = _validate_walkaround_proofs(
         payload["proofs"],
         receipt_root=path.parent,
-        dmg_sha256=expected_hash,
-        product_manifest_sha256=expected_product_hash,
+        release_output_sha256=release_hash,
     )
     _verify_recorded_live_commands(proofs, app=app_path, dmg=dmg_path)
     _verify_trusted_runner_attestation(
@@ -2259,16 +2743,20 @@ def _self_test() -> int:
         app_executable = app / "Contents/MacOS/Vibecrafted"
         terminal = app / "Contents/Helpers/vc-terminal"
         frame = app / "Contents/Helpers/vc-frame"
-        for target in (app_executable, terminal, frame):
+        product_shell = app / _LAUNCH_SHELL
+        for target in (app_executable, terminal, frame, product_shell):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(executable, target)
         codesign = _required_tool("codesign", failure_code=E_PROOF)
-        for target in (terminal, frame):
+        for target in (terminal, frame, product_shell):
             _run_tool(
                 [codesign, "--force", "--sign", "-", str(target)],
                 failure_code=E_PROOF,
                 context=f"self-test could not sign {target.name}",
             )
+        terminal_config = app / _LAUNCH_CONFIG
+        terminal_config.parent.mkdir(parents=True, exist_ok=True)
+        terminal_config.write_text("[shell]\nprogram = 'vc-start'\n", encoding="utf-8")
         plist_path = app / "Contents/Info.plist"
         plist_path.parent.mkdir(parents=True, exist_ok=True)
         with plist_path.open("wb") as handle:
@@ -2395,12 +2883,15 @@ def _self_test() -> int:
                 _fixture_entry(
                     app, frame_binding["assembly_receipt_path"], kind="config"
                 ),
+                _fixture_entry(app, _LAUNCH_CONFIG, kind="config"),
+                _fixture_entry(app, _LAUNCH_SHELL, kind="executable"),
             ],
             "entrypoints": {
                 "app": "Contents/MacOS/Vibecrafted",
                 "terminal": "Contents/Helpers/vc-terminal",
                 "frame": "Contents/Helpers/vc-frame",
             },
+            "launch_contract": _canonical_launch_contract(),
         }
         _write_json(app / "Contents/Resources/product-manifest.json", product_manifest)
         _run_tool(
@@ -2464,6 +2955,24 @@ def _self_test() -> int:
         dmg = root / "synthetic.dmg"
         dmg.write_bytes(b"synthetic-dmg\n")
         walkaround = root / "walkaround.json"
+        release_output = root / "release-output.json"
+        release_signature = root / "release-output.json.sig"
+        release_payload = {
+            "product_manifest_sha256": _sha256(
+                app / "Contents/Resources/product-manifest.json"
+            ),
+            "dmg": {"sha256": _sha256(dmg), "size": dmg.stat().st_size},
+        }
+        _write_json(release_output, release_payload)
+        release_signature.write_bytes(b"self-test-release-signature")
+
+        def proof_artifact(artifact: Path) -> dict[str, Any]:
+            return {
+                "path": artifact.relative_to(root).as_posix(),
+                "sha256": _sha256(artifact),
+                "size": artifact.stat().st_size,
+            }
+
         proofs: dict[str, Any] = {}
         expected_commands = _expected_runner_commands(app, dmg)
         for name in sorted(_WALKAROUND_CHECKS):
@@ -2477,23 +2986,13 @@ def _self_test() -> int:
             stdout.write_text(f"{name}: passed\n", encoding="utf-8")
             stderr.write_text("", encoding="utf-8")
 
-            def proof_artifact(artifact: Path) -> dict[str, Any]:
-                return {
-                    "path": artifact.relative_to(root).as_posix(),
-                    "sha256": _sha256(artifact),
-                    "size": artifact.stat().st_size,
-                }
-
             proofs[name] = {
                 "producer": WALKAROUND_SEAL_ISSUER,
                 "probe_id": _walkaround_probe_id(name),
                 "command": expected_commands[name],
                 "exit_code": 0,
                 "inputs": {
-                    "dmg_sha256": _sha256(dmg),
-                    "product_manifest_sha256": _sha256(
-                        app / "Contents/Resources/product-manifest.json"
-                    ),
+                    "release_output_sha256": _sha256(release_output),
                 },
                 "before": proof_artifact(before),
                 "after": proof_artifact(after),
@@ -2503,18 +3002,10 @@ def _self_test() -> int:
         walkaround_payload: dict[str, Any] = {
             "schema": WALKAROUND_SCHEMA,
             "dmg_path": str(dmg),
-            "dmg_sha256": _sha256(dmg),
-            "dmg_size": dmg.stat().st_size,
             "mount_path": str(mount),
             "app_path": str(app),
-            "product_manifest_sha256": _sha256(
-                app / "Contents/Resources/product-manifest.json"
-            ),
-            "source_revisions": {
-                "vibecrafted": "2" * 40,
-                "vc-terminal": "4" * 40,
-                "vc-frame": "6" * 40,
-            },
+            "release_output": proof_artifact(release_output),
+            "release_signature": proof_artifact(release_signature),
             "proofs": proofs,
         }
         proof_digests = tuple(
@@ -2694,6 +3185,7 @@ def _self_test() -> int:
             trusted_runner_public_key=runner_public_key,
             attached_mounts={(dmg.resolve(), mount.resolve())},
             run_live_checks=False,
+            release_output_verifier=lambda *args, **kwargs: release_payload,
         )
 
     if expected_failures != [E_HASH, E_DEPENDENCY]:
@@ -2725,6 +3217,13 @@ def _parser() -> argparse.ArgumentParser:
         "walkaround", help="verify a mounted-DMG walk-around receipt"
     )
     walkaround.add_argument("path", type=Path)
+    release_output = commands.add_parser(
+        "release-output", help="verify the externally signed final release identity"
+    )
+    release_output.add_argument("path", type=Path)
+    release_output.add_argument("signature", type=Path)
+    release_output.add_argument("--app", type=Path, required=True)
+    release_output.add_argument("--dmg", type=Path, required=True)
     return parser
 
 
@@ -2749,6 +3248,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             validate_schema_document(_load_json(args.path))
         elif args.command == "walkaround":
             verify_walkaround(args.path)
+        elif args.command == "release-output":
+            verify_release_output(
+                args.path,
+                args.signature,
+                app_path=args.app,
+                dmg_path=args.dmg,
+            )
         else:  # pragma: no cover - argparse owns the command set.
             _fail(E_SCHEMA, f"unsupported command: {args.command}")
     except ProductContractError as exc:
