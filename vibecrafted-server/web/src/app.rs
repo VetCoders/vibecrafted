@@ -7,7 +7,37 @@ use leptos_router::path;
 
 use crate::chrome::{ServerFrame, ServerSection};
 use crate::run_detail::RunDetailPage;
-use crate::theme::{ThemeBridge, provide_theme_context};
+
+#[cfg(feature = "ssr")]
+fn theme_head_script() -> &'static str {
+    r#"(() => {
+  try {
+    const saved = localStorage.getItem('loct-theme');
+    document.documentElement.dataset.theme = saved === 'light' ? 'light' : 'dark';
+  } catch (_) {
+    document.documentElement.dataset.theme = 'dark';
+  }
+})();"#
+}
+
+#[cfg(feature = "ssr")]
+fn theme_control_script() -> &'static str {
+    r#"(() => {
+  const button = document.querySelector('.server-theme-toggle');
+  if (!button) return;
+  const apply = (theme) => {
+    const next = theme === 'light' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    button.textContent = next;
+    button.setAttribute('aria-pressed', String(next === 'light'));
+    try { localStorage.setItem('loct-theme', next); } catch (_) {}
+  };
+  apply(document.documentElement.dataset.theme);
+  button.addEventListener('click', () => {
+    apply(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
+  });
+})();"#
+}
 
 #[derive(Clone, Default)]
 struct DashboardData {
@@ -390,8 +420,7 @@ fn settlement_board(settlement: DashboardSettlement) -> impl IntoView {
 }
 
 #[cfg(feature = "ssr")]
-pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
-    use leptos::hydration::HydrationScripts;
+pub fn shell(_options: leptos::config::LeptosOptions) -> impl IntoView {
     use leptos_meta::MetaTags;
 
     const STYLE_TOKENS: &str = include_str!("../styles/tokens.css");
@@ -405,13 +434,14 @@ pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
                 <meta charset="utf-8"/>
                 <meta name="viewport" content="width=device-width, initial-scale=1"/>
                 <MetaTags/>
-                <HydrationScripts options=options/>
+                <script inner_html=theme_head_script()></script>
                 <style>{STYLE_TOKENS}</style>
                 <style>{STYLE_FONTS}</style>
                 <style>{STYLE_MAIN}</style>
             </head>
             <body>
                 <App/>
+                <script inner_html=theme_control_script()></script>
             </body>
         </html>
     }
@@ -420,11 +450,9 @@ pub fn shell(options: leptos::config::LeptosOptions) -> impl IntoView {
 #[component]
 pub fn App() -> impl IntoView {
     leptos_meta::provide_meta_context();
-    provide_theme_context();
 
     view! {
         <Router>
-            <ThemeBridge />
             <Routes fallback=NotFoundPage>
                 <Route path=path!("/") view=ConsolePage />
                 <Route path=path!("/runs") view=RunsPage />

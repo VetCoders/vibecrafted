@@ -5,8 +5,6 @@
 
 use leptos::prelude::*;
 
-use crate::theme::{Theme, use_theme};
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ServerSection {
     Overview,
@@ -29,8 +27,6 @@ impl ServerSection {
 
 #[component]
 pub fn ServerFrame(active: ServerSection, status: String, children: Children) -> impl IntoView {
-    let theme = use_theme();
-
     view! {
         <div class="server-app-shell">
             <header class="server-navbar">
@@ -52,10 +48,9 @@ pub fn ServerFrame(active: ServerSection, status: String, children: Children) ->
                             type="button"
                             class="server-theme-toggle"
                             aria-label="Toggle color theme"
-                            aria-pressed=move || theme.get() == Theme::Light
-                            on:click=move |_| theme.update(|current| *current = current.toggle())
+                            aria-pressed="false"
                         >
-                            {move || theme.get().code()}
+                            "dark"
                         </button>
                     </div>
                 </div>
