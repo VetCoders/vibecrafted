@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.parse
 import urllib.request
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -33,6 +34,7 @@ from .settlement_ledger import read_settlement_ledger
 
 SETTLEMENT_COUNTS_PIPE = "vc_settlement_counts"
 SETTLEMENT_REPLAY_INTERVAL_SECONDS = 5.0
+SETTLEMENT_DELIVERY_RETRY_BACKOFF_SECONDS = 1.0
 SETTLEMENT_BOARD_SCOPE = "retained_control_plane_snapshots"
 MAX_STATE_RESPONSE_BYTES = 8 * 1024 * 1024
 SETTLEMENT_BOARD_TRANSPORT_SCHEMA = "vibecrafted.settlement-board-transport.v1"
@@ -119,11 +121,17 @@ def _default_runner(
 
 
 def _read_server_state(server_url: str, timeout: float) -> Mapping[str, object]:
+    parsed_url = urllib.parse.urlsplit(server_url)
+    if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
+        raise SettlementBoardError("server URL must use http or https")
     request = urllib.request.Request(
         f"{server_url.rstrip('/')}/api/control/state",
         headers={"Accept": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    # The explicit scheme check above prevents urllib's local file transport.
+    with urllib.request.urlopen(  # nosemgrep: dynamic-urllib-use-detected
+        request, timeout=timeout
+    ) as response:
         body = response.read(MAX_STATE_RESPONSE_BYTES + 1)
     if len(body) > MAX_STATE_RESPONSE_BYTES:
         raise SettlementBoardError("server state response exceeds size limit")
@@ -172,7 +180,7 @@ class SettlementBoardPublisher:
         ledger_reader: LedgerReader = _read_ledger,
         env: Mapping[str, str] | None = None,
         timeout: float = 5.0,
-        retry_backoff: float = 300.0,
+        retry_backoff: float = SETTLEMENT_DELIVERY_RETRY_BACKOFF_SECONDS,
         clock: Clock = time.monotonic,
         transport_path: Path | None = None,
     ) -> None:

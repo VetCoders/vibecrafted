@@ -11,6 +11,7 @@ from vibecrafted_core.settlement_board import (
     ServerSettlementBoard,
     SettlementBoardError,
     SettlementBoardPublisher,
+    _read_server_state,
 )
 
 
@@ -58,6 +59,11 @@ def test_server_board_requires_canonical_scope_and_consistent_totals() -> None:
     wrong_total["settlement_counts"]["total_settled"] = 999
     with pytest.raises(SettlementBoardError, match="inconsistent"):
         ServerSettlementBoard.from_state(wrong_total)
+
+
+def test_server_reader_rejects_non_http_transport() -> None:
+    with pytest.raises(SettlementBoardError, match="http or https"):
+        _read_server_state("file:///etc/passwd", 1.0)
 
 
 def test_wire_displays_server_counts_not_local_historical_mountain(
@@ -223,3 +229,42 @@ def test_delivery_failure_is_backed_off_without_blocking_new_snapshot(
     assert publisher.refresh_and_flush().failed_sessions == ("live",)
     assert publisher.refresh_and_flush().deferred_sessions == ("live",)
     assert pipe_attempts == 1
+
+
+def test_default_delivery_backoff_retries_on_next_periodic_replay(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "vc-frame"
+    binary.touch()
+    now = [10.0]
+    pipe_attempts = 0
+
+    def runner(argv: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+        nonlocal pipe_attempts
+        del timeout
+        if "list-sessions" in argv:
+            return subprocess.CompletedProcess(
+                argv, 0, stdout="live [Created now]\n", stderr=""
+            )
+        pipe_attempts += 1
+        return subprocess.CompletedProcess(
+            argv,
+            1 if pipe_attempts == 1 else 0,
+            stdout="",
+            stderr="busy" if pipe_attempts == 1 else "",
+        )
+
+    publisher = SettlementBoardPublisher(
+        server_url="http://server.example:3025",
+        control_plane_root=tmp_path / "control_plane",
+        board_reader=lambda _url, _timeout: server_state(),
+        ledger_reader=lambda _path: ledger_state(),
+        runner=runner,
+        env={"VIBECRAFTED_VC_FRAME_BIN": str(binary)},
+        clock=lambda: now[0],
+    )
+
+    assert publisher.refresh_and_flush().failed_sessions == ("live",)
+    now[0] += 5.0
+    assert publisher.refresh_and_flush().delivered_sessions == ("live",)
+    assert pipe_attempts == 2
