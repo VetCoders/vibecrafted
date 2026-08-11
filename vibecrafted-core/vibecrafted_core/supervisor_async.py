@@ -372,6 +372,7 @@ class AsyncRunHandle:
     resume_command: str = ""
     heartbeat_monotonic: float = 0.0
     worker_identity: dict[str, object] | None = None
+    workspace_fields: dict[str, object] = field(default_factory=dict)
     operator_stopped: bool = False
     operator_stop_reason: str = ""
 
@@ -546,6 +547,7 @@ class AsyncSupervisor:
             model_override_skip_reason=str(
                 model_receipt.get("model_override_skip_reason") or ""
             ),
+            workspace_fields=dict(workspace_fields),
         )
         try:
             handle.pgid = os.getpgid(process.pid)
@@ -1176,6 +1178,9 @@ class AsyncSupervisor:
             "event_kind": EventKind.LIFECYCLE.value,
             "state": state.value,
         }
+        handle = self._runs.get(run_id)
+        if handle is not None:
+            event_payload.update(handle.workspace_fields)
         if payload:
             event_payload.update(payload)
         await asyncio.to_thread(

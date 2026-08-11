@@ -55,7 +55,7 @@ _reset='\033[0m'
 
 _agents=(claude codex agy junie grok)
 _modes=(implement research review plan prompt observe await stop)
-_skills=(audit decorate delegate dou followup guard hydrate implement intents justdo marbles ownership partner polarize prune release research review scaffold trust workflow)
+_skills=(audit canary decorate delegate dou followup guard hydrate implement intents justdo marbles ownership partner polarize prune release research review scaffold trust workflow)
 
 _script_repo_root() {
   local script_dir

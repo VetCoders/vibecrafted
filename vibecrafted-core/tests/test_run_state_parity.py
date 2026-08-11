@@ -49,7 +49,7 @@ def _wait_for_active_projection(
     run_id: str,
     label: str,
     *,
-    timeout: float = 1.5,
+    timeout: float = 5.0,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     last: dict[str, Any] | None = None
