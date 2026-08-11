@@ -2613,6 +2613,44 @@ a.control-run-id:focus-visible {
   font-size: 9px;
 }
 
+.control-run-open {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.control-run-open:hover,
+.control-run-open:focus-visible {
+  color: var(--text-primary);
+  outline: none;
+}
+
+.overview-structure,
+.route-page-shell > .control-panel,
+.route-page-shell > .control-plane-meta {
+  width: min(100%, var(--max-w-page));
+  margin-inline: auto;
+}
+
+.overview-structure {
+  margin-top: 14px;
+}
+
+.route-page-shell {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.route-page-description {
+  max-width: 720px;
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .control-badge {
   padding: 3px 7px;
   border-color: var(--border-subtle);
@@ -2810,7 +2848,7 @@ a.control-run-id:focus-visible {
     bottom: 0;
     z-index: 60;
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     min-height: 58px;
     padding: 4px 5px max(4px, env(safe-area-inset-bottom));
     border-top: 1px solid var(--border-subtle);

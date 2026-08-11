@@ -7,7 +7,6 @@ use leptos_router::path;
 
 use crate::chrome::{ServerFrame, ServerSection};
 use crate::run_detail::RunDetailPage;
-use crate::scaffold::ScaffoldEditorPage;
 use crate::theme::{ThemeBridge, provide_theme_context};
 
 #[derive(Clone, Default)]
@@ -214,7 +213,7 @@ fn run_cards(runs: Vec<DashboardRun>) -> impl IntoView {
             view! {
                 <article class="control-run-row">
                     <div class="control-run-primary">
-                        <a class="control-run-id" href=detail_href>{run.run_id}</a>
+                        <a class="control-run-id" href=detail_href.clone()>{run.run_id}</a>
                         <span class="control-run-root">{run.root}</span>
                     </div>
                     <div class="control-run-tags">
@@ -229,6 +228,7 @@ fn run_cards(runs: Vec<DashboardRun>) -> impl IntoView {
                         <span>{run.updated_at}</span>
                         <span>{report_label}</span>
                         <span class="control-run-error">{run.last_error}</span>
+                        <a class="control-run-open" href=detail_href>"Open transcript →"</a>
                     </div>
                 </article>
             }
@@ -363,19 +363,19 @@ fn settlement_board(settlement: DashboardSettlement) -> impl IntoView {
                 <strong>{settlement.scope.clone()}</strong>
             </div>
             <dl class="operator-summary-cells">
-                <a class="operator-summary-cell" href="#fleet">
+                <a class="operator-summary-cell" href="/runs">
                     <dt>"alive"</dt>
                     <dd>{settlement.active}</dd>
                 </a>
-                <a class="operator-summary-cell" href="#fleet">
+                <a class="operator-summary-cell" href="/runs">
                     <dt>"final"</dt>
                     <dd>{settlement.f}</dd>
                 </a>
-                <a class="operator-summary-cell" href="#fleet">
+                <a class="operator-summary-cell" href="/runs">
                     <dt>"failed"</dt>
                     <dd>{settlement.x}</dd>
                 </a>
-                <a class="operator-summary-cell" href="#fleet">
+                <a class="operator-summary-cell" href="/runs">
                     <dt>"attention"</dt>
                     <dd>{settlement.n}</dd>
                 </a>
@@ -425,10 +425,12 @@ pub fn App() -> impl IntoView {
     view! {
         <Router>
             <ThemeBridge />
-            <Routes fallback=|| view! { <ConsolePage /> }>
+            <Routes fallback=NotFoundPage>
                 <Route path=path!("/") view=ConsolePage />
+                <Route path=path!("/runs") view=RunsPage />
+                <Route path=path!("/lifecycle") view=LifecyclePage />
+                <Route path=path!("/activity") view=ActivityPage />
                 <Route path=path!("/run/:run_id") view=RunDetailPage />
-                <Route path=path!("/scaffold") view=ScaffoldEditorPage />
             </Routes>
         </Router>
     }
@@ -449,32 +451,20 @@ pub fn ConsolePage() -> impl IntoView {
 }
 
 fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
-    let control_plane = dashboard.control_plane.clone();
-    let generated_at = dashboard.generated_at.clone();
     // Forgotten-gem filters: quarantine smoke/terminal/stale-marbles noise and
     // non-actionable lifecycle rows before they hit the operator hero.
     let active_runs = operator_active_runs(dashboard.active_runs);
-    let stalled_runs = dashboard.stalled_runs;
-    let recent_runs = dashboard.recent_runs;
     let action_runs = operator_action_runs(dashboard.lifecycle_runs);
-    let warnings = dashboard.warnings;
-    let events = dashboard.events;
     let loctree_report = dashboard.loctree_report;
 
     let active_count = active_runs.len();
-    let stalled_count = stalled_runs.len();
-    let recent_count = recent_runs.len();
-    let warning_count = warnings.len();
-    let event_count = events.len();
+    let stalled_count = dashboard.stalled_runs.len();
+    let recent_count = dashboard.recent_runs.len();
+    let warning_count = dashboard.warnings.len();
     let action_count = action_runs.len();
 
     let settlement = dashboard.settlement;
     let attention_count = settlement.n;
-    let no_active_runs = active_runs.is_empty();
-    let no_stalled_runs = stalled_runs.is_empty();
-    let no_action_runs = action_runs.is_empty();
-    let no_warnings = warnings.is_empty();
-    let no_events = events.is_empty();
     let loctree_link = if loctree_report.is_empty() {
         None
     } else {
@@ -497,8 +487,11 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
                                 "Live runs, lifecycle decisions, transcripts, and scaffold artifacts in one navigable operator desk."
                             </p>
                             <p class="server-console-links">
-                                <a class="server-console-link server-console-link-primary" href="#fleet">
+                                <a class="server-console-link server-console-link-primary" href="/runs">
                                     "Inspect live runs"
+                                </a>
+                                <a class="server-console-link" href="/lifecycle">
+                                    "Lifecycle decisions"
                                 </a>
                                 <a class="server-console-link" href="/scaffold">
                                     "Open scaffold studio"
@@ -520,23 +513,23 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
                                 <span class="server-console-panel-state">"live projection"</span>
                             </div>
                             <dl class="operator-now-cells">
-                                <a class="operator-summary-cell" href="#fleet">
+                                <a class="operator-summary-cell" href="/runs">
                                     <dt>"alive"</dt>
                                     <dd>{active_count}</dd>
                                 </a>
-                                <a class="operator-summary-cell" href="#lifecycle">
+                                <a class="operator-summary-cell" href="/lifecycle">
                                     <dt>"next"</dt>
                                     <dd>{action_count}</dd>
                                 </a>
-                                <a class="operator-summary-cell" href="#fleet">
+                                <a class="operator-summary-cell" href="/activity">
                                     <dt>"warnings"</dt>
                                     <dd>{warning_count}</dd>
                                 </a>
-                                <a class="operator-summary-cell" href="#context">
+                                <a class="operator-summary-cell" href="/runs">
                                     <dt>"stalled"</dt>
                                     <dd>{stalled_count}</dd>
                                 </a>
-                                <a class="operator-summary-cell" href="#context">
+                                <a class="operator-summary-cell" href="/runs">
                                     <dt>"recent"</dt>
                                     <dd>{recent_count}</dd>
                                 </a>
@@ -549,80 +542,7 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
                     {settlement_board(settlement)}
                 </div>
 
-                <section class="control-plane-band" id="fleet" aria-label="Control-plane dashboard">
-                <div class="control-plane-meta">
-                    <span>{control_plane}</span>
-                    <span>{generated_at}</span>
-                </div>
-
-                <div class="control-dashboard-grid">
-                    <section class="control-panel" aria-label="Active runs">
-                        <div class="control-panel-head">
-                            <h2>"Active"</h2>
-                            <span>{active_count}</span>
-                        </div>
-                        <p class="control-empty" hidden={!no_active_runs}>"No live workers need the hero right now."</p>
-                        <div class="control-run-list">
-                            {run_cards(active_runs)}
-                        </div>
-                    </section>
-
-                    <section class="control-panel" aria-label="Stalled runs">
-                        <div class="control-panel-head">
-                            <h2>"Stalled"</h2>
-                            <span>{stalled_count}</span>
-                        </div>
-                        <p class="control-empty" hidden={!no_stalled_runs}>"No stalled runs."</p>
-                        {run_cards(stalled_runs)}
-                    </section>
-
-                    <section class="control-panel" aria-label="Warnings">
-                        <div class="control-panel-head">
-                            <h2>"Warnings"</h2>
-                            <span>{warning_count}</span>
-                        </div>
-                        <p class="control-empty" hidden={!no_warnings}>"No warnings."</p>
-                        <ul class="control-warning-list">
-                            {warning_rows(warnings)}
-                        </ul>
-                    </section>
-                </div>
-
-                <section class="control-panel control-panel-wide" id="lifecycle" aria-label="Action plan">
-                    <div class="control-panel-head">
-                        <h2>"Action Plan"</h2>
-                        <span>{action_count}</span>
-                    </div>
-                    <p class="control-empty" hidden={!no_action_runs}>"No lifecycle baton currently needs an operator action."</p>
-                    <div class="operator-action-list">
-                        {action_cards(action_runs)}
-                    </div>
-                </section>
-
-                <div class="control-dashboard-grid" id="context">
-                    <section class="control-panel" aria-label="Recent state view">
-                        <div class="control-panel-head">
-                            <h2>"Recent truth"</h2>
-                            <span>{recent_count}</span>
-                        </div>
-                        <div class="control-run-list">
-                            {run_cards(recent_runs)}
-                        </div>
-                    </section>
-
-                    <section class="control-panel" aria-label="Event tail">
-                        <div class="control-panel-head">
-                            <h2>"Runtime context"</h2>
-                            <span>{event_count}</span>
-                        </div>
-                        <p class="control-empty" hidden={!no_events}>"No events in the current tail."</p>
-                        <ul class="control-event-list">
-                            {event_rows(events)}
-                        </ul>
-                    </section>
-                </div>
-
-                <section class="control-panel control-panel-wide" id="structure" aria-label="Structure">
+                <section class="control-panel control-panel-wide overview-structure" aria-label="Structure">
                     <div class="control-panel-head">
                         <h2>"Structure"</h2>
                         <span>"Loctree + scaffold"</span>
@@ -637,12 +557,128 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
                         "No Loctree report is known for the roots in the canonical state view."
                     </p>
                 </section>
-                </section>
 
                 <footer class="server-console-footer">
                     <span>"Vibecrafted · Vetcoders · LibraxisAI"</span>
                     <span>"control-plane truth · operator-safe reads"</span>
                 </footer>
+            </div>
+        </ServerFrame>
+    }
+}
+
+fn route_header(
+    eyebrow: &'static str,
+    title: &'static str,
+    description: &'static str,
+) -> impl IntoView {
+    view! {
+        <section class="run-detail-header route-page-header">
+            <div>
+                <p class="section-eyebrow">{eyebrow}</p>
+                <h1 class="run-detail-title">{title}</h1>
+                <p class="route-page-description">{description}</p>
+            </div>
+        </section>
+    }
+}
+
+#[component]
+pub fn RunsPage() -> impl IntoView {
+    let dashboard = load_dashboard_data();
+    let control_plane = dashboard.control_plane;
+    let generated_at = dashboard.generated_at;
+    let active = operator_active_runs(dashboard.active_runs);
+    let stalled = dashboard.stalled_runs;
+    let recent = dashboard.recent_runs;
+    let active_count = active.len();
+    let stalled_count = stalled.len();
+    let recent_count = recent.len();
+
+    view! {
+        <Title text="live runs - vc-server" />
+        <Meta name="description" content="Current agents and their human transcript tails." />
+        <ServerFrame active=ServerSection::Runs status=format!("{active_count} live")>
+            <div class="server-console-shell route-page-shell">
+                {route_header("Runtime", "Live runs", "Choose a current agent to open its bounded transcript.human.log tail and full control-plane detail.")}
+                <p class="control-plane-meta"><span>{control_plane}</span><span>{generated_at}</span></p>
+                <section class="control-panel control-panel-wide" aria-label="Active runs">
+                    <div class="control-panel-head"><h2>"Current agents"</h2><span>{active_count}</span></div>
+                    <p class="control-empty" hidden={active_count != 0}>"No live agents right now."</p>
+                    <div class="control-run-list">{run_cards(active)}</div>
+                </section>
+                <section class="control-panel control-panel-wide" aria-label="Stalled runs">
+                    <div class="control-panel-head"><h2>"Stalled"</h2><span>{stalled_count}</span></div>
+                    <p class="control-empty" hidden={stalled_count != 0}>"No stalled runs."</p>
+                    <div class="control-run-list">{run_cards(stalled)}</div>
+                </section>
+                <section class="control-panel control-panel-wide" aria-label="Recent state view">
+                    <div class="control-panel-head"><h2>"Recent truth"</h2><span>{recent_count}</span></div>
+                    <p class="control-empty" hidden={recent_count != 0}>"No recent settled runs."</p>
+                    <div class="control-run-list">{run_cards(recent)}</div>
+                </section>
+            </div>
+        </ServerFrame>
+    }
+}
+
+#[component]
+pub fn LifecyclePage() -> impl IntoView {
+    let dashboard = load_dashboard_data();
+    let actions = operator_action_runs(dashboard.lifecycle_runs);
+    let count = actions.len();
+    view! {
+        <Title text="lifecycle - vc-server" />
+        <Meta name="description" content="Lifecycle batons that need an operator decision." />
+        <ServerFrame active=ServerSection::Lifecycle status=format!("{count} next")>
+            <div class="server-console-shell route-page-shell">
+                {route_header("Control plane", "Lifecycle", "Open a baton to inspect its current stage, next agent, controls, and delivery state.")}
+                <section class="control-panel control-panel-wide" aria-label="Action plan">
+                    <div class="control-panel-head"><h2>"Action plan"</h2><span>{count}</span></div>
+                    <p class="control-empty" hidden={count != 0}>"No lifecycle baton currently needs an operator action."</p>
+                    <div class="operator-action-list">{action_cards(actions)}</div>
+                </section>
+            </div>
+        </ServerFrame>
+    }
+}
+
+#[component]
+pub fn ActivityPage() -> impl IntoView {
+    let dashboard = load_dashboard_data();
+    let warnings = dashboard.warnings;
+    let events = dashboard.events;
+    let warning_count = warnings.len();
+    let event_count = events.len();
+    view! {
+        <Title text="activity - vc-server" />
+        <Meta name="description" content="Warnings and current control-plane event tail." />
+        <ServerFrame active=ServerSection::Activity status=format!("{warning_count} warnings")>
+            <div class="server-console-shell route-page-shell">
+                {route_header("Runtime", "Activity", "Warnings and the current event tail, separated from agent selection and lifecycle decisions.")}
+                <section class="control-panel control-panel-wide" aria-label="Warnings">
+                    <div class="control-panel-head"><h2>"Warnings"</h2><span>{warning_count}</span></div>
+                    <p class="control-empty" hidden={warning_count != 0}>"No warnings."</p>
+                    <ul class="control-warning-list">{warning_rows(warnings)}</ul>
+                </section>
+                <section class="control-panel control-panel-wide" aria-label="Event tail">
+                    <div class="control-panel-head"><h2>"Runtime context"</h2><span>{event_count}</span></div>
+                    <p class="control-empty" hidden={event_count != 0}>"No events in the current tail."</p>
+                    <ul class="control-event-list">{event_rows(events)}</ul>
+                </section>
+            </div>
+        </ServerFrame>
+    }
+}
+
+#[component]
+pub fn NotFoundPage() -> impl IntoView {
+    view! {
+        <Title text="not found - vc-server" />
+        <ServerFrame active=ServerSection::Overview status="route not found".to_string()>
+            <div class="server-console-shell route-page-shell">
+                {route_header("404", "Route not found", "This server route does not exist. Use the workspace navigation instead of falling back to a misleading dashboard.")}
+                <p class="server-console-links"><a class="server-console-link server-console-link-primary" href="/">"Back to overview"</a></p>
             </div>
         </ServerFrame>
     }
@@ -660,7 +696,10 @@ mod tests {
     use leptos::prelude::*;
     use serde_json::{Value, json};
 
-    use super::{DashboardRun, console_dashboard, load_dashboard_data_from, operator_active_runs};
+    use super::{
+        ActivityPage, DashboardRun, LifecyclePage, RunsPage, console_dashboard,
+        load_dashboard_data_from, operator_active_runs, run_cards,
+    };
     use crate::control::api::state_payload;
     use crate::theme::provide_theme_context;
 
@@ -788,40 +827,59 @@ mod tests {
         assert!(html.contains("http://127.0.0.1:8033/"));
         assert!(html.contains("Vibecrafted server navigation"));
         assert!(html.contains("server-sidebar"));
-        assert!(html.contains("href=\"/#fleet\""));
+        assert!(html.contains("href=\"/runs\""));
+        assert!(html.contains("href=\"/lifecycle\""));
+        assert!(html.contains("href=\"/activity\""));
         assert!(html.contains("href=\"/scaffold\""));
-        assert!(!html.contains("aria-label=\"All runs\""));
+        assert!(!html.contains("href=\"#fleet\""));
         let board_position = html
             .find("aria-label=\"Operator summary\"")
             .expect("summary");
-        let active_position = html
-            .find("aria-label=\"Active runs\"")
-            .expect("active runs");
-        let warnings_position = html.find("aria-label=\"Warnings\"").expect("warnings");
-        let action_position = html
-            .find("aria-label=\"Action plan\"")
-            .expect("action plan");
-        let recent_position = html
-            .find("aria-label=\"Recent state view\"")
-            .expect("recent state");
-        let events_position = html.find("aria-label=\"Event tail\"").expect("event tail");
         let structure_position = html.find("aria-label=\"Structure\"").expect("structure");
-        assert!(
-            board_position < active_position,
-            "operator summary must be the first fleet summary"
-        );
-        assert!(board_position < warnings_position);
-        assert!(active_position < action_position);
-        assert!(warnings_position < action_position);
-        assert!(action_position < recent_position);
-        assert!(recent_position < events_position);
-        assert!(events_position < structure_position);
+        assert!(board_position < structure_position);
+        assert!(!html.contains("aria-label=\"Active runs\""));
+        assert!(!html.contains("aria-label=\"Warnings\""));
+        assert!(!html.contains("aria-label=\"Action plan\""));
+        assert!(!html.contains("aria-label=\"Recent state view\""));
+        assert!(!html.contains("aria-label=\"Event tail\""));
         assert_eq!(board["f"], 1);
         assert_eq!(board["x"], 2);
         assert_eq!(board["invalid"], 1);
         assert_eq!(board["n"], 1);
 
         fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn navigation_uses_dedicated_views_and_run_cards_open_human_transcripts() {
+        let owner = Owner::new();
+        let (runs, lifecycle, activity, card) = owner.with(|| {
+            leptos_meta::provide_meta_context();
+            provide_theme_context();
+            let card = run_cards(vec![DashboardRun {
+                run_id: "impl-live-agent".into(),
+                agent: "codex".into(),
+                health: "active".into(),
+                state: "running".into(),
+                ..DashboardRun::default()
+            }])
+            .to_html();
+            (
+                RunsPage().to_html(),
+                LifecyclePage().to_html(),
+                ActivityPage().to_html(),
+                card,
+            )
+        });
+
+        assert!(runs.contains("Live runs"));
+        assert!(runs.contains("Current agents"));
+        assert!(runs.contains("transcript.human.log"));
+        assert!(lifecycle.contains("Action plan"));
+        assert!(activity.contains("Runtime context"));
+        assert!(activity.contains("Warnings"));
+        assert!(card.contains("href=\"/run/impl-live-agent\""));
+        assert!(card.contains("Open transcript"));
     }
 
     #[test]

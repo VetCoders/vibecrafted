@@ -48,10 +48,10 @@ struct RunDetailData {
 }
 
 #[derive(Clone, Default)]
-struct TranscriptPreview {
-    body: String,
-    available: bool,
-    truncated: bool,
+pub(crate) struct TranscriptPreview {
+    pub(crate) body: String,
+    pub(crate) available: bool,
+    pub(crate) truncated: bool,
 }
 
 /// Flat, render-ready projection of [`control_core::RunStatus`]. Strings stay
@@ -147,7 +147,10 @@ fn load_run_detail(run_id: &str) -> RunDetailData {
 }
 
 #[cfg(feature = "ssr")]
-fn load_human_transcript(plane: &control_core::ControlPlane, run_id: &str) -> TranscriptPreview {
+pub(crate) fn load_human_transcript(
+    plane: &control_core::ControlPlane,
+    run_id: &str,
+) -> TranscriptPreview {
     use std::fs::{self, File};
     use std::io::{Read, Seek, SeekFrom};
 
@@ -429,7 +432,52 @@ fn event_rows(events: Vec<RunDetailEvent>) -> impl IntoView {
         .collect_view()
 }
 
-fn transcript_panel(preview: TranscriptPreview) -> impl IntoView {
+fn transcript_tail_script() -> &'static str {
+    r#"(() => {
+  const panel = document.querySelector('[data-live-transcript]');
+  if (!panel || !panel.dataset.tailUrl) return;
+  const output = panel.querySelector('[data-transcript-output]');
+  const empty = panel.querySelector('[data-transcript-empty]');
+  const state = panel.querySelector('[data-transcript-state]');
+  let lastBody = output.textContent;
+  let requestInFlight = false;
+
+  async function refreshTranscript() {
+    if (requestInFlight || document.hidden) return;
+    requestInFlight = true;
+    try {
+      const response = await fetch(panel.dataset.tailUrl, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const tail = await response.json();
+      const body = tail.body || '';
+      const hasBody = Boolean(tail.available && body.trim());
+      if (body !== lastBody) {
+        const pinnedToBottom = output.scrollHeight - output.scrollTop - output.clientHeight < 40;
+        output.textContent = body;
+        lastBody = body;
+        if (pinnedToBottom) output.scrollTop = output.scrollHeight;
+      }
+      output.hidden = !hasBody;
+      empty.hidden = hasBody;
+      empty.textContent = tail.available
+        ? 'The human transcript exists but is empty.'
+        : 'No bounded human transcript is available for this run yet.';
+      state.textContent = tail.available
+        ? (tail.truncated ? 'live · latest 160 lines' : 'live · complete tail')
+        : 'live · waiting';
+    } catch (_) {
+      state.textContent = 'live · reconnecting';
+    } finally {
+      requestInFlight = false;
+    }
+  }
+
+  refreshTranscript();
+  window.setInterval(refreshTranscript, 2000);
+})();"#
+}
+
+fn transcript_panel(run_id: String, preview: TranscriptPreview) -> impl IntoView {
     let state = if !preview.available {
         "not recorded"
     } else if preview.truncated {
@@ -438,24 +486,35 @@ fn transcript_panel(preview: TranscriptPreview) -> impl IntoView {
         "complete tail"
     };
     let empty = preview.body.trim().is_empty();
+    let tail_url = if is_safe_run_id(&run_id) {
+        format!("/api/control/runs/{run_id}/transcript")
+    } else {
+        String::new()
+    };
 
     view! {
-        <section class="control-panel control-panel-wide transcript-panel" aria-label="Human transcript preview">
+        <section
+            class="control-panel control-panel-wide transcript-panel"
+            aria-label="Human transcript preview"
+            data-live-transcript
+            data-tail-url=tail_url
+        >
             <div class="control-panel-head">
                 <div>
                     <p class="mono-cap">"Live worker voice"</p>
                     <h2>"transcript.human.log"</h2>
                 </div>
-                <span>{state}</span>
+                <span data-transcript-state>{format!("live · {state}")}</span>
             </div>
-            <p class="control-empty" hidden={preview.available && !empty}>
+            <p class="control-empty" data-transcript-empty hidden={preview.available && !empty}>
                 {if preview.available {
                     "The human transcript exists but is empty."
                 } else {
                     "No bounded human transcript is available for this run."
                 }}
             </p>
-            <pre class="transcript-preview" hidden={!preview.available || empty}>{preview.body}</pre>
+            <pre class="transcript-preview" data-transcript-output hidden={!preview.available || empty}>{preview.body}</pre>
+            <script inner_html=transcript_tail_script()></script>
         </section>
     }
 }
@@ -512,7 +571,7 @@ fn run_detail_view(detail: RunDetailData) -> impl IntoView {
                     </p>
                 </section>
 
-                {transcript_panel(transcript)}
+                {transcript_panel(run_id.clone(), transcript)}
 
                 {match (run, lifecycle) {
                     (Some(run), _) => leptos::either::EitherOf3::A(run_body(run)),
@@ -870,6 +929,9 @@ mod tests {
         assert!(html.contains("human-line-239"));
         assert!(!html.contains("human-line-000"));
         assert!(!html.contains("\u{1b}[36m"));
+        assert!(html.contains(&format!("/api/control/runs/{run_id}/transcript")));
+        assert!(html.contains("setInterval(refreshTranscript, 2000)"));
+        assert!(html.contains("data-transcript-output"));
 
         fs::remove_dir_all(home).ok();
     }

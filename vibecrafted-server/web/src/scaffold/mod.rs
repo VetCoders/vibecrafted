@@ -1,27 +1,3 @@
-use leptos::prelude::*;
-use leptos_meta::{Link, Meta, Title};
-
-#[component]
-pub fn ScaffoldEditorPage() -> impl IntoView {
-    view! {
-        <Title text="vibecrafted server - scaffold review" />
-        <Meta
-            name="description"
-            content="Editable multi-tab vc-scaffold artifact review surface."
-        />
-        <Link rel="preload" as_="font" type_="font/woff2" href="/fonts/inter-var-latin.woff2" crossorigin="anonymous" />
-        <Link rel="preload" as_="font" type_="font/woff2" href="/fonts/jetbrains-mono-var-latin.woff2" crossorigin="anonymous" />
-
-        <main class="scaffold-editor-shell">
-            <iframe
-                class="scaffold-editor-frame"
-                title="Scaffold artifact editor"
-                src="/scaffold/editor"
-            />
-        </main>
-    }
-}
-
 #[cfg(feature = "ssr")]
 pub mod api {
     use std::collections::BTreeSet;
@@ -95,6 +71,8 @@ pub mod api {
 
     pub fn scaffold_routes() -> Router<leptos::config::LeptosOptions> {
         Router::<leptos::config::LeptosOptions>::new()
+            .route("/scaffold", get(editor))
+            .route("/scaffold/", get(editor))
             .route("/scaffold/editor", get(editor))
             .route("/api/scaffold/plans", get(plans))
             .route("/api/scaffold/artifacts", get(artifacts))
@@ -339,7 +317,7 @@ pub mod api {
             "status-saved"
         };
         let location = format!(
-            "/scaffold/editor?org={}&repo={}&day={}&plan_id={}#{status}",
+            "/scaffold?org={}&repo={}&day={}&plan_id={}#{status}",
             url_component(org),
             url_component(repo),
             url_component(day),
@@ -496,8 +474,9 @@ pub mod api {
     </a>
     <nav class="studio-global-nav" aria-label="Server routes">
       <a href="/" target="_top">Overview</a>
-      <a href="/#fleet" target="_top">Runs</a>
-      <a href="/#lifecycle" target="_top">Lifecycle</a>
+      <a href="/runs" target="_top">Runs</a>
+      <a href="/lifecycle" target="_top">Lifecycle</a>
+      <a href="/activity" target="_top">Activity</a>
       <a class="is-active" href="/scaffold" target="_top">Scaffold</a>
     </nav>
     <a class="studio-back-link" href="/" target="_top">← Back to console</a>
@@ -677,8 +656,9 @@ pub mod api {
       </a>
       <div class="library-nav-links">
         <a href="/" target="_top">Overview</a>
-        <a href="/#fleet" target="_top">Runs</a>
-        <a href="/#lifecycle" target="_top">Lifecycle</a>
+        <a href="/runs" target="_top">Runs</a>
+        <a href="/lifecycle" target="_top">Lifecycle</a>
+        <a href="/activity" target="_top">Activity</a>
         <span class="library-mode">Scaffold</span>
       </div>
     </nav>
@@ -739,7 +719,7 @@ pub mod api {
     fn plan_picker_card(index: usize, card: &ScaffoldPlanCard) -> String {
         let plan = &card.plan;
         let href = format!(
-            "/scaffold/editor?org={}&repo={}&day={}&plan_id={}",
+            "/scaffold?org={}&repo={}&day={}&plan_id={}",
             url_component(&plan.org),
             url_component(&plan.repo),
             url_component(&plan.day),
@@ -840,7 +820,7 @@ pub mod api {
     </a>
     <div class="library-nav-links">
       <a href="/" target="_top">Overview</a>
-      <a class="back-link" href="/scaffold/editor">← Scaffold library</a>
+      <a class="back-link" href="/scaffold">← Scaffold library</a>
     </div>
   </nav>
   <header class="blocked-plan-head">
@@ -2256,7 +2236,7 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
             assert_eq!(response.status(), StatusCode::SEE_OTHER);
             assert_eq!(
                 response.headers().get(header::LOCATION).unwrap(),
-                "/scaffold/editor?org=vetcoders&repo=vibecrafted&day=2026_0615&plan_id=plan-a#status-error"
+                "/scaffold?org=vetcoders&repo=vibecrafted&day=2026_0615&plan_id=plan-a#status-error"
             );
         }
 
@@ -2344,7 +2324,7 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
             assert!(html.contains(r#"class="studio-navbar""#));
             assert!(html.contains(r#"href="/" target="_top""#));
             assert!(html.contains("← Back to console"));
-            assert!(html.contains(r#"href="/#fleet" target="_top""#));
+            assert!(html.contains(r#"href="/runs" target="_top""#));
             assert!(html.contains(r##""#artifact/" + encodeURIComponent(panel.id)"##));
         }
 
@@ -2417,7 +2397,7 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
             assert!(html.contains("id=\"plan-search\""));
             assert!(html.contains(".normalize(\"NFD\")"));
             assert!(html.contains(
-                "/scaffold/editor?org=vetcoders&amp;repo=vibecrafted&amp;day=2026_0727&amp;plan_id=runtime-truth-v1"
+                "/scaffold?org=vetcoders&amp;repo=vibecrafted&amp;day=2026_0727&amp;plan_id=runtime-truth-v1"
             ));
             assert!(!html.contains("scaffold plan selection required"));
         }
