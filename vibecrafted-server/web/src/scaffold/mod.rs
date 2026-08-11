@@ -488,9 +488,24 @@ pub mod api {
 <style>{}</style>
 </head>
 <body>
+<div class="studio-app-shell">
+  <header class="studio-navbar">
+    <a class="studio-navbar-brand" href="/" target="_top">
+      <span class="studio-brand-mark" aria-hidden="true">⌁</span>
+      <span><strong>Vibecrafted server</strong><small>scaffold studio</small></span>
+    </a>
+    <nav class="studio-global-nav" aria-label="Server routes">
+      <a href="/" target="_top">Overview</a>
+      <a href="/#fleet" target="_top">Runs</a>
+      <a href="/#lifecycle" target="_top">Lifecycle</a>
+      <a class="is-active" href="/scaffold" target="_top">Scaffold</a>
+    </nav>
+    <a class="studio-back-link" href="/" target="_top">← Back to console</a>
+  </header>
+
 <main class="review-shell" data-first-artifact="{}">
   <nav class="review-sidebar" aria-label="Scaffold artifacts">
-    <div class="brand">vibecrafted server</div>
+    <div class="brand">Artifact index</div>
     <div class="summary">
       <strong>{}</strong>
       <span>{} / {} checkpointed</span>
@@ -542,6 +557,7 @@ pub mod api {
     </div>
   </aside>
 </main>
+</div>
 {}
 {}
 {}
@@ -655,8 +671,16 @@ pub mod api {
 <main class="plan-library">
   <header class="library-header">
     <nav class="library-nav" aria-label="Scaffold navigation">
-      <a class="brand" href="/">vibecrafted server</a>
-      <span class="library-mode">scaffold library</span>
+      <a class="studio-navbar-brand" href="/" target="_top">
+        <span class="studio-brand-mark" aria-hidden="true">⌁</span>
+        <span><strong>Vibecrafted server</strong><small>scaffold library</small></span>
+      </a>
+      <div class="library-nav-links">
+        <a href="/" target="_top">Overview</a>
+        <a href="/#fleet" target="_top">Runs</a>
+        <a href="/#lifecycle" target="_top">Lifecycle</a>
+        <span class="library-mode">Scaffold</span>
+      </div>
     </nav>
     <div class="library-intro">
       <div>
@@ -810,8 +834,14 @@ pub mod api {
 <body>
 <main class="blocked-plan-shell">
   <nav class="library-nav">
-    <a class="brand" href="/">vibecrafted server</a>
-    <a class="back-link" href="/scaffold/editor">← scaffold library</a>
+    <a class="studio-navbar-brand" href="/" target="_top">
+      <span class="studio-brand-mark" aria-hidden="true">⌁</span>
+      <span><strong>Vibecrafted server</strong><small>blocked scaffold</small></span>
+    </a>
+    <div class="library-nav-links">
+      <a href="/" target="_top">Overview</a>
+      <a class="back-link" href="/scaffold/editor">← Scaffold library</a>
+    </div>
   </nav>
   <header class="blocked-plan-head">
     <div>
@@ -925,7 +955,7 @@ pub mod api {
             r#"<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><title>Scaffold review unavailable</title><style>{}</style></head>
-<body><main class="empty"><h1>Scaffold review</h1><p>{}</p></main></body>
+<body><main class="empty"><a class="back-link" href="/" target="_top">← Back to console</a><h1>Scaffold review</h1><p>{}</p></main></body>
 </html>"#,
             editor_css(),
             escape_html(message)
@@ -1637,6 +1667,12 @@ pub mod api {
   function panelIdFromHash() {
     var h = (location.hash || "").replace(/^#/, "");
     if (!h || h.indexOf("status-") === 0) return "";
+    if (h.indexOf("artifact/") === 0) {
+      try { return decodeURIComponent(h.slice("artifact/".length)); }
+      catch (_) { return ""; }
+    }
+    // Legacy `#mission` links remain readable, but new hashes deliberately do
+    // not equal a panel DOM id so browsers cannot anchor-scroll the studio.
     return h;
   }
 
@@ -1679,6 +1715,8 @@ pub mod api {
 
   function activate(id, opts) {
     opts = opts || {};
+    var restorePageX = opts.resetPageScroll ? 0 : window.scrollX;
+    var restorePageY = opts.resetPageScroll ? 0 : window.scrollY;
     var panel = findPanel(id);
     if (!panel) {
       if (firstId && id !== firstId) return activate(firstId, opts);
@@ -1769,17 +1807,35 @@ pub mod api {
     updateStats(panel);
 
     if (!opts.skipHash) {
-      var next = "#" + panel.id;
+      var next = "#artifact/" + encodeURIComponent(panel.id);
       if (location.hash !== next) {
         if (history.replaceState) history.replaceState(null, "", next);
-        else location.hash = panel.id;
+        else location.hash = "artifact/" + encodeURIComponent(panel.id);
       }
     }
 
-    // Keep the active tab visible in the left rail.
+    // Keep the active tab visible inside the rail without scrolling the whole
+    // document. `scrollIntoView` moved the mobile studio down by the sidebar
+    // height on boot because the tabs become a horizontal strip there.
     var activeTab = document.querySelector('.tabs .tab.is-active');
-    if (activeTab && activeTab.scrollIntoView) {
-      activeTab.scrollIntoView({ block: "nearest" });
+    var tabRail = activeTab && activeTab.closest(".tabs");
+    if (activeTab && tabRail) {
+      var tabBox = activeTab.getBoundingClientRect();
+      var railBox = tabRail.getBoundingClientRect();
+      if (tabBox.left < railBox.left) tabRail.scrollLeft -= railBox.left - tabBox.left;
+      else if (tabBox.right > railBox.right) tabRail.scrollLeft += tabBox.right - railBox.right;
+      if (tabBox.top < railBox.top) tabRail.scrollTop -= railBox.top - tabBox.top;
+      else if (tabBox.bottom > railBox.bottom) tabRail.scrollTop += tabBox.bottom - railBox.bottom;
+    }
+
+    // Fragment updates select artifacts; they must never turn into page-level
+    // navigation. Restore the studio viewport after the browser processes the
+    // new hash so the global navbar remains visible on mobile.
+    window.scrollTo(restorePageX, restorePageY);
+    if (window.requestAnimationFrame) {
+      window.requestAnimationFrame(function () {
+        window.scrollTo(restorePageX, restorePageY);
+      });
     }
   }
 
@@ -1799,7 +1855,7 @@ pub mod api {
 
   // Init: hash wins, else first artifact. Never leave every panel visible.
   var boot = panelIdFromHash() || firstId;
-  if (boot) activate(boot);
+  if (boot) activate(boot, { resetPageScroll: true });
   else panels.forEach(function (p) { p.hidden = true; });
 })();
 </script>"##
@@ -1824,7 +1880,7 @@ pub mod api {
 
     fn editor_css() -> &'static str {
         r#"
-:root{color-scheme:dark;--bg:#0d0f10;--panel:#151819;--panel-lift:#1b1f20;--line:#2b3033;--text:#f3eee7;--muted:#a9b1b4;--accent:#b8ef7d;--teal:#4d9b8e;--amber:#d8a640;--warn:#ffd166;--bad:#ff8a8a}
+:root{color-scheme:dark;--bg:#0a0a0b;--panel:#121214;--panel-lift:#1a1a1e;--line:#27272a;--text:#f4f4f5;--muted:#a1a1aa;--accent:#d4d4d8;--teal:#d4d4d8;--amber:#d4d4d8;--warn:#fbbf24;--bad:#f87171}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
 a{color:inherit}
 /* Studio editor locks the viewport; plan library / blocked pages still scroll. */
@@ -2006,7 +2062,68 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
   .artifact-panel.is-active{min-height:50vh}
   .review-statusbar .stat-plan{margin-left:0}
 }
-@media(max-width:520px){.library-header,.plan-field{padding-left:18px;padding-right:18px}.library-intro h1{font-size:48px}.library-stats dd{font-size:22px}.plan-grid{grid-template-columns:1fr}}
+/* Shared vc-server chrome: the scaffold renderer is raw HTML, so it mirrors
+ * the Leptos ServerFrame contract without importing a second routing system. */
+.studio-app-shell{display:grid;grid-template-rows:58px minmax(0,1fr);height:100vh;min-height:100vh;overflow:hidden;background:var(--bg)}
+.studio-navbar{position:relative;z-index:30;display:flex;align-items:center;justify-content:space-between;gap:18px;height:58px;padding:0 18px;border-bottom:1px solid var(--line);background:rgba(10,10,11,.94);backdrop-filter:blur(18px)}
+.studio-navbar-brand{display:inline-flex;align-items:center;gap:10px;min-width:0;color:var(--text);text-decoration:none}
+.studio-navbar-brand>span:last-child{display:grid;min-width:0;line-height:1.15}
+.studio-navbar-brand strong{font:650 13px/1.2 Inter,ui-sans-serif,system-ui,sans-serif;white-space:nowrap}
+.studio-navbar-brand small{color:var(--muted);font:10px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}
+.studio-brand-mark{display:grid;place-items:center;flex:0 0 auto;width:30px;height:30px;border:1px solid var(--line);border-radius:8px;background:var(--panel-lift);color:var(--muted);font:700 16px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
+.studio-global-nav,.library-nav-links{display:flex;align-items:center;gap:5px}
+.studio-global-nav a,.library-nav-links a,.library-nav-links span,.studio-back-link{min-height:32px;display:inline-flex;align-items:center;padding:0 10px;border:1px solid transparent;border-radius:8px;color:var(--muted);font:550 11px/1 Inter,ui-sans-serif,system-ui,sans-serif;text-decoration:none;white-space:nowrap}
+.studio-global-nav a:hover,.studio-global-nav a:focus-visible,.library-nav-links a:hover,.library-nav-links a:focus-visible,.studio-back-link:hover,.studio-back-link:focus-visible{border-color:var(--line);background:var(--panel-lift);color:var(--text);outline:none}
+.studio-global-nav a.is-active,.library-nav-links span{border-color:var(--line);background:var(--panel);color:var(--text)}
+.studio-back-link{border-color:var(--line);background:var(--panel);color:var(--text)}
+.review-shell{height:100%;min-height:0}
+.review-sidebar,.review-workspace,.review-inspector{height:100%}
+.review-sidebar,.review-topbar,.review-statusbar{background:#0f0f11}
+.review-inspector{background:#0d0d0f}
+.tab,.render-mode-btn,.checkpoint-state,.inspector-pill{background:#18181b}
+.tab.is-active{border-color:#52525b;background:#202024;box-shadow:inset 2px 0 0 #d4d4d8}
+.tab:hover,.tab:focus,.api-link{color:var(--text)}
+.plan-library{background:radial-gradient(700px 320px at 15% -8%,rgba(63,63,70,.2),transparent 64%),var(--bg)}
+.library-header{padding:0 0 30px;border-bottom:1px solid var(--line)}
+.library-nav{position:sticky;top:0;z-index:20;height:58px;margin:0 0 30px;padding:0 clamp(18px,3vw,38px);border-bottom:1px solid var(--line);background:rgba(10,10,11,.94);backdrop-filter:blur(18px)}
+.library-intro,.library-stats{margin-left:auto;margin-right:auto;width:min(calc(100% - 48px),1152px)}
+.library-intro{grid-template-columns:minmax(0,1fr) minmax(280px,.72fr);gap:40px}
+.library-intro h1{max-width:760px;margin:9px 0 0;font:650 clamp(32px,4.4vw,54px)/.98 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:-.055em}
+.library-lede{font-size:14px;line-height:1.6}
+.library-stats{margin-top:30px;border-top:1px solid var(--line)}
+.library-stats div{padding-top:12px}.library-stats dd{color:var(--text);font-size:22px}
+.plan-field{width:min(100%,1200px);margin:0 auto;padding:28px 24px 68px}
+.plan-toolbar h2{font:650 26px/1.05 ui-monospace,SFMono-Regular,Menlo,monospace}
+.plan-card{min-height:230px;border-radius:16px;background:linear-gradient(145deg,var(--panel),#0f0f11);box-shadow:0 1px 0 rgba(255,255,255,.025)}
+.plan-card:hover,.plan-card:focus-visible{transform:translateY(-2px);border-color:#52525b;background:var(--panel-lift)}
+.plan-card-title h3{font:600 22px/1.08 Inter,ui-sans-serif,system-ui,sans-serif}
+.plan-card-title p,.plan-number,.plan-open b{color:var(--text)}
+.blocked-plan-shell{padding:0 clamp(24px,5vw,76px) 80px;background:radial-gradient(700px 320px at 15% -8%,rgba(63,63,70,.2),transparent 64%),var(--bg)}
+.blocked-plan-shell .library-nav{margin-inline:calc(clamp(24px,5vw,76px) * -1);margin-bottom:42px}
+.blocked-plan-head h1,.blocked-explainer h2{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.empty{border-radius:16px}
+@media(max-width:820px){
+  .studio-app-shell{height:auto;min-height:100vh;overflow:visible}
+  .studio-navbar{height:auto;min-height:54px;padding:8px 12px}
+  .studio-global-nav{display:none}
+  .review-shell{height:auto;min-height:calc(100vh - 54px)}
+  .review-sidebar{height:auto;max-height:none}
+  .tabs{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(190px,72vw);overflow-x:auto;overflow-y:hidden;padding:0 0 5px}
+  .review-workspace{min-height:64vh}
+  .review-inspector{height:auto}
+  .library-intro{grid-template-columns:1fr}
+  .library-nav{margin-bottom:24px}
+}
+@media(max-width:620px){
+  .studio-navbar-brand small{display:none}
+  .studio-back-link{padding-inline:8px;font-size:10px}
+  .library-nav-links a:not(.back-link){display:none}
+  .library-intro,.library-stats{width:min(calc(100% - 32px),1152px)}
+  .library-stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .library-intro h1{font-size:32px}
+  .plan-grid{grid-template-columns:1fr}
+}
+@media(max-width:520px){.library-header,.plan-field{padding-left:18px;padding-right:18px}.library-stats dd{font-size:20px}}
 "#
     }
 
@@ -2224,6 +2341,11 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
                     || html.contains("border-radius:999px"),
                 "Edit control must share pill geometry with checkpoint-state"
             );
+            assert!(html.contains(r#"class="studio-navbar""#));
+            assert!(html.contains(r#"href="/" target="_top""#));
+            assert!(html.contains("← Back to console"));
+            assert!(html.contains(r#"href="/#fleet" target="_top""#));
+            assert!(html.contains(r##""#artifact/" + encodeURIComponent(panel.id)"##));
         }
 
         #[test]

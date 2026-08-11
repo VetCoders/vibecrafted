@@ -15,7 +15,25 @@
 use leptos::prelude::*;
 use leptos_meta::{Meta, Title};
 
+#[cfg(feature = "ssr")]
 use control_core::is_safe_run_id;
+
+// Hydration does not link the server-only control-core crate. This exact,
+// side-effect-free mirror only keeps the client DOM aligned with SSR when it
+// decides whether to render the raw-run link; control-core remains the runtime
+// authority for every lookup and filesystem read.
+#[cfg(not(feature = "ssr"))]
+fn is_safe_run_id(run_id: &str) -> bool {
+    let bytes = run_id.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 255
+        && bytes[0].is_ascii_alphanumeric()
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+use crate::chrome::{ServerFrame, ServerSection};
 
 /// Everything the detail page knows about one run id. Exactly one of `run` /
 /// `lifecycle` is populated on a hit; both empty renders the honest 404 body.
@@ -25,7 +43,15 @@ struct RunDetailData {
     control_plane: String,
     run: Option<RunDetailView>,
     lifecycle: Option<LifecycleDetailView>,
+    transcript: TranscriptPreview,
     events: Vec<RunDetailEvent>,
+}
+
+#[derive(Clone, Default)]
+struct TranscriptPreview {
+    body: String,
+    available: bool,
+    truncated: bool,
 }
 
 /// Flat, render-ready projection of [`control_core::RunStatus`]. Strings stay
@@ -118,6 +144,95 @@ fn load_run_detail(run_id: &str) -> RunDetailData {
     use control_core::ControlPlane;
 
     load_run_detail_from(&ControlPlane::from_env(), run_id, Utc::now())
+}
+
+#[cfg(feature = "ssr")]
+fn load_human_transcript(plane: &control_core::ControlPlane, run_id: &str) -> TranscriptPreview {
+    use std::fs::{self, File};
+    use std::io::{Read, Seek, SeekFrom};
+
+    const MAX_BYTES: u64 = 48 * 1024;
+    const MAX_LINES: usize = 160;
+
+    fn strip_terminal_escapes(input: &str) -> String {
+        let mut output = String::with_capacity(input.len());
+        let mut chars = input.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch != '\u{1b}' {
+                output.push(ch);
+                continue;
+            }
+
+            match chars.next() {
+                Some('[') => {
+                    for code in chars.by_ref() {
+                        if ('@'..='~').contains(&code) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    let mut escaped = false;
+                    for code in chars.by_ref() {
+                        if code == '\u{7}' || (escaped && code == '\\') {
+                            break;
+                        }
+                        escaped = code == '\u{1b}';
+                    }
+                }
+                Some(_) | None => {}
+            }
+        }
+        output
+    }
+
+    if !is_safe_run_id(run_id) {
+        return TranscriptPreview::default();
+    }
+
+    let runtime_root = plane.control_plane_home().join("runtime_runs");
+    let Ok(canonical_root) = fs::canonicalize(&runtime_root) else {
+        return TranscriptPreview::default();
+    };
+    let candidate = runtime_root.join(run_id).join("transcript.human.log");
+    let Ok(metadata) = fs::symlink_metadata(&candidate) else {
+        return TranscriptPreview::default();
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return TranscriptPreview::default();
+    }
+    let Ok(canonical_candidate) = fs::canonicalize(&candidate) else {
+        return TranscriptPreview::default();
+    };
+    if !canonical_candidate.starts_with(&canonical_root) {
+        return TranscriptPreview::default();
+    }
+
+    let start = metadata.len().saturating_sub(MAX_BYTES);
+    let Ok(mut file) = File::open(&canonical_candidate) else {
+        return TranscriptPreview::default();
+    };
+    if file.seek(SeekFrom::Start(start)).is_err() {
+        return TranscriptPreview::default();
+    }
+    let mut bytes = Vec::with_capacity((metadata.len() - start) as usize);
+    if file.read_to_end(&mut bytes).is_err() {
+        return TranscriptPreview::default();
+    }
+    if start > 0
+        && let Some(first_newline) = bytes.iter().position(|byte| *byte == b'\n')
+    {
+        bytes.drain(..=first_newline);
+    }
+
+    let decoded = String::from_utf8_lossy(&bytes);
+    let lines = decoded.lines().collect::<Vec<_>>();
+    let line_start = lines.len().saturating_sub(MAX_LINES);
+    TranscriptPreview {
+        body: strip_terminal_escapes(&lines[line_start..].join("\n")),
+        available: true,
+        truncated: start > 0 || line_start > 0,
+    }
 }
 
 #[cfg(feature = "ssr")]
@@ -243,6 +358,7 @@ fn load_run_detail_from(
         control_plane: plane.control_plane_home().display().to_string(),
         run,
         lifecycle,
+        transcript: load_human_transcript(plane, run_id),
         events,
     }
 }
@@ -313,6 +429,37 @@ fn event_rows(events: Vec<RunDetailEvent>) -> impl IntoView {
         .collect_view()
 }
 
+fn transcript_panel(preview: TranscriptPreview) -> impl IntoView {
+    let state = if !preview.available {
+        "not recorded"
+    } else if preview.truncated {
+        "latest 160 lines"
+    } else {
+        "complete tail"
+    };
+    let empty = preview.body.trim().is_empty();
+
+    view! {
+        <section class="control-panel control-panel-wide transcript-panel" aria-label="Human transcript preview">
+            <div class="control-panel-head">
+                <div>
+                    <p class="mono-cap">"Live worker voice"</p>
+                    <h2>"transcript.human.log"</h2>
+                </div>
+                <span>{state}</span>
+            </div>
+            <p class="control-empty" hidden={preview.available && !empty}>
+                {if preview.available {
+                    "The human transcript exists but is empty."
+                } else {
+                    "No bounded human transcript is available for this run."
+                }}
+            </p>
+            <pre class="transcript-preview" hidden={!preview.available || empty}>{preview.body}</pre>
+        </section>
+    }
+}
+
 #[component]
 pub fn RunDetailPage() -> impl IntoView {
     let params = leptos_router::hooks::use_params_map();
@@ -329,52 +476,70 @@ pub fn RunDetailPage() -> impl IntoView {
 fn run_detail_view(detail: RunDetailData) -> impl IntoView {
     let run_id = detail.run_id.clone();
     let api_href = is_safe_run_id(&run_id).then(|| format!("/api/control/runs/{run_id}"));
+    let nav_status = detail
+        .run
+        .as_ref()
+        .map(|run| {
+            if run.health.is_empty() {
+                "run detail".to_string()
+            } else {
+                run.health.clone()
+            }
+        })
+        .or_else(|| detail.lifecycle.as_ref().map(|run| run.status.clone()))
+        .unwrap_or_else(|| "not found".to_string());
+    let run = detail.run;
+    let lifecycle = detail.lifecycle;
+    let transcript = detail.transcript;
     let events = detail.events;
     let no_events = events.is_empty();
+    let control_plane = detail.control_plane;
 
     view! {
-        <main class="server-console-shell run-detail-shell">
-            <section class="server-console-hero">
-                <div class="server-console-topbar">
-                    <span class="server-console-brand mono-cap">"vc-server"</span>
-                    <span class="server-console-version mono-cap">{env!("VC_SERVER_VERSION")}</span>
-                    <a class="server-console-link" href="/">"Back to console"</a>
-                </div>
-                <p class="section-eyebrow">"run observability"</p>
-                <h1 class="run-detail-title">{run_id.clone()}</h1>
-                <p class="server-console-links">
-                    {api_href.map(|href| view! {
-                        <a class="server-console-link" href=href>"Raw run JSON"</a>
-                    })}
-                    <a class="server-console-link" href="/api/control/events">"Event stream"</a>
+        <ServerFrame active=ServerSection::Runs status=nav_status>
+            <div class="server-console-shell run-detail-shell">
+                <section class="run-detail-header">
+                    <div>
+                        <p class="section-eyebrow">"Run observability"</p>
+                        <h1 class="run-detail-title">{run_id.clone()}</h1>
+                    </div>
+                    <p class="server-console-links">
+                        <a class="server-console-link" href="/">"← Overview"</a>
+                        {api_href.map(|href| view! {
+                            <a class="server-console-link" href=href>"Raw run JSON"</a>
+                        })}
+                        <a class="server-console-link" href="/api/control/events">"Event stream"</a>
+                    </p>
+                </section>
+
+                {transcript_panel(transcript)}
+
+                {match (run, lifecycle) {
+                    (Some(run), _) => leptos::either::EitherOf3::A(run_body(run)),
+                    (None, Some(lifecycle)) => {
+                        leptos::either::EitherOf3::B(lifecycle_body(run_id.clone(), lifecycle))
+                    }
+                    (None, None) => leptos::either::EitherOf3::C(missing_body(run_id.clone())),
+                }}
+
+                <section class="control-panel control-panel-wide" aria-label="Run events">
+                    <div class="control-panel-head">
+                        <h2>"Recent events"</h2>
+                        <span>{events.len()}</span>
+                    </div>
+                    <p class="control-empty" hidden={!no_events}>
+                        "No events for this run in the current tail."
+                    </p>
+                    <ul class="control-event-list">
+                        {event_rows(events)}
+                    </ul>
+                </section>
+
+                <p class="control-plane-meta run-detail-plane">
+                    <span>{control_plane}</span>
                 </p>
-            </section>
-
-            {match (detail.run, detail.lifecycle) {
-                (Some(run), _) => leptos::either::EitherOf3::A(run_body(run)),
-                (None, Some(lifecycle)) => {
-                    leptos::either::EitherOf3::B(lifecycle_body(run_id.clone(), lifecycle))
-                }
-                (None, None) => leptos::either::EitherOf3::C(missing_body(run_id.clone())),
-            }}
-
-            <section class="control-panel control-panel-wide" aria-label="Run events">
-                <div class="control-panel-head">
-                    <h2>"Recent events"</h2>
-                    <span>{events.len()}</span>
-                </div>
-                <p class="control-empty" hidden={!no_events}>
-                    "No events for this run in the current tail."
-                </p>
-                <ul class="control-event-list">
-                    {event_rows(events)}
-                </ul>
-            </section>
-
-            <p class="control-plane-meta run-detail-plane">
-                <span>{detail.control_plane}</span>
-            </p>
-        </main>
+            </div>
+        </ServerFrame>
     }
 }
 
@@ -659,7 +824,9 @@ mod tests {
         assert!(html.contains("delivery: delivered"));
         assert!(html.contains("/api/control/runs/impl-260809-120000-1"));
         assert!(html.contains("/tmp/repo/reports/final.md"));
-        assert!(html.contains("Back to console"));
+        assert!(html.contains("← Overview"));
+        assert!(html.contains("Vibecrafted server navigation"));
+        assert!(html.contains("transcript.human.log"));
         assert!(html.contains("aria-label=\"Delivery proof\""));
         assert!(html.contains("aria-label=\"Process and sessions\""));
 
@@ -677,6 +844,32 @@ mod tests {
 
         assert!(html.contains("javascript:alert(1)"));
         assert!(!html.contains("href=\"javascript:alert(1)\""));
+
+        fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn human_transcript_preview_reads_only_the_bounded_canonical_tail() {
+        let home = temp_home();
+        let run_id = "impl-260809-120000-tail";
+        let runs_dir = home.join("control_plane/runs");
+        let transcript_dir = home.join("control_plane/runtime_runs").join(run_id);
+        fs::create_dir_all(&runs_dir).expect("runs dir");
+        fs::create_dir_all(&transcript_dir).expect("transcript dir");
+        write_snapshot(&runs_dir, run_id, "/tmp/repo/reports/final.md");
+        let transcript = (0..240)
+            .map(|line| format!("\u{1b}[36mhuman-line-{line:03}\u{1b}[0m"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(transcript_dir.join("transcript.human.log"), transcript)
+            .expect("human transcript");
+
+        let html = render(&home, run_id);
+
+        assert!(html.contains("latest 160 lines"));
+        assert!(html.contains("human-line-239"));
+        assert!(!html.contains("human-line-000"));
+        assert!(!html.contains("\u{1b}[36m"));
 
         fs::remove_dir_all(home).ok();
     }

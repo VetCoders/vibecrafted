@@ -5,9 +5,10 @@ use leptos_meta::{Link, Meta, Title};
 use leptos_router::components::{Route, Router, Routes};
 use leptos_router::path;
 
+use crate::chrome::{ServerFrame, ServerSection};
 use crate::run_detail::RunDetailPage;
 use crate::scaffold::ScaffoldEditorPage;
-use crate::theme::{Theme, ThemeBridge, provide_theme_context, use_theme};
+use crate::theme::{ThemeBridge, provide_theme_context};
 
 #[derive(Clone, Default)]
 struct DashboardData {
@@ -440,7 +441,7 @@ pub fn ConsolePage() -> impl IntoView {
     view! {
         <Title text="vc-server - control plane" />
         <Meta name="description" content="Vibecrafted control-plane dashboard." />
-        <Meta name="theme-color" content="#0e0e0e" />
+        <Meta name="theme-color" content="#0a0a0b" />
         <Link rel="preload" as_="font" type_="font/woff2" href="/fonts/inter-var-latin.woff2" crossorigin="anonymous" />
         <Link rel="preload" as_="font" type_="font/woff2" href="/fonts/jetbrains-mono-var-latin.woff2" crossorigin="anonymous" />
         {console_dashboard(dashboard)}
@@ -448,7 +449,6 @@ pub fn ConsolePage() -> impl IntoView {
 }
 
 fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
-    let theme = use_theme();
     let control_plane = dashboard.control_plane.clone();
     let generated_at = dashboard.generated_at.clone();
     // Forgotten-gem filters: quarantine smoke/terminal/stale-marbles noise and
@@ -469,6 +469,7 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
     let action_count = action_runs.len();
 
     let settlement = dashboard.settlement;
+    let attention_count = settlement.n;
     let no_active_runs = active_runs.is_empty();
     let no_stalled_runs = stalled_runs.is_empty();
     let no_action_runs = action_runs.is_empty();
@@ -482,98 +483,73 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
     let has_loctree_link = loctree_link.is_some();
 
     view! {
-        <main class="server-console-shell">
-            <div class="settlement-board-wrap">
-                {settlement_board(settlement)}
-            </div>
-
-            <section class="server-console-hero">
-                <div class="server-console-topbar">
-                    <span class="server-console-brand mono-cap">"vc-server"</span>
-                    <span class="server-console-version mono-cap">{env!("VC_SERVER_VERSION")}</span>
-                    <button
-                        type="button"
-                        class="server-console-toggle"
-                        aria-label="Toggle color theme"
-                        aria-pressed=move || theme.get() == Theme::Light
-                        on:click=move |_| theme.update(|current| *current = current.toggle())
-                    >
-                        {move || format!("{} mode", theme.get().code())}
-                    </button>
-                </div>
-
-                <nav class="operator-rail" aria-label="Operator rail">
-                    <a href="#now">"NOW"</a>
-                    <a href="#fleet">"Fleet"</a>
-                    <a href="#context">"Context"</a>
-                    <a href="#structure">"Structure"</a>
-                </nav>
-
-                <div class="server-console-grid">
-                    <div class="server-console-copy" id="now">
-                        <p class="section-eyebrow">"control plane"</p>
-                        <h1>"Operator Console"</h1>
-                        <p>
-                            "One live shell for what is running, what needs a decision, and where the supporting context lives."
-                        </p>
-                        <p class="server-console-links">
-                            <a class="server-console-link" href="/scaffold">
-                                "Open scaffold review"
-                            </a>
-                            <a
-                                class="server-console-link"
-                                href="http://127.0.0.1:8033/?q=vibecrafted+server&sort=oldest"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                            >
-                                "Open AICX context"
-                            </a>
-                            <a class="server-console-link" href="#structure">
-                                "Jump to structure"
-                            </a>
-                        </p>
-                    </div>
-
-                    <aside class="server-console-panel" aria-label="Console status preview">
-                        <div class="server-console-panel-head">
-                            <span class="mono-cap">"right now"</span>
-                            <button
-                                type="button"
-                                class="server-console-toggle server-console-toggle-compact"
-                                aria-label="Toggle color theme"
-                                aria-pressed=move || theme.get() == Theme::Light
-                                on:click=move |_| theme.update(|current| *current = current.toggle())
-                            >
-                                {move || theme.get().code()}
-                            </button>
+        <ServerFrame
+            active=ServerSection::Overview
+            status=format!("{active_count} live · {attention_count} attention")
+        >
+            <div class="server-console-shell">
+                <section class="server-console-hero" id="now">
+                    <div class="server-console-grid">
+                        <div class="server-console-copy">
+                            <p class="section-eyebrow">"Operator workspace"</p>
+                            <h1>"Control plane"</h1>
+                            <p>
+                                "Live runs, lifecycle decisions, transcripts, and scaffold artifacts in one navigable operator desk."
+                            </p>
+                            <p class="server-console-links">
+                                <a class="server-console-link server-console-link-primary" href="#fleet">
+                                    "Inspect live runs"
+                                </a>
+                                <a class="server-console-link" href="/scaffold">
+                                    "Open scaffold studio"
+                                </a>
+                                <a
+                                    class="server-console-link"
+                                    href="http://127.0.0.1:8033/?q=vibecrafted+server&sort=oldest"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                >
+                                    "AICX context ↗"
+                                </a>
+                            </p>
                         </div>
-                        <dl class="operator-now-cells">
-                            <a class="operator-summary-cell" href="#fleet">
-                                <dt>"alive"</dt>
-                                <dd>{active_count}</dd>
-                            </a>
-                            <a class="operator-summary-cell" href="#fleet">
-                                <dt>"next"</dt>
-                                <dd>{action_count}</dd>
-                            </a>
-                            <a class="operator-summary-cell" href="#fleet">
-                                <dt>"warnings"</dt>
-                                <dd>{warning_count}</dd>
-                            </a>
-                            <a class="operator-summary-cell" href="#context">
-                                <dt>"stalled"</dt>
-                                <dd>{stalled_count}</dd>
-                            </a>
-                            <a class="operator-summary-cell" href="#context">
-                                <dt>"recent"</dt>
-                                <dd>{recent_count}</dd>
-                            </a>
-                        </dl>
-                    </aside>
-                </div>
-            </section>
 
-            <section class="control-plane-band" id="fleet" aria-label="Control-plane dashboard">
+                        <aside class="server-console-panel" aria-label="Console status preview">
+                            <div class="server-console-panel-head">
+                                <span class="mono-cap">"Right now"</span>
+                                <span class="server-console-panel-state">"live projection"</span>
+                            </div>
+                            <dl class="operator-now-cells">
+                                <a class="operator-summary-cell" href="#fleet">
+                                    <dt>"alive"</dt>
+                                    <dd>{active_count}</dd>
+                                </a>
+                                <a class="operator-summary-cell" href="#lifecycle">
+                                    <dt>"next"</dt>
+                                    <dd>{action_count}</dd>
+                                </a>
+                                <a class="operator-summary-cell" href="#fleet">
+                                    <dt>"warnings"</dt>
+                                    <dd>{warning_count}</dd>
+                                </a>
+                                <a class="operator-summary-cell" href="#context">
+                                    <dt>"stalled"</dt>
+                                    <dd>{stalled_count}</dd>
+                                </a>
+                                <a class="operator-summary-cell" href="#context">
+                                    <dt>"recent"</dt>
+                                    <dd>{recent_count}</dd>
+                                </a>
+                            </dl>
+                        </aside>
+                    </div>
+                </section>
+
+                <div class="settlement-board-wrap">
+                    {settlement_board(settlement)}
+                </div>
+
+                <section class="control-plane-band" id="fleet" aria-label="Control-plane dashboard">
                 <div class="control-plane-meta">
                     <span>{control_plane}</span>
                     <span>{generated_at}</span>
@@ -612,7 +588,7 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
                     </section>
                 </div>
 
-                <section class="control-panel control-panel-wide" aria-label="Action plan">
+                <section class="control-panel control-panel-wide" id="lifecycle" aria-label="Action plan">
                     <div class="control-panel-head">
                         <h2>"Action Plan"</h2>
                         <span>{action_count}</span>
@@ -661,8 +637,14 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
                         "No Loctree report is known for the roots in the canonical state view."
                     </p>
                 </section>
-            </section>
-        </main>
+                </section>
+
+                <footer class="server-console-footer">
+                    <span>"Vibecrafted · Vetcoders · LibraxisAI"</span>
+                    <span>"control-plane truth · operator-safe reads"</span>
+                </footer>
+            </div>
+        </ServerFrame>
     }
 }
 
@@ -804,8 +786,10 @@ mod tests {
         assert!(html.contains("attention"));
         assert!(html.contains("aria-label=\"Toggle color theme\""));
         assert!(html.contains("http://127.0.0.1:8033/"));
-        assert!(html.contains("operator-rail"));
-        assert!(html.contains("href=\"#fleet\""));
+        assert!(html.contains("Vibecrafted server navigation"));
+        assert!(html.contains("server-sidebar"));
+        assert!(html.contains("href=\"/#fleet\""));
+        assert!(html.contains("href=\"/scaffold\""));
         assert!(!html.contains("aria-label=\"All runs\""));
         let board_position = html
             .find("aria-label=\"Operator summary\"")
