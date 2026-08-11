@@ -381,6 +381,13 @@ PARITY_CONTRACT_KEYS = frozenset(
         "artifact_gate",
         "lifecycle",
         "health",
+        "workspace_id",
+        "vibecrafted_session_id",
+        "workspace_instance_id",
+        "build_id",
+        "workspace_display_label",
+        "worker_host_session",
+        "worker_host_display",
     }
 )
 LIVE_LIVENESS_PLACEHOLDERS = {"", "pid_gone", "terminal", "lock_present"}

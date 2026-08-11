@@ -13,10 +13,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from vibecrafted_core.workflow import reserve_run_id
+
 from .doctor import diagnose_file
 from .model import STATE_VERIFIED, Dispatch
+from .receipts import ReceiptContractError
 from .schema import render_cell_prompt
-from .supervisor import DispatchResult, run_dispatch
+from .supervisor import DispatchResult, cleanup_settled_run, run_dispatch
+from .worktrees import canonical_artifact_root
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -46,6 +50,11 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="RUN_ID",
         help="continue from the first non-verified cut recorded in the tracker",
     )
+    parser.add_argument(
+        "--cleanup-settled",
+        metavar="RUN_ID",
+        help="remove only settled per-cut worktrees/targets; retain branches and evidence",
+    )
     return parser
 
 
@@ -64,8 +73,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     assert report.dispatch is not None
 
     dispatch = _with_runtime_baseline(report.dispatch)
-    if args.resume:
-        dispatch = _resume_dispatch(dispatch)
+    if args.cleanup_settled:
+        try:
+            outcomes = cleanup_settled_run(dispatch, args.cleanup_settled)
+        except ReceiptContractError as exc:
+            print(f"cleanup refused: {exc}")
+            return 1
+        print(
+            json.dumps(outcomes, ensure_ascii=False, indent=2)
+            if args.json
+            else "\n".join(f"{key}: {value}" for key, value in outcomes.items())
+        )
+        return (
+            0
+            if all(value not in {"receipt-incomplete"} for value in outcomes.values())
+            else 1
+        )
 
     if args.dry_run:
         dry_result = _dry_run(source, dispatch, run_id=args.resume)
@@ -76,9 +99,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"dry_run_dir: {dry_result['artifacts']['dry_run_dir']}")
         return 0
 
-    artifacts_dir = _artifacts_dir(dispatch)
+    run_id = args.resume or reserve_run_id("dispatch")
+    artifacts_dir = _artifacts_dir(dispatch, run_id=run_id)
     _copy_validated_source(source, artifacts_dir)
-    dispatch_result = run_dispatch(dispatch, artifacts_dir=artifacts_dir)
+    try:
+        dispatch_result = run_dispatch(
+            dispatch,
+            artifacts_dir=artifacts_dir,
+            run_id=run_id,
+            manage_worktrees=True,
+            resume=bool(args.resume),
+        )
+    except ReceiptContractError as exc:
+        print(f"dispatch refused: {exc}")
+        return 1
     if args.json:
         print(json.dumps(dispatch_result.to_dict(), ensure_ascii=False, indent=2))
     else:
@@ -154,37 +188,6 @@ def _dry_run(
     return payload
 
 
-def _resume_dispatch(dispatch: Dispatch) -> Dispatch:
-    """Trim the cut list to resume from the first cut not verified in the tracker."""
-    states = _tracker_states(Path(dispatch.meta.tracker).expanduser())
-    if not states:
-        return dispatch
-    start_index = 0
-    for index, cut in enumerate(dispatch.cuts):
-        if states.get(cut.id) != STATE_VERIFIED:
-            start_index = index
-            break
-    else:
-        start_index = len(dispatch.cuts)
-    return replace(dispatch, cuts=dispatch.cuts[start_index:])
-
-
-def _tracker_states(path: Path) -> dict[str, str]:
-    """Parse a tracker.md table into a cut_id -> state-cell mapping."""
-    if not path.is_file():
-        return {}
-    states: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("| ") or stripped.startswith("| Cut |"):
-            continue
-        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-        if len(cells) < 4 or cells[0] == "---":
-            continue
-        states[cells[0]] = cells[3]
-    return states
-
-
 def _write_dry_run_tracker(
     dispatch: Dispatch, dry_run_dir: Path, *, run_id: str | None = None
 ) -> None:
@@ -201,12 +204,12 @@ def _write_dry_run_tracker(
         f"- validated_copy: {dry_run_dir / 'validated-dispatch.toml'}",
         "- mode: dry-run (no workers launched)",
         "",
-        "| Cut | Phase | Agent | State | Supervisor evidence |",
-        "|---|---|---|---:|---|",
+        "| Cut | Phase | Agent | State | Scheduler | Supervisor evidence |",
+        "|---|---|---|---:|---|---|",
     ]
     for cut in dispatch.cuts:
         lines.append(
-            f"| {cut.id} | {cut.phase} | {cut.agent} | [ ] | prompt rendered |"
+            f"| {cut.id} | {cut.phase} | {cut.agent} | [ ] | queued | prompt rendered |"
         )
     tracker.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -221,18 +224,12 @@ def _copy_validated_source(source: Path, artifacts_dir: Path) -> Path:
 
 def _dry_run_dir(dispatch: Dispatch) -> Path:
     """Resolve the directory a dry-run's artifacts are written into."""
-    if dispatch.meta.reports_dir:
-        return Path(dispatch.meta.reports_dir).expanduser() / "dry-run"
-    return Path.cwd() / "dry-run"
+    return canonical_artifact_root(dispatch.meta.repo) / "plans" / "dry-run"
 
 
-def _artifacts_dir(dispatch: Dispatch) -> Path:
+def _artifacts_dir(dispatch: Dispatch, *, run_id: str = "dispatch") -> Path:
     """Resolve the directory a real dispatch run's artifacts are written into."""
-    if dispatch.meta.tracker:
-        return Path(dispatch.meta.tracker).expanduser().parent
-    if dispatch.meta.reports_dir:
-        return Path(dispatch.meta.reports_dir).expanduser()
-    return Path.cwd()
+    return canonical_artifact_root(dispatch.meta.repo) / "plans" / "dispatch" / run_id
 
 
 def _result_ok(result: DispatchResult) -> bool:

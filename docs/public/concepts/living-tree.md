@@ -119,8 +119,18 @@ conditions hold:
    single-threaded after green verifiers, runs full gates on the
    integrated tree, and journals every mid-plan change. Workers never
    push, never merge, never touch the main checkout.
-4. **Standard geometry** — worktrees under `.claude/worktrees/<cut-id>`,
-   branches `cut/<cut-id>`, removed after integration.
+4. **Standard geometry** — provider-neutral worktrees under
+   `~/.vibecrafted/worktrees/<org>/<repo>/YYYY_MMDD/<cut-id>`, branches
+   `cut/<cut-id>`, and one real ignored `<worktree>/target` per cut. Durable
+   plans/reports stay in `~/.vibecrafted/artifacts`; transient processes,
+   locks, heartbeats, and scheduler receipts stay in
+   `~/.vibecrafted/control_plane`.
+
+Fleet dispatch never creates infrastructure in `.claude`, `.codex`,
+`.gemini`, or a repo-local `.vibecrafted`. Those legacy roots may be inspected
+read-only for recovery of an already-active run, but every new allocation uses
+the global provider-neutral geometry. The dispatcher owns create, validation,
+resume, and explicit settled cleanup; workers never choose their own root.
 
 The formation is operator-explicit by construction: it exists only inside
 a written plan that passed its doctors. There is no third mode — an agent

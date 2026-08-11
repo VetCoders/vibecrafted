@@ -46,9 +46,15 @@ cztery** warunki:
    pełne bramki na zintegrowanym drzewie i journaluje każdą zmianę planu w
    locie. Workerzy NIGDY nie pushują, NIGDY nie merge'ują, NIGDY nie dotykają
    głównego checkoutu.
-4. **Standardowa geometria.** Worktree żyją pod `.claude/worktrees/<cut-id>`
-   na gałęziach `cut/<cut-id>`, odgałęzionych od bazy (albo od swojego
-   poprzednika w sekwencji), i są sprzątane po integracji. Zero drzew-sierot.
+4. **Standardowa geometria.** Dispatcher jest właścicielem neutralnych wobec
+   providera worktree pod
+   `~/.vibecrafted/worktrees/<org>/<repo>/YYYY_MMDD/<cut-id>` na gałęziach
+   `cut/<cut-id>`. Każde cięcie ma prawdziwy, ignorowany
+   `<worktree>/target`; współdzielenie i symlinkowanie targetów Cargo jest
+   zabronione. Trwałe dowody zostają pod `~/.vibecrafted/artifacts`, stan
+   efemeryczny pod `~/.vibecrafted/control_plane`, a jawny cleanup może usunąć
+   wyłącznie settled worktree. Zero rootów provider-specific i zero
+   drzew-sierot.
 
 Tryb B jest operator-explicit z konstrukcji: istnieje wyłącznie wewnątrz
 pisanego planu (dispatch TOML + briefy), który przeszedł swoje doctory. Agent

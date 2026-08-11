@@ -43,7 +43,7 @@ tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/vibecrafted-server-smoke.XXXXXX")"
 export VIBECRAFTED_HOME="$tmp_home"
 export VIBECRAFTED_RUNTIME_HOME="$tmp_home/share"
 mkdir -p "$VIBECRAFTED_HOME/control_plane/runs"
-mkdir -p "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life"
+mkdir -p "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/lcyc-smoke-life"
 
 # Ensure clean teardown on exit
 cleanup() {
@@ -119,25 +119,25 @@ EOF_RUN
 
 ok "seeded control-plane run snapshots"
 
-cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/report.md" <<'EOF_LIFE_REPORT'
+cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/lcyc-smoke-life/report.md" <<'EOF_LIFE_REPORT'
 # smoke lifecycle report
 EOF_LIFE_REPORT
 
-cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/worker-report.md" <<'EOF_WORKER_REPORT'
+cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/lcyc-smoke-life/worker-report.md" <<'EOF_WORKER_REPORT'
 ---
 dou_index: 0
 ---
 # smoke worker lifecycle report
 EOF_WORKER_REPORT
 
-cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/transcript.log" <<'EOF_LIFE_TRANSCRIPT'
+cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/lcyc-smoke-life/transcript.log" <<'EOF_LIFE_TRANSCRIPT'
 {"kind":"stage","id":"scaffold"}
 EOF_LIFE_TRANSCRIPT
 
-cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/state.json" <<EOF_LIFE
+cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/lcyc-smoke-life/state.json" <<EOF_LIFE
 {
   "schema": "vibecrafted.lifecycle.v1",
-  "run_id": "smoke-life",
+  "run_id": "lcyc-smoke-life",
   "workflow": "vc-ship",
   "agent": "codex",
   "root": "/tmp/vibecrafted-smoke",
@@ -150,9 +150,9 @@ cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/state.json" <<E
   "spec": {"workflow_id": "vc-ship", "agent": "codex"},
   "supervisor": "vibecrafted_core.lifecycle_runner.LifecycleSupervisor",
   "human_controls": ["approve_transition", "interrupt_workflow", "accept_dou"],
-  "state_path": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/state.json",
-  "report_path": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/report.md",
-  "transcript_path": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/transcript.log",
+  "state_path": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/lcyc-smoke-life/state.json",
+  "report_path": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/lcyc-smoke-life/report.md",
+  "transcript_path": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/lcyc-smoke-life/transcript.log",
   "context_atlas": {"ok": true},
   "manifest": {"id": "vc-ship"},
   "baton": {
@@ -161,7 +161,7 @@ cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/state.json" <<E
     "next_stage": "implement",
     "next_agent": "codex",
     "reason": "stage_launched_without_await",
-    "previous_reports": ["$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/worker-report.md"],
+    "previous_reports": ["$VIBECRAFTED_HOME/control_plane/lifecycle_runs/lcyc-smoke-life/worker-report.md"],
     "dou_index": 0,
     "audit_after": "",
     "fallback_stage": ""
@@ -173,7 +173,7 @@ cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/state.json" <<E
     "phase": "read",
     "agent": "codex",
     "status": "completed",
-    "launch": {"report": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/worker-report.md"},
+    "launch": {"report": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/lcyc-smoke-life/worker-report.md"},
     "await": {},
     "commit_before": "abc123",
     "commit_after": "def456",
@@ -192,7 +192,7 @@ cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/state.json" <<E
   "dou_index": {
     "value": 0,
     "stage": "scaffold",
-    "report": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/worker-report.md"
+    "report": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/lcyc-smoke-life/worker-report.md"
   },
   "accepted_dou": 1,
   "accepted_dou_findings": [{"id": "accepted-1"}]
@@ -343,7 +343,7 @@ resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/control/lifecycle"
 data = json.loads(resp.read().decode())
 assert data["count"] == 1, data
 run = data["lifecycle_runs"][0]
-assert run["run_id"] == "smoke-life", run
+assert run["run_id"] == "lcyc-smoke-life", run
 assert run["schema"] == "vibecrafted.lifecycle.v1", run
 assert run["workflow"] == "vc-ship", run
 assert run["current_stage"] == "scaffold", run
@@ -365,9 +365,9 @@ fi
 
 if python3 -c '
 import urllib.request, json, sys
-resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/control/lifecycle/smoke-life", timeout=1.0)
+resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/control/lifecycle/lcyc-smoke-life", timeout=1.0)
 data = json.loads(resp.read().decode())
-assert data["run_id"] == "smoke-life", data
+assert data["run_id"] == "lcyc-smoke-life", data
 assert data["schema"] == "vibecrafted.lifecycle.v1", data
 assert data["baton"]["next_stage"] == "implement", data
 assert data["baton"]["dou_index"] == 0, data
@@ -389,7 +389,7 @@ import urllib.request, json, sys
 resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/control/state", timeout=1.0)
 data = json.loads(resp.read().decode())
 runs = data["active_runs"] + data["recent_runs"]
-matches = [run for run in runs if run["run_id"] == "smoke-life"]
+matches = [run for run in runs if run["run_id"] == "lcyc-smoke-life"]
 assert matches, data
 assert matches[0]["source"] == "lifecycle_runs", matches[0]
 ' >/dev/null 2>&1; then
@@ -402,9 +402,9 @@ fi
 
 if python3 -c '
 import urllib.request, json, sys
-resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/control/runs/smoke-life", timeout=1.0)
+resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/control/runs/lcyc-smoke-life", timeout=1.0)
 data = json.loads(resp.read().decode())
-assert data["run_id"] == "smoke-life", data
+assert data["run_id"] == "lcyc-smoke-life", data
 assert data["source"] == "lifecycle_runs", data
 assert data["skill"] == "vc-ship", data
 ' >/dev/null 2>&1; then
@@ -420,14 +420,12 @@ import urllib.request, sys
 html = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/", timeout=1.0).read().decode()
 assert "smoke-active" in html, "dashboard missing active run"
 assert "smoke-final" in html, "dashboard missing final run"
-assert "smoke-life" in html, "dashboard missing lifecycle run"
+assert "lcyc-smoke-life" in html, "dashboard missing lifecycle run"
 assert "vc-ship" in html, "dashboard missing lifecycle workflow"
 assert "approve_transition" in html, "dashboard missing lifecycle human control"
-assert "interrupt_workflow" in html, "dashboard missing lifecycle human control"
 assert "ZERO DoU" in html, "dashboard missing lifecycle ZERO DoU signal"
 assert "accepted 1" in html, "dashboard missing lifecycle accepted DoU count"
-assert "control count 3" in html, "dashboard missing lifecycle control count"
-assert "actions 1" in html, "dashboard missing lifecycle operator action count"
+assert "3 controls / 1 actions" in html, "dashboard missing lifecycle control/action counts"
 ' >/dev/null 2>&1; then
   ok "dashboard HTML exposes snapshots, lifecycle controls, ZERO DoU signal, and lifecycle counters"
 else

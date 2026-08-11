@@ -13,6 +13,7 @@ Contract id: ``vibecrafted.report-frontmatter.v1``
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -378,12 +379,34 @@ def materialize_launcher_report_template(
     launcher later removes the marker and stamps the child agent session.
     """
 
-    report = Path(path)
     try:
-        if report.is_file() and report.stat().st_size > 0:
-            return False
-    except OSError:
+        reserve_launcher_report_template(
+            path,
+            run_id=run_id,
+            agent=agent,
+            skill=skill,
+            claim_digest=claim_digest,
+        )
+    except FileExistsError:
         return False
+    return True
+
+
+def reserve_launcher_report_template(
+    path: str | Path,
+    *,
+    run_id: str,
+    agent: str,
+    skill: str,
+    claim_digest: str = "",
+) -> None:
+    """Atomically reserve and seed a run's report before provider launch.
+
+    ``O_EXCL`` is the allocation authority. A collision is a hard contract
+    failure; callers must allocate a new run id instead of scanning for the
+    next suffix.
+    """
+    report = Path(path)
     report.parent.mkdir(parents=True, exist_ok=True)
     extra = {
         "claim_status": "pending",
@@ -394,17 +417,21 @@ def materialize_launcher_report_template(
     launcher_digest = str(claim_digest or "").strip()
     if launcher_digest:
         extra["claim_digest"] = launcher_digest
-    report.write_text(
-        render_minimal_frontmatter(
-            run_id=run_id,
-            agent=agent,
-            skill=skill,
-            status=_PENDING_TEMPLATE_STATUS,
-            extra=extra,
-        ),
-        encoding="utf-8",
-    )
-    return True
+    payload = render_minimal_frontmatter(
+        run_id=run_id,
+        agent=agent,
+        skill=skill,
+        status=_PENDING_TEMPLATE_STATUS,
+        extra=extra,
+    ).encode("utf-8")
+    descriptor = os.open(report, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb", closefd=False) as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+    finally:
+        os.close(descriptor)
 
 
 def worker_authored_report(fields: Mapping[str, str], body: str) -> bool:

@@ -1,0 +1,47 @@
+schema = "vibecrafted.dispatch.v1"
+
+[meta]
+name = "parallel-worktree-example"
+repo = "/absolute/path/to/repository"
+
+[policy]
+concurrency = 2
+allow_concurrency = true
+require_commit = true
+await = { poll_s = 5, timeout_min = 90 }
+
+[common]
+text = """
+Work only in {repo}. Commit the cut and leave a complete report in the
+preallocated VIBECRAFTED_REPORT_PATH. Never choose another checkout or Cargo
+target; the dispatcher owns both.
+"""
+
+[[cuts]]
+id = "api"
+agent = "codex"
+workflow = "implement"
+prompt = "Implement the API half."
+  [[cuts.verify]]
+  run = "make test-api"
+  expect = { exit_code = 0 }
+
+[[cuts]]
+id = "ui"
+agent = "claude"
+workflow = "implement"
+prompt = "Implement the UI half."
+  [[cuts.verify]]
+  run = "make test-ui"
+  expect = { exit_code = 0 }
+
+[[cuts]]
+id = "integrate"
+agent = "codex"
+workflow = "implement"
+integrator = true
+depends_on = ["api", "ui"]
+prompt = "Merge the two verified cut branches and run the full product gate."
+  [[cuts.verify]]
+  run = "make test"
+  expect = { exit_code = 0 }

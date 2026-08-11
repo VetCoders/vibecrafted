@@ -221,7 +221,10 @@ def test_launch_workflow_returns_pid_and_logs_spawn(
     assert payload["prompt_file"]
     assert ".vibecrafted/artifacts/local/src/" in payload["report"]
     assert "/reports/workflow/" in payload["report"]
-    assert Path(payload["report"]).name.endswith("_go_report.md")
+    report_name = Path(payload["report"]).name
+    assert "_go_" in report_name
+    assert payload["run_id"].replace(".", "-") in report_name
+    assert report_name.endswith("_report.md")
     assert ".vibecrafted/control_plane/runtime_runs/" in payload["transcript"]
     assert ".vibecrafted/control_plane/runtime_runs/" in payload["meta"]
     assert ".vibecrafted/control_plane/runtime_runs/" in payload["prompt_file"]
@@ -737,6 +740,19 @@ def test_headless_launch_opens_live_bucket_viewer_and_stamps_origin(
     assert meta["origin_session"] == "Live runs"
     assert meta["origin_tab"] == run_id
     assert meta["live_viewer"]["status"] == "opened"
+
+
+def test_test_mode_never_opens_live_viewer() -> None:
+    """Hermetic tests must not mutate the operator's real vc-frame surface."""
+    assert (
+        workflow._live_viewer_enabled(
+            {
+                "VIBECRAFTED_TEST_MODE": "1",
+                "VIBECRAFTED_LIVE_VIEWER": "1",
+            }
+        )
+        is False
+    )
 
 
 def test_headless_launch_fails_open_when_vc_frame_binary_is_absent(

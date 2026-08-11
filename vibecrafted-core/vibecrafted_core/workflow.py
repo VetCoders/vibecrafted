@@ -44,7 +44,7 @@ from .events import append_event
 from .model_overrides import _model_override_receipt, _with_model_override
 from .package_resources import deck_path as package_deck_path
 from .process_control import process_identity_receipt, validate_process_identity
-from .report_contract import CLAIM_DIGEST_ENV
+from .report_contract import CLAIM_DIGEST_ENV, reserve_launcher_report_template
 from .research_config import ResearchAgentSelection, resolve_research_runtime_config
 from .run_mutation import mutate_run_meta, run_mutation_locks
 from .run_triage import BUCKET_LIVE
@@ -271,35 +271,20 @@ def _slug_words(text: str) -> list[str]:
     ]
 
 
-def _artifact_report_suffix(
-    canonical_report_dir: Path | None,
-    artifact_ts: str,
-    artifact_slug: str,
-) -> str:
-    """Find the first unused numeric suffix for a canonical report filename."""
-    if canonical_report_dir is None:
-        return ""
-    for index in range(1, 100):
-        suffix = "" if index == 1 else f"-{index}"
-        pattern = f"{artifact_ts}_*_{artifact_slug}_report{suffix}.*"
-        if not any(canonical_report_dir.glob(pattern)):
-            return suffix
-    return "-99"
-
-
 def _canonical_report_path(
     *,
     canonical_report_dir: Path,
     artifact_ts: str,
     agent: str,
     artifact_slug: str,
-    artifact_suffix: str,
+    run_id: str,
 ) -> Path:
-    """Assemble the canonical report filename from its slug/agent/suffix parts."""
+    """Assemble a run-id-addressed report path; no shared suffix allocator."""
     safe_agent = "-".join(_slug_words(agent)) or "agent"
+    safe_run_id = re.sub(r"[^A-Za-z0-9._-]+", "-", run_id).strip(".-") or "run"
     return (
         canonical_report_dir
-        / f"{artifact_ts}_{safe_agent}_{artifact_slug}_report{artifact_suffix}.md"
+        / f"{artifact_ts}_{safe_agent}_{artifact_slug}_{safe_run_id}_report.md"
     )
 
 
@@ -1026,6 +1011,8 @@ _LIVE_VIEWER_OFF = {"0", "false", "no", "off"}
 
 def _live_viewer_enabled(env: dict[str, str]) -> bool:
     """Whether the LIVE viewer is switched on for this launch."""
+    if str(env.get("VIBECRAFTED_TEST_MODE", "") or "").strip() == "1":
+        return False
     raw = str(env.get(LIVE_VIEWER_ENV, "") or "").strip().lower()
     return raw not in _LIVE_VIEWER_OFF
 
@@ -1961,17 +1948,19 @@ def launch_workflow(
     canonical_report_dir = _canonical_report_dir(spec.root, spec.skill)
     artifact_ts = time.strftime("%Y-%m-%d")
     artifact_slug = _artifact_slug(source_prompt, run_id)
-    artifact_suffix = _artifact_report_suffix(
-        canonical_report_dir,
-        artifact_ts,
-        artifact_slug,
-    )
     report_path = _canonical_report_path(
         canonical_report_dir=canonical_report_dir,
         artifact_ts=artifact_ts,
         agent=spec.agent,
         artifact_slug=artifact_slug,
-        artifact_suffix=artifact_suffix,
+        run_id=run_id,
+    )
+    reserve_launcher_report_template(
+        report_path,
+        run_id=run_id,
+        agent=spec.agent,
+        skill=spec.skill,
+        claim_digest=str(spec.claim_digest or "").strip(),
     )
     prompt_path = _write_prompt_file(artifacts["prompt"], prompt_body)
     claim_digest = str(spec.claim_digest or "").strip()
@@ -2060,8 +2049,6 @@ def launch_workflow(
     merged_env["VIBECRAFTED_CANONICAL_REPORT_DIR"] = str(canonical_report_dir)
     merged_env["VIBECRAFTED_ARTIFACT_SLUG"] = artifact_slug
     merged_env["VIBECRAFTED_ARTIFACT_TS"] = artifact_ts
-    if artifact_suffix:
-        merged_env["VIBECRAFTED_ARTIFACT_SUFFIX"] = artifact_suffix
     if spec.runtime == "headless":
         # A detached run has no terminal origin. Ambient Zellij/vc-frame
         # variables belong to the operator shell and must not manufacture a
@@ -2088,7 +2075,7 @@ def launch_workflow(
         canonical_report_dir=canonical_report_dir,
         artifact_slug=artifact_slug,
         artifact_ts=artifact_ts,
-        artifact_suffix=artifact_suffix,
+        artifact_suffix="",
         research_selection=research_selection,
     )
     if operator_session:

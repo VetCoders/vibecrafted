@@ -81,10 +81,17 @@ spawn_effective_operator_session() {
   fi
 
   # Prefer the Python catalog resolver so shell and Python stay identical.
-  local resolved=""
-  if command -v python3 >/dev/null 2>&1; then
+  # Resolve the checkout/installed package explicitly: relying on ambient
+  # PYTHONPATH made source checkouts silently fall back to basename hosts.
+  local core_path="" py="" python_path="${PYTHONPATH:-}" resolved=""
+  core_path="$(spawn_python_core_path 2>/dev/null || true)"
+  py="$(spawn_python_bin)"
+  if [[ -n "$core_path" ]]; then
+    python_path="${core_path}${python_path:+:$python_path}"
+  fi
+  if command -v "$py" >/dev/null 2>&1; then
     resolved="$(
-      SPAWN_ROOT="$repo_root" VIBECRAFTED_ROOT="$repo_root" python3 - <<'PY' 2>/dev/null
+      PYTHONPATH="$python_path" SPAWN_ROOT="$repo_root" VIBECRAFTED_ROOT="$repo_root" "$py" - <<'PY' 2>/dev/null
 import os
 from pathlib import Path
 root = os.environ.get("SPAWN_ROOT") or os.environ.get("VIBECRAFTED_ROOT") or os.getcwd()

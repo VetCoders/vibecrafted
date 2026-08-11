@@ -20,12 +20,11 @@ schema = "vibecrafted.dispatch.v1"
 [meta]
 name = "my-line"
 repo = "~/projects/my-app"
-reports_dir = "~/projects/my-app/reports"
 
 [common]
 text = """
 Repo: {repo}
-Report: {reports_dir}/{id}_report.md
+Durable artifact plane: {reports_dir}
 Baton: {baton}
 """
 
@@ -65,6 +64,16 @@ prompt = "Implement cut {id} in {repo}."
 | `reports_dir` | no       | Rendered into `{reports_dir}`                     |
 | `tracker`     | no       | Tracker path, rendered into `{tracker}`           |
 
+`reports_dir` and `tracker` are recovery-only compatibility inputs. New
+dispatch writes ignore them and allocate under the canonical global artifact
+plane:
+
+```text
+~/.vibecrafted/artifacts/<org>/<repo>/YYYY_MMDD/{plans,reports,...}
+```
+
+Provider-specific roots and repo-local `.vibecrafted` paths fail doctor.
+
 ## `[policy]`
 
 | Key                         | Default        | Values / meaning                                        |
@@ -98,21 +107,61 @@ the titles.
 
 ## `[[cuts]]`
 
-| Key                | Required     | Meaning                                                                                                     |
-| ------------------ | ------------ | ----------------------------------------------------------------------------------------------------------- |
-| `id`               | yes          | Unique cut id, rendered into `{id}`                                                                         |
-| `agent`            | no           | Fleet agent (`claude`, `codex`, `agy`, `junie`, `grok`)                                                     |
-| `workflow`         | yes          | Must resolve (via `workflow_map`) to a supported workflow                                                   |
-| `phase`            | no           | Phase title, when phases are declared                                                                       |
-| `prompt` / `brief` | one required | Inline prompt, or a brief file path (resolved relative to the plan file; must exist)                        |
-| `extra`            | no           | Text appended after the brief/prompt                                                                        |
-| `mode`             | no           | `"write"` (default) or `"read"`                                                                             |
-| `mutation`         | READ cuts    | `forbid` \| `allow-report-only` \| `allow` — doctor requires it on every READ cut                           |
-| `observational`    | no           | `true` marks an observational READ cut (`observe` accepted); the only case where `verify` may be omitted    |
-| `critical`         | no           | `true` makes failure subject to `on_critical_fail`                                                          |
-| `model`            | no           | Model pin for the cut's agent                                                                               |
-| `verify`           | usually      | Array of verifier tables (below)                                                                            |
-| `recovery`         | no           | `{ on = "[!]", goto = "<cut-id-or-phase>", max_loops = <int> }` — `goto` must name an existing cut or phase |
+| Key                | Required     | Meaning                                                                                                               |
+| ------------------ | ------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `id`               | yes          | Unique cut id, rendered into `{id}`                                                                                   |
+| `agent`            | no           | Fleet agent (`claude`, `codex`, `agy`, `junie`, `grok`)                                                               |
+| `workflow`         | yes          | Must resolve (via `workflow_map`) to a supported workflow                                                             |
+| `phase`            | no           | Phase title, when phases are declared                                                                                 |
+| `prompt` / `brief` | one required | Inline prompt, or a brief file path (resolved relative to the plan file; must exist)                                  |
+| `extra`            | no           | Text appended after the brief/prompt                                                                                  |
+| `mode`             | no           | `"write"` (default) or `"read"`                                                                                       |
+| `mutation`         | READ cuts    | `forbid` \| `allow-report-only` \| `allow` — doctor requires it on every READ cut                                     |
+| `observational`    | no           | `true` marks an observational READ cut (`observe` accepted); the only case where `verify` may be omitted              |
+| `critical`         | no           | `true` makes failure subject to `on_critical_fail`                                                                    |
+| `model`            | no           | Model pin for the cut's agent                                                                                         |
+| `verify`           | usually      | Array of verifier tables (below)                                                                                      |
+| `recovery`         | no           | `{ on = "[!]", goto = "<cut-id-or-phase>", max_loops = <int> }` — `goto` must name an existing cut or phase           |
+| `depends_on`       | no           | Cut id array. A cut becomes ready only after every dependency settles successfully; cycles and unknown ids fail parse |
+| `integrator`       | no           | `true` names an exclusive WRITE cut that alone may modify the main checkout                                           |
+
+## Scheduling and checkout contract
+
+The supervisor parses `depends_on` as a DAG. It launches all ready workers up
+to `policy.concurrency`; independent failures do not stop siblings unless the
+declared critical-failure policy breaks the line. An integrator is exclusive
+for the repository and never overlaps another active cut.
+
+Every non-integrator cut receives:
+
+```text
+checkout  ~/.vibecrafted/worktrees/<org>/<repo>/YYYY_MMDD/<cut-id>
+branch    cut/<cut-id>
+target    <checkout>/target
+```
+
+`CARGO_TARGET_DIR` is always the cut's own `<checkout>/target`. A symlink,
+escape, ambient shared Cargo target, dirty reused checkout, or wrong branch is
+a hard refusal. Cold compilation is an accepted isolation cost; a future
+compiler cache must remain content-addressed and must not merge target dirs.
+
+The scheduler receipt ledger lives under
+`~/.vibecrafted/control_plane/dispatches/<run-id>/receipts.json` and exposes
+`queued`, `launching`, `active`, `reported`, `verified`, `integrating`,
+`settled`, `failed`, and `stopped` transitions together with worktree, target,
+artifact, report, dependency, slot, integration, gate, commit, and cleanup
+evidence.
+
+Resume with `--resume <run-id>`. The supervisor consumes receipts and Git
+ancestry, awaits a still-live process instead of launching a duplicate, and
+refuses to guess when a dead launch has no report. Remove settled checkout
+payloads explicitly:
+
+```bash
+vibecrafted dispatch plan.dispatch.toml --cleanup-settled <run-id>
+```
+
+Branches and durable reports remain. Active cuts are never cleaned.
 
 ## `[[cuts.verify]]`
 
@@ -144,11 +193,11 @@ commands render these placeholders:
 
 | Placeholder                          | Value                                                                   |
 | ------------------------------------ | ----------------------------------------------------------------------- |
-| `{repo}`                             | `meta.repo`                                                             |
+| `{repo}`                             | Resolved worker checkout; main checkout only for an integrator          |
 | `{id}`                               | Cut id                                                                  |
 | `{agent}`                            | Cut agent                                                               |
 | `{workflow}` / `{resolved_workflow}` | Declared / mapped workflow                                              |
-| `{reports_dir}`                      | `meta.reports_dir`                                                      |
+| `{reports_dir}`                      | Canonical durable artifact root                                         |
 | `{tracker}`                          | `meta.tracker`                                                          |
 | `{baton}`                            | Accumulated baton state as JSON — prompts only, never verifier commands |
 

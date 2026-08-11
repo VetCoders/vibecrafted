@@ -303,6 +303,19 @@ def test_spawn_write_meta_schema_contract_pin(tmp_path: Path) -> None:
     assert data["model"] == "gpt-4"
     assert isinstance(data["created_at"], str)
     assert isinstance(data["updated_at"], str)
+    for identity_key in (
+        "workspace_id",
+        "workspace_instance_id",
+        "workspace_display_label",
+        "worker_host_session",
+        "worker_host_display",
+        "vibecrafted_session_id",
+    ):
+        assert isinstance(data[identity_key], str)
+    assert isinstance(data["build_id"], dict)
+    assert data["build_id"]["schema"] == "vibecrafted.build-id.v1"
+    assert data["workspace_id"]
+    assert data["worker_host_session"].endswith(" workers")
 
     expected_keys = {
         "created_at",
@@ -324,6 +337,13 @@ def test_spawn_write_meta_schema_contract_pin(tmp_path: Path) -> None:
         "launcher_pid",
         "liveness",
         "model",
+        "workspace_id",
+        "workspace_instance_id",
+        "workspace_display_label",
+        "worker_host_session",
+        "worker_host_display",
+        "build_id",
+        "vibecrafted_session_id",
     }
     assert set(data.keys()) == expected_keys
 

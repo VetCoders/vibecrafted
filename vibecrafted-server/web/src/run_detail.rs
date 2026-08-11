@@ -15,6 +15,8 @@
 use leptos::prelude::*;
 use leptos_meta::{Meta, Title};
 
+use control_core::is_safe_run_id;
+
 /// Everything the detail page knows about one run id. Exactly one of `run` /
 /// `lifecycle` is populated on a hit; both empty renders the honest 404 body.
 #[derive(Clone, Default)]
@@ -124,6 +126,14 @@ fn load_run_detail_from(
     run_id: &str,
     now: chrono::DateTime<chrono::Utc>,
 ) -> RunDetailData {
+    if !is_safe_run_id(run_id) {
+        return RunDetailData {
+            run_id: run_id.to_string(),
+            control_plane: plane.control_plane_home().display().to_string(),
+            ..RunDetailData::default()
+        };
+    }
+
     /// Serde is the single naming authority for enum wire strings; rendering
     /// through it keeps this page drift-proof against model.rs enum changes.
     fn wire<T: serde::Serialize>(value: &Option<T>) -> String {
@@ -135,10 +145,7 @@ fn load_run_detail_from(
     }
 
     fn display<T: std::fmt::Display>(value: &Option<T>) -> String {
-        value
-            .as_ref()
-            .map(ToString::to_string)
-            .unwrap_or_default()
+        value.as_ref().map(ToString::to_string).unwrap_or_default()
     }
 
     let run = plane.lookup_run(run_id).map(|run| RunDetailView {
@@ -273,7 +280,7 @@ fn axis_badge(axis: &'static str, value: String) -> impl IntoView {
     view! { <span class="control-badge">{label}</span> }
 }
 
-fn artifact_link(label: &'static str, path: String) -> impl IntoView {
+fn artifact_path(label: &'static str, path: String) -> impl IntoView {
     if path.is_empty() {
         leptos::either::Either::Left(view! {
             <li class="run-detail-artifact">
@@ -282,11 +289,10 @@ fn artifact_link(label: &'static str, path: String) -> impl IntoView {
             </li>
         })
     } else {
-        let href = path.clone();
         leptos::either::Either::Right(view! {
             <li class="run-detail-artifact">
                 <span class="mono-cap">{label}</span>
-                <a class="server-console-link" href=href>{path}</a>
+                <span class="run-detail-artifact-path">{path}</span>
             </li>
         })
     }
@@ -322,7 +328,7 @@ pub fn RunDetailPage() -> impl IntoView {
 
 fn run_detail_view(detail: RunDetailData) -> impl IntoView {
     let run_id = detail.run_id.clone();
-    let api_href = format!("/api/control/runs/{run_id}");
+    let api_href = is_safe_run_id(&run_id).then(|| format!("/api/control/runs/{run_id}"));
     let events = detail.events;
     let no_events = events.is_empty();
 
@@ -337,7 +343,9 @@ fn run_detail_view(detail: RunDetailData) -> impl IntoView {
                 <p class="section-eyebrow">"run observability"</p>
                 <h1 class="run-detail-title">{run_id.clone()}</h1>
                 <p class="server-console-links">
-                    <a class="server-console-link" href=api_href>"Raw run JSON"</a>
+                    {api_href.map(|href| view! {
+                        <a class="server-console-link" href=href>"Raw run JSON"</a>
+                    })}
                     <a class="server-console-link" href="/api/control/events">"Event stream"</a>
                 </p>
             </section>
@@ -485,8 +493,8 @@ fn run_body(run: RunDetailView) -> impl IntoView {
                 <h2>"Artifacts"</h2>
             </div>
             <ul class="run-detail-artifacts">
-                {artifact_link("report", run.latest_report)}
-                {artifact_link("transcript", run.latest_transcript)}
+                {artifact_path("report", run.latest_report)}
+                {artifact_path("transcript", run.latest_transcript)}
             </ul>
         </section>
     }
@@ -576,7 +584,7 @@ mod tests {
         panic!("could not allocate an isolated fixture home")
     }
 
-    fn write_snapshot(runs_dir: &Path, run_id: &str) {
+    fn write_snapshot(runs_dir: &Path, run_id: &str, report: &str) {
         let payload = json!({
             "run_id": run_id,
             "state": "completed",
@@ -585,7 +593,7 @@ mod tests {
             "mode": "implement",
             "root": "/tmp/repo",
             "operator_session": format!("repo-{run_id}"),
-            "latest_report": "/tmp/repo/reports/final.md",
+            "latest_report": report,
             "latest_transcript": "",
             "last_error": "",
             "updated_at": "2026-08-09T12:00:00+00:00",
@@ -636,7 +644,11 @@ mod tests {
         let home = temp_home();
         let runs_dir = home.join("control_plane/runs");
         fs::create_dir_all(&runs_dir).expect("runs dir");
-        write_snapshot(&runs_dir, "impl-260809-120000-1");
+        write_snapshot(
+            &runs_dir,
+            "impl-260809-120000-1",
+            "/tmp/repo/reports/final.md",
+        );
 
         let html = render(&home, "impl-260809-120000-1");
 
@@ -650,6 +662,35 @@ mod tests {
         assert!(html.contains("Back to console"));
         assert!(html.contains("aria-label=\"Delivery proof\""));
         assert!(html.contains("aria-label=\"Process and sessions\""));
+
+        fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn artifact_paths_are_text_not_navigation() {
+        let home = temp_home();
+        let runs_dir = home.join("control_plane/runs");
+        fs::create_dir_all(&runs_dir).expect("runs dir");
+        write_snapshot(&runs_dir, "unsafe-artifact", "javascript:alert(1)");
+
+        let html = render(&home, "unsafe-artifact");
+
+        assert!(html.contains("javascript:alert(1)"));
+        assert!(!html.contains("href=\"javascript:alert(1)\""));
+
+        fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn invalid_run_id_never_becomes_a_control_plane_lookup_or_api_link() {
+        let home = temp_home();
+        fs::create_dir_all(home.join("control_plane/runs")).expect("runs dir");
+
+        let html = render(&home, "../secret");
+
+        assert!(html.contains("Run not found"));
+        assert!(!html.contains("/api/control/runs/../secret"));
+        assert!(!html.contains("aria-label=\"Delivery proof\""));
 
         fs::remove_dir_all(home).ok();
     }

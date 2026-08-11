@@ -2120,6 +2120,47 @@ def test_agent_stop_mode_routes_to_core_cli_help() -> None:
     assert "Unknown mode: stop" not in result.stderr
 
 
+def test_swarm_alias_routes_to_research_help() -> None:
+    result = subprocess.run(
+        [str(LAUNCHER), "swarm", "--help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Multi-agent research pass" in result.stdout
+    assert "vibecrafted swarm [agents...] [flags]" in result.stdout
+    assert "not in the command deck" not in result.stdout
+
+
+def test_swarm_lifecycle_help_uses_existing_core_route() -> None:
+    result = subprocess.run(
+        [str(LAUNCHER), "swarm", "observe", "--help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Check the last agent report or transcript." in result.stdout
+    assert "Usage: vibecrafted swarm observe --last" in result.stdout
+
+
+def test_canary_launcher_has_canonical_help() -> None:
+    result = subprocess.run(
+        [str(LAUNCHER), "canary", "--help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Ownership catalog" in result.stdout
+    assert "vibecrafted canary" in result.stdout
+    assert "not in the command deck" not in result.stdout
+
+
 def test_dashboard_subcommand_launches_repo_owned_vc_frame_layout(
     tmp_path: Path,
 ) -> None:

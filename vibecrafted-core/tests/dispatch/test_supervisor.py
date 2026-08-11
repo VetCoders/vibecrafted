@@ -227,8 +227,9 @@ prompt = "unpinned cut"
     )
     captured: dict[str, str] = {}
 
-    def fake_launch_workflow(spec, _base_dir):
+    def fake_launch_workflow(spec, _base_dir, *, env=None):
         captured[spec.agent] = spec.model
+        assert env is not None
         return {"accepted": True, "run_id": "r", "pid": 1, "report": ""}
 
     monkeypatch.setattr(supervisor_module, "launch_workflow", fake_launch_workflow)

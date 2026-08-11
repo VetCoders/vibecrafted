@@ -54,9 +54,14 @@ A written multi-agent dispatch MAY put each cut in its own worktree — and at
    branches back single-threaded after green verifiers, runs full gates on
    the integrated tree, and journals every mid-plan change. Workers NEVER
    push, NEVER merge, NEVER touch the main checkout.
-4. **Standard geometry.** Worktrees live under `.claude/worktrees/<cut-id>`
-   on `cut/<cut-id>` branches, branched from the base (or from their
-   sequence predecessor), and are removed after integration. No orphan trees.
+4. **Standard geometry.** The dispatcher owns provider-neutral worktrees at
+   `~/.vibecrafted/worktrees/<org>/<repo>/YYYY_MMDD/<cut-id>` on
+   `cut/<cut-id>` branches. Every cut owns a real ignored
+   `<worktree>/target`; sharing or symlinking Cargo targets is forbidden.
+   Durable evidence stays under `~/.vibecrafted/artifacts`, ephemeral runtime
+   state under `~/.vibecrafted/control_plane`, and only settled worktrees are
+   eligible for explicit cleanup. No provider-specific roots and no orphan
+   trees.
 
 Mode B is operator-explicit by construction: it exists only inside a written
 plan (dispatch TOML + briefs) that passed its doctors. An agent may not enter

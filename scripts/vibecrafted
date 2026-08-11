@@ -505,6 +505,7 @@ _is_help_flag() {
 _skill_summary() {
   case "$1" in
     audit) printf 'READ-ONLY falsification of a completed plan or multi-task implementation.\n' ;;
+    canary) printf 'Ownership catalog: Loctree scopes, docstring cuts, one supervisor commit.\n' ;;
     decorate) printf 'Visual finishing and UX coherence pass.\n' ;;
     delegate) printf 'Native in-session subagent delegation.\n' ;;
     dou) printf 'Definition of Undone audit across the product surface.\n' ;;
@@ -5362,6 +5363,22 @@ cmd_unknown() {
   printf '  Try %bvibecrafted help%b for the current surface.\n\n' "$_cyan" "$_reset"
 }
 
+cmd_swarm() {
+  local mode="${1:-}"
+  case "$mode" in
+    observe|await|stop)
+      shift || true
+      run_mode "swarm" "$mode" "$@"
+      ;;
+    help|-h|--help|"")
+      cmd_skill_help "research"
+      ;;
+    *)
+      run_skill "research" "$@"
+      ;;
+  esac
+}
+
 main() {
   local invoked cmd
   invoked="$(basename "$0")"
@@ -5407,6 +5424,7 @@ main() {
     uninstall|remove) cmd_uninstall ;;
     version|--version|-v) printf 'vibecrafted %s\n' "$(_version)" ;;
     agents) cmd_agents "$@" ;;
+    swarm) cmd_swarm "$@" ;;
     claude|codex|gemini|agy|junie|grok)
       local mode="${1:-}"
       if _is_help_flag "$mode"; then
@@ -5425,7 +5443,7 @@ main() {
       run_mode "$cmd" "$mode" "$@"
       ;;
     implement) run_skill "implement" "$@" ;;
-    audit|decorate|delegate|dou|followup|guard|hydrate|intents|justdo|marbles|ownership|partner|polarize|prune|release|research|review|scaffold|trust|workflow)
+    audit|canary|decorate|delegate|dou|followup|guard|hydrate|intents|justdo|marbles|ownership|partner|polarize|prune|release|research|review|scaffold|trust|workflow)
       run_skill "$cmd" "$@"
       ;;
     *)

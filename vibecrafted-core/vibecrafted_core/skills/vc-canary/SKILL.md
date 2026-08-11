@@ -119,7 +119,7 @@ All writes go under `./.loctree/` (atlas + canary). Status on stdout; data in fi
 
 ## Agent pin defaults (when user silent)
 
-Prefer whichever launcher is live in the session, in order:  
+Prefer whichever launcher is live in the session, in order:
 `claude` (Sonnet 5 class) · `codex` (gpt-5.6-terra class) · `grok` (grok-4.5).
 
 ## Common mistakes
