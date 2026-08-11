@@ -13,6 +13,7 @@ pub enum ServerSection {
     Runs,
     Lifecycle,
     Activity,
+    Structure,
     Scaffold,
 }
 
@@ -76,8 +77,11 @@ pub fn ServerFrame(active: ServerSection, status: String, children: Children) ->
                         <a class=active.nav_class(ServerSection::Activity) href="/activity">
                             <span>"04"</span><strong>"Activity"</strong>
                         </a>
+                        <a class=active.nav_class(ServerSection::Structure) href="/structure">
+                            <span>"05"</span><strong>"Structure"</strong>
+                        </a>
                         <a class=active.nav_class(ServerSection::Scaffold) href="/scaffold">
-                            <span>"05"</span><strong>"Scaffold"</strong>
+                            <span>"06"</span><strong>"Scaffold"</strong>
                         </a>
                     </nav>
                     <div class="server-sidebar-note">
@@ -105,8 +109,11 @@ pub fn ServerFrame(active: ServerSection, status: String, children: Children) ->
                 <a class=active.nav_class(ServerSection::Activity) href="/activity">
                     <span>"04"</span><strong>"Activity"</strong>
                 </a>
+                <a class=active.nav_class(ServerSection::Structure) href="/structure">
+                    <span>"05"</span><strong>"Structure"</strong>
+                </a>
                 <a class=active.nav_class(ServerSection::Scaffold) href="/scaffold">
-                    <span>"05"</span><strong>"Scaffold"</strong>
+                    <span>"06"</span><strong>"Scaffold"</strong>
                 </a>
             </nav>
         </div>

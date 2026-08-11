@@ -2848,7 +2848,7 @@ a.control-run-id:focus-visible {
     bottom: 0;
     z-index: 60;
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     min-height: 58px;
     padding: 4px 5px max(4px, env(safe-area-inset-bottom));
     border-top: 1px solid var(--border-subtle);

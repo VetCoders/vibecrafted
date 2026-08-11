@@ -430,6 +430,7 @@ pub fn App() -> impl IntoView {
                 <Route path=path!("/runs") view=RunsPage />
                 <Route path=path!("/lifecycle") view=LifecyclePage />
                 <Route path=path!("/activity") view=ActivityPage />
+                <Route path=path!("/structure") view=StructurePage />
                 <Route path=path!("/run/:run_id") view=RunDetailPage />
             </Routes>
         </Router>
@@ -465,12 +466,7 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
 
     let settlement = dashboard.settlement;
     let attention_count = settlement.n;
-    let loctree_link = if loctree_report.is_empty() {
-        None
-    } else {
-        Some(loctree_report)
-    };
-    let has_loctree_link = loctree_link.is_some();
+    let has_loctree_report = !loctree_report.is_empty();
 
     view! {
         <ServerFrame
@@ -548,12 +544,10 @@ fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
                         <span>"Loctree + scaffold"</span>
                     </div>
                     <div class="structure-links">
-                        {loctree_link.map(|href| view! {
-                            <a class="server-console-link" href=href>"Open last Loctree report"</a>
-                        })}
+                        <a class="server-console-link" href="/structure">"Inspect structure"</a>
                         <a class="server-console-link" href="/scaffold">"Open scaffold review"</a>
                     </div>
-                    <p class="control-empty" hidden=has_loctree_link>
+                    <p class="control-empty" hidden=has_loctree_report>
                         "No Loctree report is known for the roots in the canonical state view."
                     </p>
                 </section>
@@ -672,6 +666,28 @@ pub fn ActivityPage() -> impl IntoView {
 }
 
 #[component]
+pub fn StructurePage() -> impl IntoView {
+    let dashboard = load_dashboard_data();
+    let report = dashboard.loctree_report;
+    let has_report = !report.is_empty();
+    view! {
+        <Title text="structure - vc-server" />
+        <Meta name="description" content="Current structural evidence and scaffold entry points." />
+        <ServerFrame active=ServerSection::Structure status="structural evidence".to_string()>
+            <div class="server-console-shell route-page-shell">
+                {route_header("Repository", "Structure", "Structural evidence is shown as runtime truth. Local filesystem paths are never emitted as broken browser links.")}
+                <section class="control-panel control-panel-wide" aria-label="Structural evidence">
+                    <div class="control-panel-head"><h2>"Latest Loctree report"</h2><span>{if has_report { "available" } else { "not found" }}</span></div>
+                    <p class="run-detail-artifact-path" hidden={!has_report}>{report}</p>
+                    <p class="control-empty" hidden=has_report>"No Loctree report is known for the roots in the canonical state view."</p>
+                    <p class="server-console-links"><a class="server-console-link server-console-link-primary" href="/scaffold">"Open scaffold studio"</a></p>
+                </section>
+            </div>
+        </ServerFrame>
+    }
+}
+
+#[component]
 pub fn NotFoundPage() -> impl IntoView {
     view! {
         <Title text="not found - vc-server" />
@@ -697,7 +713,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        ActivityPage, DashboardRun, LifecyclePage, RunsPage, console_dashboard,
+        ActivityPage, DashboardRun, LifecyclePage, RunsPage, StructurePage, console_dashboard,
         load_dashboard_data_from, operator_active_runs, run_cards,
     };
     use crate::control::api::state_payload;
@@ -830,6 +846,7 @@ mod tests {
         assert!(html.contains("href=\"/runs\""));
         assert!(html.contains("href=\"/lifecycle\""));
         assert!(html.contains("href=\"/activity\""));
+        assert!(html.contains("href=\"/structure\""));
         assert!(html.contains("href=\"/scaffold\""));
         assert!(!html.contains("href=\"#fleet\""));
         let board_position = html
@@ -853,7 +870,7 @@ mod tests {
     #[test]
     fn navigation_uses_dedicated_views_and_run_cards_open_human_transcripts() {
         let owner = Owner::new();
-        let (runs, lifecycle, activity, card) = owner.with(|| {
+        let (runs, lifecycle, activity, structure, card) = owner.with(|| {
             leptos_meta::provide_meta_context();
             provide_theme_context();
             let card = run_cards(vec![DashboardRun {
@@ -868,6 +885,7 @@ mod tests {
                 RunsPage().to_html(),
                 LifecyclePage().to_html(),
                 ActivityPage().to_html(),
+                StructurePage().to_html(),
                 card,
             )
         });
@@ -878,6 +896,8 @@ mod tests {
         assert!(lifecycle.contains("Action plan"));
         assert!(activity.contains("Runtime context"));
         assert!(activity.contains("Warnings"));
+        assert!(structure.contains("Latest Loctree report"));
+        assert!(!structure.contains("href=\"/Volumes/"));
         assert!(card.contains("href=\"/run/impl-live-agent\""));
         assert!(card.contains("Open transcript"));
     }

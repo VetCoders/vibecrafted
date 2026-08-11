@@ -499,6 +499,7 @@ pub mod api {
       <a href="/runs" target="_top">Runs</a>
       <a href="/lifecycle" target="_top">Lifecycle</a>
       <a href="/activity" target="_top">Activity</a>
+      <a href="/structure" target="_top">Structure</a>
       <a class="is-active" href="/scaffold" target="_top">Scaffold</a>
     </nav>
     <a class="studio-back-link" href="/scaffold/library">All plans</a>
@@ -681,6 +682,7 @@ pub mod api {
         <a href="/runs" target="_top">Runs</a>
         <a href="/lifecycle" target="_top">Lifecycle</a>
         <a href="/activity" target="_top">Activity</a>
+        <a href="/structure" target="_top">Structure</a>
         <span class="library-mode">Scaffold</span>
       </div>
     </nav>
