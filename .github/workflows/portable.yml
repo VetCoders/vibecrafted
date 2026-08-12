@@ -124,7 +124,13 @@ jobs:
       - name: Serve install.sh locally and bootstrap
         run: |
           archive="/tmp/vibecrafted-bootstrap.tar.gz"
-          tar -czf "$archive" --exclude='.git' -C "$GITHUB_WORKSPACE" .
+          source_revision="$(git rev-parse HEAD)"
+          python3 scripts/distribution_manifest.py archive \
+            --source "$GITHUB_WORKSPACE" \
+            --output "$archive" \
+            --root-name vibecrafted-bootstrap \
+            --owner-repo "$GITHUB_REPOSITORY" \
+            --source-revision "$source_revision"
           bash install.sh --archive-file "$archive"
       - name: Verify bootstrap result
         run: |

@@ -374,6 +374,7 @@ def test_packaged_asset_findings_require_release_contract_resources(
     skill = tmp_path / "skills/vc-justdo/SKILL.md"
     deck = tmp_path / "deck/vibecrafted"
     release_assets = (
+        tmp_path / "product_contract.py",
         tmp_path / "walkaround_runner.py",
         tmp_path / "schemas/unified_product.schema.v1.json",
         tmp_path / "trust/release-policy.v1.json",
@@ -392,10 +393,10 @@ def test_packaged_asset_findings_require_release_contract_resources(
     release_findings = [
         finding for finding in findings if finding.component == "release-contract"
     ]
-    assert len(release_findings) == 4
+    assert len(release_findings) == 5
     assert all(finding.level == "ok" for finding in release_findings)
 
-    release_assets[2].unlink()
+    (tmp_path / "trust/release-policy.v1.json").unlink()
     findings = doctor._packaged_asset_findings()
     assert any(
         finding.level == "fail" and "release-policy.v1.json" in finding.message

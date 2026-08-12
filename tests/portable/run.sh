@@ -162,12 +162,29 @@ mkdir -p "$bootstrap_home" "$bootstrap_config_dir" "$home_dir" "$config_dir" "$w
 export VIBECRAFTED_PERCEPTION_WATCH=0
 
 log "bootstrap smoke via root install.sh"
-tar -czf "$bootstrap_archive" \
-  --exclude='.git' \
-  --exclude='node_modules' \
-  --exclude='output' \
-  --exclude='*.png' \
-  -C "$repo_root" .
+read -r bootstrap_source_owner bootstrap_source_revision < <(
+  python3 - "$repo_root" <<'PY'
+from pathlib import Path
+import sys
+
+repo_root = Path(sys.argv[1])
+sys.path.insert(0, str(repo_root))
+from scripts.distribution_manifest import resolve_source_provenance
+
+provenance = resolve_source_provenance(
+    repo_root,
+    owner_repo=None,
+    source_revision=None,
+)
+print(provenance["owner_repo"], provenance["source_revision"])
+PY
+)
+python3 "$repo_root/scripts/distribution_manifest.py" archive \
+  --source "$repo_root" \
+  --output "$bootstrap_archive" \
+  --root-name vibecrafted-bootstrap \
+  --owner-repo "$bootstrap_source_owner" \
+  --source-revision "$bootstrap_source_revision"
 # The portable sandbox shares the operator's launchd user domain. Install the
 # complete payload without claiming or mutating the host's fixed service label.
 if ! HOME="$bootstrap_home" XDG_CONFIG_HOME="$bootstrap_config_dir" VIBECRAFTED_HOME="$bootstrap_home/.vibecrafted" INSTALL_SERVER_SERVICE_POLICY=isolated \

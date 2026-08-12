@@ -44,10 +44,11 @@ def deck_path() -> Path:
     return resource_path("deck", "vibecrafted")
 
 
-def release_contract_paths() -> tuple[Path, Path, Path, Path]:
+def release_contract_paths() -> tuple[Path, Path, Path, Path, Path]:
     """Return every package-owned release verifier/trust resource."""
     root = package_root()
     return (
+        root / "product_contract.py",
         root / "walkaround_runner.py",
         root / "schemas" / "unified_product.schema.v1.json",
         root / "trust" / "release-policy.v1.json",

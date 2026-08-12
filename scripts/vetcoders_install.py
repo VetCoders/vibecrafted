@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ast
 import ctypes
 import errno
 import fcntl
@@ -37,6 +38,7 @@ import stat
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager, nullcontext
@@ -73,6 +75,11 @@ xdg_data_home = _runtime_paths.xdg_data_home
 xdg_config_home = _runtime_paths.xdg_config_home
 stage_distribution_payload = _distribution_manifest.stage_payload
 distribution_path_is_forbidden = _distribution_manifest.path_is_forbidden
+assert_source_payload_matches_provenance = (
+    _distribution_manifest.assert_source_payload_matches_provenance
+)
+load_source_provenance = _distribution_manifest.load_source_provenance
+resolve_source_provenance = _distribution_manifest.resolve_source_provenance
 DistributionManifestError = _distribution_manifest.ManifestError
 
 # ---------------------------------------------------------------------------
@@ -918,35 +925,23 @@ def get_repo_commit(repo_root: Path) -> str:
     """Short (8-char) git commit SHA for `repo_root`, honoring VIBECRAFTED_SOURCE_REVISION
     override.
     """
-    configured = os.environ.get("VIBECRAFTED_SOURCE_REVISION", "").strip()
-    if re.fullmatch(r"[0-9a-fA-F]{40}", configured):
-        return configured[:8].lower()
-    try:
-        return subprocess.check_output(
-            ["git", "-C", str(repo_root), "rev-parse", "--short", "HEAD"],
-            stderr=subprocess.DEVNULL,
-            text=True,
-        ).strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return "unknown"
+    revision = get_repo_full_commit(repo_root)
+    return revision[:8] if revision != "unknown" else "unknown"
 
 
 def get_repo_full_commit(repo_root: Path) -> str:
     """Full 40-char git commit SHA for `repo_root`, honoring VIBECRAFTED_SOURCE_REVISION
     override.
     """
-    configured = os.environ.get("VIBECRAFTED_SOURCE_REVISION", "").strip()
-    if re.fullmatch(r"[0-9a-fA-F]{40}", configured):
-        return configured.lower()
     try:
-        revision = subprocess.check_output(
-            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
-            stderr=subprocess.DEVNULL,
-            text=True,
-        ).strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
+        provenance = resolve_source_provenance(
+            Path(repo_root).resolve(strict=False),
+            owner_repo=None,
+            source_revision=None,
+        )
+    except DistributionManifestError:
         return "unknown"
-    return revision.lower() if re.fullmatch(r"[0-9a-fA-F]{40}", revision) else "unknown"
+    return provenance["source_revision"]
 
 
 def get_install_version(repo_root: Path) -> str:
@@ -1037,17 +1032,15 @@ def get_repo_owner(repo_root: Path) -> str:
     """`owner/repo` slug for `repo_root`, from VIBECRAFTED_SOURCE_OWNER_REPO or parsed out of
     the origin remote URL; 'unknown' if neither resolves.
     """
-    configured = os.environ.get("VIBECRAFTED_SOURCE_OWNER_REPO", "").strip()
-    if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", configured):
-        return configured
-    url = get_repo_url(repo_root).rstrip("/").removesuffix(".git")
-    if not url:
+    try:
+        provenance = resolve_source_provenance(
+            Path(repo_root).resolve(strict=False),
+            owner_repo=None,
+            source_revision=None,
+        )
+    except DistributionManifestError:
         return "unknown"
-    path = url.split(":", 1)[-1] if ":" in url and not url.startswith("http") else url
-    parts = [part for part in path.replace("\\", "/").split("/") if part]
-    if len(parts) < 2:
-        return "unknown"
-    return f"{parts[-2]}/{parts[-1]}"
+    return provenance["owner_repo"]
 
 
 # ---------------------------------------------------------------------------
@@ -2527,11 +2520,14 @@ PYTHON_ENTRYPOINT_LAUNCHERS = [
 ]
 
 RELEASE_CONTRACT_PACKAGE_ASSETS = (
+    "product_contract.py",
     "walkaround_runner.py",
     "schemas/unified_product.schema.v1.json",
     "trust/release-policy.v1.json",
     "trust/vibecrafted-signing-v1.pub",
 )
+SECURE_WALKAROUND_LAUNCHER = "verify-vibecrafted-walkaround"
+SECURE_WALKAROUND_LAUNCHER_MARKER = "vibecrafted-managed-walkaround-launcher-v2"
 _RELEASE_KEY_SPKI_SHA256 = (
     "521ed59d3c446c540afe1557c2dbc39c9c190775f99896b2b65206c32814b25b"
 )
@@ -2933,15 +2929,181 @@ def _remove_path(path: Path) -> None:
 _TOOLS_HANDOFF_SCHEMA = "vibecrafted.tools-handoff.v1"
 _RUNTIME_GENERATION_MANIFEST = "runtime-manifest.json"
 _RUNTIME_GENERATION_MANIFEST_SCHEMA = "vibecrafted.runtime-generation.v1"
+_RUNTIME_GENERATION_MANIFEST_KEYS = frozenset(
+    {
+        "schema",
+        "version",
+        "source_fingerprint",
+        "owner_repo",
+        "source_revision",
+        "entrypoint",
+        "hashes",
+    }
+)
 _RUNTIME_GENERATION_ENTRYPOINT = Path(
     "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
 )
-_RUNTIME_GENERATION_REQUIRED_HASHES = frozenset(
+_RUNTIME_GENERATION_RUNTIME_ALIAS = Path("runtime")
+_RUNTIME_GENERATION_CANONICAL_RUNTIME = Path(
+    "vibecrafted-core/vibecrafted_core/runtime"
+)
+_RUNTIME_GENERATION_PROJECTED_CONFIG = Path("runtime/generated/vc-frame/config.kdl")
+_RUNTIME_GENERATION_CANONICAL_CONFIG = (
+    _RUNTIME_GENERATION_CANONICAL_RUNTIME / "generated/vc-frame/config.kdl"
+)
+_RUNTIME_GENERATION_RELEASE_CONTRACT_HASHES = frozenset(
+    Path("vibecrafted-core/vibecrafted_core") / relative
+    for relative in RELEASE_CONTRACT_PACKAGE_ASSETS
+)
+_RUNTIME_GENERATION_REQUIRED_HASHES = (
+    frozenset(
+        {
+            Path("VERSION"),
+            Path("scripts/vibecrafted"),
+            _RUNTIME_GENERATION_PROJECTED_CONFIG,
+            _RUNTIME_GENERATION_ENTRYPOINT,
+        }
+    )
+    | _RUNTIME_GENERATION_RELEASE_CONTRACT_HASHES
+)
+_MAX_RUNTIME_BOUND_FILE_BYTES = 16 * 1024 * 1024
+_RUNTIME_VERIFIER_PACKAGE = Path("vibecrafted-core/vibecrafted_core")
+_RUNTIME_VERIFIER_PRODUCT = _RUNTIME_VERIFIER_PACKAGE / "product_contract.py"
+_RUNTIME_VERIFIER_RUNNER = _RUNTIME_VERIFIER_PACKAGE / "walkaround_runner.py"
+_RUNTIME_VERIFIER_SCHEMA = (
+    _RUNTIME_VERIFIER_PACKAGE / "schemas/unified_product.schema.v1.json"
+)
+_RUNTIME_VERIFIER_PRODUCT_COMMANDS = frozenset(
     {
-        Path("VERSION"),
-        Path("scripts/vibecrafted"),
-        Path("runtime/generated/vc-frame/config.kdl"),
-        _RUNTIME_GENERATION_ENTRYPOINT,
+        "module",
+        "app",
+        "transaction",
+        "schema",
+        "walkaround",
+        "release-output",
+        "runtime-generation",
+    }
+)
+_RUNTIME_VERIFIER_RUNNER_COMMANDS = frozenset(
+    {"trust-probe", "verify-release", "walkaround"}
+)
+_RUNTIME_VERIFIER_E_SCHEMA = 21
+_RUNTIME_VERIFIER_E_MISSING = 22
+_RUNTIME_VERIFIER_E_HASH = 24
+_RUNTIME_VERIFIER_E_DEPENDENCY = 27
+_RUNTIME_VERIFIER_E_TRANSACTION = 28
+_RUNTIME_VERIFIER_SCHEMA_DEFS = frozenset(
+    {
+        "architecture",
+        "assemblyReceipt",
+        "fileEntry",
+        "gitSha",
+        "launchContract",
+        "minimumMacos",
+        "moduleBinding",
+        "moduleManifest",
+        "outerBundleCode",
+        "productIdentity",
+        "productManifest",
+        "proofArtifact",
+        "relativePath",
+        "releaseAbsent",
+        "releaseModuleIdentity",
+        "releaseOutput",
+        "releasePair",
+        "releaseState",
+        "runnerArgvObservation",
+        "runnerAssertionObservation",
+        "runnerProbeObservation",
+        "runnerProbeObservations",
+        "runnerSemanticObservation",
+        "runnerWalkaroundReceipt",
+        "runtimeIdentity",
+        "sha256",
+        "signedFileTransformation",
+        "transactionReceipt",
+        "walkaroundReceipt",
+    }
+)
+_RUNTIME_VERIFIER_OBJECT_SCHEMA_DEFS = frozenset(
+    {
+        "assemblyReceipt",
+        "fileEntry",
+        "launchContract",
+        "moduleBinding",
+        "moduleManifest",
+        "outerBundleCode",
+        "productIdentity",
+        "productManifest",
+        "proofArtifact",
+        "releaseAbsent",
+        "releaseModuleIdentity",
+        "releaseOutput",
+        "releasePair",
+        "runnerArgvObservation",
+        "runnerAssertionObservation",
+        "runnerProbeObservations",
+        "runnerSemanticObservation",
+        "runnerWalkaroundReceipt",
+        "runtimeIdentity",
+        "signedFileTransformation",
+        "transactionReceipt",
+    }
+)
+_RUNTIME_VERIFIER_TYPED_OBJECT_SCHEMA_PATHS = frozenset(
+    {
+        "$defs/fileEntry",
+        "$defs/moduleManifest",
+        "$defs/moduleManifest/properties/entrypoints",
+        "$defs/signedFileTransformation",
+        "$defs/assemblyReceipt",
+        "$defs/moduleBinding",
+        "$defs/outerBundleCode",
+        "$defs/launchContract",
+        "$defs/launchContract/properties/shell",
+        "$defs/launchContract/properties/environment",
+        "$defs/productManifest",
+        "$defs/productManifest/properties/modules/allOf/0/contains",
+        "$defs/productManifest/properties/modules/allOf/1/contains",
+        "$defs/productManifest/properties/entrypoints",
+        "$defs/productIdentity",
+        "$defs/runtimeIdentity",
+        "$defs/releasePair",
+        "$defs/releaseAbsent",
+        "$defs/transactionReceipt",
+        "$defs/proofArtifact",
+        "$defs/releaseModuleIdentity",
+        "$defs/releaseModuleIdentity/properties/manifest",
+        "$defs/releaseModuleIdentity/properties/assembly_receipt",
+        "$defs/releaseOutput",
+        "$defs/releaseOutput/properties/signature_policy",
+        "$defs/releaseOutput/properties/product",
+        "$defs/releaseOutput/properties/product/properties/manifest",
+        "$defs/releaseOutput/properties/outer_executable",
+        "$defs/releaseOutput/properties/outer_executable/properties/signer_policy",
+        "$defs/releaseOutput/properties/code_resources",
+        "$defs/releaseOutput/properties/dmg",
+        "$defs/releaseOutput/properties/modules",
+        "$defs/releaseOutput/properties/source_revisions",
+        "$defs/releaseOutput/properties/notarization",
+        "$defs/releaseOutput/properties/notarization/properties/app",
+        "$defs/releaseOutput/properties/notarization/properties/dmg",
+        "$defs/runnerAssertionObservation",
+        "$defs/runnerArgvObservation",
+        "$defs/runnerSemanticObservation",
+        "$defs/runnerProbeObservations",
+        "$defs/runnerWalkaroundReceipt",
+        "$defs/runnerWalkaroundReceipt/properties/observations",
+    }
+)
+_RUNTIME_VERIFIER_UNTYPED_OBJECT_MATCHER_PATHS = frozenset(
+    {
+        "$defs/moduleManifest/allOf/0/if",
+        "$defs/moduleManifest/allOf/0/then",
+        "$defs/moduleManifest/allOf/0/then/properties/entrypoints",
+        "$defs/moduleManifest/allOf/1/if",
+        "$defs/moduleManifest/allOf/1/then",
+        "$defs/moduleManifest/allOf/1/then/properties/entrypoints",
     }
 )
 _RUNTIME_ACTIVE_TEXT_ROOTS = (
@@ -7694,6 +7856,527 @@ def _runtime_generation_audit_errors(
     return sorted(set(errors))
 
 
+def _capture_runtime_bound_file(path: Path) -> bytes:
+    """Read one stable, unique regular file without following its final path component."""
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise OSError(f"cannot open unique regular file: {exc}") from exc
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise OSError("path is not a unique regular file")
+        if before.st_size > _MAX_RUNTIME_BOUND_FILE_BYTES:
+            raise OSError("file exceeds the runtime-manifest size limit")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            raw = handle.read(_MAX_RUNTIME_BOUND_FILE_BYTES + 1)
+        after = os.fstat(descriptor)
+        if len(raw) > _MAX_RUNTIME_BOUND_FILE_BYTES:
+            raise OSError("file exceeds the runtime-manifest size limit")
+        if (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        ) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+            raise OSError("file changed while it was captured")
+        return raw
+    finally:
+        os.close(descriptor)
+
+
+def _runtime_projection_topology_error(
+    generation: Path,
+    projected: Path,
+    resolved: Path,
+) -> str | None:
+    """Allow a projected config alias only through the exact top-level runtime link."""
+    if resolved == projected:
+        return None
+    runtime_alias = generation / _RUNTIME_GENERATION_RUNTIME_ALIAS
+    canonical_runtime = generation / _RUNTIME_GENERATION_CANONICAL_RUNTIME
+    canonical_config = generation / _RUNTIME_GENERATION_CANONICAL_CONFIG
+    if not runtime_alias.is_symlink():
+        return "runtime projection topology is not canonical"
+    try:
+        raw_target = os.readlink(runtime_alias)
+        resolved_runtime = runtime_alias.resolve(strict=True)
+        resolved_canonical_runtime = canonical_runtime.resolve(strict=True)
+        resolved_canonical_config = canonical_config.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        return f"runtime projection topology is invalid: {exc}"
+    if (
+        raw_target != _RUNTIME_GENERATION_CANONICAL_RUNTIME.as_posix()
+        or resolved_runtime != canonical_runtime
+        or resolved_canonical_runtime != canonical_runtime
+        or resolved_canonical_config != canonical_config
+        or resolved != canonical_config
+    ):
+        return "runtime projection topology is not canonical"
+    return None
+
+
+def _ast_command_grammar(tree: ast.AST) -> frozenset[str]:
+    """Return literal ``add_parser`` command names from one parsed CLI module."""
+    commands: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr != "add_parser" or not node.args:
+            continue
+        first = node.args[0]
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            commands.add(first.value)
+    return frozenset(commands)
+
+
+def _validate_runtime_verifier_ast(
+    raw: bytes,
+    *,
+    relative: Path,
+    required_functions: frozenset[str],
+    required_commands: frozenset[str],
+) -> None:
+    """Compile one captured verifier source and require its frozen public CLI shape."""
+    try:
+        source = raw.decode("utf-8")
+        tree = ast.parse(source, filename=relative.as_posix())
+        compile(tree, relative.as_posix(), "exec")
+    except (UnicodeError, SyntaxError, ValueError) as exc:
+        raise OSError(
+            f"candidate verifier source is not compilable: {relative}: {exc}"
+        ) from exc
+    functions = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    missing_functions = required_functions - functions
+    if missing_functions:
+        raise OSError(
+            f"candidate verifier source is missing entrypoints in {relative}: "
+            + ", ".join(sorted(missing_functions))
+        )
+    commands = _ast_command_grammar(tree)
+    if commands != required_commands:
+        raise OSError(
+            f"candidate verifier command grammar drifted in {relative}: "
+            + ", ".join(sorted(commands))
+        )
+
+
+def _validate_runtime_verifier_schema(raw: bytes) -> None:
+    """Require the captured W0 schema's closed, canonical product-contract shape."""
+    try:
+        schema = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise OSError(
+            f"candidate unified-product schema is invalid JSON: {exc}"
+        ) from exc
+    if not isinstance(schema, dict) or set(schema) != {
+        "$schema",
+        "$id",
+        "title",
+        "description",
+        "oneOf",
+        "$defs",
+    }:
+        raise OSError("candidate unified-product schema top level is not closed")
+    if (
+        schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema"
+        or schema.get("$id") != "io.vetcoders.vibecrafted.contracts.v1"
+    ):
+        raise OSError("candidate unified-product schema identity drifted")
+    definitions = schema.get("$defs")
+    if (
+        not isinstance(definitions, dict)
+        or set(definitions) != _RUNTIME_VERIFIER_SCHEMA_DEFS
+    ):
+        raise OSError("candidate unified-product schema definition inventory drifted")
+    expected_roots = [
+        {"$ref": f"#/$defs/{name}"}
+        for name in (
+            "moduleManifest",
+            "assemblyReceipt",
+            "productManifest",
+            "transactionReceipt",
+            "releaseOutput",
+            "walkaroundReceipt",
+        )
+    ]
+    if schema.get("oneOf") != expected_roots:
+        raise OSError("candidate unified-product schema root grammar drifted")
+    object_definitions = {
+        name
+        for name, definition in definitions.items()
+        if isinstance(definition, dict) and definition.get("type") == "object"
+    }
+    if object_definitions != _RUNTIME_VERIFIER_OBJECT_SCHEMA_DEFS:
+        raise OSError("candidate unified-product schema object inventory drifted")
+
+    partial_object_matchers = {
+        (
+            "$defs",
+            "productManifest",
+            "properties",
+            "modules",
+            "allOf",
+            str(index),
+            "contains",
+        )
+        for index in range(2)
+    }
+    observed_partial_matchers: set[tuple[str, ...]] = set()
+    observed_typed_object_paths: set[str] = set()
+    observed_untyped_object_matcher_paths: set[str] = set()
+
+    def require_closed_objects(node: object, path: tuple[str, ...] = ()) -> None:
+        if isinstance(node, dict):
+            rendered = "/".join(path) or "<root>"
+            if node.get("type") == "object":
+                observed_typed_object_paths.add(rendered)
+                # These two schemas are deliberately partial object matchers used by
+                # ``contains`` to require one manifest for each supported module.
+                partial_contains = path in partial_object_matchers
+                if partial_contains:
+                    observed_partial_matchers.add(path)
+                if (
+                    not partial_contains
+                    and node.get("additionalProperties") is not False
+                ):
+                    raise OSError(
+                        "candidate unified-product schema leaves an object open at "
+                        + rendered
+                    )
+            elif "properties" in node or "required" in node:
+                observed_untyped_object_matcher_paths.add(rendered)
+            for key, value in node.items():
+                require_closed_objects(value, (*path, str(key)))
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                require_closed_objects(value, (*path, str(index)))
+
+    require_closed_objects(schema)
+    if observed_typed_object_paths != _RUNTIME_VERIFIER_TYPED_OBJECT_SCHEMA_PATHS:
+        raise OSError("candidate unified-product schema object path inventory drifted")
+    if (
+        observed_untyped_object_matcher_paths
+        != _RUNTIME_VERIFIER_UNTYPED_OBJECT_MATCHER_PATHS
+    ):
+        raise OSError(
+            "candidate unified-product schema untyped object matcher inventory drifted"
+        )
+    if observed_partial_matchers != partial_object_matchers:
+        raise OSError(
+            "candidate unified-product schema partial matcher inventory drifted"
+        )
+    try:
+        dmg_name = definitions["releaseOutput"]["properties"]["dmg"]["properties"][
+            "path"
+        ]["const"]
+    except (KeyError, TypeError) as exc:
+        raise OSError(
+            "candidate unified-product schema has no canonical DMG path"
+        ) from exc
+    if dmg_name != "Vibecrafted.dmg":
+        raise OSError("candidate unified-product schema canonical DMG path drifted")
+
+
+def _write_runtime_verifier_snapshot(
+    snapshot: Path,
+    captured: dict[Path, bytes],
+    manifest_raw: bytes,
+) -> None:
+    """Materialize only already-captured bytes for candidate semantic execution."""
+    snapshot.mkdir(mode=0o700)
+    _atomic_bytes_file(
+        snapshot / _RUNTIME_GENERATION_MANIFEST,
+        manifest_raw,
+        mode=0o600,
+    )
+    for relative, raw in captured.items():
+        _atomic_bytes_file(
+            snapshot / relative,
+            raw,
+            mode=0o700
+            if relative
+            in {
+                Path("scripts/vibecrafted"),
+                _RUNTIME_GENERATION_ENTRYPOINT,
+            }
+            else 0o600,
+        )
+
+
+def _run_runtime_verifier_semantic_command(
+    argv: Sequence[str],
+    *,
+    cache: Path,
+) -> subprocess.CompletedProcess[str]:
+    """Run one captured candidate CLI under an isolated Python import/cache environment."""
+    environment = os.environ.copy()
+    for name in ("PYTHONHOME", "PYTHONPATH", "PYTHONPYCACHEPREFIX"):
+        environment.pop(name, None)
+    environment.update(
+        {
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+    )
+    return subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            "-X",
+            f"pycache_prefix={cache}",
+            *argv,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=60,
+    )
+
+
+def _assert_runtime_verifier_semantic_failure(
+    result: subprocess.CompletedProcess[str],
+    *,
+    expected_code: int,
+    context: str,
+) -> None:
+    """Require one public candidate command to fail with its exact stable contract."""
+    expected_prefix = f"VCPC{expected_code:03d}:"
+    if (
+        result.returncode != expected_code
+        or result.stdout
+        or not result.stderr.startswith(expected_prefix)
+    ):
+        detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
+        raise OSError(
+            "candidate verifier failed semantic negative control "
+            f"{context}: expected {expected_prefix}, got rc={result.returncode}: "
+            f"{detail}"
+        )
+
+
+def _validate_runtime_verifier_semantics(runtime_root: Path) -> None:
+    """Validate captured candidate code/schema and exercise its real public entrypoints."""
+    captured: dict[Path, bytes] = {}
+    for relative in sorted(_RUNTIME_GENERATION_REQUIRED_HASHES):
+        try:
+            captured[relative] = _capture_runtime_bound_file(runtime_root / relative)
+        except OSError as exc:
+            raise OSError(
+                f"candidate verifier capture failed for {relative}: {exc}"
+            ) from exc
+    try:
+        manifest_raw = _capture_runtime_bound_file(
+            runtime_root / _RUNTIME_GENERATION_MANIFEST
+        )
+    except OSError as exc:
+        raise OSError(f"candidate verifier manifest capture failed: {exc}") from exc
+
+    _validate_runtime_verifier_ast(
+        captured[_RUNTIME_VERIFIER_PRODUCT],
+        relative=_RUNTIME_VERIFIER_PRODUCT,
+        required_functions=frozenset({"main", "verify_installed_runtime_generation"}),
+        required_commands=_RUNTIME_VERIFIER_PRODUCT_COMMANDS,
+    )
+    _validate_runtime_verifier_ast(
+        captured[_RUNTIME_VERIFIER_RUNNER],
+        relative=_RUNTIME_VERIFIER_RUNNER,
+        required_functions=frozenset({"main"}),
+        required_commands=_RUNTIME_VERIFIER_RUNNER_COMMANDS,
+    )
+    _validate_runtime_verifier_schema(captured[_RUNTIME_VERIFIER_SCHEMA])
+
+    with tempfile.TemporaryDirectory(prefix="vibecrafted-runtime-verifier-") as raw_tmp:
+        temporary = Path(raw_tmp)
+        snapshot = temporary / "runtime"
+        _write_runtime_verifier_snapshot(snapshot, captured, manifest_raw)
+        product = snapshot / _RUNTIME_VERIFIER_PRODUCT
+        runner = snapshot / _RUNTIME_VERIFIER_RUNNER
+        cache = temporary / "pycache"
+
+        generation_result = _run_runtime_verifier_semantic_command(
+            [str(product), "runtime-generation", str(snapshot)],
+            cache=cache,
+        )
+        expected_generation_output = f"verified runtime-generation: {snapshot}\n"
+        if (
+            generation_result.returncode != 0
+            or generation_result.stdout != expected_generation_output
+            or generation_result.stderr
+        ):
+            detail = (
+                generation_result.stderr.strip() or generation_result.stdout.strip()
+            )
+            raise OSError(
+                "candidate product contract failed runtime-generation self-verification"
+                + (f": {detail}" if detail else "")
+            )
+
+        product_help = _run_runtime_verifier_semantic_command(
+            [str(product), "--help"], cache=cache
+        )
+        if (
+            product_help.returncode != 0
+            or product_help.stderr
+            or any(
+                token not in product_help.stdout
+                for token in _RUNTIME_VERIFIER_PRODUCT_COMMANDS
+            )
+        ):
+            raise OSError("candidate product-contract --help surface is incomplete")
+
+        runner_help = _run_runtime_verifier_semantic_command(
+            [str(runner), "--help"], cache=cache
+        )
+        if (
+            runner_help.returncode != 0
+            or runner_help.stderr
+            or any(
+                token not in runner_help.stdout
+                for token in _RUNTIME_VERIFIER_RUNNER_COMMANDS
+            )
+        ):
+            raise OSError("candidate walk-around runner --help surface is incomplete")
+
+        drift_snapshot = temporary / "hash-drift"
+        _write_runtime_verifier_snapshot(drift_snapshot, captured, manifest_raw)
+        drifted_launcher = drift_snapshot / "scripts/vibecrafted"
+        drifted_launcher.write_bytes(drifted_launcher.read_bytes() + b"\n# drift\n")
+        _assert_runtime_verifier_semantic_failure(
+            _run_runtime_verifier_semantic_command(
+                [
+                    str(drift_snapshot / _RUNTIME_VERIFIER_PRODUCT),
+                    "runtime-generation",
+                    str(drift_snapshot),
+                ],
+                cache=cache,
+            ),
+            expected_code=_RUNTIME_VERIFIER_E_HASH,
+            context="runtime-generation bound-byte drift",
+        )
+
+        try:
+            manifest = json.loads(manifest_raw.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as exc:  # pragma: no cover
+            raise OSError(f"captured runtime manifest is invalid: {exc}") from exc
+
+        legacy_snapshot = temporary / "legacy-inventory"
+        legacy_manifest = dict(manifest)
+        legacy_hashes = manifest.get("hashes")
+        if not isinstance(legacy_hashes, dict):  # pragma: no cover - loader owns this.
+            raise OSError("captured runtime manifest has no hash inventory")
+        legacy_manifest["hashes"] = {
+            relative.as_posix(): legacy_hashes[relative.as_posix()]
+            for relative in (
+                Path("VERSION"),
+                Path("scripts/vibecrafted"),
+                _RUNTIME_GENERATION_PROJECTED_CONFIG,
+                _RUNTIME_GENERATION_ENTRYPOINT,
+            )
+        }
+        _write_runtime_verifier_snapshot(
+            legacy_snapshot,
+            captured,
+            (json.dumps(legacy_manifest, sort_keys=True) + "\n").encode("utf-8"),
+        )
+        _assert_runtime_verifier_semantic_failure(
+            _run_runtime_verifier_semantic_command(
+                [
+                    str(legacy_snapshot / _RUNTIME_VERIFIER_PRODUCT),
+                    "runtime-generation",
+                    str(legacy_snapshot),
+                ],
+                cache=cache,
+            ),
+            expected_code=_RUNTIME_VERIFIER_E_TRANSACTION,
+            context="runtime-generation legacy hash inventory",
+        )
+
+        open_snapshot = temporary / "open-manifest"
+        open_manifest = dict(manifest)
+        open_manifest["unexpected"] = "parallel truth"
+        _write_runtime_verifier_snapshot(
+            open_snapshot,
+            captured,
+            (json.dumps(open_manifest, sort_keys=True) + "\n").encode("utf-8"),
+        )
+        _assert_runtime_verifier_semantic_failure(
+            _run_runtime_verifier_semantic_command(
+                [
+                    str(open_snapshot / _RUNTIME_VERIFIER_PRODUCT),
+                    "runtime-generation",
+                    str(open_snapshot),
+                ],
+                cache=cache,
+            ),
+            expected_code=_RUNTIME_VERIFIER_E_SCHEMA,
+            context="runtime-generation unknown manifest key",
+        )
+
+        _assert_runtime_verifier_semantic_failure(
+            _run_runtime_verifier_semantic_command(
+                [str(product), "schema", str(snapshot / _RUNTIME_GENERATION_MANIFEST)],
+                cache=cache,
+            ),
+            expected_code=_RUNTIME_VERIFIER_E_DEPENDENCY,
+            context="schema without site packages",
+        )
+
+        missing = temporary / "missing"
+        runner_negative_commands = (
+            (
+                "trust-probe",
+                [str(missing / "challenge.json"), str(missing / "challenge.sig")],
+                None,
+            ),
+            (
+                "verify-release",
+                [
+                    "--release-output",
+                    str(missing / "release-output.json"),
+                    "--signature",
+                    str(missing / "release-output.json.sig"),
+                ],
+                None,
+            ),
+            (
+                "walkaround",
+                [
+                    "--release-output",
+                    str(missing / "release-output.json"),
+                    "--signature",
+                    str(missing / "release-output.json.sig"),
+                    "--output",
+                    str(missing / "unexpected-walkaround.json"),
+                ],
+                missing / "unexpected-walkaround.json",
+            ),
+        )
+        for command, arguments, forbidden_output in runner_negative_commands:
+            _assert_runtime_verifier_semantic_failure(
+                _run_runtime_verifier_semantic_command(
+                    [str(runner), command, *arguments], cache=cache
+                ),
+                expected_code=_RUNTIME_VERIFIER_E_MISSING,
+                context=f"walk-around runner {command} missing input",
+            )
+            if forbidden_output is not None and (
+                forbidden_output.exists() or forbidden_output.is_symlink()
+            ):
+                raise OSError(
+                    "candidate verifier failed semantic negative control "
+                    "walk-around runner created output for missing inputs"
+                )
+
+
 def _write_runtime_generation_manifest(
     runtime_root: Path,
     *,
@@ -7703,22 +8386,41 @@ def _write_runtime_generation_manifest(
     """Write the runtime generation manifest: hashes of the required entrypoint files, source
     fingerprint/owner/revision, and install version.
     """
+    try:
+        provenance = assert_source_payload_matches_provenance(
+            source_root.resolve(strict=False),
+            owner_repo=None,
+            source_revision=None,
+        )
+    except DistributionManifestError as exc:
+        raise OSError(f"candidate runtime source provenance is invalid: {exc}") from exc
     hashes: dict[str, str] = {}
     for relative in sorted(_RUNTIME_GENERATION_REQUIRED_HASHES):
         path = runtime_root / relative
-        if not path.is_file():
-            raise OSError(f"candidate runtime is missing manifest input: {relative}")
-        hashes[relative.as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+        try:
+            raw = _capture_runtime_bound_file(path)
+        except OSError as exc:
+            raise OSError(
+                f"candidate runtime has invalid manifest input {relative}: {exc}"
+            ) from exc
+        hashes[relative.as_posix()] = hashlib.sha256(raw).hexdigest()
     payload = {
         "schema": _RUNTIME_GENERATION_MANIFEST_SCHEMA,
         "version": (install_version or read_version_file(runtime_root)).strip(),
         "source_fingerprint": _path_fingerprint(source_root),
-        "owner_repo": get_repo_owner(source_root),
-        "source_revision": get_repo_full_commit(source_root),
+        "owner_repo": provenance["owner_repo"],
+        "source_revision": provenance["source_revision"],
         "entrypoint": _RUNTIME_GENERATION_ENTRYPOINT.as_posix(),
         "hashes": hashes,
     }
     _atomic_json_file(runtime_root / _RUNTIME_GENERATION_MANIFEST, payload)
+    written, manifest_error = _load_runtime_generation_manifest(runtime_root)
+    if written is None:
+        raise OSError(
+            "candidate runtime manifest failed its own schema: "
+            + (manifest_error or "invalid runtime manifest")
+        )
+    _validate_runtime_verifier_semantics(runtime_root)
 
 
 def _sync_control_plane_tree_locked(
@@ -7772,6 +8474,17 @@ def _sync_control_plane_tree_locked(
     pointer_swapped = False
     try:
         stage_distribution_payload(src, staging, mirror=True)
+        try:
+            assert_source_payload_matches_provenance(
+                src.resolve(strict=False),
+                owner_repo=None,
+                source_revision=None,
+                payload_root=staging,
+            )
+        except DistributionManifestError as exc:
+            raise OSError(
+                f"candidate staged payload provenance is invalid: {exc}"
+            ) from exc
         if install_version:
             stamp_install_version(staging, install_version)
         _materialize_vc_frame_generation(staging)
@@ -7783,6 +8496,12 @@ def _sync_control_plane_tree_locked(
             source_root=src,
             install_version=install_version,
         )
+        payload_errors = _runtime_generation_payload_errors(staging)
+        if payload_errors:
+            raise OSError(
+                "candidate runtime failed pre-publish validation:\n"
+                + "\n".join(payload_errors)
+            )
         staging.rename(generation)
         handoff = {
             "schema": _TOOLS_HANDOFF_SCHEMA,
@@ -8515,98 +9234,427 @@ def _load_install_state(store_path: Path) -> InstallState:
     return state
 
 
-def _runtime_venv_dir(current_tools: Path) -> Path:
-    """Path to the runtime venv directory under a given current-tools generation."""
-    return current_tools / ".venv"
+def _canonical_path_preserving_final_symlink(path: Path) -> Path:
+    """Canonicalize a path's parent while preserving its final component spelling."""
+    expanded = path.expanduser()
+    if not expanded.is_absolute():
+        expanded = Path.cwd() / expanded
+    return expanded.parent.resolve(strict=False) / expanded.name
 
 
-def _runtime_venv_python(current_tools: Path) -> Path:
-    """Path to the runtime venv's python3 interpreter under a given current-tools generation."""
-    return _runtime_venv_dir(current_tools) / "bin" / "python3"
-
-
-def _ensure_runtime_pip(python_bin: Path) -> None:
-    """Ensure `python_bin` has a working pip, bootstrapping it via `ensurepip` if missing."""
-    pip_check = subprocess.run(
-        [str(python_bin), "-m", "pip", "--version"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
+def _secure_walkaround_preflight_source() -> str:
+    """Return the stdlib-only verifier preflight embedded in every managed wrapper."""
+    expected_paths = tuple(
+        relative.as_posix() for relative in sorted(_RUNTIME_GENERATION_REQUIRED_HASHES)
     )
-    if pip_check.returncode == 0:
-        return
-    subprocess.run(
-        [str(python_bin), "-m", "ensurepip", "--upgrade"],
-        check=True,
-        stdout=subprocess.DEVNULL,
+    return (
+        "EXPECTED_PATHS = frozenset("
+        + repr(expected_paths)
+        + ")\n"
+        + r"""import hashlib
+import json
+import os
+import re
+import stat
+import sys
+
+MANIFEST_NAME = "runtime-manifest.json"
+MANIFEST_SCHEMA = "vibecrafted.runtime-generation.v1"
+MANIFEST_KEYS = frozenset({
+    "schema", "version", "source_fingerprint", "owner_repo",
+    "source_revision", "entrypoint", "hashes",
+})
+ENTRYPOINT = "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
+RUNTIME_ALIAS = "runtime"
+CANONICAL_RUNTIME = "vibecrafted-core/vibecrafted_core/runtime"
+PROJECTED_CONFIG = "runtime/generated/vc-frame/config.kdl"
+CANONICAL_CONFIG = CANONICAL_RUNTIME + "/generated/vc-frame/config.kdl"
+PROVENANCE_NAME = "source-provenance.json"
+PROVENANCE_KEYS = frozenset({"schema", "owner_repo", "source_revision"})
+PROVENANCE_SCHEMA = "vibecrafted.source-provenance.v1"
+MAX_BYTES = 16 * 1024 * 1024
+SHA256 = re.compile(r"[0-9a-f]{64}")
+GIT_SHA = re.compile(r"[0-9a-f]{40}")
+OWNER = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+GENERATION = re.compile(r"vibecrafted-generation-[A-Za-z0-9._+-]+")
+
+
+def fail(message):
+    raise RuntimeError(message)
+
+
+def capture(path, context, *, allowed_resolved_path=None):
+    expected = os.path.abspath(path)
+    resolved = os.path.realpath(expected)
+    if resolved != expected:
+        if (
+            allowed_resolved_path is None
+            or resolved != os.path.abspath(allowed_resolved_path)
+        ):
+            fail(context + " is aliased")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(expected, flags)
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            fail(context + " is not a unique regular file")
+        if before.st_size > MAX_BYTES:
+            fail(context + " exceeds the size limit")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            raw = handle.read(MAX_BYTES + 1)
+        after = os.fstat(descriptor)
+        if len(raw) > MAX_BYTES:
+            fail(context + " exceeds the size limit")
+        if (
+            before.st_dev, before.st_ino, before.st_mode, before.st_nlink,
+            before.st_size, before.st_mtime_ns, before.st_ctime_ns,
+        ) != (
+            after.st_dev, after.st_ino, after.st_mode, after.st_nlink,
+            after.st_size, after.st_mtime_ns, after.st_ctime_ns,
+        ):
+            fail(context + " changed during capture")
+        return raw
+    finally:
+        os.close(descriptor)
+
+
+def load_json(raw, context):
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        fail(context + " is invalid JSON: " + str(exc))
+    if not isinstance(value, dict):
+        fail(context + " is not an object")
+    return value
+
+
+def write_snapshot(root, relative, raw):
+    destination = os.path.join(root, *relative.split("/"))
+    parent = os.path.dirname(destination)
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    descriptor = os.open(
+        destination,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
     )
+    try:
+        view = memoryview(raw)
+        while view:
+            written = os.write(descriptor, view)
+            view = view[written:]
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
-def _ensure_runtime_venv(current_tools: Path, dry_run: bool = False) -> Path | None:
-    """Create/update the installed runtime venv and editable core packages."""
-    python_bin = _runtime_venv_python(current_tools)
-    if dry_run:
-        print(f"  {dim('venv')} {python_bin}")
-        return python_bin
+def main():
+    if len(sys.argv) != 4:
+        fail("preflight argument contract is invalid")
+    generation_root, managed_wrapper, snapshot_root = map(os.path.abspath, sys.argv[1:])
+    root_stat = os.lstat(generation_root)
+    if (
+        not stat.S_ISDIR(root_stat.st_mode)
+        or stat.S_ISLNK(root_stat.st_mode)
+        or GENERATION.fullmatch(os.path.basename(generation_root)) is None
+        or os.path.realpath(generation_root) != generation_root
+    ):
+        fail("runtime generation is aliased")
+    capture(managed_wrapper, "managed wrapper")
 
-    if not python_bin.exists():
-        subprocess.run(
-            [sys.executable, "-m", "venv", str(_runtime_venv_dir(current_tools))],
-            check=True,
+    manifest_raw = capture(
+        os.path.join(generation_root, MANIFEST_NAME), "runtime manifest"
+    )
+    manifest = load_json(manifest_raw, "runtime manifest")
+    hashes = manifest.get("hashes")
+    if (
+        set(manifest) != MANIFEST_KEYS
+        or manifest.get("schema") != MANIFEST_SCHEMA
+        or not isinstance(manifest.get("version"), str)
+        or not manifest["version"]
+        or manifest["version"] != manifest["version"].strip()
+        or not isinstance(manifest.get("source_fingerprint"), str)
+        or SHA256.fullmatch(manifest["source_fingerprint"]) is None
+        or not isinstance(manifest.get("owner_repo"), str)
+        or OWNER.fullmatch(manifest["owner_repo"]) is None
+        or not isinstance(manifest.get("source_revision"), str)
+        or GIT_SHA.fullmatch(manifest["source_revision"]) is None
+        or manifest.get("entrypoint") != ENTRYPOINT
+        or not isinstance(hashes, dict)
+        or set(hashes) != EXPECTED_PATHS
+        or any(not isinstance(value, str) or SHA256.fullmatch(value) is None for value in hashes.values())
+    ):
+        fail("runtime manifest does not satisfy the closed schema")
+
+    provenance_raw = None
+    provenance_path = os.path.join(generation_root, PROVENANCE_NAME)
+    if os.path.lexists(provenance_path):
+        provenance_raw = capture(provenance_path, "source provenance")
+        provenance = load_json(provenance_raw, "source provenance")
+        if (
+            set(provenance) != PROVENANCE_KEYS
+            or provenance.get("schema") != PROVENANCE_SCHEMA
+            or provenance.get("owner_repo") != manifest["owner_repo"]
+            or provenance.get("source_revision") != manifest["source_revision"]
+        ):
+            fail("source provenance disagrees with runtime manifest")
+
+    captured = {}
+    for relative in sorted(EXPECTED_PATHS):
+        allowed_resolved_path = None
+        if relative == PROJECTED_CONFIG:
+            allowed_resolved_path = os.path.join(
+                generation_root,
+                *CANONICAL_CONFIG.split("/"),
+            )
+            if os.path.realpath(allowed_resolved_path) != allowed_resolved_path:
+                fail("canonical runtime projection is aliased")
+            projected_path = os.path.join(generation_root, *relative.split("/"))
+            if os.path.realpath(projected_path) != os.path.abspath(projected_path):
+                runtime_alias = os.path.join(generation_root, RUNTIME_ALIAS)
+                try:
+                    runtime_stat = os.lstat(runtime_alias)
+                except OSError as exc:
+                    fail("runtime projection topology is invalid: " + str(exc))
+                if not stat.S_ISLNK(runtime_stat.st_mode):
+                    fail("runtime projection topology is not canonical")
+                try:
+                    runtime_target = os.readlink(runtime_alias)
+                except OSError as exc:
+                    fail("runtime projection topology is invalid: " + str(exc))
+                if (
+                    runtime_target != CANONICAL_RUNTIME
+                    or os.path.realpath(runtime_alias)
+                    != os.path.join(generation_root, *CANONICAL_RUNTIME.split("/"))
+                ):
+                    fail("runtime projection topology is not canonical")
+        raw = capture(
+            os.path.join(generation_root, *relative.split("/")),
+            "manifest-bound file " + relative,
+            allowed_resolved_path=allowed_resolved_path,
         )
+        if hashlib.sha256(raw).hexdigest() != hashes[relative]:
+            fail("manifest-bound file drifted: " + relative)
+        captured[relative] = raw
+    try:
+        version = captured["VERSION"].decode("utf-8").strip()
+    except UnicodeError as exc:
+        fail("VERSION is not UTF-8: " + str(exc))
+    if version != manifest["version"]:
+        fail("VERSION disagrees with runtime manifest")
 
-    _ensure_runtime_pip(python_bin)
+    os.mkdir(snapshot_root, mode=0o700)
+    write_snapshot(snapshot_root, MANIFEST_NAME, manifest_raw)
+    if provenance_raw is not None:
+        write_snapshot(snapshot_root, PROVENANCE_NAME, provenance_raw)
+    for relative, raw in captured.items():
+        write_snapshot(snapshot_root, relative, raw)
 
-    packages = [
-        current_tools / "vibecrafted-core",
-        current_tools / "plugins" / "iterm2",
-        current_tools / "vibecrafted-mcp",
+
+try:
+    main()
+except Exception as exc:
+    sys.stderr.write("invalid Vibecrafted verifier runtime: " + str(exc) + "\n")
+    raise SystemExit(70)
+"""
+    )
+
+
+def _secure_walkaround_launcher_contents(
+    current_tools: Path,
+    python_bin: Path,
+    *,
+    launcher_path: Path | None = None,
+) -> bytes:
+    """Render the exact wrapper with a stdlib preflight before candidate execution."""
+    current = _canonical_path_preserving_final_symlink(current_tools)
+    tools_root = current.parent
+    interpreter = _canonical_path_preserving_final_symlink(python_bin)
+    managed_wrapper = _canonical_path_preserving_final_symlink(
+        launcher_path or python_bin.parent / SECURE_WALKAROUND_LAUNCHER
+    )
+    preflight = _secure_walkaround_preflight_source()
+    return (
+        "#!/bin/sh\n"
+        f"# {SECURE_WALKAROUND_LAUNCHER_MARKER} python={interpreter}\n"
+        "set -eu\n"
+        f"current={shlex_quote(str(current))}\n"
+        f"tools_root={shlex_quote(str(tools_root))}\n"
+        f"interpreter={shlex_quote(str(interpreter))}\n"
+        f"managed_wrapper={shlex_quote(str(managed_wrapper))}\n"
+        'generation=$(/usr/bin/readlink "$current")\n'
+        'case "$generation" in vibecrafted-generation-*) ;; '
+        "*) printf '%s\\n' 'invalid Vibecrafted runtime pointer' >&2; exit 70 ;; esac\n"
+        "case \"$generation\" in */*|.|..) printf '%s\\n' "
+        "'invalid Vibecrafted runtime pointer' >&2; exit 70 ;; esac\n"
+        'target="$tools_root/$generation"\n'
+        '[ -d "$target" ] && [ ! -L "$target" ] || { '
+        "printf '%s\\n' 'invalid Vibecrafted runtime generation' >&2; exit 70; }\n"
+        'cache=$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/vibecrafted-walkaround.XXXXXX")\n'
+        "trap '/bin/rm -rf -- \"$cache\"' EXIT HUP INT TERM\n"
+        "unset PYTHONPATH PYTHONHOME PYTHONPYCACHEPREFIX\n"
+        "export PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1\n"
+        'snapshot="$cache/runtime"\n'
+        '"$interpreter" -I -B -X pycache_prefix="$cache/pycache" - '
+        '"$target" "$managed_wrapper" "$snapshot" <<\'VIBECRAFTED_PREFLIGHT\'\n'
+        + preflight
+        + "VIBECRAFTED_PREFLIGHT\n"
+        + 'runner="$snapshot/vibecrafted-core/vibecrafted_core/walkaround_runner.py"\n'
+        + '"$interpreter" -I -B -X pycache_prefix="$cache/pycache" "$runner" "$@"\n'
+    ).encode("utf-8")
+
+
+def _install_secure_walkaround_launcher(
+    current_tools: Path,
+    python_bin: Path,
+    *,
+    launcher_path: Path | None = None,
+) -> Path:
+    """Replace the generic console shim with the deterministic installed verifier boundary."""
+    destination = launcher_path or (
+        vibecrafted_launcher_bin() / SECURE_WALKAROUND_LAUNCHER
+    )
+    contents = _secure_walkaround_launcher_contents(
+        current_tools,
+        python_bin,
+        launcher_path=destination,
+    )
+    if destination.exists() or destination.is_symlink():
+        if not _is_replaceable_framework_launcher(destination):
+            raise OSError(
+                f"refusing to overwrite unmanaged verifier launcher: {destination}"
+            )
+        if destination.is_symlink() or destination.is_dir():
+            _remove_path(destination)
+    _atomic_bytes_file(destination, contents, mode=0o755)
+    return destination
+
+
+def _secure_walkaround_launcher_issues(
+    current_tools: Path,
+    launcher_path: Path,
+) -> list[str]:
+    """Return exact managed-wrapper and verifier-cache integrity issues."""
+    issues: list[str] = []
+    if not launcher_path.is_file():
+        return [f"{SECURE_WALKAROUND_LAUNCHER}:missing"]
+    try:
+        resolved_launcher = launcher_path.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        return [f"{SECURE_WALKAROUND_LAUNCHER}:corrupt:{exc}"]
+    uv_tools_root = Path(
+        os.environ.get("UV_TOOL_DIR", str(xdg_data_home() / "uv" / "tools"))
+    ).expanduser()
+    expected_wrapper = _canonical_path_preserving_final_symlink(
+        uv_tools_root / "vibecrafted" / "bin" / SECURE_WALKAROUND_LAUNCHER
+    )
+    if resolved_launcher != expected_wrapper:
+        return [
+            f"{SECURE_WALKAROUND_LAUNCHER}:corrupt:wrapper is outside managed tool roots"
+        ]
+    try:
+        wrapper_metadata = resolved_launcher.lstat()
+    except OSError as exc:
+        return [f"{SECURE_WALKAROUND_LAUNCHER}:corrupt:{exc}"]
+    if not stat.S_ISREG(wrapper_metadata.st_mode) or wrapper_metadata.st_nlink != 1:
+        return [
+            f"{SECURE_WALKAROUND_LAUNCHER}:corrupt:wrapper is not a unique regular file"
+        ]
+    try:
+        raw = _capture_runtime_bound_file(resolved_launcher)
+    except OSError as exc:
+        return [f"{SECURE_WALKAROUND_LAUNCHER}:corrupt:{exc}"]
+    interpreters = tuple(
+        _canonical_path_preserving_final_symlink(candidate)
+        for candidate in (
+            resolved_launcher.parent / "python",
+            resolved_launcher.parent / "python3",
+        )
+        if candidate.is_file() and os.access(candidate, os.X_OK)
+    )
+    matching = [
+        interpreter
+        for interpreter in interpreters
+        if raw
+        == _secure_walkaround_launcher_contents(
+            current_tools,
+            interpreter,
+            launcher_path=resolved_launcher,
+        )
     ]
-    for package in packages:
-        if not (package / "pyproject.toml").is_file():
-            continue
-        subprocess.run(
-            [
-                str(python_bin),
-                "-m",
-                "pip",
-                "install",
-                "--disable-pip-version-check",
-                "--no-deps",
-                "-e",
-                str(package),
-            ],
-            check=True,
-            stdout=subprocess.DEVNULL,
+    if len(matching) != 1:
+        issues.append(f"{SECURE_WALKAROUND_LAUNCHER}:corrupt:wrapper bytes drifted")
+    runner = current_tools / _RUNTIME_VERIFIER_RUNNER
+    try:
+        _capture_runtime_bound_file(runner)
+    except OSError as exc:
+        issues.append(
+            f"{SECURE_WALKAROUND_LAUNCHER}:corrupt:runner is not unique: {exc}"
         )
+    try:
+        generation = current_tools.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        issues.append(
+            f"{SECURE_WALKAROUND_LAUNCHER}:corrupt:runtime generation is invalid: {exc}"
+        )
+    else:
+        canonical_projection = generation / _RUNTIME_GENERATION_CANONICAL_CONFIG
+        for relative in sorted(_RUNTIME_GENERATION_REQUIRED_HASHES):
+            candidate = generation / relative
+            try:
+                resolved = candidate.resolve(strict=True)
+            except (OSError, RuntimeError) as exc:
+                issues.append(
+                    f"{SECURE_WALKAROUND_LAUNCHER}:corrupt:"
+                    f"manifest-bound file is invalid:{relative}:{exc}"
+                )
+                continue
+            allowed = {candidate}
+            if relative == _RUNTIME_GENERATION_PROJECTED_CONFIG:
+                topology_error = _runtime_projection_topology_error(
+                    generation,
+                    candidate,
+                    resolved,
+                )
+                if topology_error is not None:
+                    issues.append(
+                        f"{SECURE_WALKAROUND_LAUNCHER}:corrupt:{topology_error}"
+                    )
+                    continue
+            if (
+                relative == _RUNTIME_GENERATION_PROJECTED_CONFIG
+                and resolved != candidate
+            ):
+                allowed.add(canonical_projection)
+            if resolved not in allowed:
+                issues.append(
+                    f"{SECURE_WALKAROUND_LAUNCHER}:corrupt:"
+                    f"manifest-bound file is aliased:{relative}"
+                )
+    issues.extend(_verifier_bytecode_shadow_issues(current_tools))
+    return sorted(set(issues))
 
-    subprocess.run(
-        [str(python_bin), "-c", "import vibecrafted_core"],
-        check=True,
-        stdout=subprocess.DEVNULL,
+
+def _verifier_bytecode_shadow_issues(current_tools: Path) -> list[str]:
+    """Reject adjacent bytecode for the two manifest-bound verifier modules."""
+    package = current_tools / "vibecrafted-core" / "vibecrafted_core"
+    issues: list[str] = []
+    bytecode_patterns = (
+        "product_contract.pyc",
+        "product_contract.pyo",
+        "walkaround_runner.pyc",
+        "walkaround_runner.pyo",
+        "__pycache__/product_contract.*.pyc",
+        "__pycache__/product_contract.*.pyo",
+        "__pycache__/walkaround_runner.*.pyc",
+        "__pycache__/walkaround_runner.*.pyo",
     )
-    return python_bin
-
-
-def _install_python_entrypoint_launchers(
-    current_tools: Path, dry_run: bool = False
-) -> list[Path]:
-    """Expose Python console scripts from the installed runtime venv."""
-    installed: list[Path] = []
-    console_bin = _runtime_venv_dir(current_tools) / "bin"
-    launcher_bin_dir = vibecrafted_launcher_bin()
-    if not dry_run:
-        launcher_bin_dir.mkdir(parents=True, exist_ok=True)
-
-    for name in PYTHON_ENTRYPOINT_LAUNCHERS:
-        src = console_bin / name
-        dst = launcher_bin_dir / name
-        if not dry_run and not src.exists():
-            print(f"  {WARN} Runtime entrypoint missing: {src}")
-            continue
-        create_symlink(src, dst, dry_run=dry_run)
-        installed.append(dst)
-    return installed
+    for pattern in bytecode_patterns:
+        for candidate in package.glob(pattern):
+            issues.append(
+                f"{candidate.relative_to(package)}:corrupt:verifier bytecode shadow"
+            )
+    return sorted(set(issues))
 
 
 def _state_agency_quarantine(current_tools: Path) -> Path:
@@ -9053,6 +10101,119 @@ def _runtime_root_contract_findings() -> list[DoctorFinding]:
     return findings
 
 
+def _load_runtime_generation_manifest(
+    generation: Path,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Load the one closed runtime-generation manifest used by publish and doctor."""
+    manifest_path = generation / _RUNTIME_GENERATION_MANIFEST
+    try:
+        manifest_raw = _capture_runtime_bound_file(manifest_path)
+        loaded = json.loads(manifest_raw.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return None, f"installed generation manifest is missing or invalid: {exc}"
+    if not isinstance(loaded, dict):
+        return None, "installed generation manifest does not satisfy the runtime schema"
+
+    version_path = generation / "VERSION"
+    try:
+        installed_version = (
+            _capture_runtime_bound_file(version_path).decode("utf-8").strip()
+        )
+    except (OSError, UnicodeError) as exc:
+        return None, f"installed generation VERSION is unreadable: {exc}"
+    version = loaded.get("version")
+    source_fingerprint = loaded.get("source_fingerprint")
+    owner_repo = loaded.get("owner_repo")
+    source_revision = loaded.get("source_revision")
+    hashes = loaded.get("hashes")
+    if (
+        set(loaded) != _RUNTIME_GENERATION_MANIFEST_KEYS
+        or loaded.get("schema") != _RUNTIME_GENERATION_MANIFEST_SCHEMA
+        or not isinstance(version, str)
+        or not version
+        or version != version.strip()
+        or installed_version != version
+        or not isinstance(source_fingerprint, str)
+        or len(source_fingerprint) != 64
+        or not re.fullmatch(r"[0-9a-f]{64}", source_fingerprint)
+        or not isinstance(owner_repo, str)
+        or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", owner_repo)
+        or not isinstance(source_revision, str)
+        or not re.fullmatch(r"[0-9a-f]{40}", source_revision)
+        or loaded.get("entrypoint") != _RUNTIME_GENERATION_ENTRYPOINT.as_posix()
+        or not isinstance(hashes, dict)
+        or set(hashes)
+        != {path.as_posix() for path in _RUNTIME_GENERATION_REQUIRED_HASHES}
+        or any(
+            not isinstance(relative, str)
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            for relative, digest in hashes.items()
+        )
+    ):
+        return None, "installed generation manifest does not satisfy the runtime schema"
+    return loaded, None
+
+
+def _runtime_generation_payload_errors(generation: Path) -> list[str]:
+    """Validate one candidate/current generation without consulting or mutating its pointer."""
+    manifest, manifest_error = _load_runtime_generation_manifest(generation)
+    if manifest is None:
+        return [manifest_error or "installed generation manifest is invalid"]
+    errors: list[str] = []
+    try:
+        provenance = load_source_provenance(generation)
+    except DistributionManifestError as exc:
+        errors.append(f"installed source provenance is invalid: {exc}")
+        provenance = None
+    if provenance is not None and (
+        provenance["owner_repo"] != manifest["owner_repo"]
+        or provenance["source_revision"] != manifest["source_revision"]
+    ):
+        errors.append("installed source provenance disagrees with runtime manifest")
+    projected_config = generation / _RUNTIME_GENERATION_PROJECTED_CONFIG
+    try:
+        resolved_projected_config = projected_config.resolve(strict=True)
+    except (OSError, RuntimeError):
+        pass  # The bound-file loop below owns the missing/broken-path diagnostic.
+    else:
+        topology_error = _runtime_projection_topology_error(
+            generation,
+            projected_config,
+            resolved_projected_config,
+        )
+        if topology_error is not None:
+            errors.append(topology_error)
+    for relative_text, expected_digest in manifest["hashes"].items():
+        relative = Path(relative_text)
+        installed_file = generation / relative
+        if (
+            relative.is_absolute()
+            or ".." in relative.parts
+            or not installed_file.is_file()
+            or installed_file.is_symlink()
+        ):
+            errors.append(f"manifest-bound file is missing or aliased: {relative_text}")
+            continue
+        try:
+            actual_digest = hashlib.sha256(
+                _capture_runtime_bound_file(installed_file)
+            ).hexdigest()
+        except OSError as exc:
+            errors.append(f"manifest-bound file is unreadable: {relative_text}: {exc}")
+            continue
+        if actual_digest != expected_digest:
+            errors.append(f"manifest-bound file drifted: {relative_text}")
+    errors.extend(
+        _runtime_generation_audit_errors(
+            generation,
+            source_fingerprint=manifest["source_fingerprint"],
+        )
+    )
+    errors.extend(_release_contract_asset_issues(generation, manifest=manifest))
+    return sorted(set(errors))
+
+
 def _runtime_generation_contract_findings() -> list[DoctorFinding]:
     """Verify the current runtime generation is manifest-bound: symlink resolves under the
     canonical runtime root, its generation manifest is well-formed, every manifest-hashed file
@@ -9087,70 +10248,7 @@ def _runtime_generation_contract_findings() -> list[DoctorFinding]:
             )
         ]
 
-    manifest_path = generation / _RUNTIME_GENERATION_MANIFEST
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return [
-            DoctorFinding(
-                "fail",
-                "runtime-generation",
-                f"installed generation manifest is missing or invalid: {exc}",
-            )
-        ]
-    source_fingerprint = manifest.get("source_fingerprint")
-    owner_repo = manifest.get("owner_repo")
-    source_revision = manifest.get("source_revision")
-    hashes = manifest.get("hashes")
-    if (
-        manifest.get("schema") != _RUNTIME_GENERATION_MANIFEST_SCHEMA
-        or not isinstance(source_fingerprint, str)
-        or len(source_fingerprint) != 64
-        or not re.fullmatch(r"[0-9a-f]{64}", source_fingerprint)
-        or not isinstance(owner_repo, str)
-        or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", owner_repo)
-        or not isinstance(source_revision, str)
-        or not re.fullmatch(r"[0-9a-f]{40}", source_revision)
-        or manifest.get("entrypoint") != _RUNTIME_GENERATION_ENTRYPOINT.as_posix()
-        or not isinstance(hashes, dict)
-        or set(hashes)
-        != {path.as_posix() for path in _RUNTIME_GENERATION_REQUIRED_HASHES}
-    ):
-        return [
-            DoctorFinding(
-                "fail",
-                "runtime-generation",
-                "installed generation manifest does not satisfy the runtime schema",
-            )
-        ]
-
-    errors: list[str] = []
-    for relative_text, expected_digest in hashes.items():
-        if (
-            not isinstance(relative_text, str)
-            or not isinstance(expected_digest, str)
-            or not re.fullmatch(r"[0-9a-f]{64}", expected_digest)
-        ):
-            errors.append("installed generation manifest has an invalid hash entry")
-            continue
-        relative = Path(relative_text)
-        if relative.is_absolute() or ".." in relative.parts:
-            errors.append("installed generation manifest has an unsafe hash path")
-            continue
-        installed_file = generation / relative
-        if not installed_file.is_file():
-            errors.append(f"manifest-bound file is missing: {relative_text}")
-            continue
-        actual_digest = hashlib.sha256(installed_file.read_bytes()).hexdigest()
-        if actual_digest != expected_digest:
-            errors.append(f"manifest-bound file drifted: {relative_text}")
-
-    errors.extend(
-        _runtime_generation_audit_errors(
-            generation,
-            source_fingerprint=source_fingerprint,
-        )
-    )
+    errors = _runtime_generation_payload_errors(generation)
     launcher = _canonical_launcher_root() / "vibecrafted"
     try:
         launcher_target = launcher.resolve(strict=True)
@@ -9443,55 +10541,83 @@ def _python_entrypoint_issue_level(
     issues: Sequence[str], *, state: InstallState
 ) -> str:
     """The release verifier is mandatory in every installed-state shape."""
-    if "verify-vibecrafted-walkaround:missing" in issues:
+    if any(issue.startswith(f"{SECURE_WALKAROUND_LAUNCHER}:") for issue in issues):
         return "fail"
     return "warn"
 
 
-def _release_contract_asset_issues(current_tools: Path) -> list[str]:
-    """Fail closed when any installed W0 verifier/trust asset is absent or corrupt."""
+def _release_contract_asset_issues(
+    current_tools: Path,
+    *,
+    manifest: dict[str, Any] | None = None,
+) -> list[str]:
+    """Bind the installed W0 verifier closure to the published generation manifest."""
     package = current_tools / "vibecrafted-core" / "vibecrafted_core"
     paths = {
         relative: package / relative for relative in RELEASE_CONTRACT_PACKAGE_ASSETS
     }
     issues: list[str] = []
+    captured_assets: dict[str, bytes] = {}
+    issues.extend(_verifier_bytecode_shadow_issues(current_tools))
     for relative, path in paths.items():
         if not path.is_file() or path.is_symlink():
             issues.append(f"{relative}:missing")
-    if issues:
-        return issues
-    try:
-        runner_source = paths["walkaround_runner.py"].read_text(encoding="utf-8")
-        compile(
-            runner_source,
-            str(paths["walkaround_runner.py"]),
-            "exec",
-            dont_inherit=True,
-        )
-        if "def main(" not in runner_source:
-            raise ValueError("runner main entrypoint is missing")
-    except (OSError, UnicodeError, SyntaxError, ValueError) as exc:
-        issues.append(f"walkaround_runner.py:corrupt:{exc}")
-    try:
-        schema = json.loads(
-            paths["schemas/unified_product.schema.v1.json"].read_text(encoding="utf-8")
-        )
-        if not isinstance(schema, dict) or "$defs" not in schema:
-            raise ValueError("closed schema definitions are missing")
-    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
-        issues.append(f"schemas/unified_product.schema.v1.json:corrupt:{exc}")
-    try:
-        policy = json.loads(
-            paths["trust/release-policy.v1.json"].read_text(encoding="utf-8")
-        )
-        if (
-            not isinstance(policy, dict)
-            or policy.get("algorithm") != "rsa-pkcs1v15-sha256"
-            or policy.get("public_key_spki_sha256") != _RELEASE_KEY_SPKI_SHA256
-        ):
-            raise ValueError("release trust pins do not match v1")
-    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
-        issues.append(f"trust/release-policy.v1.json:corrupt:{exc}")
+
+    if manifest is None:
+        manifest_path = current_tools / _RUNTIME_GENERATION_MANIFEST
+        if not manifest_path.is_file() or manifest_path.is_symlink():
+            issues.append(f"{_RUNTIME_GENERATION_MANIFEST}:missing")
+        else:
+            manifest, manifest_error = _load_runtime_generation_manifest(current_tools)
+            if manifest is None:
+                issues.append(
+                    f"{_RUNTIME_GENERATION_MANIFEST}:corrupt:"
+                    f"{manifest_error or 'invalid runtime manifest'}"
+                )
+
+    if manifest is not None:
+        hashes = manifest["hashes"]
+        for relative, path in paths.items():
+            if not path.is_file() or path.is_symlink():
+                continue
+            manifest_relative = (
+                Path("vibecrafted-core/vibecrafted_core") / relative
+            ).as_posix()
+            expected_digest = hashes.get(manifest_relative)
+            if (
+                not isinstance(expected_digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", expected_digest) is None
+            ):
+                issues.append(f"{relative}:corrupt:runtime manifest digest is invalid")
+                continue
+            try:
+                raw = _capture_runtime_bound_file(path)
+                actual_digest = hashlib.sha256(raw).hexdigest()
+            except OSError as exc:
+                issues.append(f"{relative}:corrupt:{exc}")
+                continue
+            captured_assets[relative] = raw
+            if actual_digest != expected_digest:
+                issues.append(
+                    f"{relative}:corrupt:installed bytes do not match runtime manifest"
+                )
+
+    policy_raw = captured_assets.get("trust/release-policy.v1.json")
+    if policy_raw is not None:
+        try:
+            policy = json.loads(policy_raw.decode("utf-8"))
+            if (
+                not isinstance(policy, dict)
+                or policy.get("algorithm") != "rsa-pkcs1v15-sha256"
+                or policy.get("public_key_spki_sha256") != _RELEASE_KEY_SPKI_SHA256
+            ):
+                raise ValueError("release trust pins do not match v1")
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            issues.append(f"trust/release-policy.v1.json:corrupt:{exc}")
+
+    public_key_raw = captured_assets.get("trust/vibecrafted-signing-v1.pub")
+    if public_key_raw is None:
+        return sorted(set(issues))
     openssl = Path("/usr/bin/openssl")
     if not openssl.is_file() or not os.access(openssl, os.X_OK):
         issues.append("trust/vibecrafted-signing-v1.pub:unverifiable")
@@ -9501,12 +10627,11 @@ def _release_contract_asset_issues(current_tools: Path) -> list[str]:
                 str(openssl),
                 "pkey",
                 "-pubin",
-                "-in",
-                str(paths["trust/vibecrafted-signing-v1.pub"]),
                 "-outform",
                 "DER",
             ],
             check=False,
+            input=public_key_raw,
             capture_output=True,
         )
         if (
@@ -9514,7 +10639,7 @@ def _release_contract_asset_issues(current_tools: Path) -> list[str]:
             or hashlib.sha256(result.stdout).hexdigest() != _RELEASE_KEY_SPKI_SHA256
         ):
             issues.append("trust/vibecrafted-signing-v1.pub:corrupt")
-    return issues
+    return sorted(set(issues))
 
 
 def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
@@ -9528,9 +10653,12 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
     # 0b. Distribution channel + upgrade path
     current_link = vibecrafted_tools_home() / "vibecrafted-current"
     is_git = False
-    if current_link.exists():
-        resolved = current_link.resolve()
-        is_git = (resolved / ".git").exists()
+    if current_link.exists() or current_link.is_symlink():
+        try:
+            resolved = current_link.resolve(strict=True)
+        except (OSError, RuntimeError):
+            resolved = None
+        is_git = resolved is not None and (resolved / ".git").exists()
     elif store_path.parent.exists():
         # Check if the store itself lives inside a git checkout
         is_git = (store_path.parent / ".git").exists()
@@ -9550,17 +10678,22 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
             )
         )
 
-    # The release verifier and pinned trust assets are distribution-owned, not
-    # install-manifest-owned.  Check them before the store/state early returns
-    # so fresh, migrated, lost, and corrupt installs all fail closed alike.
-    release_contract_issues = _release_contract_asset_issues(
-        current_link.resolve(strict=False)
-    )
+    # The manifest-bound release verifier and pinned trust assets are
+    # distribution-owned, not install-state-owned. Check them before the
+    # store/state early returns so fresh, migrated, lost, and corrupt installs
+    # all fail closed alike.
+    try:
+        current_generation = current_link.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        release_contract_issues = [f"runtime-pointer:corrupt:{exc}"]
+    else:
+        release_contract_issues = _release_contract_asset_issues(current_generation)
     findings.append(
         DoctorFinding(
             "fail" if release_contract_issues else "ok",
             "release-contract-assets",
-            "installed verifier schema, policy, and public key are present and pinned"
+            "installed verifier engine, runner, schema, policy, and public key "
+            "are manifest-bound and pinned"
             if not release_contract_issues
             else "Release contract asset issue(s): "
             + ", ".join(release_contract_issues),
@@ -9868,6 +11001,16 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
             resolved = launcher_path.resolve(strict=False)
         except OSError:
             resolved = launcher_path
+        if name == SECURE_WALKAROUND_LAUNCHER:
+            verifier_issues = _secure_walkaround_launcher_issues(
+                current_link,
+                launcher_path,
+            )
+            if verifier_issues:
+                python_entrypoint_issues.extend(verifier_issues)
+            else:
+                python_entrypoint_owners.add("manifest-bound verifier wrapper")
+            continue
         if ".venv" in resolved.parts:
             python_entrypoint_owners.add("runtime venv")
             continue

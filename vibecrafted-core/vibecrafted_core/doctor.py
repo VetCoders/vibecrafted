@@ -453,7 +453,7 @@ def _packaged_asset_findings() -> list[_Finding]:
     )
     findings: list[_Finding] = []
     for component, path, ok_message in checks:
-        if path.is_file():
+        if path.is_file() and not path.is_symlink():
             findings.append(_Finding("ok", component, ok_message))
         else:
             findings.append(

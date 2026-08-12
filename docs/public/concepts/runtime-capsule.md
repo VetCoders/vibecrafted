@@ -41,17 +41,36 @@ shim or a repository checkout.
 Every published generation contains `runtime-manifest.json` with schema
 `vibecrafted.runtime-generation.v1`. It binds:
 
-| Field              | What it pins                                                                  |
-| ------------------ | ----------------------------------------------------------------------------- |
-| Installed version  | The exact version this generation ships                                       |
-| Entrypoint         | The canonical command-deck entrypoint                                         |
-| Source fingerprint | A one-way fingerprint of the source root — never the checkout path itself     |
-| SHA-256 hash set   | Digests for `VERSION`, the command deck, and generated vc-frame configuration |
+| Field              | What it pins                                                                                                                     |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| Installed version  | The exact version this generation ships                                                                                          |
+| Entrypoint         | The canonical command-deck entrypoint                                                                                            |
+| Source fingerprint | A one-way fingerprint of the source root — never the checkout path itself                                                        |
+| SHA-256 hash set   | Digests for `VERSION`, launcher/deck, generated vc-frame configuration, and the verifier engine/runner/schema/policy/key closure |
 
 The manifest and the active runtime files are created and audited **before**
 the single pointer swap. If the audit fails, the previous generation stays
 live and remains rollbackable — a half-copied tree is never published as an
 install.
+
+The packaged `verify-vibecrafted-walkaround` launcher repeats this closed-file
+audit before it executes the verifier runner. A drifted, symlinked, or
+hardlinked verifier asset therefore fails before candidate verifier code can
+run; `doctor` is not the only enforcement point.
+
+## Source carrier
+
+Release and custom bootstrap archives carry a closed `source-provenance.json`
+record that names the owner repository and exact 40-character commit. The
+archive writer refuses to claim a Git commit while any included payload byte
+differs from that commit, and bootstrap rejects missing or contradictory
+provenance instead of guessing from an archive filename.
+
+That byte-to-commit proof happens while the canonical writer still has the Git
+object database. After extraction, the carrier transports the proven identity
+and detects conflicting claims; it cannot independently reconstruct Git history.
+Official release authenticity therefore still comes from the release checksum
+and signature, not from the carrier alone.
 
 ## Checkout freedom
 

@@ -33,6 +33,7 @@ def test_package_carries_runtime_skills_and_command_deck() -> None:
     ).is_file()
     assert (package_root / "skills" / "vc-justdo" / "SKILL.md").is_file()
     assert (package_root / "deck" / "vibecrafted").is_file()
+    assert (package_root / "product_contract.py").is_file()
     assert (package_root / "walkaround_runner.py").is_file()
     assert (package_root / "schemas" / "unified_product.schema.v1.json").is_file()
     assert (package_root / "trust" / "release-policy.v1.json").is_file()

@@ -2,13 +2,41 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
+import tarfile
 from pathlib import Path
 
 import pytest
 
+from scripts import distribution_manifest as distribution
 from scripts import vetcoders_install as installer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _minimal_distribution_source(root: Path) -> None:
+    for relative in distribution.REQUIRED_FILES:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"fixture for {relative}\n", encoding="utf-8")
+    for relative in distribution.REQUIRED_DIRECTORIES:
+        (root / relative).mkdir(parents=True, exist_ok=True)
+    for relative in distribution.REQUIRED_SURFACE_FILES.values():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"runtime sentinel for {relative}\n", encoding="utf-8")
+    for relative in distribution.REQUIRED_DIRECTORIES:
+        parts = Path(relative).parts
+        if parts and parts[0] in distribution.CANONICAL_PROJECTIONS:
+            canonical = distribution.CANONICAL_PROJECTIONS[parts[0]]
+            (root / canonical.joinpath(*parts[1:])).mkdir(parents=True, exist_ok=True)
+    for relative in distribution.REQUIRED_SURFACE_FILES.values():
+        parts = Path(relative).parts
+        if parts and parts[0] in distribution.CANONICAL_PROJECTIONS:
+            canonical = distribution.CANONICAL_PROJECTIONS[parts[0]]
+            path = root / canonical.joinpath(*parts[1:])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"canonical sentinel for {relative}\n", encoding="utf-8")
 
 
 def test_makefile_python_runner_rejects_xcode_python_39() -> None:
@@ -43,6 +71,15 @@ def test_installer_smokes_the_packaged_walkaround_entrypoint() -> None:
         'verify-vibecrafted-walkaround = "vibecrafted_core.walkaround_runner:main"'
         in pyproject
     )
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    install_tools = makefile.split("install-tools-held:", 1)[1].split(
+        "\n# install-all", 1
+    )[0]
+    assert (
+        "for entrypoint in vibecrafted vc-workflow vc-guardian vc-server-supervisor "
+        "verify-vibecrafted-walkaround"
+    ) in install_tools
+    assert 'if ! "$$resolved" --help' in install_tools
 
 
 def test_unified_product_contract_gate_executes_installed_runner() -> None:
@@ -57,6 +94,39 @@ def test_unified_product_contract_gate_executes_installed_runner() -> None:
     assert '"$$runner" verify-release --release-output' in gate
     assert '"$$runner" walkaround --release-output' in gate
     assert "PYTHONNOUSERSITE=1" in gate
+    for required_test in (
+        "tests/tui/test_install_bootstrap.py",
+        "tests/tui/test_installer_doctor.py",
+        "tests/tui/test_installer_uninstall.py",
+        "tests/tui/test_staged_tools_sync.py",
+        "tests/tui/test_uv_bootstrap.py",
+        "vibecrafted-core/tests/test_runtime_receipt.py",
+    ):
+        assert required_test in gate
+
+
+def test_release_workflow_calls_the_unified_contract_gate_and_uses_checkout_head() -> (
+    None
+):
+    workflow = (REPO_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+    assert "run: make unified-product-contract-gate" in workflow
+    assert "source_revision=$(git rev-parse HEAD)" in workflow
+    assert (
+        '--source-revision "${{ steps.version.outputs.source_revision }}"' in workflow
+    )
+    assert (
+        '--expected-source-revision "${{ steps.version.outputs.source_revision }}"'
+        in workflow
+    )
+
+
+def test_bootstrap_help_requires_canonical_provenance_archives() -> None:
+    installer = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
+    usage = installer.split("usage() {", 1)[1].split("EOF_USAGE", 2)[1]
+
+    assert "source-provenance.json" in usage
+    assert "scripts/distribution_manifest.py archive" in usage
 
 
 def test_makefile_keeps_install_as_terminal_first_front_door() -> None:
@@ -215,10 +285,103 @@ def test_bundle_targets_use_distribution_manifest_for_runtime_archive() -> None:
     )
     assert '--root-name "vibecrafted-$(BUNDLE_VERSION)"' in bundle_block
     assert "build_marketplace_bundle.py" in bundle_block
+    assert (
+        'build_marketplace_bundle.py --output "$(SOURCE)/dist/'
+        'vibecrafted-framework.plugin"'
+    ) in bundle_block
+    assert '--output "$(SOURCE)/vibecrafted-framework.plugin"' not in bundle_block
     assert "build_marketplace_bundle.py" in check_block
     assert "cmp -s" not in check_block
     assert 'test -s "$$tmp_bundle"' in check_block
     assert check_block.lstrip().startswith("@set -e;")
+
+
+def test_bundle_target_cannot_self_poison_a_clean_git_source(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    archive = source / "dist" / "vibecrafted-9.8.7.tar.gz"
+    plugin = source / "dist" / "vibecrafted-framework.plugin"
+    python_dispatch = tmp_path / "python-dispatch.py"
+    _minimal_distribution_source(source)
+    subprocess.run(["git", "init", "--quiet", str(source)], check=True)
+    for key, value in (
+        ("user.name", "Bundle Contract Test"),
+        ("user.email", "bundle-contract@example.invalid"),
+    ):
+        subprocess.run(
+            ["git", "-C", str(source), "config", key, value],
+            check=True,
+        )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/vetcoders/vibecrafted.git",
+        ],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(source), "commit", "--quiet", "-m", "fixture"],
+        check=True,
+    )
+    revision = subprocess.check_output(
+        ["git", "-C", str(source), "rev-parse", "HEAD"],
+        text=True,
+    ).strip()
+    stale_root_plugin = source / "vibecrafted-framework.plugin"
+    stale_root_plugin.write_bytes(b"stale ignored marketplace plugin\n")
+    python_dispatch.write_text(
+        "from pathlib import Path\n"
+        "import os\n"
+        "import sys\n"
+        "script = Path(sys.argv[1]).name\n"
+        "if script == 'build_marketplace_bundle.py':\n"
+        "    output = Path(sys.argv[sys.argv.index('--output') + 1])\n"
+        "    output.parent.mkdir(parents=True, exist_ok=True)\n"
+        "    output.write_bytes(b'isolated marketplace plugin\\n')\n"
+        "    raise SystemExit(0)\n"
+        "os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n",
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment.pop("VIBECRAFTED_SOURCE_OWNER_REPO", None)
+    environment.pop("VIBECRAFTED_SOURCE_REVISION", None)
+
+    result = subprocess.run(
+        [
+            "make",
+            "--no-print-directory",
+            "-f",
+            str(REPO_ROOT / "Makefile"),
+            "bundle",
+            f"SOURCE={source}",
+            "BUNDLE_VERSION=9.8.7",
+            f"BUNDLE_ARCHIVE={archive}",
+            f"PYTHON={sys.executable} {python_dispatch}",
+        ],
+        cwd=REPO_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert plugin.read_bytes() == b"isolated marketplace plugin\n"
+    assert stale_root_plugin.read_bytes() == b"stale ignored marketplace plugin\n"
+    assert archive.is_file()
+    with tarfile.open(archive, "r:gz") as bundle:
+        names = bundle.getnames()
+        assert not any(name.endswith("vibecrafted-framework.plugin") for name in names)
+        carrier = bundle.extractfile(
+            f"vibecrafted-9.8.7/{distribution.SOURCE_PROVENANCE_FILE}"
+        )
+        assert carrier is not None
+        assert revision.encode("ascii") in carrier.read()
 
 
 def test_control_plane_staging_delegates_to_distribution_manifest(
@@ -234,7 +397,31 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
         dst.mkdir(parents=True)
         (dst / "payload.txt").write_text("validated\n", encoding="utf-8")
 
+    def fake_assert_provenance(
+        src: Path,
+        *,
+        owner_repo: str | None,
+        source_revision: str | None,
+        payload_root: Path | None = None,
+    ) -> dict[str, str]:
+        seen.update(
+            provenance_source=src,
+            provenance_owner=owner_repo,
+            provenance_revision=source_revision,
+            provenance_payload=payload_root,
+        )
+        return {
+            "schema": "vibecrafted.source-provenance.v1",
+            "owner_repo": "vetcoders/vibecrafted",
+            "source_revision": "1" * 40,
+        }
+
     monkeypatch.setattr(installer, "stage_distribution_payload", fake_stage)
+    monkeypatch.setattr(
+        installer,
+        "assert_source_payload_matches_provenance",
+        fake_assert_provenance,
+    )
     monkeypatch.setattr(
         installer,
         "_materialize_vc_frame_generation",
@@ -245,6 +432,11 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
         "_write_runtime_generation_manifest",
         lambda runtime_root, **_kwargs: seen.update(manifested=runtime_root),
     )
+    monkeypatch.setattr(
+        installer,
+        "_runtime_generation_payload_errors",
+        lambda runtime_root: seen.update(validated=runtime_root) or [],
+    )
 
     installer.sync_control_plane_tree(source, destination, mirror=True)
 
@@ -252,8 +444,13 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
     assert seen["destination"] != destination
     assert Path(seen["destination"]).parent == destination.parent
     assert seen["mirror"] is True
+    assert seen["provenance_source"] == source.resolve(strict=False)
+    assert seen["provenance_owner"] is None
+    assert seen["provenance_revision"] is None
+    assert seen["provenance_payload"] == seen["destination"]
     assert seen["materialized"] == seen["destination"]
     assert seen["manifested"] == seen["destination"]
+    assert seen["validated"] == seen["destination"]
     assert (destination / "payload.txt").read_text(encoding="utf-8") == "validated\n"
     source_text = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
         encoding="utf-8"

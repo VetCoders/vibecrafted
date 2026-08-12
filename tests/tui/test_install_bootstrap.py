@@ -22,6 +22,12 @@ def _write_executable(path: Path, body: str) -> None:
 
 
 def _write_distribution_manifest_stub(source_dir: Path) -> None:
+    (source_dir / "source-provenance.json").write_text(
+        '{"owner_repo":"vetcoders/vibecrafted",'
+        '"schema":"vibecrafted.source-provenance.v1",'
+        '"source_revision":"0123456789abcdef0123456789abcdef01234567"}\n',
+        encoding="utf-8",
+    )
     path = source_dir / "scripts" / "distribution_manifest.py"
     path.write_text(
         """#!/usr/bin/env python3
@@ -35,6 +41,11 @@ if sys.argv[1] != "stage":
     raise SystemExit(2)
 source = Path(sys.argv[sys.argv.index("--source") + 1])
 destination = Path(sys.argv[sys.argv.index("--destination") + 1])
+if "--require-source-provenance" in sys.argv:
+    provenance = source / "source-provenance.json"
+    if not provenance.is_file():
+        print("missing required path: source-provenance.json", file=sys.stderr)
+        raise SystemExit(2)
 if destination.exists():
     shutil.rmtree(destination)
 shutil.copytree(source, destination, symlinks=True)
@@ -101,17 +112,22 @@ def _run_with_tty(
     return os.waitstatus_to_exitcode(wait_status), output.decode("utf-8", "replace")
 
 
-def test_install_sh_fallback_prefers_github_source_snapshot_when_channel_missing() -> (
-    None
-):
+def test_install_sh_fallback_resolves_ref_to_immutable_github_commit() -> None:
     text = INSTALL_SH.read_text(encoding="utf-8")
 
     assert 'channel_url="https://vibecrafted.io/channel/${ref}.json"' in text
+    assert 'bootstrap_source_owner="vetcoders/vibecrafted"' in text
     assert (
-        'archive_url="https://github.com/vetcoders/vibecrafted/archive/refs/heads/${ref}.tar.gz"'
+        '"https://api.github.com/repos/${bootstrap_source_owner}/commits/${encoded_ref}"'
         in text
     )
-    assert "using GitHub source snapshot for ${ref}" in text
+    assert '[[ ! "$bootstrap_source_revision" =~ ^[0-9a-f]{40}$ ]]' in text
+    assert (
+        'archive_url="https://github.com/${bootstrap_source_owner}/archive/'
+        '${bootstrap_source_revision}.tar.gz"' in text
+    )
+    assert "archive/refs/heads/${ref}.tar.gz" not in text
+    assert "using immutable GitHub commit ${bootstrap_source_revision}" in text
     assert "frozen v1.2.1 URL" not in text
 
 
@@ -126,6 +142,11 @@ def test_install_sh_help_documents_runtime_flag() -> None:
 
     assert "--runtime <horse>" in result.stdout
     assert "wezterm, vc-apprt, locterm, microsandbox, or none" in result.stdout
+    assert "--archive-file" in result.stdout
+    assert "require the closed" in result.stdout
+    assert "source-provenance.json" in result.stdout
+    assert "proves every included byte against the claimed commit" in result.stdout
+    assert "scripts/distribution_manifest.py archive" in result.stdout
 
 
 def test_install_sh_quiets_tar_xattr_noise_and_hides_make_directory_trace() -> None:
@@ -140,10 +161,15 @@ def test_install_sh_stages_archives_through_distribution_manifest() -> None:
     text = INSTALL_SH.read_text(encoding="utf-8")
 
     assert 'manifest_helper="$source_dir/scripts/distribution_manifest.py"' in text
-    assert '"$manifest_helper" stage' in text
+    assert "stage_args=(" in text
+    assert 'python3 "$manifest_helper" "${stage_args[@]}"' in text
     assert '--source "$source_dir"' in text
     assert 'candidate_root="$tmpdir/candidate"' in text
     assert '--destination "$candidate_root"' in text
+    assert "--require-source-provenance" in text
+    assert 'if [[ -n "$bootstrap_source_owner" ]]' in text
+    assert '--owner-repo "$bootstrap_source_owner"' in text
+    assert '--source-revision "$bootstrap_source_revision"' in text
     assert 'ln -sfn "$staged_dir" "$current_link"' not in text
     assert 'rm -rf "$staged_dir"' not in text
     assert 'mv "$source_dir"' not in text

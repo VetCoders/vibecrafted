@@ -11,6 +11,10 @@ from that private candidate. The installer publishes into $HOME/.local/share/vib
 Use `--gui` when you want the browser-based guided installer.
 Use `--yes` to skip the attended bootstrap confirmation prompt.
 Use `--runtime <horse>` to install and activate a lab runtime: wezterm, vc-apprt, locterm, microsandbox, or none.
+`--archive-url` and `--archive-file` require the closed
+`source-provenance.json` carrier. Create local archives with
+`scripts/distribution_manifest.py archive`: for a Git checkout, that writer
+proves every included byte against the claimed commit before writing the carrier.
 Non-interactive runs without `--gui` bypass the browser and call the compact installer directly.
 
 Examples:
@@ -339,6 +343,8 @@ default_ref="${VIBECRAFTED_REF:-main}"
 ref="$default_ref"
 archive_url=""
 archive_file=""
+bootstrap_source_owner=""
+bootstrap_source_revision=""
 tools_dir="$default_tools_dir"
 target="vibecrafted"
 use_gui=0
@@ -428,9 +434,18 @@ if [[ -z "$archive_url" && -z "$archive_file" ]]; then
     archive_url="$resolved_url"
     vinfo "Resolved from channel ($ref): $archive_url"
   else
-    # Fallback: source snapshot for pre-channel / pre-deploy kickoffs.
-    archive_url="https://github.com/vetcoders/vibecrafted/archive/refs/heads/${ref}.tar.gz"
-    vinfo "[note] Channel manifest not available — using GitHub source snapshot for ${ref}"
+    # Fallback: resolve the requested ref to one immutable GitHub commit before
+    # downloading. The resulting provenance pair is written by the canonical
+    # distribution-manifest writer during candidate staging.
+    encoded_ref="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$ref")"
+    bootstrap_source_owner="vetcoders/vibecrafted"
+    bootstrap_source_revision="$(curl -fsSL "https://api.github.com/repos/${bootstrap_source_owner}/commits/${encoded_ref}" 2>/dev/null \
+      | python3 -c 'import sys,json; value=json.load(sys.stdin).get("sha", ""); print(value if isinstance(value, str) else "")' 2>/dev/null)" || true
+    if [[ ! "$bootstrap_source_revision" =~ ^[0-9a-f]{40}$ ]]; then
+      die "Channel manifest unavailable and GitHub ref could not be resolved to an immutable commit: ${ref}"
+    fi
+    archive_url="https://github.com/${bootstrap_source_owner}/archive/${bootstrap_source_revision}.tar.gz"
+    vinfo "[note] Channel manifest not available — using immutable GitHub commit ${bootstrap_source_revision}"
   fi
 fi
 
@@ -574,10 +589,20 @@ candidate_root="$tmpdir/candidate"
 manifest_helper="$source_dir/scripts/distribution_manifest.py"
 [[ -f "$manifest_helper" ]] || die "Distribution manifest missing: $manifest_helper"
 
-python3 "$manifest_helper" stage \
-  --source "$source_dir" \
-  --destination "$candidate_root" \
-  --mirror >/dev/null
+stage_args=(
+  stage
+  --source "$source_dir"
+  --destination "$candidate_root"
+  --mirror
+  --require-source-provenance
+)
+if [[ -n "$bootstrap_source_owner" ]]; then
+  stage_args+=(
+    --owner-repo "$bootstrap_source_owner"
+    --source-revision "$bootstrap_source_revision"
+  )
+fi
+python3 "$manifest_helper" "${stage_args[@]}" >/dev/null
 
 # Read canonical VERSION file from the verified candidate for the post-install banner.
 # The repo ships VERSION at the root; fall back to 'unknown' if absent (e.g. custom tarballs).

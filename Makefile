@@ -62,11 +62,17 @@ unified-product-contract-gate:
 	uv run --project vibecrafted-core --with pytest python -m pytest \
 		tests/tui/test_unified_app_contract.py \
 		tests/tui/test_makefile_installer_contract.py \
-		tests/tui/test_distribution_manifest.py -q; \
+		tests/tui/test_distribution_manifest.py \
+		tests/tui/test_install_bootstrap.py \
+		tests/tui/test_installer_doctor.py \
+		tests/tui/test_installer_uninstall.py \
+		tests/tui/test_staged_tools_sync.py \
+		tests/tui/test_uv_bootstrap.py -q; \
 	uv run --project vibecrafted-core --with pytest python -m pytest \
 		vibecrafted-core/tests/test_walkaround_distribution.py \
 		vibecrafted-core/tests/test_package_layout.py \
-		vibecrafted-core/tests/test_doctor.py -q; \
+		vibecrafted-core/tests/test_doctor.py \
+		vibecrafted-core/tests/test_runtime_receipt.py -q; \
 	bash scripts/verify-vibecrafted-product.sh --self-test; \
 	$(PYTHON) -m json.tool vibecrafted-core/vibecrafted_core/schemas/unified_product.schema.v1.json >/dev/null; \
 	$(PYTHON) -m json.tool vibecrafted-core/vibecrafted_core/trust/release-policy.v1.json >/dev/null; \
@@ -263,6 +269,7 @@ install-tools-held:
 		echo "[install-tools] FATAL: expected uv tool interpreter missing at $$tool_python" >&2; \
 		exit 1; \
 	fi; \
+	$(PYTHON) -c 'import sys; from pathlib import Path; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; v._install_secure_walkaround_launcher(Path(sys.argv[1]), Path(sys.argv[2]), launcher_path=Path(sys.argv[3]))' "$$stable_root" "$$tool_python" "$$tool_root/bin/verify-vibecrafted-walkaround"; \
 	python_entrypoints="$$($(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; print(" ".join(v.PYTHON_ENTRYPOINT_LAUNCHERS))')"; \
 	for entrypoint in $$python_entrypoints; do \
 		entrypoint_tool_root="$$tool_root"; \
@@ -285,7 +292,7 @@ install-tools-held:
 			*) echo "[install-tools] FATAL: uv tool entrypoint $$entrypoint is not owned by the uv interpreter: $$entrypoint_shebang" >&2; exit 1 ;; \
 		esac; \
 	done; \
-	for entrypoint in vibecrafted vc-workflow vc-guardian vc-server-supervisor; do \
+	for entrypoint in vibecrafted vc-workflow vc-guardian vc-server-supervisor verify-vibecrafted-walkaround; do \
 		resolved="$$(command -v "$$entrypoint" 2>/dev/null || true)"; \
 		if [ -z "$$resolved" ] || [ ! -x "$$resolved" ]; then \
 			echo "[install-tools] FATAL: expected executable entrypoint $$entrypoint was not installed" >&2; \
@@ -401,7 +408,7 @@ list:
 	@$(PYTHON) $(INSTALLER) list --source "$(SOURCE)"
 
 bundle:
-	@$(PYTHON) scripts/build_marketplace_bundle.py --output "$(SOURCE)/vibecrafted-framework.plugin"
+	@$(PYTHON) scripts/build_marketplace_bundle.py --output "$(SOURCE)/dist/vibecrafted-framework.plugin"
 	@mkdir -p "$(dir $(BUNDLE_ARCHIVE))"
 	@$(PYTHON) scripts/distribution_manifest.py archive --source "$(SOURCE)" --output "$(BUNDLE_ARCHIVE)" --root-name "vibecrafted-$(BUNDLE_VERSION)"
 
@@ -417,7 +424,7 @@ bundle-check:
 	$(PYTHON) scripts/distribution_manifest.py archive --source "$(SOURCE)" --output "$$tmp_archive" --root-name "vibecrafted-$(BUNDLE_VERSION)"; \
 	mkdir -p "$$tmp_runtime/extracted"; \
 	tar -xzf "$$tmp_archive" -C "$$tmp_runtime/extracted"; \
-	$(PYTHON) scripts/distribution_manifest.py check --root "$$tmp_runtime/extracted/vibecrafted-$(BUNDLE_VERSION)"; \
+	$(PYTHON) scripts/distribution_manifest.py check --root "$$tmp_runtime/extracted/vibecrafted-$(BUNDLE_VERSION)" --require-source-provenance; \
 	echo "Marketplace bundle and runtime payload are valid."
 
 version version-show:

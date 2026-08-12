@@ -40,9 +40,26 @@ Every published generation carries `runtime-manifest.json` (schema `vibecrafted.
 - the installed version;
 - the canonical command-deck entrypoint;
 - a one-way fingerprint of the source root — never the checkout path itself;
-- SHA-256 digests for `VERSION`, the command deck, and generated vc-frame configuration.
+- SHA-256 digests for `VERSION`, the launcher and command deck, generated vc-frame
+  configuration, and the release verifier engine, runner, schema, policy, and key.
+
+Older four-hash generation manifests fail closed and require reinstall; they are
+not silently treated as current.
 
 The manifest and runtime files are created and audited **before** the single pointer swap. A failed audit leaves the previous generation live and rollbackable — a broken update cannot take down a working install.
+
+The public release-verifier launcher validates this manifest and every bound
+file before loading its runner or verifier engine. Post-install drift cannot
+execute first and report failure afterward.
+
+Downloaded and local bootstrap archives must also carry the closed
+`source-provenance.json` carrier. The canonical archive writer proves the
+included bytes against one owner repository and full commit SHA before it writes
+that carrier; archives built from dirty included source are rejected. Once an
+archive is detached from Git, the carrier preserves that identity and detects
+contradictory claims, while official release authenticity comes from the
+release checksum and signature. Create a local archive through
+`scripts/distribution_manifest.py archive`, not with a raw `tar` command.
 
 Inspect what you are running:
 

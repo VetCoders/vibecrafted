@@ -83,11 +83,17 @@ def test_release_archive_preserves_bundled_tool_slot() -> None:
     )
 
     archive_step = release_workflow.split("- name: Build release archive", 1)[1].split(
-        "- name: Sign release artifacts", 1
+        "- name: Stage release payloads and sign with existing RSA key", 1
     )[0]
     assert "scripts/distribution_manifest.py archive" in archive_step
-    assert '--source . --output "dist/${archive_name}.tar.gz"' in archive_step
+    assert "--source ." in archive_step
+    assert '--output "dist/${archive_name}.tar.gz"' in archive_step
     assert '--root-name "$archive_name"' in archive_step
+    assert '--owner-repo "$GITHUB_REPOSITORY"' in archive_step
+    assert (
+        '--source-revision "${{ steps.version.outputs.source_revision }}"'
+        in archive_step
+    )
     assert "tar -czf" not in archive_step
     assert "--exclude" not in archive_step
     assert "$SOURCE/tools/bin/<os>-<arch>" in tools_readme

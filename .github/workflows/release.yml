@@ -26,6 +26,8 @@ jobs:
         run: make check
       - name: Install uv
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: Run unified product contract gate
+        run: make unified-product-contract-gate
       - name: Run core runtime tests
         run: make test-core
       - name: Run Semgrep security gate
@@ -41,8 +43,11 @@ jobs:
             echo "::error::Tag ($tag) does not match VERSION file ($file_version)"
             exit 1
           fi
-          echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
-          echo "version=$tag" >> "$GITHUB_OUTPUT"
+          {
+            echo "tag=$GITHUB_REF_NAME"
+            echo "version=$tag"
+            echo "source_revision=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build marketplace bundle
         run: |
@@ -53,7 +58,12 @@ jobs:
         run: |
           archive_name="vibecrafted-${{ steps.version.outputs.version }}"
           mkdir -p dist
-          uv run python3 scripts/distribution_manifest.py archive --source . --output "dist/${archive_name}.tar.gz" --root-name "$archive_name"
+          uv run python3 scripts/distribution_manifest.py archive \
+            --source . \
+            --output "dist/${archive_name}.tar.gz" \
+            --root-name "$archive_name" \
+            --owner-repo "$GITHUB_REPOSITORY" \
+            --source-revision "${{ steps.version.outputs.source_revision }}"
 
       - name: Stage release payloads and sign with existing RSA key
         env:
@@ -122,7 +132,10 @@ jobs:
           mkdir -p "$extract_dir"
           tar -xzf "dist/${archive_name}.tar.gz" -C "$extract_dir"
           uv run python3 scripts/distribution_manifest.py check \
-            --root "$extract_dir/$archive_name"
+            --root "$extract_dir/$archive_name" \
+            --require-source-provenance \
+            --expected-owner-repo "$GITHUB_REPOSITORY" \
+            --expected-source-revision "${{ steps.version.outputs.source_revision }}"
           uv run python3 -m zipfile -t dist/vibecrafted-framework.plugin
 
       - name: Extract changelog entry

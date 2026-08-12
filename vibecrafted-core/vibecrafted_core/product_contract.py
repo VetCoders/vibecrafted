@@ -28,8 +28,6 @@ from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
 from xml.parsers.expat import ExpatError
 
-from jsonschema import Draft202012Validator, ValidationError, validators
-
 MODULE_SCHEMA = "io.vetcoders.vibecrafted.module.v1"
 ASSEMBLY_SCHEMA = "io.vetcoders.vibecrafted.module-assembly.v1"
 PRODUCT_SCHEMA = "io.vetcoders.vibecrafted.product.v1"
@@ -56,6 +54,26 @@ RELEASE_POLICY_NAME = "release-policy.v1.json"
 RELEASE_DMG_NAME = "Vibecrafted.dmg"
 RELEASE_KEY_SPKI_SHA256 = (
     "521ed59d3c446c540afe1557c2dbc39c9c190775f99896b2b65206c32814b25b"
+)
+RUNTIME_GENERATION_SCHEMA = "vibecrafted.runtime-generation.v1"
+RUNTIME_GENERATION_MANIFEST_NAME = "runtime-manifest.json"
+RUNTIME_GENERATION_ENTRYPOINT = "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
+RUNTIME_GENERATION_PROJECTED_CONFIG = "runtime/generated/vc-frame/config.kdl"
+RUNTIME_GENERATION_CANONICAL_CONFIG = (
+    "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame/config.kdl"
+)
+RUNTIME_GENERATION_REQUIRED_HASHES = frozenset(
+    {
+        "VERSION",
+        "scripts/vibecrafted",
+        RUNTIME_GENERATION_PROJECTED_CONFIG,
+        RUNTIME_GENERATION_ENTRYPOINT,
+        "vibecrafted-core/vibecrafted_core/product_contract.py",
+        "vibecrafted-core/vibecrafted_core/walkaround_runner.py",
+        "vibecrafted-core/vibecrafted_core/schemas/unified_product.schema.v1.json",
+        "vibecrafted-core/vibecrafted_core/trust/release-policy.v1.json",
+        "vibecrafted-core/vibecrafted_core/trust/vibecrafted-signing-v1.pub",
+    }
 )
 
 _MACHO_CODE_DOMAIN = b"io.vetcoders.vibecrafted.macho-code-v1\0"
@@ -220,8 +238,8 @@ def _validate_unique_keys(
     keys: Any,
     instance: Any,
     _schema: Any,
-) -> Sequence[ValidationError]:
-    errors: list[ValidationError] = []
+) -> Sequence[Any]:
+    errors: list[Any] = []
     if not isinstance(keys, list) or not isinstance(instance, list):
         return errors
     for key in keys:
@@ -233,8 +251,9 @@ def _validate_unique_keys(
                 continue
             value = item[key]
             if value in seen:
+                _draft, validation_error, _validators = _jsonschema_components()
                 errors.append(
-                    ValidationError(
+                    validation_error(
                         f"duplicate {key} at indexes {seen[value]} and {index}"
                     )
                 )
@@ -248,7 +267,7 @@ def _validate_canonical_relative_path(
     enabled: Any,
     instance: Any,
     _schema: Any,
-) -> Sequence[ValidationError]:
+) -> Sequence[Any]:
     if enabled is not True or not isinstance(instance, str):
         return ()
     pure = PurePosixPath(instance)
@@ -259,17 +278,50 @@ def _validate_canonical_relative_path(
         or "\\" in instance
         or pure.as_posix() != instance
     ):
-        return (ValidationError("path is not canonical relative POSIX spelling"),)
+        _draft, validation_error, _validators = _jsonschema_components()
+        return (validation_error("path is not canonical relative POSIX spelling"),)
     return ()
 
 
-UnifiedProductValidator = validators.extend(
-    Draft202012Validator,
-    {
-        "x-vibecrafted-uniqueKeys": _validate_unique_keys,
-        "x-vibecrafted-canonicalRelativePath": _validate_canonical_relative_path,
-    },
-)
+_JSONSCHEMA_COMPONENTS: tuple[type[Any], type[Exception], Any] | None = None
+_UNIFIED_PRODUCT_VALIDATOR: type[Any] | None = None
+
+
+def _jsonschema_components() -> tuple[type[Any], type[Exception], Any]:
+    """Load the optional heavy schema engine only for commands that validate product JSON."""
+    global _JSONSCHEMA_COMPONENTS
+    if _JSONSCHEMA_COMPONENTS is not None:
+        return _JSONSCHEMA_COMPONENTS
+    try:
+        from jsonschema import Draft202012Validator, ValidationError, validators
+    except ImportError as exc:
+        _fail(E_DEPENDENCY, f"jsonschema dependency is unavailable: {exc}")
+    _JSONSCHEMA_COMPONENTS = (Draft202012Validator, ValidationError, validators)
+    return _JSONSCHEMA_COMPONENTS
+
+
+def _unified_product_validator_class() -> type[Any]:
+    """Build and cache the extended validator after its dependency is proven available."""
+    global _UNIFIED_PRODUCT_VALIDATOR
+    if _UNIFIED_PRODUCT_VALIDATOR is None:
+        draft, _validation_error, validators = _jsonschema_components()
+        _UNIFIED_PRODUCT_VALIDATOR = validators.extend(
+            draft,
+            {
+                "x-vibecrafted-uniqueKeys": _validate_unique_keys,
+                "x-vibecrafted-canonicalRelativePath": (
+                    _validate_canonical_relative_path
+                ),
+            },
+        )
+    return _UNIFIED_PRODUCT_VALIDATOR
+
+
+class UnifiedProductValidator:
+    """Compatibility constructor for the lazily loaded extended JSON Schema validator."""
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> Any:
+        return _unified_product_validator_class()(*args, **kwargs)
 
 
 def validate_schema_document(payload: Mapping[str, Any]) -> None:
@@ -1647,9 +1699,12 @@ def _verify_product_module_receipts(
         expected_hash = _expect_sha256(
             binding["manifest_sha256"], field=f"modules.{name}.manifest_sha256"
         )
-        if _sha256(receipt_path) != expected_hash:
+        captured_receipt = _capture_proof_artifact(
+            receipt_path, context=f"embedded {name} module manifest"
+        )
+        if captured_receipt.sha256 != expected_hash:
             _fail(E_PROOF, f"embedded module receipt hash mismatch: {name}")
-        receipt_payload = _load_json(receipt_path)
+        receipt_payload = _load_json_bytes(captured_receipt.raw, source=receipt_path)
         receipt = _validate_module_manifest(
             receipt_payload, context=f"embedded {name} module manifest"
         )
@@ -1683,9 +1738,15 @@ def _verify_product_module_receipts(
             binding["assembly_receipt_sha256"],
             field=f"modules.{name}.assembly_receipt_sha256",
         )
-        if _sha256(assembly_receipt_path) != expected_assembly_hash:
+        captured_assembly = _capture_proof_artifact(
+            assembly_receipt_path,
+            context=f"embedded {name} assembly receipt",
+        )
+        if captured_assembly.sha256 != expected_assembly_hash:
             _fail(E_PROOF, f"embedded assembly receipt hash mismatch: {name}")
-        assembly_payload = _load_json(assembly_receipt_path)
+        assembly_payload = _load_json_bytes(
+            captured_assembly.raw, source=assembly_receipt_path
+        )
         mappings = _validate_assembly_receipt(
             assembly_payload,
             module=name,
@@ -2274,11 +2335,14 @@ def _validate_identity(
     if not manifest_path.is_file() or manifest_path.is_symlink():
         _fail(E_MISSING, f"{field} manifest referent is missing: {relative}")
     expected_hash = _expect_sha256(value[digest_field], field=f"{field}.{digest_field}")
-    if _sha256(manifest_path) != expected_hash:
+    captured_manifest = _capture_proof_artifact(
+        manifest_path, context=f"{field} manifest referent"
+    )
+    if captured_manifest.sha256 != expected_hash:
         _fail(E_HASH, f"{field} manifest referent hash mismatch")
-    manifest = _load_json(manifest_path)
+    manifest = _load_json_bytes(captured_manifest.raw, source=manifest_path)
     expected_schema = (
-        PRODUCT_SCHEMA if artifact == "product" else "vibecrafted.runtime-generation.v1"
+        PRODUCT_SCHEMA if artifact == "product" else RUNTIME_GENERATION_SCHEMA
     )
     if manifest.get("schema") != expected_schema:
         _fail(E_TRANSACTION, f"{field} manifest referent has the wrong schema")
@@ -2337,6 +2401,11 @@ def _validate_runtime_generation_manifest(
         "hashes",
     }
     _expect_keys(manifest, required=required, context=f"{field} runtime manifest")
+    if manifest["schema"] != RUNTIME_GENERATION_SCHEMA:
+        _fail(E_TRANSACTION, f"{field} runtime schema is not canonical")
+    version = _expect_string(manifest["version"], field=f"{field}.version")
+    if version != version.strip():
+        _fail(E_TRANSACTION, f"{field} runtime version is not canonical")
     fingerprint = _expect_sha256(
         manifest["source_fingerprint"], field=f"{field}.source_fingerprint"
     )
@@ -2345,23 +2414,125 @@ def _validate_runtime_generation_manifest(
     owner_repo = _expect_string(manifest["owner_repo"], field=f"{field}.owner_repo")
     if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", owner_repo) is None:
         _fail(E_TRANSACTION, f"{field} runtime owner_repo is invalid")
+    _expect_git_sha(manifest["source_revision"], field=f"{field}.source_revision")
     entrypoint = _relative_path(
         manifest["entrypoint"], field=f"{field}.entrypoint"
     ).as_posix()
-    if entrypoint != "vibecrafted-core/vibecrafted_core/deck/vibecrafted":
+    if entrypoint != RUNTIME_GENERATION_ENTRYPOINT:
         _fail(E_TRANSACTION, f"{field} runtime entrypoint is not canonical")
     hashes = manifest["hashes"]
-    required_hashes = {
-        "VERSION",
-        "scripts/vibecrafted",
-        "runtime/generated/vc-frame/config.kdl",
-        "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
-    }
-    if not isinstance(hashes, dict) or set(hashes) != required_hashes:
+    if (
+        not isinstance(hashes, dict)
+        or set(hashes) != RUNTIME_GENERATION_REQUIRED_HASHES
+    ):
         _fail(E_TRANSACTION, f"{field} runtime hash inventory is incomplete")
     for relative, digest in hashes.items():
         _relative_path(relative, field=f"{field}.hashes.path")
         _expect_sha256(digest, field=f"{field}.hashes.{relative}")
+
+
+def _validate_runtime_projection_topology(
+    root: Path, projected: Path, resolved: Path
+) -> None:
+    """Allow config projection only through the exact top-level runtime link."""
+    if resolved == projected:
+        return
+    runtime_alias = root / "runtime"
+    canonical_runtime_relative = PurePosixPath(
+        RUNTIME_GENERATION_CANONICAL_CONFIG
+    ).parents[2]
+    canonical_runtime = root / canonical_runtime_relative
+    canonical_config = root / RUNTIME_GENERATION_CANONICAL_CONFIG
+    if not runtime_alias.is_symlink():
+        _fail(E_PATH, "runtime projection topology is not canonical")
+    try:
+        raw_target = os.readlink(runtime_alias)
+        resolved_runtime = runtime_alias.resolve(strict=True)
+        resolved_canonical_runtime = canonical_runtime.resolve(strict=True)
+        resolved_canonical_config = canonical_config.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        _fail(E_PATH, f"runtime projection topology is invalid: {exc}")
+    if (
+        raw_target != canonical_runtime_relative.as_posix()
+        or resolved_runtime != canonical_runtime
+        or resolved_canonical_runtime != canonical_runtime
+        or resolved_canonical_config != canonical_config
+        or resolved != canonical_config
+    ):
+        _fail(E_PATH, "runtime projection topology is not canonical")
+
+
+def verify_installed_runtime_generation(
+    generation_root: str | Path,
+    *,
+    expected_entrypoint: str | Path | None = None,
+) -> dict[str, Any]:
+    """Verify one installed generation from its closed manifest and bound bytes."""
+    raw_root = Path(generation_root)
+    if raw_root.is_symlink():
+        _fail(E_PATH, "installed runtime generation root must not be a symlink")
+    try:
+        root = raw_root.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        _fail(E_PATH, f"installed runtime generation cannot be resolved: {exc}")
+    if not root.is_dir():
+        _fail(E_PATH, "installed runtime generation root must be a directory")
+
+    manifest_path = root / RUNTIME_GENERATION_MANIFEST_NAME
+    captured_manifest = _capture_proof_artifact(
+        manifest_path, context="installed runtime generation manifest"
+    )
+    manifest = _load_json_bytes(captured_manifest.raw, source=manifest_path)
+    _validate_runtime_generation_manifest(manifest, field="installed generation")
+
+    version_raw: bytes | None = None
+    hashes = manifest["hashes"]
+    for relative in sorted(RUNTIME_GENERATION_REQUIRED_HASHES):
+        target = root / _relative_path(
+            relative, field="installed generation.hashes.path"
+        )
+        context = f"installed generation bound file {relative}"
+        try:
+            resolved_target = target.resolve(strict=True)
+        except (OSError, RuntimeError, ValueError) as exc:
+            _fail(E_PATH, f"{context} cannot be resolved: {exc}")
+        allowed_targets = {target}
+        if relative == RUNTIME_GENERATION_PROJECTED_CONFIG:
+            canonical_config = root / RUNTIME_GENERATION_CANONICAL_CONFIG
+            _validate_runtime_projection_topology(root, target, resolved_target)
+            if resolved_target != target:
+                allowed_targets.add(canonical_config)
+        if resolved_target not in allowed_targets:
+            _fail(E_PATH, f"{context} is aliased")
+        captured = _capture_proof_artifact(target, context=context)
+        if captured.sha256 != hashes[relative]:
+            _fail(E_HASH, f"installed generation bound file drifted: {relative}")
+        if relative == "VERSION":
+            version_raw = captured.raw
+
+    if version_raw is None:  # pragma: no cover - guaranteed by the closed inventory.
+        _fail(E_MISSING, "installed generation VERSION is missing")
+    try:
+        installed_version = version_raw.decode("utf-8").strip()
+    except UnicodeDecodeError as exc:
+        _fail(E_TRANSACTION, f"installed generation VERSION is not UTF-8: {exc}")
+    if installed_version != manifest["version"]:
+        _fail(E_TRANSACTION, "installed generation VERSION disagrees with manifest")
+
+    if expected_entrypoint is not None:
+        try:
+            resolved_expected = Path(expected_entrypoint).resolve(strict=True)
+            resolved_canonical = (root / RUNTIME_GENERATION_ENTRYPOINT).resolve(
+                strict=True
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            _fail(
+                E_ENTRYPOINT, f"installed runtime entrypoint cannot be resolved: {exc}"
+            )
+        if resolved_expected != resolved_canonical:
+            _fail(E_ENTRYPOINT, "installed binary is not the manifest entrypoint")
+
+    return dict(manifest)
 
 
 def _validate_release_state(
@@ -3088,10 +3259,10 @@ def _self_test() -> int:
                 "source_revision": "e" * 40,
                 "entrypoint": "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
                 "hashes": {
-                    "VERSION": "1" * 64,
-                    "scripts/vibecrafted": "2" * 64,
-                    "runtime/generated/vc-frame/config.kdl": "3" * 64,
-                    "vibecrafted-core/vibecrafted_core/deck/vibecrafted": "4" * 64,
+                    relative: f"{index:x}" * 64
+                    for index, relative in enumerate(
+                        sorted(RUNTIME_GENERATION_REQUIRED_HASHES), start=1
+                    )
                 },
             },
         )
@@ -3169,6 +3340,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     release_output.add_argument("path", type=Path)
     release_output.add_argument("signature", type=Path)
+    runtime_generation = commands.add_parser(
+        "runtime-generation", help="verify an installed runtime generation"
+    )
+    runtime_generation.add_argument("path", type=Path)
+    runtime_generation.add_argument("--expected-entrypoint", type=Path)
     return parser
 
 
@@ -3195,6 +3371,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             verify_walkaround(args.path)
         elif args.command == "release-output":
             verify_release_output(args.path, args.signature)
+        elif args.command == "runtime-generation":
+            verify_installed_runtime_generation(
+                args.path, expected_entrypoint=args.expected_entrypoint
+            )
         else:  # pragma: no cover - argparse owns the command set.
             _fail(E_SCHEMA, f"unsupported command: {args.command}")
     except ProductContractError as exc:

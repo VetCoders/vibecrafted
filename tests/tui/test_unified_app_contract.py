@@ -390,10 +390,10 @@ def _transaction_fixture(path: Path, macho_executable: Path) -> dict[str, Any]:
             "source_revision": "8" * 40,
             "entrypoint": "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
             "hashes": {
-                "VERSION": "1" * 64,
-                "scripts/vibecrafted": "2" * 64,
-                "runtime/generated/vc-frame/config.kdl": "3" * 64,
-                "vibecrafted-core/vibecrafted_core/deck/vibecrafted": "4" * 64,
+                relative: f"{index:x}" * 64
+                for index, relative in enumerate(
+                    sorted(contract.RUNTIME_GENERATION_REQUIRED_HASHES), start=1
+                )
             },
         },
     )
@@ -1558,6 +1558,128 @@ def test_transaction_rejects_minimal_manifest_lookalikes(
     _write_json(receipt, payload)
 
     _assert_error(contract.E_TRANSACTION, lambda: contract.verify_transaction(receipt))
+
+
+def test_transaction_rejects_runtime_manifest_without_verifier_hash(
+    tmp_path: Path, macho_executable: Path
+) -> None:
+    receipt = tmp_path / "transaction.json"
+    payload = _transaction_fixture(receipt, macho_executable)
+    identity = payload["new"]["runtime"]
+    manifest_path = tmp_path / identity["manifest_path"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["hashes"].pop("vibecrafted-core/vibecrafted_core/product_contract.py")
+    _write_json(manifest_path, manifest)
+    identity["runtime_manifest_sha256"] = _sha256(manifest_path)
+    payload["active"] = copy.deepcopy(payload["new"])
+    _write_json(receipt, payload)
+
+    _assert_error(contract.E_TRANSACTION, lambda: contract.verify_transaction(receipt))
+
+
+def test_transaction_rejects_exact_legacy_four_hash_runtime_manifest(
+    tmp_path: Path, macho_executable: Path
+) -> None:
+    receipt = tmp_path / "transaction.json"
+    payload = _transaction_fixture(receipt, macho_executable)
+    identity = payload["new"]["runtime"]
+    manifest_path = tmp_path / identity["manifest_path"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["hashes"] = {
+        relative: manifest["hashes"][relative]
+        for relative in (
+            "VERSION",
+            "scripts/vibecrafted",
+            "runtime/generated/vc-frame/config.kdl",
+            "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
+        )
+    }
+    _write_json(manifest_path, manifest)
+    identity["runtime_manifest_sha256"] = _sha256(manifest_path)
+    payload["active"] = copy.deepcopy(payload["new"])
+    _write_json(receipt, payload)
+
+    _assert_error(contract.E_TRANSACTION, lambda: contract.verify_transaction(receipt))
+
+
+@pytest.mark.parametrize("artifact", ["app", "runtime"])
+def test_transaction_identity_validates_the_single_captured_manifest_snapshot(
+    tmp_path: Path,
+    macho_executable: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    artifact: str,
+) -> None:
+    """A path swap after capture must not let unbound bytes pass validation."""
+    receipt = tmp_path / "transaction.json"
+    payload = _transaction_fixture(receipt, macho_executable)
+    identity = payload["new"][artifact]
+    manifest_path = tmp_path / identity["manifest_path"]
+    valid_bytes = manifest_path.read_bytes()
+
+    if artifact == "app":
+        invalid_manifest = {
+            "schema": contract.PRODUCT_SCHEMA,
+            "version": identity["version"],
+            "git_sha": identity["source_revision"],
+        }
+        digest_field = "product_manifest_sha256"
+    else:
+        invalid_manifest = {
+            "schema": contract.RUNTIME_GENERATION_SCHEMA,
+            "version": identity["version"],
+            "source_fingerprint": "7" * 64,
+            "owner_repo": "vetcoders/vibecrafted",
+            "source_revision": identity["source_revision"],
+            "entrypoint": "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
+            "hashes": {
+                relative: f"{index:x}" * 64
+                for index, relative in enumerate(
+                    (
+                        "VERSION",
+                        "runtime/generated/vc-frame/config.kdl",
+                        "scripts/vibecrafted",
+                        "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
+                    ),
+                    start=1,
+                )
+            },
+        }
+        digest_field = "runtime_manifest_sha256"
+
+    _write_json(manifest_path, invalid_manifest)
+    identity[digest_field] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    replacement = manifest_path.with_name(f"{manifest_path.name}.valid")
+    replacement.write_bytes(valid_bytes)
+    real_capture = contract._capture_proof_artifact
+    captures = 0
+
+    def capture_then_swap(path: Path, *, context: str):
+        nonlocal captures
+        captured = real_capture(path, context=context)
+        if path == manifest_path:
+            captures += 1
+            replacement.replace(manifest_path)
+        return captured
+
+    def forbid_second_open(path: Path) -> str:
+        if path == manifest_path:
+            pytest.fail("manifest identity reopened its mutable path after capture")
+        return _sha256(path)
+
+    monkeypatch.setattr(contract, "_capture_proof_artifact", capture_then_swap)
+    monkeypatch.setattr(contract, "_sha256", forbid_second_open)
+
+    _assert_error(
+        contract.E_TRANSACTION,
+        lambda: contract._validate_identity(
+            identity,
+            field=f"new.{artifact}",
+            receipt_root=tmp_path,
+            artifact="product" if artifact == "app" else "runtime",
+        ),
+    )
+    assert captures == 1
+    assert manifest_path.read_bytes() == valid_bytes
 
 
 def test_transaction_product_referent_runs_semantic_launch_binding(

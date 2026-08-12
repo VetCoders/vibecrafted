@@ -47,6 +47,12 @@ def _write_executable(path: Path, body: str) -> None:
 
 
 def _write_distribution_manifest_stub(source_dir: Path) -> None:
+    (source_dir / "source-provenance.json").write_text(
+        '{"owner_repo":"vetcoders/vibecrafted",'
+        '"schema":"vibecrafted.source-provenance.v1",'
+        '"source_revision":"0123456789abcdef0123456789abcdef01234567"}\n',
+        encoding="utf-8",
+    )
     path = source_dir / "scripts" / "distribution_manifest.py"
     path.write_text(
         """#!/usr/bin/env python3
@@ -60,6 +66,11 @@ if sys.argv[1] != "stage":
     raise SystemExit(2)
 source = Path(sys.argv[sys.argv.index("--source") + 1])
 destination = Path(sys.argv[sys.argv.index("--destination") + 1])
+if "--require-source-provenance" in sys.argv:
+    provenance = source / "source-provenance.json"
+    if not provenance.is_file():
+        print("missing required path: source-provenance.json", file=sys.stderr)
+        raise SystemExit(2)
 if destination.exists():
     shutil.rmtree(destination)
 shutil.copytree(source, destination, symlinks=True)

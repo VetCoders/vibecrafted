@@ -19,7 +19,7 @@ vibecrafted doctor --verbose      # list every check, including passing ones
 | Audit               | What it proves                                                                                                                                                      |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Generation manifest | `runtime-manifest.json` (schema `vibecrafted.runtime-generation.v1`) exists and is valid for the current generation                                                 |
-| Content hashes      | SHA-256 digests for `VERSION`, the command deck, and generated vc-frame config still match — any manifest-bound file that drifted fails                             |
+| Content hashes      | SHA-256 digests for `VERSION`, launcher/deck, generated vc-frame config, and verifier engine/runner/schema/policy/key still match — any drift fails                 |
 | Launcher binding    | The public launcher resolves to the exact current generation entrypoint inside `~/.local/share/vibecrafted` — a launcher resolving outside the installed root fails |
 | Checkout-link scan  | No active config, KDL, helper, or command-deck content references a source checkout                                                                                 |
 | Symlink census      | No installed symlink is broken or resolves outside its generation                                                                                                   |
