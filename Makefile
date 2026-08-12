@@ -497,11 +497,22 @@ test-skills:
 test-install:
 	@bash tests/install_smoke.sh
 
+# update NEVER rewrites the working tree with another branch's content.
+# The old `git checkout "$(BRANCH)" -- .` plastered a stale $(BRANCH) tree
+# over index+worktree of whatever branch the Living Tree was on (2026-08-12:
+# 174 files silently reverted to an Aug-8 main). Now: fast-forward only when
+# already on $(BRANCH); on any other branch the tree is left untouched and
+# the install runs from the current checkout as-is.
 update:
 	@if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
-		printf "Git repo detected — pulling origin/$(BRANCH)...\n"; \
-		git fetch origin; \
-		git checkout "$(BRANCH)" -- . 2>/dev/null || git merge --ff-only "origin/$(BRANCH)"; \
+		current="$$(git rev-parse --abbrev-ref HEAD)"; \
+		if [ "$$current" = "$(BRANCH)" ]; then \
+			printf "Git repo on $(BRANCH) — fast-forwarding from origin/$(BRANCH)...\n"; \
+			git fetch origin; \
+			git merge --ff-only "origin/$(BRANCH)" || printf "No fast-forward possible — tree left as-is.\n"; \
+		else \
+			printf "Repo is on '%s', not '$(BRANCH)' — tree untouched; installing from the current checkout.\n" "$$current"; \
+		fi; \
 		printf "Re-installing...\n"; \
 		$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --with-shell --mirror --non-interactive; \
 	else \

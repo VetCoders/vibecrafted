@@ -859,6 +859,27 @@ def test_install_manifest_uses_four_human_checkpoints_with_artifact_reason() -> 
     assert 'installer_cmd = "make install"' in text
 
 
+def test_update_target_never_rewrites_the_tree_from_another_branch() -> None:
+    """`make update` must not plaster $(BRANCH)'s tree over the current
+    branch. 2026-08-12: `git checkout "$(BRANCH)" -- .` silently reverted
+    174 files of a release branch to a stale Aug-8 main (index + worktree,
+    HEAD untouched) and then reinstalled from the poisoned source. The
+    contract: fast-forward only when already on $(BRANCH); no recipe line
+    may run `git checkout` at all."""
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+
+    recipe_lines = [
+        line
+        for line in makefile.splitlines()
+        if line.startswith("\t") and not line.lstrip("\t ").startswith("#")
+    ]
+    offenders = [line for line in recipe_lines if "git checkout" in line]
+    assert offenders == []
+
+    assert '[ "$$current" = "$(BRANCH)" ]' in makefile
+    assert 'git merge --ff-only "origin/$(BRANCH)"' in makefile
+
+
 def test_makefile_exposes_version_bump_contract() -> None:
     text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
 
