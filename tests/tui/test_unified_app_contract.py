@@ -373,6 +373,15 @@ def _identity(
     }
 
 
+def _runtime_source_payload() -> dict[str, object]:
+    return {
+        "schema": contract.SOURCE_PAYLOAD_SCHEMA,
+        "algorithm": "sha256",
+        "tree_sha256": "9" * 64,
+        "entry_count": 42,
+    }
+
+
 def _transaction_fixture(path: Path, macho_executable: Path) -> dict[str, Any]:
     product_manifest = path.parent / "manifests/product-manifest.json"
     runtime_manifest = path.parent / "manifests/runtime-manifest.json"
@@ -383,11 +392,12 @@ def _transaction_fixture(path: Path, macho_executable: Path) -> dict[str, Any]:
     _write_json(
         runtime_manifest,
         {
-            "schema": "vibecrafted.runtime-generation.v1",
+            "schema": contract.RUNTIME_GENERATION_SCHEMA,
             "version": "1.0.0",
             "source_fingerprint": "7" * 64,
             "owner_repo": "vetcoders/vibecrafted",
             "source_revision": "8" * 40,
+            "source_payload": _runtime_source_payload(),
             "entrypoint": "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
             "hashes": {
                 relative: f"{index:x}" * 64
@@ -1547,9 +1557,10 @@ def test_transaction_rejects_minimal_manifest_lookalikes(
         digest_field = "product_manifest_sha256"
     else:
         lookalike = {
-            "schema": "vibecrafted.runtime-generation.v1",
+            "schema": contract.RUNTIME_GENERATION_SCHEMA,
             "version": identity["version"],
             "source_revision": identity["source_revision"],
+            "source_payload": _runtime_source_payload(),
         }
         digest_field = "runtime_manifest_sha256"
     _write_json(manifest, lookalike)
@@ -1630,6 +1641,7 @@ def test_transaction_identity_validates_the_single_captured_manifest_snapshot(
             "source_fingerprint": "7" * 64,
             "owner_repo": "vetcoders/vibecrafted",
             "source_revision": identity["source_revision"],
+            "source_payload": _runtime_source_payload(),
             "entrypoint": "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
             "hashes": {
                 relative: f"{index:x}" * 64

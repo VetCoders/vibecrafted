@@ -56,10 +56,10 @@ version and a unique token:
 
 and atomically repoints the `vibecrafted-current` symlink at it. The
 generation's `runtime-manifest.json` (schema
-`vibecrafted.runtime-generation.v1`) records the installed version and the
-SHA-256 digests that bind it — so version truth is auditable, not
-declarative. See [Runtime capsule](/docs/runtime-capsule/) for the full
-mechanism.
+`vibecrafted.runtime-generation.v2`) records the installed version, the verified
+source-payload tree identity, and the SHA-256 digests that bind its critical
+runtime files — so version truth is auditable, not declarative. See
+[Runtime capsule](/docs/runtime-capsule/) for the full mechanism.
 
 ## The delivery receipt
 

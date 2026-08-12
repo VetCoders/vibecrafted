@@ -1022,6 +1022,7 @@ def _probe_installed_runtime_manifest(
                 "owner_repo": payload["owner_repo"],
                 "branch": _unknown("checkout-free installed generation has no branch"),
                 "checkout_sha": payload["source_revision"],
+                "source_payload": payload["source_payload"],
                 "resolution": "installed_runtime_manifest",
                 "dirty": False,
             },

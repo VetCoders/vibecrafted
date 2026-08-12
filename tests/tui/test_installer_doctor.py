@@ -21,6 +21,26 @@ from scripts import vetcoders_install as installer
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _write_test_source_provenance(
+    root: Path,
+    *,
+    owner_repo: str = "vetcoders/vibecrafted",
+    source_revision: str = "b" * 40,
+) -> dict[str, object]:
+    """Mint a test-only carrier for a detached fixture's current input tree."""
+    provenance: dict[str, object] = {
+        "schema": installer._SOURCE_PROVENANCE_SCHEMA,
+        "owner_repo": owner_repo,
+        "source_revision": source_revision,
+        "payload": installer._distribution_manifest._distribution_tree_record(root),
+    }
+    (root / "source-provenance.json").write_text(
+        json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return provenance
+
+
 def _write_executable(path: Path, body: str) -> None:
     path.write_text(body, encoding="utf-8")
     path.chmod(0o755)
@@ -500,16 +520,8 @@ def test_cmd_doctor_fix_launchers_repairs_missing_wrappers(
     monkeypatch.setattr(installer, "_slack_provider_contract_findings", list)
     detached_source = tmp_path / "detached-source"
     installer.stage_distribution_payload(REPO_ROOT, detached_source, mirror=True)
-    provenance = installer.resolve_source_provenance(
-        REPO_ROOT,
-        owner_repo=None,
-        source_revision=None,
-    )
-    (detached_source / "source-provenance.json").write_text(
-        json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
-        encoding="utf-8",
-    )
     (detached_source / "VERSION").write_text("1.4.1-test\n", encoding="utf-8")
+    _write_test_source_provenance(detached_source)
     monkeypatch.setattr(
         installer, "_doctor_launcher_source_root", lambda _store: detached_source
     )
@@ -882,21 +894,14 @@ def _write_release_contract_runtime_manifest(
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO_ROOT / source_relative, target)
 
-    provenance = installer.resolve_source_provenance(
-        REPO_ROOT,
-        owner_repo=None,
-        source_revision=None,
-    )
-    (current_tools / "source-provenance.json").write_text(
-        json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    provenance = _write_test_source_provenance(current_tools)
 
     monkeypatch.delenv("VIBECRAFTED_SOURCE_OWNER_REPO", raising=False)
     monkeypatch.delenv("VIBECRAFTED_SOURCE_REVISION", raising=False)
     installer._write_runtime_generation_manifest(
         current_tools,
         source_root=current_tools,
+        source_provenance=provenance,
         install_version=None,
     )
 
@@ -982,7 +987,7 @@ def test_installer_release_contract_assets_reject_missing_or_incomplete_manifest
     )
 
 
-def test_runtime_manifest_accepts_clean_exact_git_source_without_carrier(
+def test_runtime_manifest_retains_clean_exact_git_source_carrier(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1026,13 +1031,24 @@ def test_runtime_manifest_accepts_clean_exact_git_source_without_carrier(
         check=True,
     )
 
+    provenance = installer.resolve_source_provenance(
+        source,
+        owner_repo=None,
+        source_revision=None,
+    )
+    (current_tools / "source-provenance.json").write_text(
+        json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
     installer._write_runtime_generation_manifest(
         current_tools,
         source_root=source,
+        source_provenance=provenance,
         install_version=None,
     )
 
     assert not (source / "source-provenance.json").exists()
+    assert (current_tools / "source-provenance.json").is_file()
     manifest, error = installer._load_runtime_generation_manifest(current_tools)
     assert error is None
     assert manifest is not None

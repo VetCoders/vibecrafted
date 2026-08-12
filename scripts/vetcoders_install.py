@@ -40,7 +40,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
@@ -2928,7 +2928,7 @@ def _remove_path(path: Path) -> None:
 
 _TOOLS_HANDOFF_SCHEMA = "vibecrafted.tools-handoff.v1"
 _RUNTIME_GENERATION_MANIFEST = "runtime-manifest.json"
-_RUNTIME_GENERATION_MANIFEST_SCHEMA = "vibecrafted.runtime-generation.v1"
+_RUNTIME_GENERATION_MANIFEST_SCHEMA = "vibecrafted.runtime-generation.v2"
 _RUNTIME_GENERATION_MANIFEST_KEYS = frozenset(
     {
         "schema",
@@ -2936,10 +2936,17 @@ _RUNTIME_GENERATION_MANIFEST_KEYS = frozenset(
         "source_fingerprint",
         "owner_repo",
         "source_revision",
+        "source_payload",
         "entrypoint",
         "hashes",
     }
 )
+_SOURCE_PROVENANCE_SCHEMA = "vibecrafted.source-provenance.v2"
+_SOURCE_PROVENANCE_KEYS = frozenset(
+    {"schema", "owner_repo", "source_revision", "payload"}
+)
+_SOURCE_PAYLOAD_SCHEMA = "vibecrafted.distribution-tree.v1"
+_SOURCE_PAYLOAD_KEYS = frozenset({"schema", "algorithm", "tree_sha256", "entry_count"})
 _RUNTIME_GENERATION_ENTRYPOINT = Path(
     "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
 )
@@ -2992,6 +2999,7 @@ _RUNTIME_VERIFIER_E_MISSING = 22
 _RUNTIME_VERIFIER_E_HASH = 24
 _RUNTIME_VERIFIER_E_DEPENDENCY = 27
 _RUNTIME_VERIFIER_E_TRANSACTION = 28
+_RUNTIME_VERIFIER_E_PROOF = 33
 _RUNTIME_VERIFIER_SCHEMA_DEFS = frozenset(
     {
         "architecture",
@@ -7858,9 +7866,11 @@ def _runtime_generation_audit_errors(
 
 def _capture_runtime_bound_file(path: Path) -> bytes:
     """Read one stable, unique regular file without following its final path component."""
+    expected = os.path.abspath(path)
+    resolved = os.path.realpath(expected)
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        descriptor = os.open(path, flags)
+        descriptor = os.open(expected, flags)
     except OSError as exc:
         raise OSError(f"cannot open unique regular file: {exc}") from exc
     try:
@@ -7872,14 +7882,49 @@ def _capture_runtime_bound_file(path: Path) -> bytes:
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
             raw = handle.read(_MAX_RUNTIME_BOUND_FILE_BYTES + 1)
         after = os.fstat(descriptor)
+        path_after = os.lstat(expected)
+        resolved_after = os.path.realpath(expected)
         if len(raw) > _MAX_RUNTIME_BOUND_FILE_BYTES:
             raise OSError("file exceeds the runtime-manifest size limit")
         if (
-            before.st_dev,
-            before.st_ino,
-            before.st_size,
-            before.st_mtime_ns,
-        ) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+            (
+                before.st_dev,
+                before.st_ino,
+                before.st_mode,
+                before.st_nlink,
+                before.st_size,
+                before.st_mtime_ns,
+                before.st_ctime_ns,
+            )
+            != (
+                after.st_dev,
+                after.st_ino,
+                after.st_mode,
+                after.st_nlink,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            )
+            or resolved_after != resolved
+            or (
+                after.st_dev,
+                after.st_ino,
+                after.st_mode,
+                after.st_nlink,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            )
+            != (
+                path_after.st_dev,
+                path_after.st_ino,
+                path_after.st_mode,
+                path_after.st_nlink,
+                path_after.st_size,
+                path_after.st_mtime_ns,
+                path_after.st_ctime_ns,
+            )
+        ):
             raise OSError("file changed while it was captured")
         return raw
     finally:
@@ -8087,12 +8132,18 @@ def _write_runtime_verifier_snapshot(
     snapshot: Path,
     captured: dict[Path, bytes],
     manifest_raw: bytes,
+    source_provenance_raw: bytes,
 ) -> None:
     """Materialize only already-captured bytes for candidate semantic execution."""
     snapshot.mkdir(mode=0o700)
     _atomic_bytes_file(
         snapshot / _RUNTIME_GENERATION_MANIFEST,
         manifest_raw,
+        mode=0o600,
+    )
+    _atomic_bytes_file(
+        snapshot / _distribution_manifest.SOURCE_PROVENANCE_FILE,
+        source_provenance_raw,
         mode=0o600,
     )
     for relative, raw in captured.items():
@@ -8177,8 +8228,11 @@ def _validate_runtime_verifier_semantics(runtime_root: Path) -> None:
         manifest_raw = _capture_runtime_bound_file(
             runtime_root / _RUNTIME_GENERATION_MANIFEST
         )
+        source_provenance_raw = _capture_runtime_bound_file(
+            runtime_root / _distribution_manifest.SOURCE_PROVENANCE_FILE
+        )
     except OSError as exc:
-        raise OSError(f"candidate verifier manifest capture failed: {exc}") from exc
+        raise OSError(f"candidate verifier lineage capture failed: {exc}") from exc
 
     _validate_runtime_verifier_ast(
         captured[_RUNTIME_VERIFIER_PRODUCT],
@@ -8197,7 +8251,9 @@ def _validate_runtime_verifier_semantics(runtime_root: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="vibecrafted-runtime-verifier-") as raw_tmp:
         temporary = Path(raw_tmp)
         snapshot = temporary / "runtime"
-        _write_runtime_verifier_snapshot(snapshot, captured, manifest_raw)
+        _write_runtime_verifier_snapshot(
+            snapshot, captured, manifest_raw, source_provenance_raw
+        )
         product = snapshot / _RUNTIME_VERIFIER_PRODUCT
         runner = snapshot / _RUNTIME_VERIFIER_RUNNER
         cache = temporary / "pycache"
@@ -8247,7 +8303,9 @@ def _validate_runtime_verifier_semantics(runtime_root: Path) -> None:
             raise OSError("candidate walk-around runner --help surface is incomplete")
 
         drift_snapshot = temporary / "hash-drift"
-        _write_runtime_verifier_snapshot(drift_snapshot, captured, manifest_raw)
+        _write_runtime_verifier_snapshot(
+            drift_snapshot, captured, manifest_raw, source_provenance_raw
+        )
         drifted_launcher = drift_snapshot / "scripts/vibecrafted"
         drifted_launcher.write_bytes(drifted_launcher.read_bytes() + b"\n# drift\n")
         _assert_runtime_verifier_semantic_failure(
@@ -8286,6 +8344,7 @@ def _validate_runtime_verifier_semantics(runtime_root: Path) -> None:
             legacy_snapshot,
             captured,
             (json.dumps(legacy_manifest, sort_keys=True) + "\n").encode("utf-8"),
+            source_provenance_raw,
         )
         _assert_runtime_verifier_semantic_failure(
             _run_runtime_verifier_semantic_command(
@@ -8307,6 +8366,7 @@ def _validate_runtime_verifier_semantics(runtime_root: Path) -> None:
             open_snapshot,
             captured,
             (json.dumps(open_manifest, sort_keys=True) + "\n").encode("utf-8"),
+            source_provenance_raw,
         )
         _assert_runtime_verifier_semantic_failure(
             _run_runtime_verifier_semantic_command(
@@ -8376,24 +8436,72 @@ def _validate_runtime_verifier_semantics(runtime_root: Path) -> None:
                     "walk-around runner created output for missing inputs"
                 )
 
+        invalid = temporary / "invalid"
+        invalid.mkdir()
+        invalid_challenge = invalid / "challenge.json"
+        invalid_challenge.write_bytes(b"not a trust challenge\n")
+        invalid_challenge_signature = invalid / "challenge.sig"
+        invalid_challenge_signature.write_bytes(b"\0" * 256)
+        invalid_release = invalid / "release-output.json"
+        invalid_release.write_bytes(b"not a release receipt\n")
+        invalid_release_signature = invalid / "release-output.json.sig"
+        invalid_release_signature.write_bytes(b"\0" * 256)
+        invalid_walkaround = invalid / "walkaround.json"
+        runner_invalid_commands = (
+            (
+                "trust-probe",
+                [str(invalid_challenge), str(invalid_challenge_signature)],
+                None,
+            ),
+            (
+                "verify-release",
+                [
+                    "--release-output",
+                    str(invalid_release),
+                    "--signature",
+                    str(invalid_release_signature),
+                ],
+                None,
+            ),
+            (
+                "walkaround",
+                [
+                    "--release-output",
+                    str(invalid_release),
+                    "--signature",
+                    str(invalid_release_signature),
+                    "--output",
+                    str(invalid_walkaround),
+                ],
+                invalid_walkaround,
+            ),
+        )
+        for command, arguments, forbidden_output in runner_invalid_commands:
+            _assert_runtime_verifier_semantic_failure(
+                _run_runtime_verifier_semantic_command(
+                    [str(runner), command, *arguments], cache=cache
+                ),
+                expected_code=_RUNTIME_VERIFIER_E_PROOF,
+                context=f"walk-around runner {command} invalid proof",
+            )
+            if forbidden_output is not None and (
+                forbidden_output.exists() or forbidden_output.is_symlink()
+            ):
+                raise OSError(
+                    "candidate verifier failed semantic negative control "
+                    "walk-around runner created output for invalid proof"
+                )
+
 
 def _write_runtime_generation_manifest(
     runtime_root: Path,
     *,
     source_root: Path,
+    source_provenance: Mapping[str, Any],
     install_version: str | None,
 ) -> None:
-    """Write the runtime generation manifest: hashes of the required entrypoint files, source
-    fingerprint/owner/revision, and install version.
-    """
-    try:
-        provenance = assert_source_payload_matches_provenance(
-            source_root.resolve(strict=False),
-            owner_repo=None,
-            source_revision=None,
-        )
-    except DistributionManifestError as exc:
-        raise OSError(f"candidate runtime source provenance is invalid: {exc}") from exc
+    """Bind transformed runtime bytes to the retained distribution input lineage."""
+    provenance = _canonical_runtime_source_provenance(source_provenance)
     hashes: dict[str, str] = {}
     for relative in sorted(_RUNTIME_GENERATION_REQUIRED_HASHES):
         path = runtime_root / relative
@@ -8410,6 +8518,7 @@ def _write_runtime_generation_manifest(
         "source_fingerprint": _path_fingerprint(source_root),
         "owner_repo": provenance["owner_repo"],
         "source_revision": provenance["source_revision"],
+        "source_payload": provenance["payload"],
         "entrypoint": _RUNTIME_GENERATION_ENTRYPOINT.as_posix(),
         "hashes": hashes,
     }
@@ -8421,6 +8530,45 @@ def _write_runtime_generation_manifest(
             + (manifest_error or "invalid runtime manifest")
         )
     _validate_runtime_verifier_semantics(runtime_root)
+
+
+def _canonical_runtime_source_provenance(
+    provenance: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Copy one exact v2 carrier; publication never rereads or mints its authority."""
+    if set(provenance) != _SOURCE_PROVENANCE_KEYS:
+        raise OSError("candidate runtime source provenance is not a closed v2 carrier")
+    payload = provenance.get("payload")
+    owner_repo = provenance.get("owner_repo")
+    source_revision = provenance.get("source_revision")
+    if (
+        provenance.get("schema") != _SOURCE_PROVENANCE_SCHEMA
+        or not isinstance(owner_repo, str)
+        or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", owner_repo) is None
+        or not isinstance(source_revision, str)
+        or re.fullmatch(r"[0-9a-f]{40}", source_revision) is None
+        or not isinstance(payload, dict)
+        or set(payload) != _SOURCE_PAYLOAD_KEYS
+        or payload.get("schema") != _SOURCE_PAYLOAD_SCHEMA
+        or payload.get("algorithm") != "sha256"
+        or not isinstance(payload.get("tree_sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", payload["tree_sha256"]) is None
+        or isinstance(payload.get("entry_count"), bool)
+        or not isinstance(payload.get("entry_count"), int)
+        or payload["entry_count"] < 1
+    ):
+        raise OSError("candidate runtime source provenance is not a closed v2 carrier")
+    return {
+        "schema": _SOURCE_PROVENANCE_SCHEMA,
+        "owner_repo": owner_repo,
+        "source_revision": source_revision,
+        "payload": {
+            "schema": _SOURCE_PAYLOAD_SCHEMA,
+            "algorithm": "sha256",
+            "tree_sha256": payload["tree_sha256"],
+            "entry_count": payload["entry_count"],
+        },
+    }
 
 
 def _sync_control_plane_tree_locked(
@@ -8473,18 +8621,14 @@ def _sync_control_plane_tree_locked(
         )
     pointer_swapped = False
     try:
-        stage_distribution_payload(src, staging, mirror=True)
-        try:
-            assert_source_payload_matches_provenance(
-                src.resolve(strict=False),
-                owner_repo=None,
-                source_revision=None,
-                payload_root=staging,
-            )
-        except DistributionManifestError as exc:
-            raise OSError(
-                f"candidate staged payload provenance is invalid: {exc}"
-            ) from exc
+        source_provenance = stage_distribution_payload(
+            src,
+            staging,
+            mirror=True,
+            require_source_provenance=True,
+        )
+        if source_provenance is None:
+            raise OSError("candidate staging returned no required source provenance")
         if install_version:
             stamp_install_version(staging, install_version)
         _materialize_vc_frame_generation(staging)
@@ -8494,6 +8638,7 @@ def _sync_control_plane_tree_locked(
         _write_runtime_generation_manifest(
             staging,
             source_root=src,
+            source_provenance=source_provenance,
             install_version=install_version,
         )
         payload_errors = _runtime_generation_payload_errors(staging)
@@ -9259,10 +9404,10 @@ import stat
 import sys
 
 MANIFEST_NAME = "runtime-manifest.json"
-MANIFEST_SCHEMA = "vibecrafted.runtime-generation.v1"
+MANIFEST_SCHEMA = "vibecrafted.runtime-generation.v2"
 MANIFEST_KEYS = frozenset({
     "schema", "version", "source_fingerprint", "owner_repo",
-    "source_revision", "entrypoint", "hashes",
+    "source_revision", "source_payload", "entrypoint", "hashes",
 })
 ENTRYPOINT = "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
 RUNTIME_ALIAS = "runtime"
@@ -9270,8 +9415,10 @@ CANONICAL_RUNTIME = "vibecrafted-core/vibecrafted_core/runtime"
 PROJECTED_CONFIG = "runtime/generated/vc-frame/config.kdl"
 CANONICAL_CONFIG = CANONICAL_RUNTIME + "/generated/vc-frame/config.kdl"
 PROVENANCE_NAME = "source-provenance.json"
-PROVENANCE_KEYS = frozenset({"schema", "owner_repo", "source_revision"})
-PROVENANCE_SCHEMA = "vibecrafted.source-provenance.v1"
+PROVENANCE_KEYS = frozenset({"schema", "owner_repo", "source_revision", "payload"})
+PROVENANCE_SCHEMA = "vibecrafted.source-provenance.v2"
+SOURCE_PAYLOAD_KEYS = frozenset({"schema", "algorithm", "tree_sha256", "entry_count"})
+SOURCE_PAYLOAD_SCHEMA = "vibecrafted.distribution-tree.v1"
 MAX_BYTES = 16 * 1024 * 1024
 SHA256 = re.compile(r"[0-9a-f]{64}")
 GIT_SHA = re.compile(r"[0-9a-f]{40}")
@@ -9303,6 +9450,8 @@ def capture(path, context, *, allowed_resolved_path=None):
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
             raw = handle.read(MAX_BYTES + 1)
         after = os.fstat(descriptor)
+        path_after = os.lstat(expected)
+        resolved_after = os.path.realpath(expected)
         if len(raw) > MAX_BYTES:
             fail(context + " exceeds the size limit")
         if (
@@ -9311,6 +9460,13 @@ def capture(path, context, *, allowed_resolved_path=None):
         ) != (
             after.st_dev, after.st_ino, after.st_mode, after.st_nlink,
             after.st_size, after.st_mtime_ns, after.st_ctime_ns,
+        ) or resolved_after != resolved or (
+            after.st_dev, after.st_ino, after.st_mode, after.st_nlink,
+            after.st_size, after.st_mtime_ns, after.st_ctime_ns,
+        ) != (
+            path_after.st_dev, path_after.st_ino, path_after.st_mode,
+            path_after.st_nlink, path_after.st_size, path_after.st_mtime_ns,
+            path_after.st_ctime_ns,
         ):
             fail(context + " changed during capture")
         return raw
@@ -9367,6 +9523,7 @@ def main():
     )
     manifest = load_json(manifest_raw, "runtime manifest")
     hashes = manifest.get("hashes")
+    source_payload = manifest.get("source_payload")
     if (
         set(manifest) != MANIFEST_KEYS
         or manifest.get("schema") != MANIFEST_SCHEMA
@@ -9379,6 +9536,15 @@ def main():
         or OWNER.fullmatch(manifest["owner_repo"]) is None
         or not isinstance(manifest.get("source_revision"), str)
         or GIT_SHA.fullmatch(manifest["source_revision"]) is None
+        or not isinstance(source_payload, dict)
+        or set(source_payload) != SOURCE_PAYLOAD_KEYS
+        or source_payload.get("schema") != SOURCE_PAYLOAD_SCHEMA
+        or source_payload.get("algorithm") != "sha256"
+        or not isinstance(source_payload.get("tree_sha256"), str)
+        or SHA256.fullmatch(source_payload["tree_sha256"]) is None
+        or isinstance(source_payload.get("entry_count"), bool)
+        or not isinstance(source_payload.get("entry_count"), int)
+        or source_payload["entry_count"] < 1
         or manifest.get("entrypoint") != ENTRYPOINT
         or not isinstance(hashes, dict)
         or set(hashes) != EXPECTED_PATHS
@@ -9386,18 +9552,31 @@ def main():
     ):
         fail("runtime manifest does not satisfy the closed schema")
 
-    provenance_raw = None
     provenance_path = os.path.join(generation_root, PROVENANCE_NAME)
-    if os.path.lexists(provenance_path):
-        provenance_raw = capture(provenance_path, "source provenance")
-        provenance = load_json(provenance_raw, "source provenance")
-        if (
-            set(provenance) != PROVENANCE_KEYS
-            or provenance.get("schema") != PROVENANCE_SCHEMA
-            or provenance.get("owner_repo") != manifest["owner_repo"]
-            or provenance.get("source_revision") != manifest["source_revision"]
-        ):
-            fail("source provenance disagrees with runtime manifest")
+    provenance_raw = capture(provenance_path, "source provenance")
+    provenance = load_json(provenance_raw, "source provenance")
+    canonical_provenance_raw = (
+        json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n"
+    ).encode("utf-8")
+    provenance_payload = provenance.get("payload")
+    if (
+        provenance_raw != canonical_provenance_raw
+        or set(provenance) != PROVENANCE_KEYS
+        or provenance.get("schema") != PROVENANCE_SCHEMA
+        or provenance.get("owner_repo") != manifest["owner_repo"]
+        or provenance.get("source_revision") != manifest["source_revision"]
+        or not isinstance(provenance_payload, dict)
+        or set(provenance_payload) != SOURCE_PAYLOAD_KEYS
+        or provenance_payload.get("schema") != SOURCE_PAYLOAD_SCHEMA
+        or provenance_payload.get("algorithm") != "sha256"
+        or not isinstance(provenance_payload.get("tree_sha256"), str)
+        or SHA256.fullmatch(provenance_payload["tree_sha256"]) is None
+        or isinstance(provenance_payload.get("entry_count"), bool)
+        or not isinstance(provenance_payload.get("entry_count"), int)
+        or provenance_payload["entry_count"] < 1
+        or provenance_payload != source_payload
+    ):
+        fail("source provenance disagrees with runtime manifest")
 
     captured = {}
     for relative in sorted(EXPECTED_PATHS):
@@ -9445,8 +9624,7 @@ def main():
 
     os.mkdir(snapshot_root, mode=0o700)
     write_snapshot(snapshot_root, MANIFEST_NAME, manifest_raw)
-    if provenance_raw is not None:
-        write_snapshot(snapshot_root, PROVENANCE_NAME, provenance_raw)
+    write_snapshot(snapshot_root, PROVENANCE_NAME, provenance_raw)
     for relative, raw in captured.items():
         write_snapshot(snapshot_root, relative, raw)
 
@@ -10125,6 +10303,7 @@ def _load_runtime_generation_manifest(
     source_fingerprint = loaded.get("source_fingerprint")
     owner_repo = loaded.get("owner_repo")
     source_revision = loaded.get("source_revision")
+    source_payload = loaded.get("source_payload")
     hashes = loaded.get("hashes")
     if (
         set(loaded) != _RUNTIME_GENERATION_MANIFEST_KEYS
@@ -10152,6 +10331,18 @@ def _load_runtime_generation_manifest(
         )
     ):
         return None, "installed generation manifest does not satisfy the runtime schema"
+    try:
+        canonical_provenance = _canonical_runtime_source_provenance(
+            {
+                "schema": _SOURCE_PROVENANCE_SCHEMA,
+                "owner_repo": owner_repo,
+                "source_revision": source_revision,
+                "payload": source_payload,
+            }
+        )
+    except OSError:
+        return None, "installed generation manifest does not satisfy the runtime schema"
+    loaded["source_payload"] = canonical_provenance["payload"]
     return loaded, None
 
 
@@ -10166,10 +10357,14 @@ def _runtime_generation_payload_errors(generation: Path) -> list[str]:
     except DistributionManifestError as exc:
         errors.append(f"installed source provenance is invalid: {exc}")
         provenance = None
-    if provenance is not None and (
-        provenance["owner_repo"] != manifest["owner_repo"]
-        or provenance["source_revision"] != manifest["source_revision"]
-    ):
+    if provenance is None:
+        errors.append("installed source provenance is missing")
+    elif provenance != {
+        "schema": _SOURCE_PROVENANCE_SCHEMA,
+        "owner_repo": manifest["owner_repo"],
+        "source_revision": manifest["source_revision"],
+        "payload": manifest["source_payload"],
+    }:
         errors.append("installed source provenance disagrees with runtime manifest")
     projected_config = generation / _RUNTIME_GENERATION_PROJECTED_CONFIG
     try:

@@ -19,6 +19,12 @@ SOURCE_PROVENANCE = {
     "schema": manifest.SOURCE_PROVENANCE_SCHEMA,
     "owner_repo": SOURCE_OWNER_REPO,
     "source_revision": SOURCE_REVISION,
+    "payload": {
+        "schema": manifest.DISTRIBUTION_TREE_SCHEMA,
+        "algorithm": manifest.DISTRIBUTION_TREE_ALGORITHM,
+        "tree_sha256": "0" * 64,
+        "entry_count": 1,
+    },
 }
 
 EXPECTED_REQUIRED = {
@@ -85,18 +91,41 @@ def _minimal_payload(root: Path) -> None:
             path.write_text(f"canonical sentinel for {relative}\n", encoding="utf-8")
 
 
-def _write_source_provenance(root: Path, payload: dict[str, str] | None = None) -> Path:
+def _source_provenance_for(
+    root: Path,
+    *,
+    owner_repo: str = SOURCE_OWNER_REPO,
+    source_revision: str = SOURCE_REVISION,
+) -> dict[str, object]:
+    entries = [
+        path
+        for path in manifest._walk_entries(root)
+        if path.relative_to(root) != Path(manifest.SOURCE_PROVENANCE_FILE)
+    ]
+    tree = (
+        manifest._distribution_tree_record(root)
+        if entries
+        else SOURCE_PROVENANCE["payload"]
+    )
+    return {
+        "schema": manifest.SOURCE_PROVENANCE_SCHEMA,
+        "owner_repo": owner_repo,
+        "source_revision": source_revision,
+        "payload": tree,
+    }
+
+
+def _write_source_provenance(
+    root: Path, payload: dict[str, object] | None = None
+) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     path = root / manifest.SOURCE_PROVENANCE_FILE
+    record = _source_provenance_for(root) if payload is None else payload
     path.write_text(
-        json.dumps(
-            SOURCE_PROVENANCE if payload is None else payload,
-            sort_keys=True,
-            indent=2,
-        )
-        + "\n",
+        json.dumps(record, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
+    path.chmod(0o644)
     return path
 
 
@@ -105,6 +134,14 @@ def _clear_source_provenance_environment(
 ) -> None:
     monkeypatch.delenv("VIBECRAFTED_SOURCE_OWNER_REPO", raising=False)
     monkeypatch.delenv("VIBECRAFTED_SOURCE_REVISION", raising=False)
+
+
+def _replace_alias_directories_with_symlinks(root: Path) -> None:
+    for alias, canonical in manifest.CANONICAL_PROJECTIONS.items():
+        alias_path = root / alias
+        if alias_path.is_dir() and not alias_path.is_symlink():
+            shutil.rmtree(alias_path)
+        alias_path.symlink_to(canonical, target_is_directory=True)
 
 
 def _git(root: Path, *arguments: str) -> str:
@@ -116,6 +153,7 @@ def _git(root: Path, *arguments: str) -> str:
 
 def _committed_git_source(root: Path) -> str:
     _minimal_payload(root)
+    _replace_alias_directories_with_symlinks(root)
     excluded_fixture = root / "tests" / "dev-only.txt"
     excluded_fixture.parent.mkdir(parents=True)
     excluded_fixture.write_text("committed dev-only fixture\n", encoding="utf-8")
@@ -130,6 +168,7 @@ def _committed_git_source(root: Path) -> str:
 
 def _filter_clean_git_source(root: Path) -> tuple[str, Path]:
     _minimal_payload(root)
+    _replace_alias_directories_with_symlinks(root)
     _git(root, "init", "--quiet")
     _git(root, "config", "user.name", "Distribution Filter Test")
     _git(root, "config", "user.email", "distribution-filter@example.invalid")
@@ -190,7 +229,7 @@ def test_load_source_provenance_accepts_only_the_exact_closed_record(
     ],
 )
 def test_load_source_provenance_rejects_open_or_invalid_records(
-    tmp_path: Path, payload: dict[str, str]
+    tmp_path: Path, payload: dict[str, object]
 ) -> None:
     _write_source_provenance(tmp_path, payload)
 
@@ -460,6 +499,100 @@ def test_stage_payload_rejects_symlink_that_escapes_source(tmp_path: Path) -> No
         manifest.stage_payload(source, tmp_path / "payload", mirror=True)
 
 
+@pytest.mark.parametrize("relation", ["equal", "ancestor", "descendant"])
+def test_stage_mirror_rejects_path_overlap_and_preserves_sentinel(
+    tmp_path: Path, relation: str
+) -> None:
+    source = tmp_path / "owner" / "source"
+    _minimal_payload(source)
+    if relation == "equal":
+        destination = source
+    elif relation == "ancestor":
+        destination = source.parent
+    else:
+        destination = source / "scripts" / "nested-output"
+        destination.mkdir(parents=True)
+    sentinel = destination / "OVERLAP-SENTINEL"
+    sentinel.write_text("operator-owned\n", encoding="utf-8")
+
+    with pytest.raises(manifest.ManifestError, match="overlap"):
+        manifest.stage_payload(source, destination, mirror=True)
+
+    assert sentinel.read_text(encoding="utf-8") == "operator-owned\n"
+
+
+def test_stage_mirror_rejects_symlink_alias_overlap_and_preserves_source(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    alias = tmp_path / "source-alias"
+    _minimal_payload(source)
+    sentinel = source / "ALIAS-SENTINEL"
+    sentinel.write_text("operator-owned\n", encoding="utf-8")
+    alias.symlink_to(source, target_is_directory=True)
+
+    with pytest.raises(manifest.ManifestError, match="overlap"):
+        manifest.stage_payload(source, alias, mirror=True)
+
+    assert alias.is_symlink()
+    assert sentinel.read_text(encoding="utf-8") == "operator-owned\n"
+
+
+def test_stage_copy_rejects_source_path_replacement_after_fd_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    _minimal_payload(source)
+    destination.mkdir()
+    sentinel = destination / "KEEP"
+    sentinel.write_text("old destination\n", encoding="utf-8")
+    target = source / "scripts" / "vetcoders_install.py"
+    replacement = source / "scripts" / "replacement.py"
+    replacement.write_text("replacement bytes\n", encoding="utf-8")
+    real_open = manifest.os.open
+    replaced = False
+
+    def replace_after_open(
+        path: object, flags: int, *args: object, **kwargs: object
+    ) -> int:
+        nonlocal replaced
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if Path(path) == target and not replaced:
+            replaced = True
+            replacement.replace(target)
+        return descriptor
+
+    monkeypatch.setattr(manifest.os, "open", replace_after_open)
+    with pytest.raises(manifest.ManifestError, match="hardlinked|path changed"):
+        manifest.stage_payload(source, destination, mirror=True)
+
+    assert replaced
+    assert sentinel.read_text(encoding="utf-8") == "old destination\n"
+
+
+def test_stage_publish_cleanup_failure_is_nonfatal_after_atomic_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    _minimal_payload(source)
+    destination.mkdir()
+    (destination / "OLD").write_text("old\n", encoding="utf-8")
+    real_remove = manifest._remove_path
+
+    def fail_private_backup_cleanup(path: Path) -> None:
+        if ".previous-" in path.name:
+            raise OSError("synthetic cleanup failure")
+        real_remove(path)
+
+    monkeypatch.setattr(manifest, "_remove_path", fail_private_backup_cleanup)
+    manifest.stage_payload(source, destination, mirror=True)
+
+    assert (destination / "VERSION").is_file()
+    assert not (destination / "OLD").exists()
+
+
 def test_manifest_cli_check_is_loud_and_nonzero_for_junk(tmp_path: Path) -> None:
     payload = tmp_path / "payload"
     _minimal_payload(payload)
@@ -482,15 +615,16 @@ def test_manifest_cli_check_is_loud_and_nonzero_for_junk(tmp_path: Path) -> None
     assert "forbidden path: package-lock.json" in result.stderr
 
 
-def test_stage_payload_writes_one_canonical_provenance_record(
+def test_stage_payload_preserves_one_canonical_provenance_record(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _clear_source_provenance_environment(monkeypatch)
     source = tmp_path / "source"
     destination = tmp_path / "payload"
     _minimal_payload(source)
+    source_carrier = _write_source_provenance(source).read_bytes()
 
-    manifest.stage_payload(
+    returned = manifest.stage_payload(
         source,
         destination,
         mirror=True,
@@ -500,9 +634,12 @@ def test_stage_payload_writes_one_canonical_provenance_record(
     )
 
     provenance_path = destination / manifest.SOURCE_PROVENANCE_FILE
-    assert manifest.load_source_provenance(destination) == SOURCE_PROVENANCE
+    expected = _source_provenance_for(destination)
+    assert returned == expected
+    assert manifest.load_source_provenance(destination) == expected
+    assert provenance_path.read_bytes() == source_carrier
     assert provenance_path.read_text(encoding="utf-8") == (
-        json.dumps(SOURCE_PROVENANCE, sort_keys=True, indent=2) + "\n"
+        json.dumps(expected, sort_keys=True, indent=2) + "\n"
     )
     assert provenance_path.stat().st_mode & 0o777 == 0o644
 
@@ -515,18 +652,20 @@ def test_required_stage_infers_git_provenance_without_an_explicit_pair(
     destination = tmp_path / "payload"
     revision = _committed_git_source(source)
 
-    manifest.stage_payload(
+    returned = manifest.stage_payload(
         source,
         destination,
         mirror=True,
         require_source_provenance=True,
     )
 
-    assert manifest.load_source_provenance(destination) == {
+    assert returned == {
         "schema": manifest.SOURCE_PROVENANCE_SCHEMA,
         "owner_repo": SOURCE_OWNER_REPO,
         "source_revision": revision,
+        "payload": manifest._distribution_tree_record(destination),
     }
+    assert manifest.load_source_provenance(destination) == returned
 
 
 def test_required_stage_checks_all_provenance_providers_before_copy(
@@ -660,6 +799,153 @@ def test_archive_rejects_source_without_exact_provenance(
         )
 
 
+def test_non_git_explicit_identity_cannot_mint_v2_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_source_provenance_environment(monkeypatch)
+    source = tmp_path / "source"
+    _minimal_payload(source)
+
+    with pytest.raises(manifest.ManifestError, match="existing source-provenance v2"):
+        manifest.stage_payload(
+            source,
+            tmp_path / "destination",
+            mirror=True,
+            owner_repo=SOURCE_OWNER_REPO,
+            source_revision=SOURCE_REVISION,
+            require_source_provenance=True,
+        )
+
+
+def test_v1_source_carrier_is_rejected_on_provenance_required_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_source_provenance_environment(monkeypatch)
+    source = tmp_path / "source"
+    _minimal_payload(source)
+    _write_source_provenance(
+        source,
+        {
+            "schema": "vibecrafted.source-provenance.v1",
+            "owner_repo": SOURCE_OWNER_REPO,
+            "source_revision": SOURCE_REVISION,
+        },
+    )
+
+    with pytest.raises(manifest.ManifestError, match="closed provenance schema"):
+        manifest.stage_payload(
+            source,
+            tmp_path / "destination",
+            mirror=True,
+            require_source_provenance=True,
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["bytes", "mode", "type", "symlink", "add", "delete", "empty-directory"],
+)
+def test_carrier_digest_rejects_every_payload_tree_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    _clear_source_provenance_environment(monkeypatch)
+    source = tmp_path / "source"
+    _minimal_payload(source)
+    _replace_alias_directories_with_symlinks(source)
+    _write_source_provenance(source)
+    target = source / "scripts" / "vetcoders_install.py"
+    if mutation == "bytes":
+        target.write_text("substituted bytes\n", encoding="utf-8")
+    elif mutation == "mode":
+        target.chmod(0o755)
+    elif mutation == "type":
+        target.unlink()
+        target.symlink_to("../VERSION")
+    elif mutation == "symlink":
+        (source / "runtime").unlink()
+        (source / "runtime").symlink_to(manifest.CANONICAL_SKILLS)
+    elif mutation == "add":
+        (source / "scripts" / "added.py").write_text("added\n", encoding="utf-8")
+    elif mutation == "delete":
+        target.unlink()
+    elif mutation == "empty-directory":
+        (source / "scripts" / "new-empty-directory").mkdir()
+    else:  # pragma: no cover - parametrization owns the closed set.
+        raise AssertionError(mutation)
+
+    with pytest.raises(manifest.ManifestError, match="payload digest"):
+        manifest.assert_source_payload_matches_provenance(
+            source,
+            owner_repo=None,
+            source_revision=None,
+        )
+
+
+def test_carrier_only_stage_preserves_digest_bound_empty_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_source_provenance_environment(monkeypatch)
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    _minimal_payload(source)
+    empty = source / "scripts" / "bound-empty-directory"
+    empty.mkdir()
+    _write_source_provenance(source)
+
+    returned = manifest.stage_payload(
+        source,
+        destination,
+        mirror=True,
+        require_source_provenance=True,
+    )
+
+    assert (destination / empty.relative_to(source)).is_dir()
+    assert returned == manifest.load_source_provenance(destination)
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "vibecrafted-core/vibecrafted_core/product_contract.py",
+        "vibecrafted-core/vibecrafted_core/walkaround_runner.py",
+    ],
+)
+def test_unchanged_carrier_rejects_product_and_runner_substitution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    relative: str,
+) -> None:
+    _clear_source_provenance_environment(monkeypatch)
+    source = tmp_path / "source"
+    _minimal_payload(source)
+    _write_source_provenance(source)
+    (source / relative).write_text("semantic substitute\n", encoding="utf-8")
+
+    with pytest.raises(manifest.ManifestError, match="payload digest"):
+        manifest.create_archive(
+            source,
+            tmp_path / "substituted.tar.gz",
+            root_name="vibecrafted-substituted",
+        )
+
+
+def test_carrier_consistent_but_structurally_incomplete_source_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_source_provenance_environment(monkeypatch)
+    source = tmp_path / "source"
+    (source / "scripts").mkdir(parents=True)
+    (source / "scripts" / "one.py").write_text("one\n", encoding="utf-8")
+    _write_source_provenance(source)
+
+    with pytest.raises(manifest.ManifestError, match="missing required"):
+        manifest.create_archive(
+            source,
+            tmp_path / "incomplete.tar.gz",
+            root_name="vibecrafted-incomplete",
+        )
+
+
 def test_archive_rejects_nested_enclosing_git_source_instead_of_carrier_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -733,6 +1019,119 @@ def test_archive_rejects_output_symlink_without_touching_its_target(
     assert target.read_bytes() == b"operator-owned\n"
 
 
+@pytest.mark.parametrize("relation", ["equal", "ancestor", "descendant"])
+def test_archive_rejects_output_overlap_before_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relation: str
+) -> None:
+    _clear_source_provenance_environment(monkeypatch)
+    source = tmp_path / "owner" / "source"
+    _minimal_payload(source)
+    sentinel = source / "SOURCE-SENTINEL"
+    sentinel.write_text("operator-owned\n", encoding="utf-8")
+    if relation == "equal":
+        output = source
+    elif relation == "ancestor":
+        output = source.parent
+    else:
+        output = source / "archive.tar.gz"
+
+    with pytest.raises(manifest.ManifestError, match="overlap"):
+        manifest.create_archive(source, output, root_name="vibecrafted-overlap")
+
+    assert sentinel.read_text(encoding="utf-8") == "operator-owned\n"
+    if relation == "descendant":
+        assert not output.exists()
+
+
+def test_archive_rejects_output_symlink_alias_into_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_source_provenance_environment(monkeypatch)
+    source = tmp_path / "source"
+    alias = tmp_path / "archive-alias.tar.gz"
+    target = source / "archive.tar.gz"
+    _minimal_payload(source)
+    sentinel = source / "SOURCE-SENTINEL"
+    sentinel.write_text("operator-owned\n", encoding="utf-8")
+    alias.symlink_to(target)
+
+    with pytest.raises(manifest.ManifestError, match="overlap"):
+        manifest.create_archive(source, alias, root_name="vibecrafted-alias")
+
+    assert alias.is_symlink()
+    assert not target.exists()
+    assert sentinel.read_text(encoding="utf-8") == "operator-owned\n"
+
+
+@pytest.mark.parametrize("through_alias", [False, True])
+def test_archive_publish_rejects_non_dist_source_target_without_mutation(
+    tmp_path: Path,
+    through_alias: bool,
+) -> None:
+    source = tmp_path / "source"
+    _minimal_payload(source)
+    candidate = tmp_path / "candidate.tar.gz"
+    candidate.write_bytes(b"verified candidate\n")
+    tracked = source / "README.md"
+    before = tracked.read_bytes()
+    if through_alias:
+        alias = tmp_path / "source-alias"
+        alias.symlink_to(source, target_is_directory=True)
+        output = alias / "README.md"
+    else:
+        output = tracked
+
+    with pytest.raises(
+        manifest.ManifestError,
+        match="inside source must be below its physical dist directory",
+    ):
+        manifest.publish_archive_candidate(source, candidate, output)
+
+    assert tracked.read_bytes() == before
+    assert candidate.read_bytes() == b"verified candidate\n"
+
+
+def test_archive_publish_atomically_moves_verified_candidate_into_dist(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    _minimal_payload(source)
+    distribution = source / "dist"
+    distribution.mkdir()
+    candidate = tmp_path / "candidate.tar.gz"
+    candidate.write_bytes(b"verified candidate\n")
+    output = distribution / "vibecrafted.tar.gz"
+    output.write_bytes(b"old archive\n")
+
+    published = manifest.publish_archive_candidate(source, candidate, output)
+
+    assert published == output
+    assert output.read_bytes() == b"verified candidate\n"
+    assert not candidate.exists()
+
+
+def test_archive_publish_rejects_symlink_output_without_touching_target(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    _minimal_payload(source)
+    distribution = source / "dist"
+    distribution.mkdir()
+    candidate = tmp_path / "candidate.tar.gz"
+    candidate.write_bytes(b"verified candidate\n")
+    target = tmp_path / "operator-owned.tar.gz"
+    target.write_bytes(b"operator owned\n")
+    output = distribution / "vibecrafted.tar.gz"
+    output.symlink_to(target)
+
+    with pytest.raises(manifest.ManifestError, match="must not be a symlink"):
+        manifest.publish_archive_candidate(source, candidate, output)
+
+    assert output.is_symlink()
+    assert target.read_bytes() == b"operator owned\n"
+    assert candidate.read_bytes() == b"verified candidate\n"
+
+
 def test_archive_write_failure_preserves_existing_regular_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -741,6 +1140,7 @@ def test_archive_write_failure_preserves_existing_regular_output(
     source = tmp_path / "source"
     output = tmp_path / "archive.tar.gz"
     _minimal_payload(source)
+    _write_source_provenance(source)
     output.write_bytes(b"operator-owned\n")
 
     def fail_after_write(_payload: Path, candidate: Path, _root_name: str) -> None:
@@ -773,6 +1173,7 @@ def test_archive_verification_failure_preserves_existing_regular_output(
     source = tmp_path / "source"
     output = tmp_path / "archive.tar.gz"
     _minimal_payload(source)
+    _write_source_provenance(source)
     output.write_bytes(b"operator-owned\n")
 
     def reject_candidate(*_args: object, **_kwargs: object) -> None:
@@ -810,6 +1211,7 @@ def test_archive_atomically_replaces_existing_regular_output_only_after_success(
     source = tmp_path / "source"
     output = tmp_path / "archive.tar.gz"
     _minimal_payload(source)
+    _write_source_provenance(source)
     output.write_bytes(b"operator-owned\n")
     original_replace = manifest.os.replace
     replacements: list[tuple[Path, Path]] = []
@@ -819,9 +1221,9 @@ def test_archive_atomically_replaces_existing_regular_output_only_after_success(
     ) -> None:
         candidate_path = Path(candidate)
         target_path = Path(target)
-        assert candidate_path.is_file()
-        assert target_path.read_bytes() == b"operator-owned\n"
-        replacements.append((candidate_path, target_path))
+        if candidate_path.is_file():
+            assert target_path.read_bytes() == b"operator-owned\n"
+            replacements.append((candidate_path, target_path))
         original_replace(candidate_path, target_path)
 
     monkeypatch.setattr(manifest.os, "replace", record_replace)
@@ -854,7 +1256,7 @@ def test_archive_has_one_safe_root_and_validated_payload(
     extracted = tmp_path / "extracted"
     _minimal_payload(source)
     (source / "scripts" / "keep.py").write_text("keep\n", encoding="utf-8")
-    (source / "scripts" / ".DS_Store").write_text("junk\n", encoding="utf-8")
+    _write_source_provenance(source)
 
     manifest.create_archive(
         source,
@@ -884,8 +1286,39 @@ def test_archive_has_one_safe_root_and_validated_payload(
         expected_owner_repo=SOURCE_OWNER_REPO,
         expected_source_revision=SOURCE_REVISION,
     )
-    assert manifest.load_source_provenance(payload) == SOURCE_PROVENANCE
+    assert manifest.load_source_provenance(payload) == _source_provenance_for(payload)
     assert (payload / "scripts" / "keep.py").is_file()
+
+
+def test_archive_writer_emits_only_canonical_member_modes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_source_provenance_environment(monkeypatch)
+    source = tmp_path / "source"
+    output = tmp_path / "canonical-modes.tar.gz"
+    _minimal_payload(source)
+    (source / "scripts").chmod(0o700)
+    (source / "README.md").chmod(0o600)
+    (source / "scripts" / "vibecrafted").chmod(0o700)
+    _write_source_provenance(source)
+
+    manifest.create_archive(
+        source,
+        output,
+        root_name="vibecrafted-modes",
+    )
+
+    with tarfile.open(output, "r:gz") as archive:
+        members = {member.name: member for member in archive.getmembers()}
+    assert members["vibecrafted-modes"].mode & 0o7777 == 0o755
+    assert members["vibecrafted-modes/scripts"].mode & 0o7777 == 0o755
+    assert members["vibecrafted-modes/README.md"].mode & 0o7777 == 0o644
+    assert members["vibecrafted-modes/scripts/vibecrafted"].mode & 0o7777 == 0o755
+    assert all(
+        member.size == 0
+        for member in members.values()
+        if member.isdir() or member.issym()
+    )
 
 
 def test_archive_accepts_clean_committed_included_payload(
@@ -1028,14 +1461,11 @@ def test_public_provenance_assertion_rejects_dirty_git_but_accepts_carrier_only(
     extracted = tmp_path / "extracted"
     _minimal_payload(extracted)
     _write_source_provenance(extracted)
-    assert (
-        manifest.assert_source_payload_matches_provenance(
-            extracted,
-            owner_repo=None,
-            source_revision=None,
-        )
-        == SOURCE_PROVENANCE
-    )
+    assert manifest.assert_source_payload_matches_provenance(
+        extracted,
+        owner_repo=None,
+        source_revision=None,
+    ) == _source_provenance_for(extracted)
 
 
 def test_stage_cannot_launder_dirty_git_into_a_source_carrier(
@@ -1126,10 +1556,13 @@ def test_copy_time_destination_swap_is_rejected_before_carrier(
     swapped = False
 
     def swap_after_copy(
-        source_root: Path, source_path: Path, destination_path: Path
+        source_root: Path,
+        source_path: Path,
+        destination_path: Path,
+        **kwargs: object,
     ) -> None:
         nonlocal swapped
-        original_copy(source_root, source_path, destination_path)
+        original_copy(source_root, source_path, destination_path, **kwargs)
         if source_path == target and not swapped:
             if mutation == "bytes":
                 destination_path.write_text("COPY-TIME-RACE\n", encoding="utf-8")
@@ -1177,9 +1610,7 @@ def test_post_stage_archive_swap_cannot_emit_misattributed_bytes(
 
     monkeypatch.setattr(manifest, "_write_archive", write_swapped_payload)
 
-    with pytest.raises(
-        manifest.ManifestError, match="bytes:scripts/vetcoders_install.py"
-    ):
+    with pytest.raises(manifest.ManifestError, match="payload-digest"):
         manifest.create_archive(
             source,
             archive_path,
@@ -1199,6 +1630,7 @@ def test_archive_is_deterministic(
     first = tmp_path / "first.tar.gz"
     second = tmp_path / "second.tar.gz"
     _minimal_payload(source)
+    _write_source_provenance(source)
 
     for output in (first, second):
         manifest.create_archive(
@@ -1216,20 +1648,30 @@ def test_archive_bytes_change_with_exact_source_revision(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _clear_source_provenance_environment(monkeypatch)
-    source = tmp_path / "source"
+    first_source = tmp_path / "first-source"
+    second_source = tmp_path / "second-source"
     first = tmp_path / "first.tar.gz"
     second = tmp_path / "second.tar.gz"
-    _minimal_payload(source)
+    _minimal_payload(first_source)
+    _minimal_payload(second_source)
+    _write_source_provenance(first_source)
+    _write_source_provenance(
+        second_source,
+        _source_provenance_for(
+            second_source,
+            source_revision=OTHER_SOURCE_REVISION,
+        ),
+    )
 
     manifest.create_archive(
-        source,
+        first_source,
         first,
         root_name="vibecrafted-test",
         owner_repo=SOURCE_OWNER_REPO,
         source_revision=SOURCE_REVISION,
     )
     manifest.create_archive(
-        source,
+        second_source,
         second,
         root_name="vibecrafted-test",
         owner_repo=SOURCE_OWNER_REPO,

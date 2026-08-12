@@ -16,11 +16,13 @@ shim or repository checkout as the public launcher target.
 ## Generation manifest
 
 Every published generation contains `runtime-manifest.json` with schema
-`vibecrafted.runtime-generation.v1`. It binds:
+`vibecrafted.runtime-generation.v2`. It binds:
 
 - the installed version;
 - the canonical command-deck entrypoint;
 - a one-way fingerprint of the source root, never the checkout path itself;
+- the canonical distribution-tree digest and entry count from the verified v2
+  source carrier;
 - SHA-256 digests for `VERSION`, the launcher, command deck, generated vc-frame
   configuration, and the complete W0 release verifier closure: verifier engine,
   runner, public schema, release policy, and signing key.
@@ -34,12 +36,17 @@ single-link identity plus the exact closed manifest and all bound file digests
 before it executes any generation-owned Python. This keeps corruption
 detection outside the code whose integrity is being decided.
 
-Source archives have a separate closed `source-provenance.json` carrier. A Git
-checkout may claim its `HEAD` only when every included payload path equals that
-commit; raw tarballs without the carrier and contradictory owner/revision pairs
-fail bootstrap. The carrier preserves the writer's proven identity after
-extraction but does not recreate Git's object database; official release
-authenticity remains bound by its checksum and signature.
+Source archives have a separate closed v2 `source-provenance.json` carrier. A
+Git checkout may claim its `HEAD` only when every included payload path, type,
+mode, byte sequence, and symlink target equals that commit. The carrier records
+the canonical distribution-tree SHA-256 and entry count. Bootstrap recomputes
+that identity before extraction, after extraction, and after candidate staging,
+before archive-owned Python may influence publication. Raw tarballs without v2
+and contradictory or mismatched records fail bootstrap.
+
+The carrier is an internal-integrity boundary, not an authenticity proof. W4
+must bind the exact archive/carrier identity through the pinned release trust
+root and keep bootstrap verification fail closed.
 
 ## Checkout-free gate
 

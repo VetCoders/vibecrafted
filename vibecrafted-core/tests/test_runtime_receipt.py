@@ -13,6 +13,12 @@ from vibecrafted_core import runtime_receipt as rr
 
 _RUNTIME_VERSION = "3.7.0"
 _RUNTIME_REVISION = "0123456789abcdef0123456789abcdef01234567"
+_SOURCE_PAYLOAD = {
+    "schema": pc.SOURCE_PAYLOAD_SCHEMA,
+    "algorithm": "sha256",
+    "tree_sha256": "b" * 64,
+    "entry_count": 42,
+}
 _RUNTIME_FILE_BYTES = {
     "VERSION": f"{_RUNTIME_VERSION}\n".encode(),
     "scripts/vibecrafted": b"#!/usr/bin/env bash\n",
@@ -64,6 +70,7 @@ def _runtime_generation_fixture(
         "source_fingerprint": "a" * 64,
         "owner_repo": "vetcoders/vibecrafted",
         "source_revision": _RUNTIME_REVISION,
+        "source_payload": dict(_SOURCE_PAYLOAD),
         "entrypoint": pc.RUNTIME_GENERATION_ENTRYPOINT,
         "hashes": {
             relative: hashlib.sha256(raw).hexdigest()
@@ -71,12 +78,30 @@ def _runtime_generation_fixture(
         },
     }
     _write_runtime_manifest(generation, manifest)
+    _write_source_provenance(generation)
     return generation, deck, manifest
 
 
 def _write_runtime_manifest(generation: Path, manifest: dict[str, object]) -> None:
     (generation / pc.RUNTIME_GENERATION_MANIFEST_NAME).write_text(
         json.dumps(manifest), encoding="utf-8"
+    )
+
+
+def _write_source_provenance(
+    generation: Path, *, mutation: dict[str, object] | None = None
+) -> None:
+    provenance: dict[str, object] = {
+        "schema": pc.SOURCE_PROVENANCE_SCHEMA,
+        "owner_repo": "vetcoders/vibecrafted",
+        "source_revision": _RUNTIME_REVISION,
+        "payload": dict(_SOURCE_PAYLOAD),
+    }
+    if mutation:
+        provenance.update(mutation)
+    (generation / pc.SOURCE_PROVENANCE_NAME).write_text(
+        json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
     )
 
 
@@ -280,6 +305,7 @@ def test_vibecrafted_receipt_uses_checkout_free_runtime_manifest(
     assert tool["source"]["resolution"] == "installed_runtime_manifest"
     assert tool["source"]["owner_repo"] == "vetcoders/vibecrafted"
     assert tool["source"]["checkout_sha"] == _RUNTIME_REVISION
+    assert tool["source"]["source_payload"] == _SOURCE_PAYLOAD
     assert tool["installed"]["dirty_build"] is False
     assert rr.DRIFT_DIRTY_BUILD not in tool["drift"]
 
@@ -297,6 +323,9 @@ def test_vibecrafted_receipt_uses_checkout_free_runtime_manifest(
         "wrong_entrypoint",
         "uppercase_bound_sha",
         "legacy_four_hashes",
+        "missing_source_payload",
+        "open_source_payload",
+        "invalid_source_payload_count",
     ),
 )
 def test_installed_runtime_manifest_rejects_noncanonical_manifest(
@@ -333,11 +362,113 @@ def test_installed_runtime_manifest_rejects_noncanonical_manifest(
                 pc.RUNTIME_GENERATION_ENTRYPOINT,
             )
         }
+    elif mutation == "missing_source_payload":
+        manifest.pop("source_payload")
+    elif mutation == "open_source_payload":
+        source_payload = manifest["source_payload"]
+        assert isinstance(source_payload, dict)
+        source_payload["unbound"] = True
+    elif mutation == "invalid_source_payload_count":
+        source_payload = manifest["source_payload"]
+        assert isinstance(source_payload, dict)
+        source_payload["entry_count"] = 0
     else:  # pragma: no cover - closed parametrization above.
         raise AssertionError(f"unknown mutation: {mutation}")
     _write_runtime_manifest(generation, manifest)
 
     assert rr._installed_runtime_manifest(str(deck)) is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "missing",
+        "v1",
+        "open",
+        "owner_mismatch",
+        "revision_mismatch",
+        "payload_mismatch",
+    ),
+)
+def test_installed_runtime_manifest_rejects_noncanonical_source_provenance(
+    tmp_path: Path, mutation: str
+) -> None:
+    generation, deck, _manifest = _runtime_generation_fixture(tmp_path)
+    provenance_path = generation / pc.SOURCE_PROVENANCE_NAME
+    if mutation == "missing":
+        provenance_path.unlink()
+    else:
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        if mutation == "v1":
+            provenance["schema"] = "vibecrafted.source-provenance.v1"
+        elif mutation == "open":
+            provenance["unbound"] = True
+        elif mutation == "owner_mismatch":
+            provenance["owner_repo"] = "vetcoders/other"
+        elif mutation == "revision_mismatch":
+            provenance["source_revision"] = "f" * 40
+        elif mutation == "payload_mismatch":
+            provenance["payload"]["tree_sha256"] = "f" * 64
+        else:  # pragma: no cover
+            raise AssertionError(mutation)
+        provenance_path.write_text(json.dumps(provenance), encoding="utf-8")
+
+    probe = rr._probe_installed_runtime_manifest(str(deck))
+    assert probe.state == "rejection"
+    assert probe.reason is not None
+    assert probe.reason.startswith("VCPC")
+
+
+def test_runtime_receipt_rejects_source_provenance_path_swap_during_capture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generation, deck, _manifest = _runtime_generation_fixture(tmp_path)
+    provenance_path = generation / pc.SOURCE_PROVENANCE_NAME
+    replacement = generation / "source-provenance.next.json"
+    changed = json.loads(provenance_path.read_text(encoding="utf-8"))
+    changed["payload"]["tree_sha256"] = "f" * 64
+    replacement.write_text(
+        json.dumps(changed, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    real_open = pc.os.open
+    real_fstat = pc.os.fstat
+    real_replace = pc.os.replace
+    state: dict[str, object] = {"fd": None, "fstats": 0, "swapped": False}
+
+    def open_then_track(path, flags, *args, **kwargs):
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if Path(path) == provenance_path:
+            state["fd"] = descriptor
+        return descriptor
+
+    def replace_path_after_second_fstat(descriptor: int):
+        metadata = real_fstat(descriptor)
+        if descriptor == state["fd"]:
+            state["fstats"] = int(state["fstats"]) + 1
+            if state["fstats"] == 2:
+                real_replace(replacement, provenance_path)
+                state["swapped"] = True
+                state["fd"] = None
+        return metadata
+
+    monkeypatch.setattr(pc.os, "open", open_then_track)
+    monkeypatch.setattr(pc.os, "fstat", replace_path_after_second_fstat)
+
+    probe = rr._probe_installed_runtime_manifest(str(deck))
+
+    assert state["swapped"] is True
+    assert probe.state == "rejection"
+    assert probe.source is None
+    assert probe.reason is not None
+    assert probe.reason.startswith(f"VCPC{pc.E_PROOF:03d}: ")
+    assert (
+        json.loads(provenance_path.read_text(encoding="utf-8"))["payload"][
+            "tree_sha256"
+        ]
+        == "f" * 64
+    )
 
 
 def test_installed_runtime_manifest_rejects_bound_byte_drift(tmp_path: Path) -> None:

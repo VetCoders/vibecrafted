@@ -56,14 +56,20 @@ jobs:
 
       - name: Build release archive
         run: |
+          set -euo pipefail
           archive_name="vibecrafted-${{ steps.version.outputs.version }}"
+          workspace_parent="$(dirname "$GITHUB_WORKSPACE")"
+          candidate_archive="$(mktemp "$workspace_parent/.vibecrafted-release.XXXXXX")"
+          trap 'rm -f "$candidate_archive"' EXIT
           mkdir -p dist
           uv run python3 scripts/distribution_manifest.py archive \
             --source . \
-            --output "dist/${archive_name}.tar.gz" \
+            --output "$candidate_archive" \
+            --publish-output "dist/${archive_name}.tar.gz" \
             --root-name "$archive_name" \
             --owner-repo "$GITHUB_REPOSITORY" \
             --source-revision "${{ steps.version.outputs.source_revision }}"
+          trap - EXIT
 
       - name: Stage release payloads and sign with existing RSA key
         env:

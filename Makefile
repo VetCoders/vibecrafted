@@ -409,8 +409,14 @@ list:
 
 bundle:
 	@$(PYTHON) scripts/build_marketplace_bundle.py --output "$(SOURCE)/dist/vibecrafted-framework.plugin"
-	@mkdir -p "$(dir $(BUNDLE_ARCHIVE))"
-	@$(PYTHON) scripts/distribution_manifest.py archive --source "$(SOURCE)" --output "$(BUNDLE_ARCHIVE)" --root-name "vibecrafted-$(BUNDLE_VERSION)"
+	@set -e; \
+	source_root="$$(cd "$(SOURCE)" && pwd -P)"; \
+	source_parent="$$(dirname "$$source_root")"; \
+	tmp_archive="$$(mktemp "$$source_parent/.vibecrafted-bundle-archive.XXXXXX")"; \
+	trap 'rm -f "$$tmp_archive"' EXIT; \
+	mkdir -p "$(dir $(BUNDLE_ARCHIVE))"; \
+	$(PYTHON) scripts/distribution_manifest.py archive --source "$$source_root" --output "$$tmp_archive" --publish-output "$(BUNDLE_ARCHIVE)" --root-name "vibecrafted-$(BUNDLE_VERSION)"; \
+	trap - EXIT
 
 bundle-check:
 	@set -e; \

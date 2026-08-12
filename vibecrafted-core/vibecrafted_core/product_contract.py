@@ -55,8 +55,11 @@ RELEASE_DMG_NAME = "Vibecrafted.dmg"
 RELEASE_KEY_SPKI_SHA256 = (
     "521ed59d3c446c540afe1557c2dbc39c9c190775f99896b2b65206c32814b25b"
 )
-RUNTIME_GENERATION_SCHEMA = "vibecrafted.runtime-generation.v1"
+RUNTIME_GENERATION_SCHEMA = "vibecrafted.runtime-generation.v2"
 RUNTIME_GENERATION_MANIFEST_NAME = "runtime-manifest.json"
+SOURCE_PROVENANCE_NAME = "source-provenance.json"
+SOURCE_PROVENANCE_SCHEMA = "vibecrafted.source-provenance.v2"
+SOURCE_PAYLOAD_SCHEMA = "vibecrafted.distribution-tree.v1"
 RUNTIME_GENERATION_ENTRYPOINT = "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
 RUNTIME_GENERATION_PROJECTED_CONFIG = "runtime/generated/vc-frame/config.kdl"
 RUNTIME_GENERATION_CANONICAL_CONFIG = (
@@ -683,9 +686,11 @@ def _public_key_spki_sha256(public_key: Path) -> str:
 
 
 def _capture_proof_artifact(path: Path, *, context: str) -> _CapturedProofArtifact:
+    absolute_path = Path(os.path.abspath(path))
+    resolved = os.path.realpath(absolute_path)
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
-        descriptor = os.open(path, flags)
+        descriptor = os.open(absolute_path, flags)
     except OSError as exc:
         _fail(E_MISSING, f"{context} is unreadable: {exc}")
     try:
@@ -699,17 +704,52 @@ def _capture_proof_artifact(path: Path, *, context: str) -> _CapturedProofArtifa
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
             payload = handle.read(_MAX_SIGNED_PAYLOAD_BYTES + 1)
         after = os.fstat(descriptor)
+        path_after = os.lstat(absolute_path)
+        resolved_after = os.path.realpath(absolute_path)
         if len(payload) > _MAX_SIGNED_PAYLOAD_BYTES:
             _fail(E_SIZE, f"{context} exceeds the 64 MiB signed-payload limit")
         if (
-            before.st_dev,
-            before.st_ino,
-            before.st_size,
-            before.st_mtime_ns,
-        ) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+            (
+                before.st_dev,
+                before.st_ino,
+                before.st_mode,
+                before.st_nlink,
+                before.st_size,
+                before.st_mtime_ns,
+                before.st_ctime_ns,
+            )
+            != (
+                after.st_dev,
+                after.st_ino,
+                after.st_mode,
+                after.st_nlink,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            )
+            or resolved_after != resolved
+            or (
+                after.st_dev,
+                after.st_ino,
+                after.st_mode,
+                after.st_nlink,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            )
+            != (
+                path_after.st_dev,
+                path_after.st_ino,
+                path_after.st_mode,
+                path_after.st_nlink,
+                path_after.st_size,
+                path_after.st_mtime_ns,
+                path_after.st_ctime_ns,
+            )
+        ):
             _fail(E_PROOF, f"{context} changed while it was captured")
         return _CapturedProofArtifact(
-            path=path.absolute(),
+            path=absolute_path,
             raw=payload,
             sha256=hashlib.sha256(payload).hexdigest(),
             size=len(payload),
@@ -2397,6 +2437,7 @@ def _validate_runtime_generation_manifest(
         "source_fingerprint",
         "owner_repo",
         "source_revision",
+        "source_payload",
         "entrypoint",
         "hashes",
     }
@@ -2415,6 +2456,9 @@ def _validate_runtime_generation_manifest(
     if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", owner_repo) is None:
         _fail(E_TRANSACTION, f"{field} runtime owner_repo is invalid")
     _expect_git_sha(manifest["source_revision"], field=f"{field}.source_revision")
+    _validate_source_payload_identity(
+        manifest["source_payload"], field=f"{field}.source_payload"
+    )
     entrypoint = _relative_path(
         manifest["entrypoint"], field=f"{field}.entrypoint"
     ).as_posix()
@@ -2429,6 +2473,62 @@ def _validate_runtime_generation_manifest(
     for relative, digest in hashes.items():
         _relative_path(relative, field=f"{field}.hashes.path")
         _expect_sha256(digest, field=f"{field}.hashes.{relative}")
+
+
+def _validate_source_payload_identity(value: Any, *, field: str) -> dict[str, Any]:
+    """Validate the closed digest identity of the distribution input tree."""
+    if not isinstance(value, dict):
+        _fail(E_SCHEMA, f"{field} must be an object")
+    _expect_keys(
+        value,
+        required={"schema", "algorithm", "tree_sha256", "entry_count"},
+        context=field,
+    )
+    if value["schema"] != SOURCE_PAYLOAD_SCHEMA:
+        _fail(E_TRANSACTION, f"{field}.schema is not canonical")
+    if value["algorithm"] != "sha256":
+        _fail(E_TRANSACTION, f"{field}.algorithm is not canonical")
+    tree_sha256 = _expect_sha256(value["tree_sha256"], field=f"{field}.tree_sha256")
+    entry_count = value["entry_count"]
+    if (
+        isinstance(entry_count, bool)
+        or not isinstance(entry_count, int)
+        or entry_count < 1
+    ):
+        _fail(E_TRANSACTION, f"{field}.entry_count must be a positive integer")
+    return {
+        "schema": SOURCE_PAYLOAD_SCHEMA,
+        "algorithm": "sha256",
+        "tree_sha256": tree_sha256,
+        "entry_count": entry_count,
+    }
+
+
+def _validate_source_provenance(value: Any, *, field: str) -> dict[str, Any]:
+    """Validate the exact carrier that transported the distribution input identity."""
+    if not isinstance(value, dict):
+        _fail(E_SCHEMA, f"{field} must be an object")
+    _expect_keys(
+        value,
+        required={"schema", "owner_repo", "source_revision", "payload"},
+        context=field,
+    )
+    if value["schema"] != SOURCE_PROVENANCE_SCHEMA:
+        _fail(E_TRANSACTION, f"{field}.schema is not canonical")
+    owner_repo = _expect_string(value["owner_repo"], field=f"{field}.owner_repo")
+    if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", owner_repo) is None:
+        _fail(E_TRANSACTION, f"{field}.owner_repo is invalid")
+    source_revision = _expect_git_sha(
+        value["source_revision"], field=f"{field}.source_revision"
+    )
+    return {
+        "schema": SOURCE_PROVENANCE_SCHEMA,
+        "owner_repo": owner_repo,
+        "source_revision": source_revision,
+        "payload": _validate_source_payload_identity(
+            value["payload"], field=f"{field}.payload"
+        ),
+    }
 
 
 def _validate_runtime_projection_topology(
@@ -2484,6 +2584,39 @@ def verify_installed_runtime_generation(
     )
     manifest = _load_json_bytes(captured_manifest.raw, source=manifest_path)
     _validate_runtime_generation_manifest(manifest, field="installed generation")
+
+    provenance_path = root / SOURCE_PROVENANCE_NAME
+    captured_provenance = _capture_proof_artifact(
+        provenance_path, context="installed runtime source provenance"
+    )
+    provenance_document = _load_json_bytes(
+        captured_provenance.raw, source=provenance_path
+    )
+    canonical_provenance = (
+        json.dumps(
+            provenance_document,
+            ensure_ascii=True,
+            sort_keys=True,
+            indent=2,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+    if captured_provenance.raw != canonical_provenance:
+        _fail(E_PROOF, "installed runtime source provenance is not canonical JSON")
+    provenance = _validate_source_provenance(
+        provenance_document,
+        field="installed generation source provenance",
+    )
+    if (
+        provenance["owner_repo"] != manifest["owner_repo"]
+        or provenance["source_revision"] != manifest["source_revision"]
+        or provenance["payload"] != manifest["source_payload"]
+    ):
+        _fail(
+            E_TRANSACTION,
+            "installed generation source provenance disagrees with runtime manifest",
+        )
 
     version_raw: bytes | None = None
     hashes = manifest["hashes"]
@@ -3252,11 +3385,17 @@ def _self_test() -> int:
         _write_json(
             transaction_runtime,
             {
-                "schema": "vibecrafted.runtime-generation.v1",
+                "schema": RUNTIME_GENERATION_SCHEMA,
                 "version": "1.0.0",
                 "source_fingerprint": "d" * 64,
                 "owner_repo": "vetcoders/vibecrafted",
                 "source_revision": "e" * 40,
+                "source_payload": {
+                    "schema": SOURCE_PAYLOAD_SCHEMA,
+                    "algorithm": "sha256",
+                    "tree_sha256": "f" * 64,
+                    "entry_count": 42,
+                },
                 "entrypoint": "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
                 "hashes": {
                     relative: f"{index:x}" * 64

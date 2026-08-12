@@ -87,7 +87,8 @@ def test_release_archive_preserves_bundled_tool_slot() -> None:
     )[0]
     assert "scripts/distribution_manifest.py archive" in archive_step
     assert "--source ." in archive_step
-    assert '--output "dist/${archive_name}.tar.gz"' in archive_step
+    assert '--output "$candidate_archive"' in archive_step
+    assert '--publish-output "dist/${archive_name}.tar.gz"' in archive_step
     assert '--root-name "$archive_name"' in archive_step
     assert '--owner-repo "$GITHUB_REPOSITORY"' in archive_step
     assert (

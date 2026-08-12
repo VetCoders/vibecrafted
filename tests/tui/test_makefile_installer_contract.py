@@ -119,6 +119,10 @@ def test_release_workflow_calls_the_unified_contract_gate_and_uses_checkout_head
         '--expected-source-revision "${{ steps.version.outputs.source_revision }}"'
         in workflow
     )
+    assert 'mktemp "$workspace_parent/.vibecrafted-release.XXXXXX"' in workflow
+    assert '--output "$candidate_archive"' in workflow
+    assert '--publish-output "dist/${archive_name}.tar.gz"' in workflow
+    assert "os.replace(sys.argv[1], sys.argv[2])" not in workflow
 
 
 def test_bootstrap_help_requires_canonical_provenance_archives() -> None:
@@ -284,6 +288,15 @@ def test_bundle_targets_use_distribution_manifest_for_runtime_archive() -> None:
         "BUNDLE_ARCHIVE ?= $(SOURCE)/dist/vibecrafted-$(BUNDLE_VERSION).tar.gz" in text
     )
     assert '--root-name "vibecrafted-$(BUNDLE_VERSION)"' in bundle_block
+    assert 'source_root="$$(cd "$(SOURCE)" && pwd -P)"' in bundle_block
+    assert 'source_parent="$$(dirname "$$source_root")"' in bundle_block
+    assert 'mktemp "$$source_parent/.vibecrafted-bundle-archive.XXXXXX"' in bundle_block
+    assert '--output "$$tmp_archive"' in bundle_block
+    assert '--publish-output "$(BUNDLE_ARCHIVE)"' in bundle_block
+    assert '--source "$$source_root"' in bundle_block
+    assert "os.replace(sys.argv[1], sys.argv[2])" not in bundle_block
+    assert "mv -f" not in bundle_block
+    assert '--output "$(BUNDLE_ARCHIVE)"' not in bundle_block
     assert "build_marketplace_bundle.py" in bundle_block
     assert (
         'build_marketplace_bundle.py --output "$(SOURCE)/dist/'
@@ -383,6 +396,36 @@ def test_bundle_target_cannot_self_poison_a_clean_git_source(tmp_path: Path) -> 
         assert carrier is not None
         assert revision.encode("ascii") in carrier.read()
 
+    tracked_readme = source / "README.md"
+    tracked_readme_before = tracked_readme.read_bytes()
+    rejected = subprocess.run(
+        [
+            "make",
+            "--no-print-directory",
+            "-f",
+            str(REPO_ROOT / "Makefile"),
+            "bundle",
+            f"SOURCE={source}",
+            "BUNDLE_VERSION=9.8.7",
+            f"BUNDLE_ARCHIVE={tracked_readme}",
+            f"PYTHON={sys.executable} {python_dispatch}",
+        ],
+        cwd=REPO_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rejected.returncode != 0
+    assert "inside source must be below its physical dist directory" in rejected.stderr
+    assert tracked_readme.read_bytes() == tracked_readme_before
+    assert (
+        subprocess.run(
+            ["git", "-C", str(source), "diff", "--quiet"], check=False
+        ).returncode
+        == 0
+    )
+
 
 def test_control_plane_staging_delegates_to_distribution_manifest(
     monkeypatch, tmp_path: Path
@@ -392,36 +435,36 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
     source.mkdir()
     seen: dict[str, object] = {}
 
-    def fake_stage(src: Path, dst: Path, *, mirror: bool) -> None:
-        seen.update(source=src, destination=dst, mirror=mirror)
+    source_provenance = {
+        "schema": "vibecrafted.source-provenance.v2",
+        "owner_repo": "vetcoders/vibecrafted",
+        "source_revision": "1" * 40,
+        "payload": {
+            "schema": "vibecrafted.distribution-tree.v1",
+            "algorithm": "sha256",
+            "tree_sha256": "2" * 64,
+            "entry_count": 1,
+        },
+    }
+
+    def fake_stage(
+        src: Path,
+        dst: Path,
+        *,
+        mirror: bool,
+        require_source_provenance: bool,
+    ) -> dict[str, object]:
+        seen.update(
+            source=src,
+            destination=dst,
+            mirror=mirror,
+            require_source_provenance=require_source_provenance,
+        )
         dst.mkdir(parents=True)
         (dst / "payload.txt").write_text("validated\n", encoding="utf-8")
-
-    def fake_assert_provenance(
-        src: Path,
-        *,
-        owner_repo: str | None,
-        source_revision: str | None,
-        payload_root: Path | None = None,
-    ) -> dict[str, str]:
-        seen.update(
-            provenance_source=src,
-            provenance_owner=owner_repo,
-            provenance_revision=source_revision,
-            provenance_payload=payload_root,
-        )
-        return {
-            "schema": "vibecrafted.source-provenance.v1",
-            "owner_repo": "vetcoders/vibecrafted",
-            "source_revision": "1" * 40,
-        }
+        return source_provenance
 
     monkeypatch.setattr(installer, "stage_distribution_payload", fake_stage)
-    monkeypatch.setattr(
-        installer,
-        "assert_source_payload_matches_provenance",
-        fake_assert_provenance,
-    )
     monkeypatch.setattr(
         installer,
         "_materialize_vc_frame_generation",
@@ -430,7 +473,10 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
     monkeypatch.setattr(
         installer,
         "_write_runtime_generation_manifest",
-        lambda runtime_root, **_kwargs: seen.update(manifested=runtime_root),
+        lambda runtime_root, **kwargs: seen.update(
+            manifested=runtime_root,
+            manifest_source_provenance=kwargs["source_provenance"],
+        ),
     )
     monkeypatch.setattr(
         installer,
@@ -444,10 +490,8 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
     assert seen["destination"] != destination
     assert Path(seen["destination"]).parent == destination.parent
     assert seen["mirror"] is True
-    assert seen["provenance_source"] == source.resolve(strict=False)
-    assert seen["provenance_owner"] is None
-    assert seen["provenance_revision"] is None
-    assert seen["provenance_payload"] == seen["destination"]
+    assert seen["require_source_provenance"] is True
+    assert seen["manifest_source_provenance"] == source_provenance
     assert seen["materialized"] == seen["destination"]
     assert seen["manifested"] == seen["destination"]
     assert seen["validated"] == seen["destination"]
