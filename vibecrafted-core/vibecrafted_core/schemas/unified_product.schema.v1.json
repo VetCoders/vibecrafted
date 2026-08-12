@@ -481,93 +481,6 @@
         "size": { "type": "integer", "minimum": 0 }
       }
     },
-    "walkaroundProof": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "producer",
-        "probe_id",
-        "command",
-        "exit_code",
-        "inputs",
-        "before",
-        "after",
-        "stdout",
-        "stderr"
-      ],
-      "properties": {
-        "producer": { "const": "vc-ship" },
-        "probe_id": {
-          "type": "string",
-          "pattern": "^io\\.vetcoders\\.vibecrafted\\.walkaround\\.[a-z_]+\\.v1$"
-        },
-        "command": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "type": "string", "minLength": 1 }
-        },
-        "exit_code": { "const": 0 },
-        "inputs": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["release_output_sha256"],
-          "properties": {
-            "release_output_sha256": { "$ref": "#/$defs/sha256" }
-          }
-        },
-        "before": { "$ref": "#/$defs/proofArtifact" },
-        "after": { "$ref": "#/$defs/proofArtifact" },
-        "stdout": { "$ref": "#/$defs/proofArtifact" },
-        "stderr": { "$ref": "#/$defs/proofArtifact" }
-      }
-    },
-    "walkaroundProofs": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "one_app",
-        "app_codesign",
-        "dmg_codesign",
-        "app_notarization",
-        "dmg_notarization",
-        "app_gatekeeper",
-        "dmg_gatekeeper",
-        "sanitized_launch",
-        "mission_control",
-        "bundled_console",
-        "start_here",
-        "update",
-        "rollback",
-        "reattach",
-        "one_outer_writer"
-      ],
-      "properties": {
-        "one_app": { "$ref": "#/$defs/walkaroundProof" },
-        "app_codesign": { "$ref": "#/$defs/walkaroundProof" },
-        "dmg_codesign": { "$ref": "#/$defs/walkaroundProof" },
-        "app_notarization": { "$ref": "#/$defs/walkaroundProof" },
-        "dmg_notarization": { "$ref": "#/$defs/walkaroundProof" },
-        "app_gatekeeper": { "$ref": "#/$defs/walkaroundProof" },
-        "dmg_gatekeeper": { "$ref": "#/$defs/walkaroundProof" },
-        "sanitized_launch": { "$ref": "#/$defs/walkaroundProof" },
-        "mission_control": { "$ref": "#/$defs/walkaroundProof" },
-        "bundled_console": { "$ref": "#/$defs/walkaroundProof" },
-        "start_here": { "$ref": "#/$defs/walkaroundProof" },
-        "update": { "$ref": "#/$defs/walkaroundProof" },
-        "rollback": { "$ref": "#/$defs/walkaroundProof" },
-        "reattach": { "$ref": "#/$defs/walkaroundProof" },
-        "one_outer_writer": { "$ref": "#/$defs/walkaroundProof" }
-      }
-    },
-    "trustedRunner": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["attestation", "signature"],
-      "properties": {
-        "attestation": { "$ref": "#/$defs/proofArtifact" },
-        "signature": { "$ref": "#/$defs/proofArtifact" }
-      }
-    },
     "releaseModuleIdentity": {
       "type": "object",
       "additionalProperties": false,
@@ -682,7 +595,7 @@
           "additionalProperties": false,
           "required": ["path", "sha256", "size"],
           "properties": {
-            "path": { "$ref": "#/$defs/relativePath" },
+            "path": { "const": "Vibecrafted.dmg" },
             "sha256": { "$ref": "#/$defs/sha256" },
             "size": { "type": "integer", "minimum": 1 }
           }
@@ -735,19 +648,37 @@
       }
     },
     "walkaroundReceipt": {
-      "oneOf": [
-        { "$ref": "#/$defs/legacyWalkaroundReceipt" },
-        { "$ref": "#/$defs/runnerWalkaroundReceipt" }
-      ]
+      "$ref": "#/$defs/runnerWalkaroundReceipt"
     },
-    "runnerProbeObservation": {
+    "runnerAssertionObservation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["probe_id", "command", "exit_code", "stdout_sha256", "stderr_sha256"],
+      "required": ["name", "passed", "evidence_sha256"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "passed": { "const": true },
+        "evidence_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "runnerArgvObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "probe_id", "executor", "owner_stage", "operation_id", "assertions",
+        "command", "exit_code", "stdout_sha256", "stderr_sha256"
+      ],
       "properties": {
         "probe_id": {
           "type": "string",
           "pattern": "^io\\.vetcoders\\.vibecrafted\\.walkaround\\.[a-z_]+\\.v1$"
+        },
+        "executor": { "const": "argv" },
+        "owner_stage": { "const": "W0" },
+        "operation_id": { "type": "string", "minLength": 1 },
+        "assertions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/runnerAssertionObservation" }
         },
         "command": {
           "type": "array",
@@ -758,6 +689,31 @@
         "stdout_sha256": { "$ref": "#/$defs/sha256" },
         "stderr_sha256": { "$ref": "#/$defs/sha256" }
       }
+    },
+    "runnerSemanticObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["probe_id", "executor", "owner_stage", "operation_id", "assertions"],
+      "properties": {
+        "probe_id": {
+          "type": "string",
+          "pattern": "^io\\.vetcoders\\.vibecrafted\\.walkaround\\.[a-z_]+\\.v1$"
+        },
+        "executor": { "enum": ["builtin", "scenario", "pipeline_gate"] },
+        "owner_stage": { "enum": ["W0", "W2", "W3", "W4"] },
+        "operation_id": { "type": "string", "minLength": 1 },
+        "assertions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/runnerAssertionObservation" }
+        }
+      }
+    },
+    "runnerProbeObservation": {
+      "oneOf": [
+        { "$ref": "#/$defs/runnerArgvObservation" },
+        { "$ref": "#/$defs/runnerSemanticObservation" }
+      ]
     },
     "runnerProbeObservations": {
       "type": "object",
@@ -803,33 +759,6 @@
             "probes": { "$ref": "#/$defs/runnerProbeObservations" }
           }
         }
-      }
-    },
-    "legacyWalkaroundReceipt": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "schema",
-        "mount_path",
-        "release_output",
-        "release_signature",
-        "proofs",
-        "trusted_runner",
-        "delivery_seal"
-      ],
-      "properties": {
-        "schema": {
-          "const": "io.vetcoders.vibecrafted.walkaround.v1"
-        },
-        "mount_path": {
-          "type": "string",
-          "pattern": "^/"
-        },
-        "release_output": { "$ref": "#/$defs/proofArtifact" },
-        "release_signature": { "$ref": "#/$defs/proofArtifact" },
-        "proofs": { "$ref": "#/$defs/walkaroundProofs" },
-        "trusted_runner": { "$ref": "#/$defs/trustedRunner" },
-        "delivery_seal": { "$ref": "#/$defs/proofArtifact" }
       }
     }
   }

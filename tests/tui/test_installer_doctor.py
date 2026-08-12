@@ -5,6 +5,7 @@ import subprocess
 from argparse import Namespace
 from pathlib import Path
 
+import pytest
 from vibecrafted_core.doctor import _vc_frame_delivery_findings
 from vibecrafted_core.frontier_assets import vc_frame_config_source
 from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config
@@ -499,7 +500,9 @@ def test_cmd_doctor_fix_launchers_repairs_missing_wrappers(
 
     exit_code = installer.cmd_doctor(Namespace(fix_rc=False, fix_launchers=True))
 
-    assert exit_code == 0
+    # Launcher repair succeeds, but the fresh-state doctor remains fail-closed
+    # until the mandatory packaged release verifier is actually installed.
+    assert exit_code == 1
     assert (launcher_bin / "vc-init").is_symlink()
     assert (launcher_bin / "vc-start").is_symlink()
     assert not (crafted_home / "bin" / "vc-init").exists()
@@ -826,8 +829,143 @@ def test_installer_doctor_fails_when_walkaround_runner_launcher_is_missing() -> 
         installer._python_entrypoint_issue_level(
             ["verify-vibecrafted-walkaround:missing"], state=installer.InstallState()
         )
-        == "warn"
+        == "fail"
     )
+
+
+def test_installer_release_contract_assets_fail_closed_for_missing_or_corrupt_bytes(
+    tmp_path: Path,
+) -> None:
+    current_tools = tmp_path / "vibecrafted-current"
+    package = current_tools / "vibecrafted-core" / "vibecrafted_core"
+    source = REPO_ROOT / "vibecrafted-core" / "vibecrafted_core"
+    for relative in installer.RELEASE_CONTRACT_PACKAGE_ASSETS:
+        target = package / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source / relative, target)
+
+    assert installer._release_contract_asset_issues(current_tools) == []
+
+    mutations = {
+        "walkaround_runner.py": None,
+        "schemas/unified_product.schema.v1.json": "{",
+        "trust/release-policy.v1.json": "{}\n",
+        "trust/vibecrafted-signing-v1.pub": "attacker key\n",
+    }
+    for relative, replacement in mutations.items():
+        target = package / relative
+        original = target.read_bytes()
+        if replacement is None:
+            target.unlink()
+        else:
+            target.write_text(replacement, encoding="utf-8")
+        issues = installer._release_contract_asset_issues(current_tools)
+        assert any(item.startswith(f"{relative}:") for item in issues), relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(original)
+
+
+def test_release_contract_inventory_names_runner_schema_policy_and_key() -> None:
+    assert "verify-vibecrafted-walkaround" in installer.PYTHON_ENTRYPOINT_LAUNCHERS
+    assert installer.RELEASE_CONTRACT_PACKAGE_ASSETS == (
+        "walkaround_runner.py",
+        "schemas/unified_product.schema.v1.json",
+        "trust/release-policy.v1.json",
+        "trust/vibecrafted-signing-v1.pub",
+    )
+
+
+def _loaded_release_contract_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state_shape: str,
+) -> tuple[Path, installer.InstallState, Path | None]:
+    """Materialize and load the four installer-state shapes used by doctor."""
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    tools = home / ".local/share/vibecrafted/tools"
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+    monkeypatch.setattr(installer, "FOUNDATIONS", [])
+
+    if state_shape == "fresh":
+        store = crafted_home / "skills"
+        return store, installer._load_install_state(store), None
+
+    generation = tools / "vibecrafted-generation-test"
+    store = generation / "skills"
+    store.mkdir(parents=True)
+    tools.mkdir(parents=True, exist_ok=True)
+    (tools / "vibecrafted-current").symlink_to(generation)
+
+    if state_shape == "migrated":
+        legacy_store = crafted_home / "skills"
+        installer.InstallState(framework_version="legacy").save(legacy_store)
+    elif state_shape == "corrupt":
+        (store / installer.STATE_FILE).write_text("{", encoding="utf-8")
+    elif state_shape != "lost":
+        raise AssertionError(f"unknown fixture state: {state_shape}")
+
+    return store, installer._load_install_state(store), generation
+
+
+def _seed_release_contract_assets(generation: Path) -> Path:
+    package = generation / "vibecrafted-core" / "vibecrafted_core"
+    source = REPO_ROOT / "vibecrafted-core" / "vibecrafted_core"
+    for relative in installer.RELEASE_CONTRACT_PACKAGE_ASSETS:
+        target = package / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source / relative, target)
+    return package
+
+
+@pytest.mark.parametrize("state_shape", ["fresh", "migrated", "lost", "corrupt"])
+def test_installer_doctor_checks_release_assets_before_store_state_shortcuts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state_shape: str,
+) -> None:
+    store, state, generation = _loaded_release_contract_state(
+        tmp_path, monkeypatch, state_shape
+    )
+    if state_shape == "migrated":
+        assert state.framework_version == "legacy"
+    elif state_shape in {"fresh", "lost", "corrupt"}:
+        assert state.framework_version == ""
+    assert (generation is None) == (state_shape == "fresh")
+    findings = installer.run_doctor(store, state)
+    indexed = {finding.component: finding for finding in findings}
+
+    assert indexed["release-contract-assets"].level == "fail"
+    for relative in installer.RELEASE_CONTRACT_PACKAGE_ASSETS:
+        assert f"{relative}:missing" in indexed["release-contract-assets"].message
+
+
+@pytest.mark.parametrize("state_shape", ["migrated", "lost", "corrupt"])
+def test_installer_doctor_release_assets_fail_closed_in_each_loaded_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state_shape: str,
+) -> None:
+    store, state, generation = _loaded_release_contract_state(
+        tmp_path, monkeypatch, state_shape
+    )
+    assert generation is not None
+    package = _seed_release_contract_assets(generation)
+    corruptions = {
+        "walkaround_runner.py": b"not python\x00",
+        "schemas/unified_product.schema.v1.json": b"{",
+        "trust/release-policy.v1.json": b"{}\n",
+        "trust/vibecrafted-signing-v1.pub": b"attacker key\n",
+    }
+    for relative, replacement in corruptions.items():
+        (package / relative).write_bytes(replacement)
+
+    findings = installer.run_doctor(store, state)
+    indexed = {finding.component: finding for finding in findings}
+    release_finding = indexed["release-contract-assets"]
+    assert release_finding.level == "fail"
+    for relative in installer.RELEASE_CONTRACT_PACKAGE_ASSETS:
+        assert f"{relative}:corrupt" in release_finding.message
 
 
 def test_doctor_executes_vibecrafted_launcher_without_bash() -> None:

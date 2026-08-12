@@ -2526,6 +2526,16 @@ PYTHON_ENTRYPOINT_LAUNCHERS = [
     "verify-vibecrafted-walkaround",
 ]
 
+RELEASE_CONTRACT_PACKAGE_ASSETS = (
+    "walkaround_runner.py",
+    "schemas/unified_product.schema.v1.json",
+    "trust/release-policy.v1.json",
+    "trust/vibecrafted-signing-v1.pub",
+)
+_RELEASE_KEY_SPKI_SHA256 = (
+    "521ed59d3c446c540afe1557c2dbc39c9c190775f99896b2b65206c32814b25b"
+)
+
 LEGACY_LAUNCHER_NAMES = [
     "marble-pack",
     "aicx-pack",
@@ -9432,14 +9442,79 @@ def _pause_for_runtime_contract_failures(findings: Sequence[DoctorFinding]) -> N
 def _python_entrypoint_issue_level(
     issues: Sequence[str], *, state: InstallState
 ) -> str:
-    """Make a missing release verifier fatal only after it was recorded installed."""
-    runner_was_installed = any(
-        Path(entry).name == "verify-vibecrafted-walkaround"
-        for entry in state.launcher_entries
-    )
-    if "verify-vibecrafted-walkaround:missing" in issues and runner_was_installed:
+    """The release verifier is mandatory in every installed-state shape."""
+    if "verify-vibecrafted-walkaround:missing" in issues:
         return "fail"
     return "warn"
+
+
+def _release_contract_asset_issues(current_tools: Path) -> list[str]:
+    """Fail closed when any installed W0 verifier/trust asset is absent or corrupt."""
+    package = current_tools / "vibecrafted-core" / "vibecrafted_core"
+    paths = {
+        relative: package / relative for relative in RELEASE_CONTRACT_PACKAGE_ASSETS
+    }
+    issues: list[str] = []
+    for relative, path in paths.items():
+        if not path.is_file() or path.is_symlink():
+            issues.append(f"{relative}:missing")
+    if issues:
+        return issues
+    try:
+        runner_source = paths["walkaround_runner.py"].read_text(encoding="utf-8")
+        compile(
+            runner_source,
+            str(paths["walkaround_runner.py"]),
+            "exec",
+            dont_inherit=True,
+        )
+        if "def main(" not in runner_source:
+            raise ValueError("runner main entrypoint is missing")
+    except (OSError, UnicodeError, SyntaxError, ValueError) as exc:
+        issues.append(f"walkaround_runner.py:corrupt:{exc}")
+    try:
+        schema = json.loads(
+            paths["schemas/unified_product.schema.v1.json"].read_text(encoding="utf-8")
+        )
+        if not isinstance(schema, dict) or "$defs" not in schema:
+            raise ValueError("closed schema definitions are missing")
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        issues.append(f"schemas/unified_product.schema.v1.json:corrupt:{exc}")
+    try:
+        policy = json.loads(
+            paths["trust/release-policy.v1.json"].read_text(encoding="utf-8")
+        )
+        if (
+            not isinstance(policy, dict)
+            or policy.get("algorithm") != "rsa-pkcs1v15-sha256"
+            or policy.get("public_key_spki_sha256") != _RELEASE_KEY_SPKI_SHA256
+        ):
+            raise ValueError("release trust pins do not match v1")
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        issues.append(f"trust/release-policy.v1.json:corrupt:{exc}")
+    openssl = Path("/usr/bin/openssl")
+    if not openssl.is_file() or not os.access(openssl, os.X_OK):
+        issues.append("trust/vibecrafted-signing-v1.pub:unverifiable")
+    else:
+        result = subprocess.run(
+            [
+                str(openssl),
+                "pkey",
+                "-pubin",
+                "-in",
+                str(paths["trust/vibecrafted-signing-v1.pub"]),
+                "-outform",
+                "DER",
+            ],
+            check=False,
+            capture_output=True,
+        )
+        if (
+            result.returncode != 0
+            or hashlib.sha256(result.stdout).hexdigest() != _RELEASE_KEY_SPKI_SHA256
+        ):
+            issues.append("trust/vibecrafted-signing-v1.pub:corrupt")
+    return issues
 
 
 def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
@@ -9474,6 +9549,23 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
                 "tarball — run 'vibecrafted update' to fetch latest release",
             )
         )
+
+    # The release verifier and pinned trust assets are distribution-owned, not
+    # install-manifest-owned.  Check them before the store/state early returns
+    # so fresh, migrated, lost, and corrupt installs all fail closed alike.
+    release_contract_issues = _release_contract_asset_issues(
+        current_link.resolve(strict=False)
+    )
+    findings.append(
+        DoctorFinding(
+            "fail" if release_contract_issues else "ok",
+            "release-contract-assets",
+            "installed verifier schema, policy, and public key are present and pinned"
+            if not release_contract_issues
+            else "Release contract asset issue(s): "
+            + ", ".join(release_contract_issues),
+        )
+    )
 
     # 1. Store exists
     if store_path.exists():

@@ -207,3 +207,38 @@ def test_noneditable_wheel_trust_probe_accepts_release_key_and_rejects_attacker(
     )
     assert rejected.returncode == 33
     assert "VCPC033" in rejected.stderr
+
+    missing_release = external_cwd / "release-output.json"
+    missing_signature = external_cwd / "release-output.json.sig"
+    verify_missing = _run(
+        [
+            str(runner),
+            "verify-release",
+            "--release-output",
+            str(missing_release),
+            "--signature",
+            str(missing_signature),
+        ],
+        cwd=external_cwd,
+        env=isolated_env,
+    )
+    assert verify_missing.returncode == 22
+    assert "VCPC022" in verify_missing.stderr
+    walkaround_output = external_cwd / "walkaround.json"
+    walkaround_missing = _run(
+        [
+            str(runner),
+            "walkaround",
+            "--release-output",
+            str(missing_release),
+            "--signature",
+            str(missing_signature),
+            "--output",
+            str(walkaround_output),
+        ],
+        cwd=external_cwd,
+        env=isolated_env,
+    )
+    assert walkaround_missing.returncode == 22
+    assert "VCPC022" in walkaround_missing.stderr
+    assert not walkaround_output.exists()

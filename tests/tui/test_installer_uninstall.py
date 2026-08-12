@@ -114,6 +114,76 @@ def test_cmd_uninstall_removes_launchers_and_compat_pack_wrappers(
     assert not collect_names(installer.collect_installed_launchers())
 
 
+def test_cmd_uninstall_removes_release_contract_assets_with_managed_payload(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    _setup_installed_surface(tmp_path, monkeypatch)
+
+    tools_root = installer.vibecrafted_tools_home()
+    managed_payload = tools_root / "vibecrafted-9.9.9"
+    package_root = managed_payload / "vibecrafted-core" / "vibecrafted_core"
+    contract_assets = [
+        package_root / relative
+        for relative in installer.RELEASE_CONTRACT_PACKAGE_ASSETS
+    ]
+    expected_bytes: dict[Path, bytes] = {}
+    for asset in contract_assets:
+        asset.parent.mkdir(parents=True, exist_ok=True)
+        asset.write_text(f"fixture for {asset.name}\n", encoding="utf-8")
+        expected_bytes[asset] = asset.read_bytes()
+
+    unmanaged_sibling = tools_root / "operator-owned-tools"
+    unmanaged_sibling.mkdir(parents=True)
+    (unmanaged_sibling / "keep.txt").write_text("keep\n", encoding="utf-8")
+
+    captured_inventory: list[installer.ManagedPath] = []
+    build_inventory = installer._build_uninstall_inventory
+
+    def capture_inventory(**kwargs) -> list[installer.ManagedPath]:
+        inventory = build_inventory(**kwargs)
+        captured_inventory[:] = inventory
+        return inventory
+
+    monkeypatch.setattr(installer, "_build_uninstall_inventory", capture_inventory)
+    assert installer.cmd_uninstall(Namespace(dry_run=False)) == 0
+
+    output = capsys.readouterr().out
+    assert f"staged-payload: {managed_payload}" in output
+    assert f"tools-sibling: {unmanaged_sibling}" in output
+    payload_owners = [
+        record
+        for record in captured_inventory
+        if record.kind == "staged-payload" and record.path == managed_payload
+    ]
+    assert len(payload_owners) == 1
+    owner = payload_owners[0]
+    assert owner.action == "remove"
+    for asset in contract_assets:
+        assert (
+            asset.relative_to(owner.path)
+            .as_posix()
+            .startswith("vibecrafted-core/vibecrafted_core/")
+        )
+    assert not managed_payload.exists()
+    assert all(not asset.exists() for asset in contract_assets)
+    assert (unmanaged_sibling / "keep.txt").read_text(encoding="utf-8") == "keep\n"
+
+    store_path = installer.vibecrafted_home() / "skills"
+    backup_root = installer._backup_root(store_path)
+    latest = (backup_root / "latest").read_text(encoding="utf-8").strip()
+    restore_manifest = json.loads(
+        (backup_root / latest / "restore-manifest.json").read_text(encoding="utf-8")
+    )
+    owner_records = [
+        item for item in restore_manifest["items"] if Path(item["path"]) == owner.path
+    ]
+    assert len(owner_records) == 1
+
+    assert installer.cmd_restore(Namespace(dry_run=False)) == 0
+    assert {asset: asset.read_bytes() for asset in contract_assets} == expected_bytes
+    assert (unmanaged_sibling / "keep.txt").read_text(encoding="utf-8") == "keep\n"
+
+
 def test_cmd_uninstall_prefers_manifest_tracked_launchers_and_helpers(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -20,23 +20,15 @@ import struct
 import subprocess
 import sys
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
+from xml.parsers.expat import ExpatError
 
 from jsonschema import Draft202012Validator, ValidationError, validators
-
-from .delivery.model import (
-    ContractError,
-    DeliveryProofContract,
-    DeliverySeal,
-    ProofResult,
-    ProofState,
-)
-from .delivery.seal import reconstruct_seal
 
 MODULE_SCHEMA = "io.vetcoders.vibecrafted.module.v1"
 ASSEMBLY_SCHEMA = "io.vetcoders.vibecrafted.module-assembly.v1"
@@ -55,14 +47,13 @@ PRODUCT_EXECUTABLE = "Vibecrafted"
 SUPPORTED_MODULES = frozenset({"vc-terminal", "vc-frame"})
 SUPPORTED_ARCHITECTURES = frozenset({"arm64"})
 MINIMUM_MACOS = (14, 0)
-WALKAROUND_SCOPE = "unified-vibecrafted-app-walkaround-v1"
-WALKAROUND_SEAL_ISSUER = "vc-ship"
 WALKAROUND_RUNNER_ID = "io.vetcoders.vibecrafted.walkaround-runner.v1"
 WALKAROUND_RUNNER_EXECUTABLE = "verify-vibecrafted-walkaround"
 OUTER_BUNDLE_CODE_IDENTITY = "outer-bundle-codesign-v1"
 MACHO_CODE_IDENTITY = "macho-code-v1"
 TRUSTED_RUNNER_PUBLIC_KEY_NAME = "vibecrafted-signing-v1.pub"
 RELEASE_POLICY_NAME = "release-policy.v1.json"
+RELEASE_DMG_NAME = "Vibecrafted.dmg"
 RELEASE_KEY_SPKI_SHA256 = (
     "521ed59d3c446c540afe1557c2dbc39c9c190775f99896b2b65206c32814b25b"
 )
@@ -120,7 +111,6 @@ _WALKAROUND_CHECKS = frozenset(
         "one_outer_writer",
     }
 )
-_STATE_TRANSITION_CHECKS = frozenset({"update", "rollback", "reattach"})
 _LAUNCH_INHERITED_ENV = (
     "HOME",
     "USER",
@@ -141,6 +131,7 @@ _LAUNCH_SHELL = "Contents/Resources/runtime/bin/vc-start"
 PRODUCT_MANIFEST_REFERENT = "manifests/product-manifest.json"
 RUNTIME_MANIFEST_REFERENT = "manifests/runtime-manifest.json"
 _MAX_SIGNED_PAYLOAD_BYTES = 64 * 1024 * 1024
+_RELEASE_SIGNATURE_BYTES = 256  # Pinned 2048-bit RSA trust root.
 
 
 @dataclass(frozen=True)
@@ -170,6 +161,40 @@ class _ModuleManifest:
     entrypoints: dict[str, str]
 
 
+@dataclass(frozen=True)
+class _CapturedProofArtifact:
+    """One no-follow, bounded snapshot used for every later trust decision."""
+
+    path: Path
+    raw: bytes
+    sha256: str
+    size: int
+
+
+@dataclass(frozen=True)
+class ProbeSpec:
+    """Closed definition of one canonical release walk-around proof."""
+
+    name: str
+    executor: str
+    owner_stage: str
+    operation_id: str
+    assertions: tuple[str, ...]
+    argv: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if self.executor not in {"builtin", "argv", "scenario", "pipeline_gate"}:
+            raise ValueError(f"unsupported walk-around executor: {self.executor}")
+        if not self.name or not self.owner_stage or not self.operation_id:
+            raise ValueError("walk-around probe metadata must be non-empty")
+        if not self.assertions or len(set(self.assertions)) != len(self.assertions):
+            raise ValueError(
+                "walk-around probe assertions must be non-empty and unique"
+            )
+        if (self.executor == "argv") != (self.argv is not None):
+            raise ValueError("only argv probes may carry command argv")
+
+
 class ProductContractError(ValueError):
     """A stable, machine-classifiable unified-product contract violation."""
 
@@ -188,17 +213,6 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _canonical_digest(payload: Any) -> str:
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
-    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
 def _validate_unique_keys(
@@ -616,7 +630,7 @@ def _public_key_spki_sha256(public_key: Path) -> str:
     return hashlib.sha256(result.stdout).hexdigest()
 
 
-def _read_regular_file_once(path: Path, *, context: str) -> bytes:
+def _capture_proof_artifact(path: Path, *, context: str) -> _CapturedProofArtifact:
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(path, flags)
@@ -626,6 +640,8 @@ def _read_regular_file_once(path: Path, *, context: str) -> bytes:
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode):
             _fail(E_MISSING, f"{context} is not a regular file")
+        if before.st_nlink != 1:
+            _fail(E_PATH, f"{context} must not be a hard-linked alias")
         if before.st_size > _MAX_SIGNED_PAYLOAD_BYTES:
             _fail(E_SIZE, f"{context} exceeds the 64 MiB signed-payload limit")
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
@@ -640,41 +656,62 @@ def _read_regular_file_once(path: Path, *, context: str) -> bytes:
             before.st_mtime_ns,
         ) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
             _fail(E_PROOF, f"{context} changed while it was captured")
-        return payload
+        return _CapturedProofArtifact(
+            path=path.absolute(),
+            raw=payload,
+            sha256=hashlib.sha256(payload).hexdigest(),
+            size=len(payload),
+        )
     except OSError as exc:
         _fail(E_MISSING, f"{context} is unreadable: {exc}")
     finally:
         os.close(descriptor)
 
 
-def _verify_release_signature(payload: Path, signature: Path) -> bytes:
+def _read_regular_file_once(path: Path, *, context: str) -> bytes:
+    """Compatibility wrapper for callers that need only captured bytes."""
+    return _capture_proof_artifact(path, context=context).raw
+
+
+def _verify_release_signature(
+    payload: Path, signature: Path
+) -> tuple[_CapturedProofArtifact, _CapturedProofArtifact]:
     policy = _release_policy()
     public_key = _trusted_runner_public_key()
     if not public_key.is_file() or public_key.is_symlink():
         _fail(E_MISSING, "packaged release public key is missing")
     if _public_key_spki_sha256(public_key) != policy["public_key_spki_sha256"]:
         _fail(E_PROOF, "packaged release public key fingerprint is not policy-pinned")
-    if not signature.is_file() or signature.is_symlink():
-        _fail(E_MISSING, "detached release signature is missing")
-    payload_bytes = _read_regular_file_once(payload, context="signed release payload")
-    openssl = _release_openssl()
-    result = subprocess.run(
-        [
-            openssl,
-            "dgst",
-            "-sha256",
-            "-verify",
-            str(public_key),
-            "-signature",
-            str(signature),
-        ],
-        check=False,
-        capture_output=True,
-        input=payload_bytes,
+    captured_payload = _capture_proof_artifact(
+        payload, context="signed release payload"
     )
+    captured_signature = _capture_proof_artifact(
+        signature, context="detached release signature"
+    )
+    if captured_signature.size != _RELEASE_SIGNATURE_BYTES:
+        _fail(E_PROOF, "detached release signature has an invalid size")
+    openssl = _release_openssl()
+    with tempfile.TemporaryDirectory(prefix="vibecrafted-signature-") as directory:
+        signature_snapshot = Path(directory) / "release-output.json.sig"
+        signature_snapshot.write_bytes(captured_signature.raw)
+        signature_snapshot.chmod(0o400)
+        result = subprocess.run(
+            [
+                openssl,
+                "dgst",
+                "-sha256",
+                "-verify",
+                str(public_key),
+                "-signature",
+                str(signature_snapshot),
+            ],
+            check=False,
+            capture_output=True,
+            input=captured_payload.raw,
+        )
     if result.returncode != 0:
         _fail(E_PROOF, "detached release signature is invalid")
-    return payload_bytes
+    return captured_payload, captured_signature
 
 
 def _release_openssl() -> str:
@@ -689,8 +726,9 @@ def verify_trust_probe(
 ) -> dict[str, Any]:
     """Verify a narrowly scoped challenge through the installed production trust root."""
     challenge = Path(challenge_path)
-    challenge_bytes = _verify_release_signature(challenge, Path(signature_path))
-    payload = _load_json_bytes(challenge_bytes, source=challenge)
+    signature = Path(signature_path)
+    captured_challenge, _ = _verify_release_signature(challenge, signature)
+    payload = _load_json_bytes(captured_challenge.raw, source=challenge)
     _expect_keys(payload, required={"schema", "domain", "nonce"}, context="trust probe")
     if (
         payload["schema"] != TRUST_PROBE_SCHEMA
@@ -1897,7 +1935,7 @@ def _codesign_release_evidence(app: Path) -> dict[str, Any]:
     if entitlement_bytes:
         try:
             entitlements = plistlib.loads(entitlement_bytes)
-        except (plistlib.InvalidFileException, ValueError) as exc:
+        except (plistlib.InvalidFileException, ExpatError, ValueError) as exc:
             _fail(E_PROOF, f"final app entitlements are malformed: {exc}")
     else:
         _fail(E_PROOF, "final app entitlements output is empty")
@@ -1923,6 +1961,24 @@ def _release_relative_path(root: Path, value: Any, *, field: str) -> Path:
     if candidate.is_symlink():
         _fail(E_PATH, f"{field} must not be a symlink")
     return candidate
+
+
+def _verify_release_signer_policy(
+    app: Path, outer: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    policy = _release_policy()
+    observed_signer = _codesign_release_evidence(app)
+    expected_signer = {
+        "team_id": policy["team_id"],
+        "designated_requirement": policy["designated_requirement"],
+        "hardened_runtime": policy["hardened_runtime"],
+        "entitlements": policy["entitlements"],
+    }
+    if outer["signer_policy"] != expected_signer:
+        _fail(E_PROOF, "release output signer policy violates packaged policy")
+    if observed_signer != {"cdhash": outer["cdhash"], **expected_signer}:
+        _fail(E_PROOF, "final app signer evidence does not match release output")
+    return observed_signer, expected_signer
 
 
 @contextmanager
@@ -2011,7 +2067,12 @@ def _mounted_release_dmg(dmg: Path):
 
 
 def _verify_release_artifacts(
-    payload: Mapping[str, Any], *, receipt_root: Path, dmg: Path, app: Path
+    payload: Mapping[str, Any],
+    *,
+    receipt_root: Path,
+    dmg: Path,
+    app: Path,
+    require_walkaround: bool = False,
 ) -> dict[str, Any]:
     product = verify_app(app, require_clean=True)
     product_receipt = payload["product"]
@@ -2040,18 +2101,7 @@ def _verify_release_artifacts(
     if executable_relative != product["outer_bundle_code"]["path"]:
         _fail(E_PROOF, "release output outer executable path mismatch")
     executable = app / executable_relative
-    policy = _release_policy()
-    observed_signer = _codesign_release_evidence(app)
-    expected_signer = {
-        "team_id": policy["team_id"],
-        "designated_requirement": policy["designated_requirement"],
-        "hardened_runtime": policy["hardened_runtime"],
-        "entitlements": policy["entitlements"],
-    }
-    if outer["signer_policy"] != expected_signer:
-        _fail(E_PROOF, "release output signer policy violates packaged policy")
-    if observed_signer != {"cdhash": outer["cdhash"], **expected_signer}:
-        _fail(E_PROOF, "final app signer evidence does not match release output")
+    observed_signer, expected_signer = _verify_release_signer_policy(app, outer)
     if outer != {
         "path": executable_relative,
         "sha256": _sha256(executable),
@@ -2103,17 +2153,32 @@ def _verify_release_artifacts(
     }
     if payload["source_revisions"] != expected_revisions:
         _fail(E_PROOF, "release output source revisions do not match the product")
+    if require_walkaround:
+        return _run_walkaround_probes(app, dmg)
     return _run_live_release_checks(app, dmg)
 
 
 def _verify_release_output(
     receipt_path: str | Path,
     signature_path: str | Path,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+    *,
+    require_walkaround: bool = False,
+) -> tuple[
+    dict[str, Any],
+    dict[str, Any],
+    tuple[_CapturedProofArtifact, _CapturedProofArtifact],
+]:
     """Verify W4's signed receipt as the sole selector of the DMG and app."""
     receipt = Path(receipt_path)
-    actual_receipt = _verify_release_signature(receipt, Path(signature_path))
-    payload = _load_json_bytes(actual_receipt, source=receipt)
+    signature = Path(signature_path)
+    if (
+        receipt.name != "release-output.json"
+        or signature.name != "release-output.json.sig"
+        or receipt.parent.absolute() != signature.parent.absolute()
+    ):
+        _fail(E_PROOF, "release verification requires the canonical signed tuple")
+    captured_receipt, captured_signature = _verify_release_signature(receipt, signature)
+    payload = _load_json_bytes(captured_receipt.raw, source=receipt)
     canonical = (
         json.dumps(
             payload,
@@ -2124,7 +2189,7 @@ def _verify_release_output(
         ).encode("utf-8")
         + b"\n"
     )
-    if actual_receipt != canonical:
+    if captured_receipt.raw != canonical:
         _fail(E_PROOF, "release output must be canonical JSON")
     # Public schema owns the closed shape.  Do not index even one receipt field
     # before it has accepted the exact immutable bytes verified above.
@@ -2140,6 +2205,8 @@ def _verify_release_output(
     if payload["signature_policy"] != expected_signature_policy:
         _fail(E_PROOF, "release output signature policy violates packaged policy")
     raw_dmg = payload["dmg"]
+    if raw_dmg["path"] != RELEASE_DMG_NAME:
+        _fail(E_PROOF, f"release DMG path must be {RELEASE_DMG_NAME}")
     dmg = _release_relative_path(receipt.parent, raw_dmg["path"], field="dmg.path")
     if not dmg.is_file() or dmg.is_symlink():
         _fail(E_MISSING, "release DMG is missing")
@@ -2159,9 +2226,13 @@ def _verify_release_output(
         _mounted_release_dmg(captured_dmg) as app,
     ):
         observations = _verify_release_artifacts(
-            payload, receipt_root=receipt.parent, dmg=captured_dmg, app=app
+            payload,
+            receipt_root=receipt.parent,
+            dmg=captured_dmg,
+            app=app,
+            require_walkaround=require_walkaround,
         )
-    return payload, observations
+    return payload, observations, (captured_receipt, captured_signature)
 
 
 def verify_release_output(
@@ -2169,7 +2240,7 @@ def verify_release_output(
     signature_path: str | Path,
 ) -> dict[str, Any]:
     """Verify W4's signed receipt as the sole selector of the DMG and app."""
-    payload, _ = _verify_release_output(receipt_path, signature_path)
+    payload, _, _ = _verify_release_output(receipt_path, signature_path)
     return payload
 
 
@@ -2354,285 +2425,8 @@ def verify_transaction(receipt_path: str | Path) -> dict[str, Any]:
     return payload
 
 
-def _validate_proof_artifact(root: Path, value: Any, *, field: str) -> tuple[str, str]:
-    if not isinstance(value, dict):
-        _fail(E_SCHEMA, f"{field} must be an object")
-    _expect_keys(value, required={"path", "sha256", "size"}, context=field)
-    relative = _relative_path(value["path"], field=f"{field}.path").as_posix()
-    expected_hash = _expect_sha256(value["sha256"], field=f"{field}.sha256")
-    expected_size = value["size"]
-    if (
-        not isinstance(expected_size, int)
-        or isinstance(expected_size, bool)
-        or expected_size < 0
-    ):
-        _fail(E_SCHEMA, f"{field}.size must be a non-negative integer")
-    artifact = root / relative
-    _inside_payload(root, artifact, context=field)
-    if not artifact.is_file() or artifact.is_symlink():
-        _fail(E_MISSING, f"walk-around proof artifact is missing: {relative}")
-    if artifact.stat().st_size != expected_size:
-        _fail(E_SIZE, f"walk-around proof artifact size mismatch: {relative}")
-    if _sha256(artifact) != expected_hash:
-        _fail(E_HASH, f"walk-around proof artifact hash mismatch: {relative}")
-    return relative, expected_hash
-
-
 def _walkaround_probe_id(name: str) -> str:
     return f"io.vetcoders.vibecrafted.walkaround.{name}.v1"
-
-
-def _walkaround_proof_digest(name: str, proof: Mapping[str, Any]) -> str:
-    return _canonical_digest({"name": name, "proof": proof})
-
-
-def _validate_walkaround_proofs(
-    raw_proofs: Any,
-    *,
-    receipt_root: Path,
-    release_output_sha256: str,
-) -> tuple[dict[str, Mapping[str, Any]], tuple[str, ...]]:
-    if not isinstance(raw_proofs, dict):
-        _fail(E_SCHEMA, "walk-around proofs must be an object")
-    _expect_keys(raw_proofs, required=_WALKAROUND_CHECKS, context="proofs")
-    artifacts: set[str] = set()
-    proofs: dict[str, Mapping[str, Any]] = {}
-    proof_digests: list[str] = []
-    for name in sorted(_WALKAROUND_CHECKS):
-        proof = raw_proofs[name]
-        if not isinstance(proof, dict):
-            _fail(E_SCHEMA, f"proofs.{name} must be an object")
-        _expect_keys(
-            proof,
-            required={
-                "producer",
-                "probe_id",
-                "command",
-                "exit_code",
-                "inputs",
-                "before",
-                "after",
-                "stdout",
-                "stderr",
-            },
-            context=f"proofs.{name}",
-        )
-        if proof["producer"] != WALKAROUND_SEAL_ISSUER:
-            _fail(E_PROOF, f"walk-around proof has untrusted producer: {name}")
-        if proof["probe_id"] != _walkaround_probe_id(name):
-            _fail(E_PROOF, f"walk-around proof has wrong probe identity: {name}")
-        command = proof["command"]
-        if (
-            not isinstance(command, list)
-            or not command
-            or not all(isinstance(item, str) and item for item in command)
-        ):
-            _fail(E_SCHEMA, f"proofs.{name}.command must be a non-empty argv array")
-        if proof["exit_code"] != 0 or isinstance(proof["exit_code"], bool):
-            _fail(E_PROOF, f"walk-around proof failed: {name}")
-        inputs = proof["inputs"]
-        if not isinstance(inputs, dict):
-            _fail(E_SCHEMA, f"proofs.{name}.inputs must be an object")
-        _expect_keys(
-            inputs,
-            required={"release_output_sha256"},
-            context=f"proofs.{name}.inputs",
-        )
-        if (
-            _expect_sha256(
-                inputs["release_output_sha256"],
-                field=f"proofs.{name}.inputs.release_output_sha256",
-            )
-            != release_output_sha256
-        ):
-            _fail(E_PROOF, f"walk-around proof inputs do not bind release: {name}")
-        state_hashes: dict[str, str] = {}
-        for artifact_name in ("before", "after", "stdout", "stderr"):
-            relative, artifact_hash = _validate_proof_artifact(
-                receipt_root,
-                proof[artifact_name],
-                field=f"proofs.{name}.{artifact_name}",
-            )
-            if relative in artifacts:
-                _fail(E_PROOF, f"walk-around proof artifact reused: {relative}")
-            artifacts.add(relative)
-            state_hashes[artifact_name] = artifact_hash
-        if (
-            name in _STATE_TRANSITION_CHECKS
-            and state_hashes["before"] == state_hashes["after"]
-        ):
-            _fail(E_PROOF, f"walk-around state transition did not change state: {name}")
-        proofs[name] = proof
-        proof_digests.append(_walkaround_proof_digest(name, proof))
-    return proofs, tuple(proof_digests)
-
-
-def _walkaround_subject_digest(payload: Mapping[str, Any]) -> str:
-    return _canonical_digest(
-        {
-            "schema": payload["schema"],
-            "mount_path": payload["mount_path"],
-            "release_output": payload["release_output"],
-            "release_signature": payload["release_signature"],
-        }
-    )
-
-
-def _walkaround_assertion_digest(proof_digests: Sequence[str]) -> str:
-    return _canonical_digest({"proofs": list(proof_digests)})
-
-
-def _verify_trusted_runner_attestation(
-    receipt_root: Path,
-    value: Any,
-    *,
-    trusted_public_key: Path,
-    payload: Mapping[str, Any],
-    proof_digests: Sequence[str],
-) -> None:
-    if not isinstance(value, dict):
-        _fail(E_SCHEMA, "trusted_runner must be an object")
-    _expect_keys(value, required={"attestation", "signature"}, context="trusted_runner")
-    attestation_relative, _ = _validate_proof_artifact(
-        receipt_root, value["attestation"], field="trusted_runner.attestation"
-    )
-    signature_relative, _ = _validate_proof_artifact(
-        receipt_root, value["signature"], field="trusted_runner.signature"
-    )
-    attestation_path = receipt_root / attestation_relative
-    signature_path = receipt_root / signature_relative
-    attestation = _load_json(attestation_path)
-    required = {
-        "schema",
-        "runner_id",
-        "subject_sha256",
-        "assertion_sha256",
-        "probe_ids",
-    }
-    _expect_keys(attestation, required=required, context="trusted runner attestation")
-    if attestation["schema"] != WALKAROUND_RUNNER_ID:
-        _fail(E_PROOF, "trusted runner attestation has the wrong schema")
-    if attestation["runner_id"] != WALKAROUND_RUNNER_ID:
-        _fail(E_PROOF, "trusted runner attestation has the wrong runner identity")
-    if attestation["subject_sha256"] != _walkaround_subject_digest(payload):
-        _fail(E_PROOF, "trusted runner attestation does not bind release subject")
-    if attestation["assertion_sha256"] != _walkaround_assertion_digest(proof_digests):
-        _fail(E_PROOF, "trusted runner attestation does not bind proof set")
-    expected_probe_ids = [
-        _walkaround_probe_id(name) for name in sorted(_WALKAROUND_CHECKS)
-    ]
-    if attestation["probe_ids"] != expected_probe_ids:
-        _fail(E_PROOF, "trusted runner attestation does not bind canonical probes")
-    if not trusted_public_key.is_file() or trusted_public_key.is_symlink():
-        _fail(E_MISSING, "explicit trusted runner public key is missing")
-    openssl = _release_openssl()
-    result = subprocess.run(
-        [
-            openssl,
-            "dgst",
-            "-sha256",
-            "-verify",
-            str(trusted_public_key),
-            "-signature",
-            str(signature_path),
-            str(attestation_path),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        _fail(E_PROOF, "walk-around runner attestation signature is invalid")
-
-
-def _verify_walkaround_delivery_seal(
-    receipt_root: Path,
-    seal_artifact: Any,
-    *,
-    payload: Mapping[str, Any],
-    proof_digests: tuple[str, ...],
-) -> DeliverySeal:
-    relative, _ = _validate_proof_artifact(
-        receipt_root,
-        seal_artifact,
-        field="delivery_seal",
-    )
-    seal_path = receipt_root / relative
-    if seal_path.name != "delivery-seal.json":
-        _fail(
-            E_PROOF, "walk-around seal must use the canonical delivery-seal.json name"
-        )
-    reconstruction = reconstruct_seal(seal_path.parent)
-    if not reconstruction.verified or reconstruction.seal is None:
-        detail = ", ".join(
-            str(item.get("component", "unknown")) for item in reconstruction.mismatches
-        )
-        _fail(E_PROOF, f"walk-around delivery seal is stale: {detail or 'unknown'}")
-    seal = reconstruction.seal
-    if seal.issuer != WALKAROUND_SEAL_ISSUER:
-        _fail(E_PROOF, "walk-around delivery seal has the wrong issuer")
-    if seal.cut_id != WALKAROUND_SCOPE:
-        _fail(E_PROOF, "walk-around delivery seal has the wrong cut identity")
-    if (
-        seal.declared_scope != WALKAROUND_SCOPE
-        or seal.checked_scope != WALKAROUND_SCOPE
-    ):
-        _fail(E_PROOF, "walk-around delivery seal did not check the declared scope")
-    if seal.unverified_surfaces:
-        _fail(E_PROOF, "walk-around delivery seal carries unverified surfaces")
-    if tuple(seal.runtime_probe_sha256) != proof_digests:
-        _fail(E_PROOF, "walk-around proofs are not bound by the delivery seal")
-    if seal.subject_evidence_sha256 != _walkaround_subject_digest(payload):
-        _fail(E_PROOF, "walk-around release subject is not bound by the delivery seal")
-    if seal.assertion_evidence_sha256 != _walkaround_assertion_digest(proof_digests):
-        _fail(E_PROOF, "walk-around assertion set is not bound by the delivery seal")
-    try:
-        proof_contract = DeliveryProofContract.from_payload(
-            _load_json(seal_path.parent / "delivery-proof-contract.json")
-        )
-        proof_result = ProofResult.from_payload(
-            _load_json(seal_path.parent / "proof/result.json")
-        )
-    except ContractError as exc:
-        _fail(E_PROOF, f"walk-around delivery proof contract is invalid: {exc}")
-    if proof_contract.id != seal.proof_id or proof_result.proof_id != seal.proof_id:
-        _fail(E_PROOF, "walk-around delivery proof identity does not match the seal")
-    if (
-        proof_contract.delivery_scope != WALKAROUND_SCOPE
-        or proof_contract.integration_target
-        != str(Path(payload["mount_path"]) / "Vibecrafted.app")
-    ):
-        _fail(E_PROOF, "walk-around delivery proof targets the wrong product scope")
-    expected_runtime_probes = tuple(
-        {
-            "id": name,
-            "probe_id": _walkaround_probe_id(name),
-            "evidence_sha256": digest,
-        }
-        for name, digest in zip(sorted(_WALKAROUND_CHECKS), proof_digests, strict=True)
-    )
-    if tuple(proof_contract.runtime_probes) != expected_runtime_probes:
-        _fail(E_PROOF, "walk-around delivery proof does not declare every sealed probe")
-    if proof_result.contract_sha256 != proof_contract.content_digest():
-        _fail(E_PROOF, "walk-around proof result does not bind its proof contract")
-    if (
-        proof_result.state is not ProofState.PASSED
-        or not proof_result.subject_executed
-        or not proof_result.assertion_consumed_subject_output
-        or proof_result.refusal_reasons
-    ):
-        _fail(E_PROOF, "walk-around delivery proof did not reach a clean PASS")
-    if not proof_result.assertion_results or not all(
-        result.get("passed") is True and result.get("valid") is True
-        for result in proof_result.assertion_results
-    ):
-        _fail(E_PROOF, "walk-around delivery proof assertions are incomplete")
-    if not proof_result.negative_control_results or not all(
-        result.get("detected_falsehood") is True and result.get("valid") is True
-        for result in proof_result.negative_control_results
-    ):
-        _fail(E_PROOF, "walk-around delivery proof negative controls are incomplete")
-    return seal
 
 
 def _attached_image_mounts() -> set[tuple[Path, Path]]:
@@ -2667,34 +2461,6 @@ def _attached_image_mounts() -> set[tuple[Path, Path]]:
                     (image_path, Path(entity["mount-point"]).resolve(strict=False))
                 )
     return mounts
-
-
-def _canonical_runner_commands() -> dict[str, list[str]]:
-    app = "{APP}"
-    dmg = "{DMG}"
-    executable = "{APP}/Contents/MacOS/Vibecrafted"
-    commands = _live_release_commands(Path(app), Path(dmg))
-    commands["one_app"] = ["/usr/bin/test", "-d", app]
-    for name in sorted(_WALKAROUND_CHECKS - set(commands) - {"one_app"}):
-        commands[name] = [
-            executable,
-            "--walkaround-probe",
-            name.replace("_", "-"),
-        ]
-    return {name: commands[name] for name in sorted(_WALKAROUND_CHECKS)}
-
-
-def _expected_runner_commands(app: Path, dmg: Path) -> dict[str, list[str]]:
-    replacements = {"{APP}": str(app), "{DMG}": str(dmg)}
-    return {
-        name: [
-            item.replace("{APP}", replacements["{APP}"]).replace(
-                "{DMG}", replacements["{DMG}"]
-            )
-            for item in command
-        ]
-        for name, command in _canonical_runner_commands().items()
-    }
 
 
 def _live_release_commands(app: Path, dmg: Path) -> dict[str, list[str]]:
@@ -2736,20 +2502,119 @@ def _live_release_commands(app: Path, dmg: Path) -> dict[str, list[str]]:
     }
 
 
-def _verify_recorded_live_commands(
-    proofs: Mapping[str, Mapping[str, Any]], *, app: Path, dmg: Path
-) -> None:
-    for name, expected in _expected_runner_commands(app, dmg).items():
-        recorded = list(proofs[name]["command"])
-        normalized = [Path(recorded[0]).name, *recorded[1:]]
-        expected_normalized = [Path(expected[0]).name, *expected[1:]]
-        if normalized != expected_normalized:
-            _fail(E_PROOF, f"walk-around proof recorded the wrong {name} command")
+def _probe_registry() -> tuple[ProbeSpec, ...]:
+    """The frozen 15-proof registry; W0 defines shape, later stages own providers."""
+    app, dmg = "{APP}", "{DMG}"
+    argv = _live_release_commands(Path(app), Path(dmg))
+    specs = [
+        ProbeSpec(
+            name=name,
+            executor="argv",
+            owner_stage="W0",
+            operation_id=f"platform.{name}.v1",
+            assertions=("exit_zero",),
+            argv=tuple(command),
+        )
+        for name, command in argv.items()
+    ]
+    specs.append(
+        ProbeSpec(
+            name="one_app",
+            executor="builtin",
+            owner_stage="W0",
+            operation_id="mounted_dmg.single_top_level_app.v1",
+            assertions=("sole_top_level_app", "canonical_bundle_name"),
+        )
+    )
+    for name, stage, assertions in (
+        ("sanitized_launch", "W2", ("closed_environment", "launch_succeeds")),
+        ("mission_control", "W2", ("mission_control_reachable",)),
+        ("bundled_console", "W2", ("bundled_console_reachable",)),
+        ("start_here", "W2", ("onboarding_reachable",)),
+        ("update", "W3", ("update_changes_active_identity",)),
+        ("rollback", "W3", ("rollback_restores_previous_identity",)),
+        ("reattach", "W3", ("session_reattaches",)),
+    ):
+        specs.append(
+            ProbeSpec(
+                name=name,
+                executor="scenario",
+                owner_stage=stage,
+                operation_id=f"scenario.{name}.v1",
+                assertions=assertions,
+            )
+        )
+    specs.append(
+        ProbeSpec(
+            name="one_outer_writer",
+            executor="pipeline_gate",
+            owner_stage="W4",
+            operation_id="release.single_outer_writer.v1",
+            assertions=("single_app_builder", "single_dmg_builder"),
+        )
+    )
+    registry = tuple(sorted(specs, key=lambda item: item.name))
+    if {item.name for item in registry} != _WALKAROUND_CHECKS:
+        raise RuntimeError("walk-around registry does not match the frozen proof set")
+    return registry
+
+
+def _probe_specs() -> dict[str, ProbeSpec]:
+    return {item.name: item for item in _probe_registry()}
+
+
+def _canonical_runner_commands() -> dict[str, list[str]]:
+    """Compatibility view containing only the six genuine platform argv probes."""
+    return {
+        spec.name: list(spec.argv or ())
+        for spec in _probe_registry()
+        if spec.executor == "argv"
+    }
+
+
+def _expected_runner_commands(app: Path, dmg: Path) -> dict[str, list[str]]:
+    return {
+        name: [
+            item.replace("{APP}", str(app)).replace("{DMG}", str(dmg))
+            for item in command
+        ]
+        for name, command in _canonical_runner_commands().items()
+    }
+
+
+def _walkaround_provider_registry() -> Mapping[
+    str, Callable[[Path, Path], Mapping[str, bytes | str]]
+]:
+    """W2/W3/W4 integration hook; W0 deliberately ships no fake providers."""
+    return {}
+
+
+def _assertion_observations(
+    spec: ProbeSpec, evidence: Mapping[str, bytes | str]
+) -> list[dict[str, Any]]:
+    if set(evidence) != set(spec.assertions):
+        _fail(E_PROOF, f"walk-around provider assertions are incomplete: {spec.name}")
+    observations: list[dict[str, Any]] = []
+    for name in spec.assertions:
+        raw = evidence[name]
+        if isinstance(raw, str):
+            encoded = raw.encode("utf-8")
+        elif isinstance(raw, bytes):
+            encoded = raw
+        else:
+            _fail(E_PROOF, f"walk-around provider evidence is invalid: {spec.name}")
+        observations.append(
+            {
+                "name": name,
+                "passed": True,
+                "evidence_sha256": hashlib.sha256(encoded).hexdigest(),
+            }
+        )
+    return observations
 
 
 def _run_live_release_checks(app: Path, dmg: Path) -> dict[str, Any]:
     observations: dict[str, Any] = {}
-    canonical = _canonical_runner_commands()
     for name, command in _expected_runner_commands(app, dmg).items():
         executable = _required_tool(command[0], failure_code=E_PROOF)
         result = subprocess.run(
@@ -2766,20 +2631,69 @@ def _run_live_release_checks(app: Path, dmg: Path) -> dict[str, Any]:
             )
         observations[name] = {
             "probe_id": _walkaround_probe_id(name),
-            "command": canonical[name],
+            "executor": "argv",
+            "owner_stage": "W0",
+            "operation_id": f"platform.{name}.v1",
+            "command": _canonical_runner_commands()[name],
             "exit_code": 0,
             "stdout_sha256": hashlib.sha256(result.stdout).hexdigest(),
             "stderr_sha256": hashlib.sha256(result.stderr).hexdigest(),
+            "assertions": _assertion_observations(
+                _probe_specs()[name], {"exit_zero": b"exit_code=0"}
+            ),
         }
     return observations
 
 
-def _release_reference(root: Path, path: Path) -> dict[str, Any]:
+def _run_walkaround_probes(app: Path, dmg: Path) -> dict[str, Any]:
+    observations = _run_live_release_checks(app, dmg)
+    providers = _walkaround_provider_registry()
+    for spec in _probe_registry():
+        if spec.executor == "argv":
+            continue
+        if spec.executor == "builtin":
+            evidence = {
+                "sole_top_level_app": b"count=1",
+                "canonical_bundle_name": app.name,
+            }
+        else:
+            provider = providers.get(spec.name)
+            if provider is None:
+                _fail(
+                    E_PROOF,
+                    f"walk-around {spec.executor} provider is missing: {spec.name} "
+                    f"(owner {spec.owner_stage})",
+                )
+            try:
+                evidence = provider(app, dmg)
+            except ProductContractError:
+                raise
+            # Scenario providers are an explicit W2/W3 extension boundary.
+            # Normalize expected operational/data failures, while allowing
+            # programming errors outside that contract to remain visible.
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                _fail(E_PROOF, f"walk-around provider failed ({spec.name}): {exc}")
+        observations[spec.name] = {
+            "probe_id": _walkaround_probe_id(spec.name),
+            "executor": spec.executor,
+            "owner_stage": spec.owner_stage,
+            "operation_id": spec.operation_id,
+            "assertions": _assertion_observations(spec, evidence),
+        }
+    return observations
+
+
+def _release_reference(root: Path, captured: _CapturedProofArtifact) -> dict[str, Any]:
+    root_absolute = root.absolute()
     try:
-        relative = path.relative_to(root).as_posix()
+        relative = captured.path.relative_to(root_absolute).as_posix()
     except ValueError:
         _fail(E_PATH, "walk-around release artifacts must share the output directory")
-    return {"path": relative, "sha256": _sha256(path), "size": path.stat().st_size}
+    return {
+        "path": relative,
+        "sha256": captured.sha256,
+        "size": captured.size,
+    }
 
 
 def produce_walkaround(
@@ -2793,25 +2707,29 @@ def produce_walkaround(
     release_signature = Path(release_signature_path)
     if output.exists() or output.is_symlink():
         _fail(E_PATH, "walk-around output must be a new explicit path")
-    if output.parent.resolve(strict=False) != release_output.parent.resolve(
-        strict=False
-    ):
+    if output.parent.absolute() != release_output.parent.absolute():
         _fail(E_PATH, "walk-around output and release receipt must share a directory")
     if (
         release_output.name != "release-output.json"
         or release_signature.name != "release-output.json.sig"
     ):
         _fail(E_PROOF, "walk-around requires canonical release-output artifact names")
-    _, observations = _verify_release_output(release_output, release_signature)
+    _, observations, captures = _verify_release_output(
+        release_output,
+        release_signature,
+        require_walkaround=True,
+    )
+    captured_release, captured_signature = captures
     payload = {
         "schema": WALKAROUND_SCHEMA,
-        "release_output": _release_reference(output.parent, release_output),
-        "release_signature": _release_reference(output.parent, release_signature),
+        "release_output": _release_reference(output.parent, captured_release),
+        "release_signature": _release_reference(output.parent, captured_signature),
         "observations": {
             "issuer": WALKAROUND_RUNNER_ID,
             "probes": observations,
         },
     }
+    validate_schema_document(payload)
     output.parent.mkdir(parents=True, exist_ok=True)
     encoded = (
         json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
@@ -2839,184 +2757,51 @@ def _verify_runner_receipt(path: Path, payload: Mapping[str, Any]) -> dict[str, 
         required={"schema", "release_output", "release_signature", "observations"},
         context="walk-around receipt",
     )
-    release_relative, _ = _validate_proof_artifact(
-        path.parent, payload["release_output"], field="release_output"
-    )
-    signature_relative, _ = _validate_proof_artifact(
-        path.parent, payload["release_signature"], field="release_signature"
-    )
+    release_relative = _relative_path(
+        payload["release_output"]["path"], field="release_output.path"
+    ).as_posix()
+    signature_relative = _relative_path(
+        payload["release_signature"]["path"], field="release_signature.path"
+    ).as_posix()
     if (
         release_relative != "release-output.json"
         or signature_relative != "release-output.json.sig"
     ):
         _fail(E_PROOF, "walk-around must reference canonical release-output artifacts")
-    observations = payload["observations"]
-    if not isinstance(observations, dict):
-        _fail(E_SCHEMA, "walk-around observations must be an object")
-    _expect_keys(observations, required={"issuer", "probes"}, context="observations")
-    if observations["issuer"] != WALKAROUND_RUNNER_ID:
-        _fail(E_PROOF, "walk-around observations have an untrusted issuer")
-    probes = observations["probes"]
-    if not isinstance(probes, dict):
-        _fail(E_SCHEMA, "walk-around probes must be an object")
-    _expect_keys(probes, required=_WALKAROUND_CHECKS, context="observations.probes")
-    canonical = _canonical_runner_commands()
-    for name in sorted(_WALKAROUND_CHECKS):
-        probe = probes[name]
-        if not isinstance(probe, dict):
-            _fail(E_SCHEMA, f"observations.probes.{name} must be an object")
-        _expect_keys(
-            probe,
-            required={
-                "probe_id",
-                "command",
-                "exit_code",
-                "stdout_sha256",
-                "stderr_sha256",
-            },
-            context=f"observations.probes.{name}",
-        )
-        if (
-            probe["probe_id"] != _walkaround_probe_id(name)
-            or probe["command"] != canonical[name]
-            or probe["exit_code"] != 0
-        ):
-            _fail(E_PROOF, f"walk-around probe observation mismatch: {name}")
-        _expect_sha256(
-            probe["stdout_sha256"], field=f"observations.probes.{name}.stdout_sha256"
-        )
-        _expect_sha256(
-            probe["stderr_sha256"], field=f"observations.probes.{name}.stderr_sha256"
-        )
-    verify_release_output(
-        path.parent / release_relative, path.parent / signature_relative
+    _, expected_probes, captures = _verify_release_output(
+        path.parent / release_relative,
+        path.parent / signature_relative,
+        require_walkaround=True,
     )
+    expected_release, expected_signature = captures
+    if payload["release_output"] != _release_reference(path.parent, expected_release):
+        _fail(E_PROOF, "walk-around release-output reference changed")
+    if payload["release_signature"] != _release_reference(
+        path.parent, expected_signature
+    ):
+        _fail(E_PROOF, "walk-around release-signature reference changed")
+    observations = payload["observations"]
+    if observations != {"issuer": WALKAROUND_RUNNER_ID, "probes": expected_probes}:
+        _fail(E_PROOF, "walk-around observations do not match live canonical probes")
     return dict(payload)
 
 
 def _verify_walkaround(
     receipt_path: Path,
-    *,
-    trusted_runner_public_key: Path,
-    release_output_verifier: Any = None,
-    expected_artifacts: Mapping[str, Path] | None = None,
 ) -> dict[str, Any]:
     path = receipt_path
     payload = _load_json(path)
-    if set(payload) == {
-        "schema",
-        "release_output",
-        "release_signature",
-        "observations",
-    }:
-        if payload["schema"] != WALKAROUND_SCHEMA:
-            _fail(E_SCHEMA, f"walk-around schema must be {WALKAROUND_SCHEMA}")
-        return _verify_runner_receipt(path, payload)
-    required = {
-        "schema",
-        "mount_path",
-        "release_output",
-        "release_signature",
-        "proofs",
-        "trusted_runner",
-        "delivery_seal",
-    }
-    _expect_keys(payload, required=required, context="walk-around receipt")
+    validate_schema_document(payload)
     if payload["schema"] != WALKAROUND_SCHEMA:
         _fail(E_SCHEMA, f"walk-around schema must be {WALKAROUND_SCHEMA}")
-    mount_path = Path(_expect_string(payload["mount_path"], field="mount_path"))
-    if not mount_path.is_absolute() or mount_path.is_symlink():
-        _fail(
-            E_PATH, "walk-around mount observation must be an absolute non-symlink path"
-        )
-
-    release_relative, release_hash = _validate_proof_artifact(
-        path.parent, payload["release_output"], field="release_output"
-    )
-    signature_relative, _ = _validate_proof_artifact(
-        path.parent, payload["release_signature"], field="release_signature"
-    )
-    if (
-        release_relative != "release-output.json"
-        or signature_relative != "release-output.json.sig"
-    ):
-        _fail(E_PROOF, "walk-around must reference canonical release-output artifacts")
-    if expected_artifacts is not None:
-        actual_artifacts = {
-            "release_output": (path.parent / release_relative).resolve(strict=False),
-            "release_signature": (path.parent / signature_relative).resolve(
-                strict=False
-            ),
-        }
-        expected_keys = set(actual_artifacts)
-        if set(expected_artifacts) != expected_keys:
-            _fail(E_SCHEMA, "walk-around expected artifact tuple is incomplete")
-        for name, actual in actual_artifacts.items():
-            expected = expected_artifacts[name]
-            if not expected.is_absolute() or expected.resolve(strict=False) != actual:
-                _fail(E_PROOF, f"walk-around {name} does not match requested release")
-    verifier = release_output_verifier or verify_release_output
-    release_payload = verifier(
-        path.parent / release_relative,
-        path.parent / signature_relative,
-    )
-    _expect_sha256(release_payload["dmg"]["sha256"], field="release_output.dmg.sha256")
-    _expect_sha256(
-        release_payload["product"]["manifest"]["sha256"],
-        field="release_output.product.manifest.sha256",
-    )
-    dmg_path = _release_relative_path(
-        path.parent, release_payload["dmg"]["path"], field="release_output.dmg.path"
-    )
-    app_path = mount_path / "Vibecrafted.app"
-
-    proofs, proof_digests = _validate_walkaround_proofs(
-        payload["proofs"],
-        receipt_root=path.parent,
-        release_output_sha256=release_hash,
-    )
-    _verify_recorded_live_commands(proofs, app=app_path, dmg=dmg_path)
-    _verify_trusted_runner_attestation(
-        path.parent,
-        payload["trusted_runner"],
-        trusted_public_key=trusted_runner_public_key,
-        payload=payload,
-        proof_digests=proof_digests,
-    )
-    _verify_walkaround_delivery_seal(
-        path.parent,
-        payload["delivery_seal"],
-        payload=payload,
-        proof_digests=proof_digests,
-    )
-    # The signed release verifier mounts the exact DMG and performs the live gates.
-    # The walk-around receipt only binds the canonical runner's recorded observations.
-    return payload
+    return _verify_runner_receipt(path, payload)
 
 
 def verify_walkaround(
     receipt_path: str | Path,
-    *,
-    release_output_path: str | Path | None = None,
-    release_signature_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Verify evidence against the release-policy trust root and mounted DMG."""
-    supplied = {
-        "release_output": release_output_path,
-        "release_signature": release_signature_path,
-    }
-    if any(value is not None for value in supplied.values()) and any(
-        value is None for value in supplied.values()
-    ):
-        _fail(E_SCHEMA, "walk-around expected release tuple must be complete")
-    expected_artifacts = {
-        name: Path(value) for name, value in supplied.items() if value is not None
-    } or None
-    return _verify_walkaround(
-        Path(receipt_path),
-        trusted_runner_public_key=_trusted_runner_public_key(),
-        expected_artifacts=expected_artifacts,
-    )
+    return _verify_walkaround(Path(receipt_path))
 
 
 def _fixture_entry(
@@ -3339,243 +3124,16 @@ def _self_test() -> int:
         )
         verify_transaction(transaction)
 
-        dmg = root / "synthetic.dmg"
-        dmg.write_bytes(b"synthetic-dmg\n")
-        walkaround = root / "walkaround.json"
-        release_output = root / "release-output.json"
-        release_signature = root / "release-output.json.sig"
-        release_payload = {
-            "product": {
-                "manifest": {
-                    "sha256": _sha256(app / "Contents/Resources/product-manifest.json")
-                }
-            },
-            "dmg": {
-                "path": dmg.name,
-                "sha256": _sha256(dmg),
-                "size": dmg.stat().st_size,
-            },
-        }
-        _write_json(release_output, release_payload)
-        release_signature.write_bytes(b"self-test-release-signature")
-
-        def proof_artifact(artifact: Path) -> dict[str, Any]:
-            return {
-                "path": artifact.relative_to(root).as_posix(),
-                "sha256": _sha256(artifact),
-                "size": artifact.stat().st_size,
-            }
-
-        proofs: dict[str, Any] = {}
-        expected_commands = _expected_runner_commands(app, dmg)
-        for name in sorted(_WALKAROUND_CHECKS):
-            before = root / f"proofs/{name}.before"
-            after = root / f"proofs/{name}.after"
-            stdout = root / f"proofs/{name}.stdout"
-            stderr = root / f"proofs/{name}.stderr"
-            stdout.parent.mkdir(parents=True, exist_ok=True)
-            before.write_text(f"{name}: before\n", encoding="utf-8")
-            after.write_text(f"{name}: after\n", encoding="utf-8")
-            stdout.write_text(f"{name}: passed\n", encoding="utf-8")
-            stderr.write_text("", encoding="utf-8")
-
-            proofs[name] = {
-                "producer": WALKAROUND_SEAL_ISSUER,
-                "probe_id": _walkaround_probe_id(name),
-                "command": expected_commands[name],
-                "exit_code": 0,
-                "inputs": {
-                    "release_output_sha256": _sha256(release_output),
-                },
-                "before": proof_artifact(before),
-                "after": proof_artifact(after),
-                "stdout": proof_artifact(stdout),
-                "stderr": proof_artifact(stderr),
-            }
-        walkaround_payload: dict[str, Any] = {
-            "schema": WALKAROUND_SCHEMA,
-            "mount_path": str(mount),
-            "release_output": proof_artifact(release_output),
-            "release_signature": proof_artifact(release_signature),
-            "proofs": proofs,
-        }
-        proof_digests = tuple(
-            _walkaround_proof_digest(name, proofs[name])
-            for name in sorted(_WALKAROUND_CHECKS)
-        )
-        openssl = _required_tool("openssl", failure_code=E_PROOF)
-        runner_private_key = root / "trusted-runner-private.pem"
-        runner_public_key = root / "trusted-runner-public.pem"
-        _run_tool(
-            [
-                openssl,
-                "genpkey",
-                "-algorithm",
-                "RSA",
-                "-pkeyopt",
-                "rsa_keygen_bits:2048",
-                "-out",
-                str(runner_private_key),
-            ],
-            failure_code=E_PROOF,
-            context="self-test could not create trusted runner key",
-        )
-        _run_tool(
-            [
-                openssl,
-                "pkey",
-                "-in",
-                str(runner_private_key),
-                "-pubout",
-                "-out",
-                str(runner_public_key),
-            ],
-            failure_code=E_PROOF,
-            context="self-test could not export trusted runner key",
-        )
-        runner_attestation = root / "trusted-runner/attestation.json"
-        runner_signature = root / "trusted-runner/attestation.sig"
-        _write_json(
-            runner_attestation,
-            {
-                "schema": WALKAROUND_RUNNER_ID,
-                "runner_id": WALKAROUND_RUNNER_ID,
-                "subject_sha256": _walkaround_subject_digest(walkaround_payload),
-                "assertion_sha256": _walkaround_assertion_digest(proof_digests),
-                "probe_ids": [
-                    _walkaround_probe_id(name) for name in sorted(_WALKAROUND_CHECKS)
-                ],
-            },
-        )
-        _run_tool(
-            [
-                openssl,
-                "dgst",
-                "-sha256",
-                "-sign",
-                str(runner_private_key),
-                "-out",
-                str(runner_signature),
-                str(runner_attestation),
-            ],
-            failure_code=E_PROOF,
-            context="self-test could not sign trusted runner attestation",
-        )
-        walkaround_payload["trusted_runner"] = {
-            "attestation": proof_artifact(runner_attestation),
-            "signature": proof_artifact(runner_signature),
-        }
-        seal_root = root / "delivery-run"
-        seal_artifacts = {
-            "execution_envelope_sha256": seal_root / "execution-envelope.json",
-            "delivery_proof_contract_sha256": seal_root
-            / "delivery-proof-contract.json",
-            "proof_result_sha256": seal_root / "proof/result.json",
-            "report_sha256": seal_root / "report.md",
-            "transcript_sha256": seal_root / "transcript.log",
-            "control_plane_snapshot_sha256": seal_root / "control-plane-snapshot.json",
-        }
-        runtime_probes = tuple(
-            {
-                "id": name,
-                "probe_id": _walkaround_probe_id(name),
-                "evidence_sha256": digest,
-            }
-            for name, digest in zip(
-                sorted(_WALKAROUND_CHECKS), proof_digests, strict=True
-            )
-        )
-        proof_contract = DeliveryProofContract(
-            schema=DeliveryProofContract.SCHEMA,
-            id="walkaround-proof",
-            execution_envelope_sha256="sha256:" + "0" * 64,
-            subject={"producer_id": "walkaround.subject", "argv": ["walkaround"]},
-            witness={"expected_outcome": "all product checks pass"},
-            oracle=None,
-            assertion={"id": "walkaround", "kind": "sealed-runtime-probes"},
-            negative_controls=({"id": "tamper-proof"},),
-            delivery_scope=WALKAROUND_SCOPE,
-            integration_target=str(app),
-            runtime_probes=runtime_probes,
-        )
-        proof_result = ProofResult(
-            schema=ProofResult.SCHEMA,
-            proof_id=proof_contract.id,
-            state=ProofState.PASSED,
-            evidence=({"role": "subject", "exit_code": 0},),
-            assertion_results=({"id": "walkaround", "passed": True, "valid": True},),
-            negative_control_results=(
-                {"id": "tamper-proof", "detected_falsehood": True, "valid": True},
-            ),
-            subject_executed=True,
-            assertion_consumed_subject_output=True,
-            refusal_reasons=(),
-            contract_sha256=proof_contract.content_digest(),
-            executor_sha256="sha256:" + "1" * 64,
-            evaluated_at="2026-01-01T00:00:00+00:00",
-        )
-        _write_json(
-            seal_artifacts["delivery_proof_contract_sha256"],
-            proof_contract.to_payload(),
-        )
-        _write_json(seal_artifacts["proof_result_sha256"], proof_result.to_payload())
-        for field, artifact in seal_artifacts.items():
-            if field in {"delivery_proof_contract_sha256", "proof_result_sha256"}:
-                continue
-            artifact.parent.mkdir(parents=True, exist_ok=True)
-            artifact.write_text(f"self-test {field}\n", encoding="utf-8")
-        artifact_digests = {
-            field: f"sha256:{_sha256(artifact)}"
-            for field, artifact in seal_artifacts.items()
-        }
-        seal = DeliverySeal(
-            schema=DeliverySeal.SCHEMA,
-            seal_id="sha256:" + "a" * 64,
-            issued_at="2026-01-01T00:00:00+00:00",
-            issuer=WALKAROUND_SEAL_ISSUER,
-            run_id="walkaround-self-test",
-            lifecycle_id="unified-product-self-test",
-            cut_id=WALKAROUND_SCOPE,
-            proof_id=proof_contract.id,
-            run_identity_sha256="sha256:" + "b" * 64,
-            liveness_evidence_sha256=(),
-            execution_envelope_sha256=artifact_digests["execution_envelope_sha256"],
-            delivery_proof_contract_sha256=artifact_digests[
-                "delivery_proof_contract_sha256"
-            ],
-            proof_result_sha256=artifact_digests["proof_result_sha256"],
-            executor_source_sha256="sha256:" + "c" * 64,
-            executor_version="self-test",
-            subject_evidence_sha256=_walkaround_subject_digest(walkaround_payload),
-            witness_sha256="sha256:" + "d" * 64,
-            oracle_evidence_sha256=None,
-            assertion_evidence_sha256=_walkaround_assertion_digest(proof_digests),
-            negative_control_evidence_sha256=("sha256:" + "e" * 64,),
-            repo="vetcoders/vibecrafted",
-            branch="self-test",
-            baseline_head="1" * 40,
-            final_head="2" * 40,
-            scoped_dirty_status_sha256="sha256:" + "f" * 64,
-            commit_range="1" * 40 + ".." + "2" * 40,
-            declared_scope=WALKAROUND_SCOPE,
-            checked_scope=WALKAROUND_SCOPE,
-            runtime_probe_sha256=proof_digests,
-            report_sha256=artifact_digests["report_sha256"],
-            transcript_sha256=artifact_digests["transcript_sha256"],
-            control_plane_snapshot_sha256=artifact_digests[
-                "control_plane_snapshot_sha256"
-            ],
-            unverified_surfaces=(),
-        )
-        seal_path = seal_root / "delivery-seal.json"
-        _write_json(seal_path, seal.to_payload())
-        walkaround_payload["delivery_seal"] = proof_artifact(seal_path)
-        _write_json(walkaround, walkaround_payload)
-        _verify_walkaround(
-            walkaround,
-            trusted_runner_public_key=runner_public_key,
-            release_output_verifier=lambda *args, **kwargs: release_payload,
-        )
+        registry = _probe_registry()
+        if (
+            len(registry) != 15
+            or {item.name for item in registry} != _WALKAROUND_CHECKS
+        ):
+            _fail(E_PROOF, "self-test walk-around registry is incomplete")
+        if sum(item.executor == "argv" for item in registry) != 6:
+            _fail(E_PROOF, "self-test walk-around argv registry is incomplete")
+        if any(item.executor != "argv" and item.argv is not None for item in registry):
+            _fail(E_PROOF, "self-test semantic probes carry fabricated argv")
 
     if expected_failures != [E_HASH, E_DEPENDENCY]:
         _fail(
