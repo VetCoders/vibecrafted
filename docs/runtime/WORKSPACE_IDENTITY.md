@@ -31,7 +31,7 @@ Schema: `vibecrafted.build-id.v1`
   "schema": "vibecrafted.build-id.v1",
   "git_commit": "<full sha or empty>",
   "dirty": true,
-  "dirty_digest": "<sha256 of git status --porcelain when dirty, else empty>",
+  "dirty_digest": "<sha256 of canonical dirty evidence when dirty, else empty>",
   "package_version": "<VERSION file or package>",
   "root": "<resolved absolute root>",
   "rendered": "git:<12sha>[+dirty:<12digest>]@v<version>"
@@ -41,6 +41,12 @@ Schema: `vibecrafted.build-id.v1`
 A live `workspace_instance_id` is bound to that `build_id`. An instance from
 build B cannot claim live ownership of build A's instance
 (`WorkspaceInstanceBuildMismatch`).
+
+`dirty_digest` covers NUL-delimited porcelain status, binary tracked diffs,
+and each untracked path, file type, and content. Two dirty builds at the same
+commit therefore remain distinct even when `git status` prints the same path
+and state. If Git identifies a checkout but cannot provide complete dirty
+evidence, build identity resolution fails closed.
 
 ## Catalog location
 

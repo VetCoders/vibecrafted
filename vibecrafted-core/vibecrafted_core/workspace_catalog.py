@@ -26,6 +26,9 @@ import os
 import re
 import stat
 import subprocess
+import sys
+import threading
+import time
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -59,6 +62,9 @@ _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+_UUID7_LOCK = threading.Lock()
+_UUID7_LAST_MS = -1
+_UUID7_COUNTER = 0
 
 
 class WorkspaceCatalogError(RuntimeError):
@@ -82,14 +88,42 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _new_uuid7_fallback() -> str:
+    """Mint a monotonic RFC 9562 UUIDv7 on Python versions without uuid.uuid7."""
+
+    global _UUID7_COUNTER, _UUID7_LAST_MS
+    timestamp_ms = time.time_ns() // 1_000_000
+    with _UUID7_LOCK:
+        if timestamp_ms > _UUID7_LAST_MS:
+            counter = int.from_bytes(os.urandom(10), "big") & ((1 << 74) - 1)
+        else:
+            timestamp_ms = _UUID7_LAST_MS
+            counter = (_UUID7_COUNTER + 1) & ((1 << 74) - 1)
+            if counter == 0:
+                timestamp_ms += 1
+                counter = int.from_bytes(os.urandom(10), "big") & ((1 << 74) - 1)
+        _UUID7_LAST_MS = timestamp_ms
+        _UUID7_COUNTER = counter
+
+    rand_a = counter >> 62
+    rand_b = counter & ((1 << 62) - 1)
+    value = (
+        ((timestamp_ms & ((1 << 48) - 1)) << 80)
+        | (0x7 << 76)
+        | (rand_a << 64)
+        | (0b10 << 62)
+        | rand_b
+    )
+    return str(uuid.UUID(int=value))
+
+
 def new_uuid7() -> str:
-    """Mint a canonical UUIDv7 string (falls back to v4 only if uuid7 is absent)."""
+    """Mint a canonical UUIDv7 string on every supported Python runtime."""
 
     factory = getattr(uuid, "uuid7", None)
     if callable(factory):
         return str(factory())
-    # Pre-3.14 runtimes: still emit a UUID string; document as non-v7 fallback.
-    return str(uuid.uuid4())
+    return _new_uuid7_fallback()
 
 
 def is_uuid(value: object) -> bool:
@@ -299,6 +333,92 @@ class BuildId:
         )
 
 
+def _dirty_worktree_digest(root: Path, *, porcelain: bytes, git_commit: str) -> str:
+    """Hash tracked diffs plus untracked path/type/content for one dirty checkout."""
+
+    digest = hashlib.sha256()
+    digest.update(b"vibecrafted-dirty-build-v1\0status\0")
+    digest.update(len(porcelain).to_bytes(8, "big"))
+    digest.update(porcelain)
+
+    diff_commands: tuple[list[str], ...]
+    if git_commit:
+        diff_commands = (
+            [
+                "git",
+                "-C",
+                str(root),
+                "diff",
+                "--binary",
+                "--no-ext-diff",
+                "HEAD",
+                "--",
+            ],
+        )
+    else:
+        diff_commands = (
+            ["git", "-C", str(root), "diff", "--binary", "--no-ext-diff", "--cached"],
+            ["git", "-C", str(root), "diff", "--binary", "--no-ext-diff"],
+        )
+    for command in diff_commands:
+        proc = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            timeout=20,
+        )
+        if proc.returncode != 0:
+            raise WorkspaceCatalogError(
+                "cannot compute exact dirty build_id: git diff failed"
+            )
+        digest.update(b"diff\0")
+        digest.update(len(proc.stdout).to_bytes(8, "big"))
+        digest.update(proc.stdout)
+
+    untracked_proc = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ],
+        check=False,
+        capture_output=True,
+        timeout=20,
+    )
+    if untracked_proc.returncode != 0:
+        raise WorkspaceCatalogError(
+            "cannot compute exact dirty build_id: untracked inventory failed"
+        )
+    for raw_path in sorted(item for item in untracked_proc.stdout.split(b"\0") if item):
+        path = root / os.fsdecode(raw_path)
+        digest.update(b"untracked\0")
+        digest.update(len(raw_path).to_bytes(8, "big"))
+        digest.update(raw_path)
+        try:
+            meta = path.lstat()
+            digest.update(meta.st_mode.to_bytes(4, "big"))
+            if stat.S_ISLNK(meta.st_mode):
+                content = os.fsencode(os.readlink(path))
+                digest.update(len(content).to_bytes(8, "big"))
+                digest.update(content)
+            elif stat.S_ISREG(meta.st_mode):
+                digest.update(meta.st_size.to_bytes(8, "big"))
+                with path.open("rb") as handle:
+                    while chunk := handle.read(1024 * 1024):
+                        digest.update(chunk)
+            else:
+                digest.update(b"non-regular")
+        except OSError as exc:
+            raise WorkspaceCatalogError(
+                f"cannot compute exact dirty build_id for {raw_path!r}: {exc}"
+            ) from exc
+    return digest.hexdigest()
+
+
 def compute_build_id(root: str | Path | None = None) -> BuildId:
     """Compute build_id for a checkout root (commit + dirty digest + version)."""
 
@@ -317,24 +437,44 @@ def compute_build_id(root: str | Path | None = None) -> BuildId:
         if commit_proc.returncode == 0:
             git_commit = commit_proc.stdout.strip()
         status_proc = subprocess.run(
-            ["git", "-C", str(resolved), "status", "--porcelain"],
+            [
+                "git",
+                "-C",
+                str(resolved),
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            ],
             check=False,
             capture_output=True,
-            text=True,
             timeout=10,
         )
         if status_proc.returncode == 0:
             porcelain = status_proc.stdout
             dirty = bool(porcelain.strip())
             if dirty:
-                dirty_digest = hashlib.sha256(porcelain.encode("utf-8")).hexdigest()
-    except (OSError, subprocess.SubprocessError):
-        pass
+                dirty_digest = _dirty_worktree_digest(
+                    resolved,
+                    porcelain=porcelain,
+                    git_commit=git_commit,
+                )
+        elif git_commit:
+            raise WorkspaceCatalogError(
+                "cannot compute exact build_id: git status failed"
+            )
+    except (OSError, subprocess.SubprocessError) as exc:
+        if git_commit or dirty:
+            raise WorkspaceCatalogError(
+                f"cannot compute exact dirty build_id: {exc}"
+            ) from exc
     package_version = read_version_file(resolved)
     if package_version == "unknown":
         # Prefer the installed package version when the root is not a checkout.
         try:
-            from . import __version__ as package_version  # type: ignore[attr-defined]
+            from . import __version__ as installed_version
+
+            package_version = installed_version
         except Exception:  # noqa: BLE001 — version is advisory only
             package_version = "unknown"
     return BuildId(
@@ -396,9 +536,10 @@ class WorkspaceRecord:
         buried_at = payload.get("buried_at")
         recovered_at = payload.get("recovered_at")
         notes = str(payload.get("notes") or "")
+        raw_migration = payload.get("migration")
         migration = (
-            payload.get("migration")
-            if isinstance(payload.get("migration"), dict)
+            {str(key): value for key, value in raw_migration.items()}
+            if isinstance(raw_migration, dict)
             else {}
         )
         return cls(
@@ -1627,7 +1768,7 @@ def workspace_cli_main(argv: Sequence[str] | None = None) -> int:
                 as_json=True,
             )
     except WorkspaceCatalogError as exc:
-        print(f"error: {exc}", file=os.sys.stderr)
+        print(f"error: {exc}", file=sys.stderr)
         return 2
     parser.error(f"unknown action {args.action!r}")
     return 2

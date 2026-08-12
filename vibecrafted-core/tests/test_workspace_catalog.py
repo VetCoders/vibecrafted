@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import uuid
 from pathlib import Path
 
 import pytest
@@ -117,6 +119,66 @@ def test_run_identity_fields_on_resolve(home: Path, tmp_path: Path) -> None:
         assert key in meta
     assert meta["worker_host_session"].endswith(" workers")
     assert wc.short_workspace_token(created.workspace_id) in meta["worker_host_session"]
+
+
+def test_new_uuid7_fallback_emits_uuid7(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delattr(wc.uuid, "uuid7", raising=False)
+    generated = [uuid.UUID(wc.new_uuid7()) for _ in range(8)]
+    assert all(value.version == 7 for value in generated)
+    assert generated == sorted(generated)
+
+
+def test_dirty_build_id_distinguishes_content_with_same_status(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.email", "test@example.invalid"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.name", "Vibecrafted Test"],
+        check=True,
+    )
+    tracked = root / "tracked.txt"
+    tracked.write_text("clean\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "commit", "-q", "-m", "fixture"], check=True
+    )
+
+    tracked.write_text("first dirty content\n", encoding="utf-8")
+    first = wc.compute_build_id(root)
+    tracked.write_text("second dirty content\n", encoding="utf-8")
+    second = wc.compute_build_id(root)
+
+    assert first.git_commit == second.git_commit
+    assert first.dirty is second.dirty is True
+    assert first.dirty_digest != second.dirty_digest
+
+    tracked.write_text("clean\n", encoding="utf-8")
+    untracked = root / "untracked.txt"
+    untracked.write_text("first untracked content\n", encoding="utf-8")
+    first_untracked = wc.compute_build_id(root)
+    untracked.write_text("second untracked content\n", encoding="utf-8")
+    second_untracked = wc.compute_build_id(root)
+    assert first_untracked.dirty_digest != second_untracked.dirty_digest
+
+
+def test_build_id_fails_closed_when_git_status_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    responses = iter(
+        (
+            subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=f"{'a' * 40}\n", stderr=""
+            ),
+            subprocess.CompletedProcess(args=[], returncode=2, stdout=b"", stderr=b""),
+        )
+    )
+    monkeypatch.setattr(wc.subprocess, "run", lambda *_args, **_kwargs: next(responses))
+    with pytest.raises(wc.WorkspaceCatalogError, match="git status failed"):
+        wc.compute_build_id(tmp_path)
 
 
 def test_instance_build_mismatch_cannot_claim_live(home: Path, tmp_path: Path) -> None:
