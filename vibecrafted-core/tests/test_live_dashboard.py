@@ -13,26 +13,46 @@ from pathlib import Path
 
 from vibecrafted_core.live_dashboard import (
     PENDING_HUMAN_NOTICE,
+    WORKSPACE_CATALOG_SCHEMA,
     DashboardState,
     TranscriptTail,
+    resolve_workspace_id,
     scan_live_runs,
     worker_is_alive,
 )
 
 
 def write_meta(
-    root: Path, run_id: str, pid: int, repo_root: str = "/tmp/ws/vc-frame"
+    root: Path,
+    run_id: str,
+    pid: int,
+    repo_root: str = "/tmp/ws/vc-frame",
+    workspace_id: str | None = None,
 ) -> None:
     directory = root / "runtime_runs" / run_id
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / "meta.json").write_text(
+    meta = {
+        "run_id": run_id,
+        "agent": "claude",
+        "skill": "workflow",
+        "root": repo_root,
+        "worker_pid": pid,
+    }
+    if workspace_id is not None:
+        meta["workspace_id"] = workspace_id
+    (directory / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+
+def write_catalog(
+    root: Path, workspaces: list[dict], schema: str | None = None
+) -> None:
+    directory = root / "workspaces"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "catalog.json").write_text(
         json.dumps(
             {
-                "run_id": run_id,
-                "agent": "claude",
-                "skill": "workflow",
-                "root": repo_root,
-                "worker_pid": pid,
+                "schema": schema or WORKSPACE_CATALOG_SCHEMA,
+                "workspaces": {w["workspace_id"]: w for w in workspaces},
             }
         ),
         encoding="utf-8",
@@ -200,6 +220,55 @@ def test_detail_header_names_agent_repo_run_and_mode(tmp_path: Path) -> None:
     )
     state.raw_transcript = True
     assert state.detail_header(card).endswith("· RAW")
+
+
+def test_workspace_id_resolves_from_canonical_catalog(tmp_path: Path) -> None:
+    mine = tmp_path / "repo"
+    mine.mkdir()
+    write_catalog(
+        tmp_path,
+        [
+            {"workspace_id": "ws-mine", "canonical_root": str(mine)},
+            {
+                "workspace_id": "ws-buried",
+                "canonical_root": str(mine),
+                "buried_at": "2026-08-12T00:00:00+00:00",
+            },
+        ],
+    )
+    assert resolve_workspace_id(str(mine), tmp_path) == "ws-mine"
+    assert resolve_workspace_id(str(tmp_path / "elsewhere"), tmp_path) is None
+
+
+def test_foreign_schema_or_missing_catalog_resolves_to_none(tmp_path: Path) -> None:
+    assert resolve_workspace_id(str(tmp_path), tmp_path) is None
+    write_catalog(
+        tmp_path,
+        [{"workspace_id": "ws", "canonical_root": str(tmp_path)}],
+        schema="somebody.elses.catalog.v9",
+    )
+    assert resolve_workspace_id(str(tmp_path), tmp_path) is None
+
+
+def test_current_filter_prefers_workspace_id_over_root(tmp_path: Path) -> None:
+    # Same root string on both cards — only the workspace identity separates
+    # them (the exact aliasing Cut A exists to kill).
+    write_meta(tmp_path, "a-260812-010000-1", 99, "/tmp/shared", "ws-mine")
+    write_meta(tmp_path, "b-260812-020000-2", 99, "/tmp/shared", "ws-other")
+    state = DashboardState(current_root="/tmp/shared", current_workspace_id="ws-mine")
+    state.refresh(scan_live_runs(tmp_path, is_alive=lambda _pid: True))
+
+    assert [card.run_id for card in state.visible_rows()] == ["a-260812-010000-1"]
+
+
+def test_legacy_run_without_workspace_id_falls_back_to_root(tmp_path: Path) -> None:
+    mine = tmp_path / "repo"
+    mine.mkdir()
+    write_meta(tmp_path, "old-260812-010000-1", 99, str(mine))  # no workspace_id
+    state = DashboardState(current_root=str(mine), current_workspace_id="ws-mine")
+    state.refresh(scan_live_runs(tmp_path, is_alive=lambda _pid: True))
+
+    assert [card.run_id for card in state.visible_rows()] == ["old-260812-010000-1"]
 
 
 def test_transcript_tail_reads_increments_and_survives_truncation(

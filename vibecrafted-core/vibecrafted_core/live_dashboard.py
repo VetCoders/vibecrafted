@@ -40,6 +40,9 @@ class LiveRunCard:
     skill: str
     root: str
     worker_pid: int
+    # Cut B wire: runs launched after workspace propagation carry the explicit
+    # workspace identity; legacy runs keep None and are matched by exact root.
+    workspace_id: str | None = None
 
     @property
     def repo(self) -> str:
@@ -79,12 +82,14 @@ def _card_from_meta(meta_path: Path) -> LiveRunCard | None:
     worker_pid = value.get("worker_pid")
     if not isinstance(run_id, str) or not isinstance(worker_pid, int):
         return None
+    workspace_id = value.get("workspace_id")
     return LiveRunCard(
         run_id=run_id,
         agent=str(value.get("agent") or ""),
         skill=str(value.get("skill") or ""),
         root=str(value.get("root") or ""),
         worker_pid=worker_pid,
+        workspace_id=workspace_id if isinstance(workspace_id, str) else None,
     )
 
 
@@ -103,6 +108,40 @@ def scan_live_runs(root: Path, is_alive=worker_is_alive) -> list[LiveRunCard]:
     # run_id starts with a launch timestamp: lexical order is chronological.
     cards.sort(key=lambda card: card.run_id)
     return cards
+
+
+WORKSPACE_CATALOG_SCHEMA = "vibecrafted.workspace-catalog.v1"
+
+
+def resolve_workspace_id(current_root: str, plane_root: Path) -> str | None:
+    """Map the dashboard's launch root to its workspace_id via the ONE
+    canonical catalog (``workspaces/catalog.json`` — never a second catalog,
+    never basename guessing). Unknown root / absent / foreign-schema catalog
+    resolve to None; the filter then falls back to exact-root identity."""
+    import json
+
+    path = plane_root / "workspaces" / "catalog.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if value.get("schema") != WORKSPACE_CATALOG_SCHEMA:
+        return None
+    try:
+        target = os.path.realpath(current_root)
+    except OSError:
+        target = current_root
+    workspaces = value.get("workspaces")
+    if not isinstance(workspaces, dict):
+        return None
+    for workspace in workspaces.values():
+        if not isinstance(workspace, dict) or workspace.get("buried_at"):
+            continue
+        root = workspace.get("canonical_root")
+        if isinstance(root, str) and os.path.realpath(root) == target:
+            workspace_id = workspace.get("workspace_id")
+            return workspace_id if isinstance(workspace_id, str) else None
+    return None
 
 
 def run_started_label(run_id: str, now: float | None = None) -> str:
@@ -143,16 +182,20 @@ def run_started_label(run_id: str, now: float | None = None) -> str:
 class DashboardState:
     current_root: str
     cards: list[LiveRunCard] = field(default_factory=list)
-    # 'current' filters on the run's canonical root identity (full resolved
-    # path — never the basename; two roots both named `vibecrafted` stay
-    # distinct). TODO(workspace-id): switch to workspace_id once Cut A's
-    # catalog lands and runs carry it.
+    # 'current' selects by explicit workspace_id (Cut B wire contract) when
+    # BOTH sides carry one: the dashboard's identity comes from the canonical
+    # catalog, the run's from its meta.json. Legacy runs without workspace_id
+    # fall back to full resolved-root identity — never the basename; two
+    # roots both named `vibecrafted` stay distinct.
+    current_workspace_id: str | None = None
     filter_mode: str = "current"
     selected_run_id: str | None = None
     all_streams: bool = False
     raw_transcript: bool = False
 
     def _same_workspace(self, card: LiveRunCard) -> bool:
+        if self.current_workspace_id is not None and card.workspace_id is not None:
+            return card.workspace_id == self.current_workspace_id
         try:
             card_root = str(Path(card.root).resolve())
             mine = str(Path(self.current_root).resolve())
@@ -201,8 +244,9 @@ class DashboardState:
             self.selected_run_id = None
             return
         ids = [card.run_id for card in rows]
+        selected = self.selected_run_id
         try:
-            index = ids.index(self.selected_run_id)
+            index = ids.index(selected) if selected is not None else 0
         except ValueError:
             index = 0
         self.selected_run_id = ids[max(0, min(len(ids) - 1, index + delta))]
@@ -315,7 +359,7 @@ def _draw(
     put(help_row, 0, "Enter open · A all streams · R raw · Esc close", curses.A_DIM)
     put(help_row + 1, 0, "─" * max(0, width - 1))
 
-    card = state.selected_card()
+    selected = state.selected_card()
     if state.all_streams:
         put(
             help_row + 2,
@@ -324,11 +368,11 @@ def _draw(
             + ("RAW" if state.raw_transcript else "HUMAN"),
             curses.A_BOLD,
         )
-    elif card is not None:
-        put(help_row + 2, 0, state.detail_header(card), curses.A_BOLD)
+    elif selected is not None:
+        put(help_row + 2, 0, state.detail_header(selected), curses.A_BOLD)
         if (
             not state.raw_transcript
-            and not state.transcript_path(card, plane_root).exists()
+            and not state.transcript_path(selected, plane_root).exists()
         ):
             tail_lines = [PENDING_HUMAN_NOTICE]
 
@@ -344,7 +388,11 @@ def run_dashboard(
     stdscr, plane_root: Path | None = None, current_root: str | None = None
 ) -> None:
     plane = plane_root or control_plane_root()
-    state = DashboardState(current_root=current_root or os.getcwd())
+    root = current_root or os.getcwd()
+    state = DashboardState(
+        current_root=root,
+        current_workspace_id=resolve_workspace_id(root, plane),
+    )
     state.refresh(scan_live_runs(plane))
 
     curses.curs_set(0)
