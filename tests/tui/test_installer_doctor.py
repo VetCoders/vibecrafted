@@ -806,6 +806,28 @@ def test_install_python_entrypoint_launchers_replace_managed_shell_wrappers(
     assert (launcher_bin / "vibecrafted-resume").resolve(strict=False) == (
         console_bin / "vibecrafted-resume"
     )
+    assert (launcher_bin / "verify-vibecrafted-walkaround").resolve(strict=False) == (
+        console_bin / "verify-vibecrafted-walkaround"
+    )
+
+
+def test_installer_doctor_fails_when_walkaround_runner_launcher_is_missing() -> None:
+    state = installer.InstallState(
+        launcher_entries=["/managed/bin/verify-vibecrafted-walkaround"]
+    )
+
+    assert (
+        installer._python_entrypoint_issue_level(
+            ["verify-vibecrafted-walkaround:missing"], state=state
+        )
+        == "fail"
+    )
+    assert (
+        installer._python_entrypoint_issue_level(
+            ["verify-vibecrafted-walkaround:missing"], state=installer.InstallState()
+        )
+        == "warn"
+    )
 
 
 def test_doctor_executes_vibecrafted_launcher_without_bash() -> None:

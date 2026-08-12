@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path, PurePosixPath
@@ -103,10 +104,12 @@ _APP_ENTRYPOINTS = frozenset({"app", "terminal", "frame"})
 _WALKAROUND_CHECKS = frozenset(
     {
         "one_app",
-        "codesign",
+        "app_codesign",
+        "dmg_codesign",
         "app_notarization",
         "dmg_notarization",
-        "gatekeeper",
+        "app_gatekeeper",
+        "dmg_gatekeeper",
         "sanitized_launch",
         "mission_control",
         "bundled_console",
@@ -1329,7 +1332,7 @@ def build_launch_environment(
         _fail(E_PATH, "app bundle root must not be a symlink")
     try:
         app = raw_app.resolve(strict=True)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         _fail(E_PATH, f"app bundle path cannot be resolved: {exc}")
     payload = verify_app(app)
     host = dict(os.environ if host_environment is None else host_environment)
@@ -1348,7 +1351,7 @@ def build_launch_environment(
         _fail(E_PATH, "VIBECRAFTED_RUNTIME_HOME must resolve to an absolute path")
     try:
         runtime_home = runtime_home.resolve(strict=False)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         _fail(E_PATH, f"VIBECRAFTED_RUNTIME_HOME cannot be resolved: {exc}")
     if runtime_home == app or app in runtime_home.parents:
         _fail(E_PATH, "VIBECRAFTED_RUNTIME_HOME must not descend from the app bundle")
@@ -1363,7 +1366,7 @@ def build_launch_environment(
         Path(probe).unlink()
     except ProductContractError:
         raise
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         _fail(E_PATH, f"VIBECRAFTED_RUNTIME_HOME cannot be created or written: {exc}")
     child = {name: host[name] for name in _LAUNCH_INHERITED_ENV if host.get(name)}
     child.update(
@@ -1894,10 +1897,10 @@ def _codesign_release_evidence(app: Path) -> dict[str, Any]:
     if entitlement_bytes:
         try:
             entitlements = plistlib.loads(entitlement_bytes)
-        except plistlib.InvalidFileException as exc:
+        except (plistlib.InvalidFileException, ValueError) as exc:
             _fail(E_PROOF, f"final app entitlements are malformed: {exc}")
     else:
-        entitlements = {}
+        _fail(E_PROOF, "final app entitlements output is empty")
     if not isinstance(entitlements, dict):
         _fail(E_PROOF, "final app entitlements are not a dictionary")
     return {
@@ -1912,14 +1915,202 @@ def _codesign_release_evidence(app: Path) -> dict[str, Any]:
     }
 
 
-def verify_release_output(
+def _release_relative_path(root: Path, value: Any, *, field: str) -> Path:
+    relative = _relative_path(value, field=field)
+    candidate = root / relative
+    if _inside_payload(root, candidate, context=field) != relative.as_posix():
+        _fail(E_PATH, f"{field} does not resolve to its signed relative path")
+    if candidate.is_symlink():
+        _fail(E_PATH, f"{field} must not be a symlink")
+    return candidate
+
+
+@contextmanager
+def _captured_release_dmg(dmg: Path, *, expected_size: int, expected_sha256: str):
+    """Capture one immutable, verified DMG snapshot from one no-follow descriptor."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(dmg, flags)
+    except OSError as exc:
+        _fail(E_MISSING, f"release DMG cannot be opened safely: {exc}")
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            _fail(E_PATH, "release DMG must be a regular file")
+        if metadata.st_size != expected_size:
+            _fail(E_SIZE, "release output DMG size mismatch")
+        with tempfile.TemporaryDirectory(
+            prefix="vibecrafted-release-dmg-"
+        ) as directory:
+            snapshot = Path(directory) / "Vibecrafted.dmg"
+            digest = hashlib.sha256()
+            copied = 0
+            with (
+                os.fdopen(descriptor, "rb", closefd=False) as source,
+                snapshot.open("xb") as target,
+            ):
+                while chunk := source.read(1024 * 1024):
+                    copied += len(chunk)
+                    if copied > expected_size:
+                        _fail(E_SIZE, "release DMG changed while being captured")
+                    digest.update(chunk)
+                    target.write(chunk)
+                target.flush()
+                os.fsync(target.fileno())
+            if copied != expected_size:
+                _fail(E_SIZE, "release DMG changed while being captured")
+            if digest.hexdigest() != expected_sha256:
+                _fail(E_HASH, "release output DMG hash mismatch")
+            snapshot.chmod(0o400)
+            yield snapshot
+    finally:
+        os.close(descriptor)
+
+
+@contextmanager
+def _mounted_release_dmg(dmg: Path):
+    """Mount exactly one signed DMG read-only and yield its sole top-level app."""
+    hdiutil = _required_tool("hdiutil", failure_code=E_PROOF)
+    with tempfile.TemporaryDirectory(prefix="vibecrafted-release-mount-") as directory:
+        mount = Path(directory)
+        _run_tool(
+            [
+                hdiutil,
+                "attach",
+                "-readonly",
+                "-nobrowse",
+                "-mountpoint",
+                str(mount),
+                str(dmg),
+            ],
+            failure_code=E_PROOF,
+            context="signed release DMG could not be mounted",
+        )
+        try:
+            attached = _attached_image_mounts()
+            if (dmg.resolve(), mount.resolve()) not in attached:
+                _fail(E_PROOF, "mounted image is not the exact signed DMG")
+            apps = sorted(
+                path
+                for path in mount.iterdir()
+                if path.is_dir() and path.suffix == ".app"
+            )
+            if [path.name for path in apps] != ["Vibecrafted.app"]:
+                _fail(E_BUNDLE, "signed DMG must contain one top-level Vibecrafted.app")
+            app = apps[0]
+            if app.is_symlink():
+                _fail(E_BUNDLE, "mounted Vibecrafted.app must not be a symlink")
+            yield app
+        finally:
+            subprocess.run(
+                [hdiutil, "detach", str(mount)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+
+def _verify_release_artifacts(
+    payload: Mapping[str, Any], *, receipt_root: Path, dmg: Path, app: Path
+) -> dict[str, Any]:
+    product = verify_app(app, require_clean=True)
+    product_receipt = payload["product"]
+    product_manifest_relative = _relative_path(
+        product_receipt["manifest"]["path"], field="product.manifest.path"
+    ).as_posix()
+    if product_manifest_relative != "Contents/Resources/product-manifest.json":
+        _fail(E_PROOF, "release output product manifest path is not canonical")
+    product_manifest = app / product_manifest_relative
+    if product_receipt != {
+        "version": product["version"],
+        "build": product["build"],
+        "architecture": product["architecture"],
+        "minimum_macos": product["minimum_macos"],
+        "manifest": {
+            "path": product_manifest_relative,
+            "sha256": _sha256(product_manifest),
+        },
+    }:
+        _fail(E_PROOF, "release output product identity does not match the final app")
+
+    outer = payload["outer_executable"]
+    executable_relative = _relative_path(
+        outer["path"], field="outer_executable.path"
+    ).as_posix()
+    if executable_relative != product["outer_bundle_code"]["path"]:
+        _fail(E_PROOF, "release output outer executable path mismatch")
+    executable = app / executable_relative
+    policy = _release_policy()
+    observed_signer = _codesign_release_evidence(app)
+    expected_signer = {
+        "team_id": policy["team_id"],
+        "designated_requirement": policy["designated_requirement"],
+        "hardened_runtime": policy["hardened_runtime"],
+        "entitlements": policy["entitlements"],
+    }
+    if outer["signer_policy"] != expected_signer:
+        _fail(E_PROOF, "release output signer policy violates packaged policy")
+    if observed_signer != {"cdhash": outer["cdhash"], **expected_signer}:
+        _fail(E_PROOF, "final app signer evidence does not match release output")
+    if outer != {
+        "path": executable_relative,
+        "sha256": _sha256(executable),
+        "code_identity": MACHO_CODE_IDENTITY,
+        "code_sha256": _macho_code_sha256(executable),
+        "cdhash": observed_signer["cdhash"],
+        "signer_policy": expected_signer,
+    }:
+        _fail(E_HASH, "release output outer executable identity mismatch")
+
+    resources = payload["code_resources"]
+    resources_relative = _relative_path(
+        resources["path"], field="code_resources.path"
+    ).as_posix()
+    if resources_relative != "Contents/_CodeSignature/CodeResources":
+        _fail(E_PROOF, "release output CodeResources path is not canonical")
+    resources_path = app / resources_relative
+    if not resources_path.is_file() or resources_path.is_symlink():
+        _fail(E_MISSING, "final app CodeResources is missing")
+    if resources["sha256"] != _sha256(resources_path):
+        _fail(E_HASH, "release output CodeResources hash mismatch")
+
+    product_modules = {item["module"]: item for item in product["modules"]}
+    for name in sorted(SUPPORTED_MODULES):
+        binding = product_modules[name]
+        expected = {
+            "manifest": {
+                "path": binding["manifest_path"],
+                "sha256": binding["manifest_sha256"],
+            },
+            "assembly_receipt": {
+                "path": binding["assembly_receipt_path"],
+                "sha256": binding["assembly_receipt_sha256"],
+            },
+            "git_sha": binding["git_sha"],
+        }
+        if payload["modules"][name] != expected:
+            _fail(E_PROOF, f"release output module identity mismatch: {name}")
+        for field_name in ("manifest", "assembly_receipt"):
+            referent = expected[field_name]
+            artifact = app / referent["path"]
+            if _sha256(artifact) != referent["sha256"]:
+                _fail(E_HASH, f"release output module referent mismatch: {name}")
+
+    expected_revisions = {
+        "vibecrafted": product["git_sha"],
+        "vc-terminal": product_modules["vc-terminal"]["git_sha"],
+        "vc-frame": product_modules["vc-frame"]["git_sha"],
+    }
+    if payload["source_revisions"] != expected_revisions:
+        _fail(E_PROOF, "release output source revisions do not match the product")
+    return _run_live_release_checks(app, dmg)
+
+
+def _verify_release_output(
     receipt_path: str | Path,
     signature_path: str | Path,
-    *,
-    app_path: str | Path,
-    dmg_path: str | Path,
-) -> dict[str, Any]:
-    """Verify W4's one external signed release identity against live artifacts."""
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Verify W4's signed receipt as the sole selector of the DMG and app."""
     receipt = Path(receipt_path)
     actual_receipt = _verify_release_signature(receipt, Path(signature_path))
     payload = _load_json_bytes(actual_receipt, source=receipt)
@@ -1935,87 +2126,21 @@ def verify_release_output(
     )
     if actual_receipt != canonical:
         _fail(E_PROOF, "release output must be canonical JSON")
-    required = {
-        "schema",
-        "product_manifest_sha256",
-        "outer_executable",
-        "code_resources_sha256",
-        "dmg",
-        "modules",
-        "source_revisions",
-    }
-    _expect_keys(payload, required=required, context="release output")
+    # Public schema owns the closed shape.  Do not index even one receipt field
+    # before it has accepted the exact immutable bytes verified above.
+    validate_schema_document(payload)
+    policy = _release_policy()
     if payload["schema"] != RELEASE_OUTPUT_SCHEMA:
         _fail(E_SCHEMA, f"release output schema must be {RELEASE_OUTPUT_SCHEMA}")
-    app = Path(app_path)
-    dmg = Path(dmg_path)
-    if not app.is_absolute() or not dmg.is_absolute():
-        _fail(
-            E_PATH, "release verification requires explicit absolute app and DMG paths"
-        )
-    product = verify_app(app, require_clean=True)
-    product_manifest = app / "Contents/Resources/product-manifest.json"
-    if _expect_sha256(
-        payload["product_manifest_sha256"], field="product_manifest_sha256"
-    ) != _sha256(product_manifest):
-        _fail(E_HASH, "release output product manifest hash mismatch")
-    outer = payload["outer_executable"]
-    if not isinstance(outer, dict):
-        _fail(E_SCHEMA, "release output outer_executable must be an object")
-    _expect_keys(
-        outer,
-        required={
-            "sha256",
-            "code_sha256",
-            "cdhash",
-            "team_id",
-            "designated_requirement",
-            "hardened_runtime",
-            "entitlements",
-        },
-        context="release output outer_executable",
-    )
-    executable = app / product["outer_bundle_code"]["path"]
-    if _expect_sha256(outer["sha256"], field="outer_executable.sha256") != _sha256(
-        executable
-    ):
-        _fail(E_HASH, "release output raw outer executable hash mismatch")
-    if _expect_sha256(
-        outer["code_sha256"], field="outer_executable.code_sha256"
-    ) != _macho_code_sha256(executable):
-        _fail(E_HASH, "release output Mach-O code identity mismatch")
-    policy = _release_policy()
-    observed_signer = _codesign_release_evidence(app)
-    expected_signer = {
-        "cdhash": _expect_string(outer["cdhash"], field="outer_executable.cdhash"),
-        "team_id": outer["team_id"],
-        "designated_requirement": outer["designated_requirement"],
-        "hardened_runtime": outer["hardened_runtime"],
-        "entitlements": outer["entitlements"],
+    expected_signature_policy = {
+        "algorithm": policy["algorithm"],
+        "key_id": "vibecrafted-signing-v1",
+        "spki_sha256": policy["public_key_spki_sha256"],
     }
-    if re.fullmatch(r"[0-9a-f]{40,64}", expected_signer["cdhash"]) is None:
-        _fail(E_SCHEMA, "outer_executable.cdhash must be lowercase hexadecimal")
-    if expected_signer != observed_signer:
-        _fail(E_PROOF, "release output signer evidence does not match the final app")
-    if expected_signer != {
-        "cdhash": observed_signer["cdhash"],
-        "team_id": policy["team_id"],
-        "designated_requirement": policy["designated_requirement"],
-        "hardened_runtime": policy["hardened_runtime"],
-        "entitlements": policy["entitlements"],
-    }:
-        _fail(E_PROOF, "final app signer evidence violates packaged release policy")
-    code_resources = app / "Contents/_CodeSignature/CodeResources"
-    if not code_resources.is_file() or code_resources.is_symlink():
-        _fail(E_MISSING, "final app CodeResources is missing")
-    if _expect_sha256(
-        payload["code_resources_sha256"], field="code_resources_sha256"
-    ) != _sha256(code_resources):
-        _fail(E_HASH, "release output CodeResources hash mismatch")
+    if payload["signature_policy"] != expected_signature_policy:
+        _fail(E_PROOF, "release output signature policy violates packaged policy")
     raw_dmg = payload["dmg"]
-    if not isinstance(raw_dmg, dict):
-        _fail(E_SCHEMA, "release output dmg must be an object")
-    _expect_keys(raw_dmg, required={"sha256", "size"}, context="release output dmg")
+    dmg = _release_relative_path(receipt.parent, raw_dmg["path"], field="dmg.path")
     if not dmg.is_file() or dmg.is_symlink():
         _fail(E_MISSING, "release DMG is missing")
     dmg_size = raw_dmg["size"]
@@ -2026,39 +2151,25 @@ def verify_release_output(
         or dmg_size != dmg.stat().st_size
     ):
         _fail(E_SIZE, "release output DMG size mismatch")
-    if _expect_sha256(raw_dmg["sha256"], field="dmg.sha256") != _sha256(dmg):
-        _fail(E_HASH, "release output DMG hash mismatch")
-    modules = payload["modules"]
-    if not isinstance(modules, dict):
-        _fail(E_SCHEMA, "release output modules must be an object")
-    _expect_keys(modules, required=SUPPORTED_MODULES, context="release output modules")
-    product_modules = {item["module"]: item for item in product["modules"]}
-    for name in sorted(SUPPORTED_MODULES):
-        value = modules[name]
-        if not isinstance(value, dict):
-            _fail(E_SCHEMA, f"release output module {name} must be an object")
-        _expect_keys(
-            value,
-            required={"manifest_sha256", "assembly_receipt_sha256"},
-            context=f"release output module {name}",
+    expected_dmg_sha256 = _expect_sha256(raw_dmg["sha256"], field="dmg.sha256")
+    with (
+        _captured_release_dmg(
+            dmg, expected_size=dmg_size, expected_sha256=expected_dmg_sha256
+        ) as captured_dmg,
+        _mounted_release_dmg(captured_dmg) as app,
+    ):
+        observations = _verify_release_artifacts(
+            payload, receipt_root=receipt.parent, dmg=captured_dmg, app=app
         )
-        binding = product_modules[name]
-        if value != {
-            "manifest_sha256": binding["manifest_sha256"],
-            "assembly_receipt_sha256": binding["assembly_receipt_sha256"],
-        }:
-            _fail(E_PROOF, f"release output module identity mismatch: {name}")
-    revisions = payload["source_revisions"]
-    expected_revisions = {
-        "vibecrafted": product["git_sha"],
-        "vc-terminal": product_modules["vc-terminal"]["git_sha"],
-        "vc-frame": product_modules["vc-frame"]["git_sha"],
-    }
-    if revisions != expected_revisions:
-        _fail(E_PROOF, "release output source revisions do not match the product")
-    for name, revision in expected_revisions.items():
-        _expect_git_sha(revision, field=f"source_revisions.{name}")
-    validate_schema_document(payload)
+    return payload, observations
+
+
+def verify_release_output(
+    receipt_path: str | Path,
+    signature_path: str | Path,
+) -> dict[str, Any]:
+    """Verify W4's signed receipt as the sole selector of the DMG and app."""
+    payload, _ = _verify_release_output(receipt_path, signature_path)
     return payload
 
 
@@ -2077,6 +2188,16 @@ def _validate_identity(
     relative = _relative_path(
         value["manifest_path"], field=f"{field}.manifest_path"
     ).as_posix()
+    expected_relative = (
+        PRODUCT_MANIFEST_REFERENT
+        if artifact == "product"
+        else RUNTIME_MANIFEST_REFERENT
+    )
+    if relative != expected_relative:
+        _fail(
+            E_TRANSACTION,
+            f"{field} manifest referent must use canonical path {expected_relative}",
+        )
     manifest_path = receipt_root / relative
     _inside_payload(receipt_root, manifest_path, context=f"{field}.manifest_path")
     if not manifest_path.is_file() or manifest_path.is_symlink():
@@ -2090,16 +2211,6 @@ def _validate_identity(
     )
     if manifest.get("schema") != expected_schema:
         _fail(E_TRANSACTION, f"{field} manifest referent has the wrong schema")
-    expected_relative = (
-        PRODUCT_MANIFEST_REFERENT
-        if artifact == "product"
-        else RUNTIME_MANIFEST_REFERENT
-    )
-    if relative != expected_relative:
-        _fail(
-            E_TRANSACTION,
-            f"{field} manifest referent must use canonical path {expected_relative}",
-        )
     if artifact == "product":
         try:
             validate_schema_document(manifest)
@@ -2360,9 +2471,7 @@ def _walkaround_subject_digest(payload: Mapping[str, Any]) -> str:
     return _canonical_digest(
         {
             "schema": payload["schema"],
-            "dmg_path": payload["dmg_path"],
             "mount_path": payload["mount_path"],
-            "app_path": payload["app_path"],
             "release_output": payload["release_output"],
             "release_signature": payload["release_signature"],
         }
@@ -2490,7 +2599,8 @@ def _verify_walkaround_delivery_seal(
         _fail(E_PROOF, "walk-around delivery proof identity does not match the seal")
     if (
         proof_contract.delivery_scope != WALKAROUND_SCOPE
-        or proof_contract.integration_target != payload["app_path"]
+        or proof_contract.integration_target
+        != str(Path(payload["mount_path"]) / "Vibecrafted.app")
     ):
         _fail(E_PROOF, "walk-around delivery proof targets the wrong product scope")
     expected_runtime_probes = tuple(
@@ -2559,39 +2669,69 @@ def _attached_image_mounts() -> set[tuple[Path, Path]]:
     return mounts
 
 
+def _canonical_runner_commands() -> dict[str, list[str]]:
+    app = "{APP}"
+    dmg = "{DMG}"
+    executable = "{APP}/Contents/MacOS/Vibecrafted"
+    commands = _live_release_commands(Path(app), Path(dmg))
+    commands["one_app"] = ["/usr/bin/test", "-d", app]
+    for name in sorted(_WALKAROUND_CHECKS - set(commands) - {"one_app"}):
+        commands[name] = [
+            executable,
+            "--walkaround-probe",
+            name.replace("_", "-"),
+        ]
+    return {name: commands[name] for name in sorted(_WALKAROUND_CHECKS)}
+
+
 def _expected_runner_commands(app: Path, dmg: Path) -> dict[str, list[str]]:
+    replacements = {"{APP}": str(app), "{DMG}": str(dmg)}
     return {
         name: [
-            WALKAROUND_RUNNER_EXECUTABLE,
-            name,
-            "--app",
-            str(app),
-            "--dmg",
-            str(dmg),
+            item.replace("{APP}", replacements["{APP}"]).replace(
+                "{DMG}", replacements["{DMG}"]
+            )
+            for item in command
         ]
-        for name in sorted(_WALKAROUND_CHECKS)
+        for name, command in _canonical_runner_commands().items()
     }
 
 
 def _live_release_commands(app: Path, dmg: Path) -> dict[str, list[str]]:
     return {
-        "codesign": [
+        "app_codesign": [
             "codesign",
             "--verify",
-            "--deep",
             "--strict",
             "--verbose=2",
             str(app),
         ],
+        "dmg_codesign": [
+            "codesign",
+            "--verify",
+            "--strict",
+            "--verbose=2",
+            str(dmg),
+        ],
         "app_notarization": ["xcrun", "stapler", "validate", str(app)],
         "dmg_notarization": ["xcrun", "stapler", "validate", str(dmg)],
-        "gatekeeper": [
+        "app_gatekeeper": [
             "spctl",
             "--assess",
             "--type",
             "execute",
             "--verbose=4",
             str(app),
+        ],
+        "dmg_gatekeeper": [
+            "spctl",
+            "--assess",
+            "--type",
+            "open",
+            "--context",
+            "context:primary-signature",
+            "--verbose=4",
+            str(dmg),
         ],
     }
 
@@ -2602,36 +2742,179 @@ def _verify_recorded_live_commands(
     for name, expected in _expected_runner_commands(app, dmg).items():
         recorded = list(proofs[name]["command"])
         normalized = [Path(recorded[0]).name, *recorded[1:]]
-        if normalized != expected:
+        expected_normalized = [Path(expected[0]).name, *expected[1:]]
+        if normalized != expected_normalized:
             _fail(E_PROOF, f"walk-around proof recorded the wrong {name} command")
 
 
-def _run_live_release_checks(app: Path, dmg: Path) -> None:
-    for name, command in _live_release_commands(app, dmg).items():
+def _run_live_release_checks(app: Path, dmg: Path) -> dict[str, Any]:
+    observations: dict[str, Any] = {}
+    canonical = _canonical_runner_commands()
+    for name, command in _expected_runner_commands(app, dmg).items():
         executable = _required_tool(command[0], failure_code=E_PROOF)
-        _run_tool(
+        result = subprocess.run(
             [executable, *command[1:]],
-            failure_code=E_PROOF,
-            context=f"live walk-around check failed ({name})",
+            check=False,
+            capture_output=True,
         )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or b"no diagnostic")[:4096]
+            _fail(
+                E_PROOF,
+                f"live walk-around check failed ({name}): "
+                f"{detail.decode('utf-8', errors='replace').strip()}",
+            )
+        observations[name] = {
+            "probe_id": _walkaround_probe_id(name),
+            "command": canonical[name],
+            "exit_code": 0,
+            "stdout_sha256": hashlib.sha256(result.stdout).hexdigest(),
+            "stderr_sha256": hashlib.sha256(result.stderr).hexdigest(),
+        }
+    return observations
+
+
+def _release_reference(root: Path, path: Path) -> dict[str, Any]:
+    try:
+        relative = path.relative_to(root).as_posix()
+    except ValueError:
+        _fail(E_PATH, "walk-around release artifacts must share the output directory")
+    return {"path": relative, "sha256": _sha256(path), "size": path.stat().st_size}
+
+
+def produce_walkaround(
+    release_output_path: str | Path,
+    release_signature_path: str | Path,
+    output_path: str | Path,
+) -> dict[str, Any]:
+    """Run the canonical probes and atomically create a verifier-owned receipt."""
+    output = Path(output_path)
+    release_output = Path(release_output_path)
+    release_signature = Path(release_signature_path)
+    if output.exists() or output.is_symlink():
+        _fail(E_PATH, "walk-around output must be a new explicit path")
+    if output.parent.resolve(strict=False) != release_output.parent.resolve(
+        strict=False
+    ):
+        _fail(E_PATH, "walk-around output and release receipt must share a directory")
+    if (
+        release_output.name != "release-output.json"
+        or release_signature.name != "release-output.json.sig"
+    ):
+        _fail(E_PROOF, "walk-around requires canonical release-output artifact names")
+    _, observations = _verify_release_output(release_output, release_signature)
+    payload = {
+        "schema": WALKAROUND_SCHEMA,
+        "release_output": _release_reference(output.parent, release_output),
+        "release_signature": _release_reference(output.parent, release_signature),
+        "observations": {
+            "issuer": WALKAROUND_RUNNER_ID,
+            "probes": observations,
+        },
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    encoded = (
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        + "\n"
+    ).encode("utf-8")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{output.name}.", suffix=".tmp", dir=output.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, output)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    return payload
+
+
+def _verify_runner_receipt(path: Path, payload: Mapping[str, Any]) -> dict[str, Any]:
+    _expect_keys(
+        payload,
+        required={"schema", "release_output", "release_signature", "observations"},
+        context="walk-around receipt",
+    )
+    release_relative, _ = _validate_proof_artifact(
+        path.parent, payload["release_output"], field="release_output"
+    )
+    signature_relative, _ = _validate_proof_artifact(
+        path.parent, payload["release_signature"], field="release_signature"
+    )
+    if (
+        release_relative != "release-output.json"
+        or signature_relative != "release-output.json.sig"
+    ):
+        _fail(E_PROOF, "walk-around must reference canonical release-output artifacts")
+    observations = payload["observations"]
+    if not isinstance(observations, dict):
+        _fail(E_SCHEMA, "walk-around observations must be an object")
+    _expect_keys(observations, required={"issuer", "probes"}, context="observations")
+    if observations["issuer"] != WALKAROUND_RUNNER_ID:
+        _fail(E_PROOF, "walk-around observations have an untrusted issuer")
+    probes = observations["probes"]
+    if not isinstance(probes, dict):
+        _fail(E_SCHEMA, "walk-around probes must be an object")
+    _expect_keys(probes, required=_WALKAROUND_CHECKS, context="observations.probes")
+    canonical = _canonical_runner_commands()
+    for name in sorted(_WALKAROUND_CHECKS):
+        probe = probes[name]
+        if not isinstance(probe, dict):
+            _fail(E_SCHEMA, f"observations.probes.{name} must be an object")
+        _expect_keys(
+            probe,
+            required={
+                "probe_id",
+                "command",
+                "exit_code",
+                "stdout_sha256",
+                "stderr_sha256",
+            },
+            context=f"observations.probes.{name}",
+        )
+        if (
+            probe["probe_id"] != _walkaround_probe_id(name)
+            or probe["command"] != canonical[name]
+            or probe["exit_code"] != 0
+        ):
+            _fail(E_PROOF, f"walk-around probe observation mismatch: {name}")
+        _expect_sha256(
+            probe["stdout_sha256"], field=f"observations.probes.{name}.stdout_sha256"
+        )
+        _expect_sha256(
+            probe["stderr_sha256"], field=f"observations.probes.{name}.stderr_sha256"
+        )
+    verify_release_output(
+        path.parent / release_relative, path.parent / signature_relative
+    )
+    return dict(payload)
 
 
 def _verify_walkaround(
     receipt_path: Path,
     *,
     trusted_runner_public_key: Path,
-    attached_mounts: set[tuple[Path, Path]],
-    run_live_checks: bool,
     release_output_verifier: Any = None,
     expected_artifacts: Mapping[str, Path] | None = None,
 ) -> dict[str, Any]:
     path = receipt_path
     payload = _load_json(path)
+    if set(payload) == {
+        "schema",
+        "release_output",
+        "release_signature",
+        "observations",
+    }:
+        if payload["schema"] != WALKAROUND_SCHEMA:
+            _fail(E_SCHEMA, f"walk-around schema must be {WALKAROUND_SCHEMA}")
+        return _verify_runner_receipt(path, payload)
     required = {
         "schema",
-        "dmg_path",
         "mount_path",
-        "app_path",
         "release_output",
         "release_signature",
         "proofs",
@@ -2641,32 +2924,11 @@ def _verify_walkaround(
     _expect_keys(payload, required=required, context="walk-around receipt")
     if payload["schema"] != WALKAROUND_SCHEMA:
         _fail(E_SCHEMA, f"walk-around schema must be {WALKAROUND_SCHEMA}")
-    dmg_path = Path(_expect_string(payload["dmg_path"], field="dmg_path"))
-    if not dmg_path.is_absolute():
-        _fail(E_PATH, "walk-around dmg_path must be absolute")
     mount_path = Path(_expect_string(payload["mount_path"], field="mount_path"))
-    app_path = Path(_expect_string(payload["app_path"], field="app_path"))
-    if not mount_path.is_absolute() or not app_path.is_absolute():
-        _fail(E_PATH, "walk-around mount_path and app_path must be absolute")
-    if not dmg_path.is_file():
-        _fail(E_MISSING, f"walk-around DMG is missing: {dmg_path}")
-    if not mount_path.is_dir() or mount_path.is_symlink():
-        _fail(E_MISSING, f"walk-around mount is missing: {mount_path}")
-    dmg_resolved = dmg_path.resolve()
-    mount_resolved = mount_path.resolve()
-    app_resolved = app_path.resolve(strict=False)
-    expected_app = mount_resolved / "Vibecrafted.app"
-    if app_resolved != expected_app or not app_path.is_dir() or app_path.is_symlink():
-        _fail(E_PATH, "walk-around app must be the mounted top-level Vibecrafted.app")
-    if (dmg_resolved, mount_resolved) not in attached_mounts:
-        _fail(E_PROOF, "walk-around mount is not attached from the exact DMG")
-    mounted_apps = sorted(
-        item.name
-        for item in mount_path.iterdir()
-        if item.is_dir() and item.suffix == ".app"
-    )
-    if mounted_apps != ["Vibecrafted.app"]:
-        _fail(E_BUNDLE, f"mounted DMG customer app set is invalid: {mounted_apps}")
+    if not mount_path.is_absolute() or mount_path.is_symlink():
+        _fail(
+            E_PATH, "walk-around mount observation must be an absolute non-symlink path"
+        )
 
     release_relative, release_hash = _validate_proof_artifact(
         path.parent, payload["release_output"], field="release_output"
@@ -2685,8 +2947,6 @@ def _verify_walkaround(
             "release_signature": (path.parent / signature_relative).resolve(
                 strict=False
             ),
-            "app": app_resolved,
-            "dmg": dmg_resolved,
         }
         expected_keys = set(actual_artifacts)
         if set(expected_artifacts) != expected_keys:
@@ -2699,14 +2959,16 @@ def _verify_walkaround(
     release_payload = verifier(
         path.parent / release_relative,
         path.parent / signature_relative,
-        app_path=app_path,
-        dmg_path=dmg_path,
     )
     _expect_sha256(release_payload["dmg"]["sha256"], field="release_output.dmg.sha256")
     _expect_sha256(
-        release_payload["product_manifest_sha256"],
-        field="release_output.product_manifest_sha256",
+        release_payload["product"]["manifest"]["sha256"],
+        field="release_output.product.manifest.sha256",
     )
+    dmg_path = _release_relative_path(
+        path.parent, release_payload["dmg"]["path"], field="release_output.dmg.path"
+    )
+    app_path = mount_path / "Vibecrafted.app"
 
     proofs, proof_digests = _validate_walkaround_proofs(
         payload["proofs"],
@@ -2727,8 +2989,8 @@ def _verify_walkaround(
         payload=payload,
         proof_digests=proof_digests,
     )
-    if run_live_checks:
-        _run_live_release_checks(app_path, dmg_path)
+    # The signed release verifier mounts the exact DMG and performs the live gates.
+    # The walk-around receipt only binds the canonical runner's recorded observations.
     return payload
 
 
@@ -2737,15 +2999,11 @@ def verify_walkaround(
     *,
     release_output_path: str | Path | None = None,
     release_signature_path: str | Path | None = None,
-    app_path: str | Path | None = None,
-    dmg_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Verify evidence against the release-policy trust root and mounted DMG."""
     supplied = {
         "release_output": release_output_path,
         "release_signature": release_signature_path,
-        "app": app_path,
-        "dmg": dmg_path,
     }
     if any(value is not None for value in supplied.values()) and any(
         value is None for value in supplied.values()
@@ -2757,8 +3015,6 @@ def verify_walkaround(
     return _verify_walkaround(
         Path(receipt_path),
         trusted_runner_public_key=_trusted_runner_public_key(),
-        attached_mounts=_attached_image_mounts(),
-        run_live_checks=True,
         expected_artifacts=expected_artifacts,
     )
 
@@ -3089,10 +3345,16 @@ def _self_test() -> int:
         release_output = root / "release-output.json"
         release_signature = root / "release-output.json.sig"
         release_payload = {
-            "product_manifest_sha256": _sha256(
-                app / "Contents/Resources/product-manifest.json"
-            ),
-            "dmg": {"sha256": _sha256(dmg), "size": dmg.stat().st_size},
+            "product": {
+                "manifest": {
+                    "sha256": _sha256(app / "Contents/Resources/product-manifest.json")
+                }
+            },
+            "dmg": {
+                "path": dmg.name,
+                "sha256": _sha256(dmg),
+                "size": dmg.stat().st_size,
+            },
         }
         _write_json(release_output, release_payload)
         release_signature.write_bytes(b"self-test-release-signature")
@@ -3132,9 +3394,7 @@ def _self_test() -> int:
             }
         walkaround_payload: dict[str, Any] = {
             "schema": WALKAROUND_SCHEMA,
-            "dmg_path": str(dmg),
             "mount_path": str(mount),
-            "app_path": str(app),
             "release_output": proof_artifact(release_output),
             "release_signature": proof_artifact(release_signature),
             "proofs": proofs,
@@ -3314,8 +3574,6 @@ def _self_test() -> int:
         _verify_walkaround(
             walkaround,
             trusted_runner_public_key=runner_public_key,
-            attached_mounts={(dmg.resolve(), mount.resolve())},
-            run_live_checks=False,
             release_output_verifier=lambda *args, **kwargs: release_payload,
         )
 
@@ -3353,8 +3611,6 @@ def _parser() -> argparse.ArgumentParser:
     )
     release_output.add_argument("path", type=Path)
     release_output.add_argument("signature", type=Path)
-    release_output.add_argument("--app", type=Path, required=True)
-    release_output.add_argument("--dmg", type=Path, required=True)
     return parser
 
 
@@ -3380,12 +3636,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "walkaround":
             verify_walkaround(args.path)
         elif args.command == "release-output":
-            verify_release_output(
-                args.path,
-                args.signature,
-                app_path=args.app,
-                dmg_path=args.dmg,
-            )
+            verify_release_output(args.path, args.signature)
         else:  # pragma: no cover - argparse owns the command set.
             _fail(E_SCHEMA, f"unsupported command: {args.command}")
     except ProductContractError as exc:

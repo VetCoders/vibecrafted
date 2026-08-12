@@ -61,10 +61,12 @@ unified-product-contract-gate:
 	@set -eu; \
 	uv run --project vibecrafted-core --with pytest python -m pytest \
 		tests/tui/test_unified_app_contract.py \
-		tests/tui/test_makefile_installer_contract.py -q; \
+		tests/tui/test_makefile_installer_contract.py \
+		tests/tui/test_distribution_manifest.py -q; \
 	uv run --project vibecrafted-core --with pytest python -m pytest \
 		vibecrafted-core/tests/test_walkaround_distribution.py \
-		vibecrafted-core/tests/test_package_layout.py -q; \
+		vibecrafted-core/tests/test_package_layout.py \
+		vibecrafted-core/tests/test_doctor.py -q; \
 	bash scripts/verify-vibecrafted-product.sh --self-test; \
 	$(PYTHON) -m json.tool vibecrafted-core/vibecrafted_core/schemas/unified_product.schema.v1.json >/dev/null; \
 	$(PYTHON) -m json.tool vibecrafted-core/vibecrafted_core/trust/release-policy.v1.json >/dev/null; \
@@ -74,7 +76,13 @@ unified-product-contract-gate:
 	uv build --wheel --project vibecrafted-core --out-dir "$$tmp/dist" >/dev/null; \
 	uv venv "$$tmp/venv" >/dev/null; \
 	uv pip install --python "$$tmp/venv/bin/python" "$$tmp"/dist/vibecrafted-*.whl >/dev/null; \
-	(cd / && env -u PYTHONPATH PYTHONNOUSERSITE=1 "$$tmp/venv/bin/verify-vibecrafted-walkaround" --help >/dev/null)
+	(cd / && \
+		runner="$$tmp/venv/bin/verify-vibecrafted-walkaround"; \
+		env -u PYTHONPATH PYTHONNOUSERSITE=1 "$$runner" --help >/dev/null; \
+		rc=0; env -u PYTHONPATH PYTHONNOUSERSITE=1 "$$runner" trust-probe "$$tmp/missing-challenge" "$$tmp/missing.sig" >/dev/null 2>&1 || rc=$$?; test "$$rc" -eq 22; \
+		rc=0; env -u PYTHONPATH PYTHONNOUSERSITE=1 "$$runner" verify-release --release-output "$$tmp/release-output.json" --signature "$$tmp/release-output.json.sig" >/dev/null 2>&1 || rc=$$?; test "$$rc" -eq 22; \
+		rc=0; env -u PYTHONPATH PYTHONNOUSERSITE=1 "$$runner" walkaround --release-output "$$tmp/release-output.json" --signature "$$tmp/release-output.json.sig" --output "$$tmp/walkaround.json" >/dev/null 2>&1 || rc=$$?; test "$$rc" -eq 22; \
+		test ! -e "$$tmp/walkaround.json")
 
 tui-installer: init-hooks
 	@if ! command -v uv >/dev/null 2>&1; then \

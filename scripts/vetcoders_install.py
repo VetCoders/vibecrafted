@@ -9429,6 +9429,19 @@ def _pause_for_runtime_contract_failures(findings: Sequence[DoctorFinding]) -> N
         print(file=out)
 
 
+def _python_entrypoint_issue_level(
+    issues: Sequence[str], *, state: InstallState
+) -> str:
+    """Make a missing release verifier fatal only after it was recorded installed."""
+    runner_was_installed = any(
+        Path(entry).name == "verify-vibecrafted-walkaround"
+        for entry in state.launcher_entries
+    )
+    if "verify-vibecrafted-walkaround:missing" in issues and runner_was_installed:
+        return "fail"
+    return "warn"
+
+
 def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
     """Run full installation health check."""
     findings: list[DoctorFinding] = []
@@ -9779,9 +9792,12 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
                 continue
         python_entrypoint_issues.append(f"{name}:not-uv-tool")
     if python_entrypoint_issues:
+        issue_level = _python_entrypoint_issue_level(
+            python_entrypoint_issues, state=state
+        )
         findings.append(
             DoctorFinding(
-                "warn",
+                issue_level,
                 "python-entrypoints",
                 "Python launcher ownership issue(s): "
                 + ", ".join(python_entrypoint_issues[:6])

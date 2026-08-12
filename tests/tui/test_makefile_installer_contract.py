@@ -33,6 +33,9 @@ def test_makefile_python_runner_rejects_xcode_python_39() -> None:
 
 def test_installer_smokes_the_packaged_walkaround_entrypoint() -> None:
     assert "verify-vibecrafted-walkaround" in installer.PYTHON_ENTRYPOINT_LAUNCHERS
+    assert (
+        "verify-vibecrafted-walkaround" in installer._installer_managed_launcher_names()
+    )
     pyproject = (REPO_ROOT / "vibecrafted-core/pyproject.toml").read_text(
         encoding="utf-8"
     )
@@ -48,7 +51,11 @@ def test_unified_product_contract_gate_executes_installed_runner() -> None:
 
     assert "verify-vibecrafted-product.sh --self-test" in gate
     assert "uv build --wheel --project vibecrafted-core" in gate
-    assert 'bin/verify-vibecrafted-walkaround" --help' in gate
+    assert 'runner="$$tmp/venv/bin/verify-vibecrafted-walkaround"' in gate
+    assert '"$$runner" --help' in gate
+    assert '"$$runner" trust-probe' in gate
+    assert '"$$runner" verify-release --release-output' in gate
+    assert '"$$runner" walkaround --release-output' in gate
     assert "PYTHONNOUSERSITE=1" in gate
 
 

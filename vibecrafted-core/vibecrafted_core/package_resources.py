@@ -42,3 +42,13 @@ def skills_path() -> Path:
 def deck_path() -> Path:
     """Path to the bundled ``deck/vibecrafted`` resource directory."""
     return resource_path("deck", "vibecrafted")
+
+
+def release_contract_paths() -> tuple[Path, Path, Path, Path]:
+    """Return every package-owned release verifier/trust resource."""
+    return (
+        resource_path("walkaround_runner.py"),
+        resource_path("schemas", "unified_product.schema.v1.json"),
+        resource_path("trust", "release-policy.v1.json"),
+        resource_path("trust", "vibecrafted-signing-v1.pub"),
+    )

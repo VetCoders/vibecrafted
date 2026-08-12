@@ -526,10 +526,12 @@
       "additionalProperties": false,
       "required": [
         "one_app",
-        "codesign",
+        "app_codesign",
+        "dmg_codesign",
         "app_notarization",
         "dmg_notarization",
-        "gatekeeper",
+        "app_gatekeeper",
+        "dmg_gatekeeper",
         "sanitized_launch",
         "mission_control",
         "bundled_console",
@@ -541,10 +543,12 @@
       ],
       "properties": {
         "one_app": { "$ref": "#/$defs/walkaroundProof" },
-        "codesign": { "$ref": "#/$defs/walkaroundProof" },
+        "app_codesign": { "$ref": "#/$defs/walkaroundProof" },
+        "dmg_codesign": { "$ref": "#/$defs/walkaroundProof" },
         "app_notarization": { "$ref": "#/$defs/walkaroundProof" },
         "dmg_notarization": { "$ref": "#/$defs/walkaroundProof" },
-        "gatekeeper": { "$ref": "#/$defs/walkaroundProof" },
+        "app_gatekeeper": { "$ref": "#/$defs/walkaroundProof" },
+        "dmg_gatekeeper": { "$ref": "#/$defs/walkaroundProof" },
         "sanitized_launch": { "$ref": "#/$defs/walkaroundProof" },
         "mission_control": { "$ref": "#/$defs/walkaroundProof" },
         "bundled_console": { "$ref": "#/$defs/walkaroundProof" },
@@ -567,10 +571,27 @@
     "releaseModuleIdentity": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["manifest_sha256", "assembly_receipt_sha256"],
+      "required": ["manifest", "assembly_receipt", "git_sha"],
       "properties": {
-        "manifest_sha256": { "$ref": "#/$defs/sha256" },
-        "assembly_receipt_sha256": { "$ref": "#/$defs/sha256" }
+        "manifest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256"],
+          "properties": {
+            "path": { "$ref": "#/$defs/relativePath" },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "assembly_receipt": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256"],
+          "properties": {
+            "path": { "$ref": "#/$defs/relativePath" },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "git_sha": { "$ref": "#/$defs/gitSha" }
       }
     },
     "releaseOutput": {
@@ -578,41 +599,90 @@
       "additionalProperties": false,
       "required": [
         "schema",
-        "product_manifest_sha256",
+        "signature_policy",
+        "product",
         "outer_executable",
-        "code_resources_sha256",
+        "code_resources",
         "dmg",
         "modules",
-        "source_revisions"
+        "source_revisions",
+        "notarization"
       ],
       "properties": {
         "schema": { "const": "io.vetcoders.vibecrafted.release-output.v1" },
-        "product_manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "signature_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["algorithm", "key_id", "spki_sha256"],
+          "properties": {
+            "algorithm": { "const": "rsa-pkcs1v15-sha256" },
+            "key_id": { "const": "vibecrafted-signing-v1" },
+            "spki_sha256": { "const": "521ed59d3c446c540afe1557c2dbc39c9c190775f99896b2b65206c32814b25b" }
+          }
+        },
+        "product": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "build", "architecture", "minimum_macos", "manifest"],
+          "properties": {
+            "version": { "type": "string", "minLength": 1 },
+            "build": { "type": "string", "minLength": 1 },
+            "architecture": { "const": "arm64" },
+            "minimum_macos": { "const": "14.0" },
+            "manifest": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": { "const": "Contents/Resources/product-manifest.json" },
+                "sha256": { "$ref": "#/$defs/sha256" }
+              }
+            }
+          }
+        },
         "outer_executable": {
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "sha256", "code_sha256", "cdhash", "team_id",
-            "designated_requirement", "hardened_runtime", "entitlements"
+            "path", "sha256", "code_identity", "code_sha256", "cdhash",
+            "signer_policy"
           ],
           "properties": {
+            "path": { "const": "Contents/MacOS/Vibecrafted" },
             "sha256": { "$ref": "#/$defs/sha256" },
+            "code_identity": { "const": "macho-code-v1" },
             "code_sha256": { "$ref": "#/$defs/sha256" },
             "cdhash": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
-            "team_id": { "const": "MW223P3NPX" },
-            "designated_requirement": {
-              "const": "identifier \"io.vetcoders.vibecrafted\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"MW223P3NPX\""
-            },
-            "hardened_runtime": { "const": true },
-            "entitlements": { "const": {} }
+            "signer_policy": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["team_id", "designated_requirement", "hardened_runtime", "entitlements"],
+              "properties": {
+                "team_id": { "const": "MW223P3NPX" },
+                "designated_requirement": {
+                  "const": "identifier \"io.vetcoders.vibecrafted\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"MW223P3NPX\""
+                },
+                "hardened_runtime": { "const": true },
+                "entitlements": { "const": {} }
+              }
+            }
           }
         },
-        "code_resources_sha256": { "$ref": "#/$defs/sha256" },
+        "code_resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "sha256"],
+          "properties": {
+            "path": { "const": "Contents/_CodeSignature/CodeResources" },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
         "dmg": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["sha256", "size"],
+          "required": ["path", "sha256", "size"],
           "properties": {
+            "path": { "$ref": "#/$defs/relativePath" },
             "sha256": { "$ref": "#/$defs/sha256" },
             "size": { "type": "integer", "minimum": 1 }
           }
@@ -635,17 +705,112 @@
             "vc-terminal": { "$ref": "#/$defs/gitSha" },
             "vc-frame": { "$ref": "#/$defs/gitSha" }
           }
+        },
+        "notarization": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["app", "dmg"],
+          "properties": {
+            "app": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["ticket", "gatekeeper"],
+              "properties": {
+                "ticket": { "const": true },
+                "gatekeeper": { "const": true }
+              }
+            },
+            "dmg": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["codesign", "ticket", "gatekeeper"],
+              "properties": {
+                "codesign": { "const": true },
+                "ticket": { "const": true },
+                "gatekeeper": { "const": true }
+              }
+            }
+          }
         }
       }
     },
     "walkaroundReceipt": {
+      "oneOf": [
+        { "$ref": "#/$defs/legacyWalkaroundReceipt" },
+        { "$ref": "#/$defs/runnerWalkaroundReceipt" }
+      ]
+    },
+    "runnerProbeObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["probe_id", "command", "exit_code", "stdout_sha256", "stderr_sha256"],
+      "properties": {
+        "probe_id": {
+          "type": "string",
+          "pattern": "^io\\.vetcoders\\.vibecrafted\\.walkaround\\.[a-z_]+\\.v1$"
+        },
+        "command": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "exit_code": { "const": 0 },
+        "stdout_sha256": { "$ref": "#/$defs/sha256" },
+        "stderr_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "runnerProbeObservations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "one_app", "app_codesign", "dmg_codesign", "app_notarization",
+        "dmg_notarization", "app_gatekeeper", "dmg_gatekeeper",
+        "sanitized_launch", "mission_control", "bundled_console", "start_here",
+        "update", "rollback", "reattach", "one_outer_writer"
+      ],
+      "properties": {
+        "one_app": { "$ref": "#/$defs/runnerProbeObservation" },
+        "app_codesign": { "$ref": "#/$defs/runnerProbeObservation" },
+        "dmg_codesign": { "$ref": "#/$defs/runnerProbeObservation" },
+        "app_notarization": { "$ref": "#/$defs/runnerProbeObservation" },
+        "dmg_notarization": { "$ref": "#/$defs/runnerProbeObservation" },
+        "app_gatekeeper": { "$ref": "#/$defs/runnerProbeObservation" },
+        "dmg_gatekeeper": { "$ref": "#/$defs/runnerProbeObservation" },
+        "sanitized_launch": { "$ref": "#/$defs/runnerProbeObservation" },
+        "mission_control": { "$ref": "#/$defs/runnerProbeObservation" },
+        "bundled_console": { "$ref": "#/$defs/runnerProbeObservation" },
+        "start_here": { "$ref": "#/$defs/runnerProbeObservation" },
+        "update": { "$ref": "#/$defs/runnerProbeObservation" },
+        "rollback": { "$ref": "#/$defs/runnerProbeObservation" },
+        "reattach": { "$ref": "#/$defs/runnerProbeObservation" },
+        "one_outer_writer": { "$ref": "#/$defs/runnerProbeObservation" }
+      }
+    },
+    "runnerWalkaroundReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "release_output", "release_signature", "observations"],
+      "properties": {
+        "schema": { "const": "io.vetcoders.vibecrafted.walkaround.v1" },
+        "release_output": { "$ref": "#/$defs/proofArtifact" },
+        "release_signature": { "$ref": "#/$defs/proofArtifact" },
+        "observations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["issuer", "probes"],
+          "properties": {
+            "issuer": { "const": "io.vetcoders.vibecrafted.walkaround-runner.v1" },
+            "probes": { "$ref": "#/$defs/runnerProbeObservations" }
+          }
+        }
+      }
+    },
+    "legacyWalkaroundReceipt": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "schema",
-        "dmg_path",
         "mount_path",
-        "app_path",
         "release_output",
         "release_signature",
         "proofs",
@@ -656,15 +821,7 @@
         "schema": {
           "const": "io.vetcoders.vibecrafted.walkaround.v1"
         },
-        "dmg_path": {
-          "type": "string",
-          "pattern": "^/"
-        },
         "mount_path": {
-          "type": "string",
-          "pattern": "^/"
-        },
-        "app_path": {
           "type": "string",
           "pattern": "^/"
         },

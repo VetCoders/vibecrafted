@@ -367,6 +367,42 @@ def test_doctor_run_includes_server_supervision_finding(monkeypatch) -> None:
     assert doctor.doctor_run() == [expected]
 
 
+def test_packaged_asset_findings_require_release_contract_resources(
+    tmp_path: Path, monkeypatch
+) -> None:
+    runtime = tmp_path / "runtime/scripts/await.sh"
+    skill = tmp_path / "skills/vc-justdo/SKILL.md"
+    deck = tmp_path / "deck/vibecrafted"
+    release_assets = (
+        tmp_path / "walkaround_runner.py",
+        tmp_path / "schemas/unified_product.schema.v1.json",
+        tmp_path / "trust/release-policy.v1.json",
+        tmp_path / "trust/vibecrafted-signing-v1.pub",
+    )
+    for path in (runtime, skill, deck, *release_assets):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("fixture\n", encoding="utf-8")
+    monkeypatch.setattr(doctor, "runtime_path", lambda: tmp_path / "runtime")
+    monkeypatch.setattr(doctor, "skills_path", lambda: tmp_path / "skills")
+    monkeypatch.setattr(doctor, "deck_path", lambda: deck)
+    monkeypatch.setattr(doctor, "release_contract_paths", lambda: release_assets)
+
+    findings = doctor._packaged_asset_findings()
+
+    release_findings = [
+        finding for finding in findings if finding.component == "release-contract"
+    ]
+    assert len(release_findings) == 4
+    assert all(finding.level == "ok" for finding in release_findings)
+
+    release_assets[2].unlink()
+    findings = doctor._packaged_asset_findings()
+    assert any(
+        finding.level == "fail" and "release-policy.v1.json" in finding.message
+        for finding in findings
+    )
+
+
 def _seed_truth(root: Path, content: str = "layout ok\n") -> None:
     (root / "layouts").mkdir(parents=True)
     (root / "config.kdl").write_text(content, encoding="utf-8")

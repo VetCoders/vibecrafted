@@ -10,7 +10,9 @@ import stat
 import struct
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -476,7 +478,7 @@ def _write_walkaround_delivery_seal(
         assertion={"id": "walkaround", "kind": "sealed-runtime-probes"},
         negative_controls=({"id": "tamper-proof"},),
         delivery_scope=contract.WALKAROUND_SCOPE,
-        integration_target=payload["app_path"],
+        integration_target=str(Path(payload["mount_path"]) / "Vibecrafted.app"),
         runtime_probes=runtime_probes,
     )
     proof_result = ProofResult(
@@ -656,9 +658,7 @@ def _walkaround_fixture(path: Path, macho_executable: Path) -> dict[str, Any]:
         }
     payload = {
         "schema": contract.WALKAROUND_SCHEMA,
-        "dmg_path": str(dmg),
         "mount_path": str(mount),
-        "app_path": str(app),
         "release_output": _proof_artifact(path.parent, release_output),
         "release_signature": _proof_artifact(path.parent, release_signature),
         "proofs": proofs,
@@ -692,23 +692,58 @@ def _release_output_fixture(
         "hardened_runtime": True,
         "entitlements": {},
     }
+    policy = contract._release_policy()
     executable = app / product["outer_bundle_code"]["path"]
     payload = {
         "schema": contract.RELEASE_OUTPUT_SCHEMA,
-        "product_manifest_sha256": _sha256(
-            app / "Contents/Resources/product-manifest.json"
-        ),
-        "outer_executable": {
-            "sha256": _sha256(executable),
-            "code_sha256": contract._macho_code_sha256(executable),
-            **signer,
+        "signature_policy": {
+            "algorithm": "rsa-pkcs1v15-sha256",
+            "key_id": "vibecrafted-signing-v1",
+            "spki_sha256": contract.RELEASE_KEY_SPKI_SHA256,
         },
-        "code_resources_sha256": _sha256(app / "Contents/_CodeSignature/CodeResources"),
-        "dmg": {"sha256": _sha256(dmg), "size": dmg.stat().st_size},
+        "product": {
+            "version": product["version"],
+            "build": product["build"],
+            "architecture": product["architecture"],
+            "minimum_macos": product["minimum_macos"],
+            "manifest": {
+                "path": "Contents/Resources/product-manifest.json",
+                "sha256": _sha256(app / "Contents/Resources/product-manifest.json"),
+            },
+        },
+        "outer_executable": {
+            "path": product["outer_bundle_code"]["path"],
+            "sha256": _sha256(executable),
+            "code_identity": contract.MACHO_CODE_IDENTITY,
+            "code_sha256": contract._macho_code_sha256(executable),
+            "cdhash": signer["cdhash"],
+            "signer_policy": {
+                "team_id": policy["team_id"],
+                "designated_requirement": policy["designated_requirement"],
+                "hardened_runtime": policy["hardened_runtime"],
+                "entitlements": policy["entitlements"],
+            },
+        },
+        "code_resources": {
+            "path": "Contents/_CodeSignature/CodeResources",
+            "sha256": _sha256(app / "Contents/_CodeSignature/CodeResources"),
+        },
+        "dmg": {
+            "path": dmg.relative_to(root).as_posix(),
+            "sha256": _sha256(dmg),
+            "size": dmg.stat().st_size,
+        },
         "modules": {
             name: {
-                "manifest_sha256": binding["manifest_sha256"],
-                "assembly_receipt_sha256": binding["assembly_receipt_sha256"],
+                "manifest": {
+                    "path": binding["manifest_path"],
+                    "sha256": binding["manifest_sha256"],
+                },
+                "assembly_receipt": {
+                    "path": binding["assembly_receipt_path"],
+                    "sha256": binding["assembly_receipt_sha256"],
+                },
+                "git_sha": binding["git_sha"],
             }
             for name, binding in modules.items()
         },
@@ -716,6 +751,10 @@ def _release_output_fixture(
             "vibecrafted": product["git_sha"],
             "vc-terminal": modules["vc-terminal"]["git_sha"],
             "vc-frame": modules["vc-frame"]["git_sha"],
+        },
+        "notarization": {
+            "app": {"ticket": True, "gatekeeper": True},
+            "dmg": {"codesign": True, "ticket": True, "gatekeeper": True},
         },
     }
     receipt = root / "release-output.json"
@@ -731,7 +770,7 @@ def _patch_walkaround_runtime(
     *,
     live_calls: list[tuple[Path, Path]] | None = None,
 ) -> None:
-    dmg = Path(payload["dmg_path"])
+    dmg = Path(payload["mount_path"]).parent / "Vibecrafted.dmg"
     mount = Path(payload["mount_path"])
     monkeypatch.setattr(
         contract,
@@ -745,13 +784,10 @@ def _patch_walkaround_runtime(
 
     monkeypatch.setattr(contract, "_run_live_release_checks", record)
     release_payload = json.loads(
-        (Path(payload["dmg_path"]).parent / "release-output.json").read_text(
-            encoding="utf-8"
-        )
+        (dmg.parent / "release-output.json").read_text(encoding="utf-8")
     )
 
     def verify_release_fixture(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        dmg = Path(kwargs["dmg_path"])
         if dmg.stat().st_size != release_payload["dmg"]["size"]:
             raise contract.ProductContractError(
                 contract.E_SIZE, "fixture DMG size mismatch"
@@ -763,7 +799,7 @@ def _patch_walkaround_runtime(
         return release_payload
 
     monkeypatch.setattr(contract, "verify_release_output", verify_release_fixture)
-    policy_key = Path(payload["dmg_path"]).parent / "trusted-runner-public.pem"
+    policy_key = dmg.parent / "trusted-runner-public.pem"
     monkeypatch.setattr(contract, "_trusted_runner_public_key", lambda: policy_key)
 
 
@@ -771,6 +807,15 @@ def _assert_error(code: int, call: Callable[[], Any]) -> None:
     with pytest.raises(contract.ProductContractError) as exc_info:
         call()
     assert exc_info.value.code == code
+
+
+def _patch_release_mount(monkeypatch: pytest.MonkeyPatch, app: Path) -> None:
+    @contextmanager
+    def mounted(_dmg: Path):
+        yield app
+
+    monkeypatch.setattr(contract, "_mounted_release_dmg", mounted)
+    monkeypatch.setattr(contract, "_run_live_release_checks", lambda *_: None)
 
 
 def test_versioned_json_schema_matches_runtime_contract_ids() -> None:
@@ -790,8 +835,12 @@ def test_versioned_json_schema_matches_runtime_contract_ids() -> None:
         schema["$defs"]["transactionReceipt"]["properties"]["schema"]["const"]
         == contract.TRANSACTION_SCHEMA
     )
+    assert schema["$defs"]["walkaroundReceipt"]["oneOf"] == [
+        {"$ref": "#/$defs/legacyWalkaroundReceipt"},
+        {"$ref": "#/$defs/runnerWalkaroundReceipt"},
+    ]
     assert (
-        schema["$defs"]["walkaroundReceipt"]["properties"]["schema"]["const"]
+        schema["$defs"]["runnerWalkaroundReceipt"]["properties"]["schema"]["const"]
         == contract.WALKAROUND_SCHEMA
     )
     assert schema["$defs"]["releaseOutput"]["properties"]["schema"]["const"] == (
@@ -1200,6 +1249,7 @@ def test_launch_environment_rejects_relative_or_bundle_runtime_home(
 def test_launch_environment_rejects_raw_app_symlink_and_uncreatable_exact_root(
     tmp_path: Path,
     macho_executable: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = tmp_path / "real/Vibecrafted.app"
     _app_fixture(app, macho_executable)
@@ -1213,6 +1263,18 @@ def test_launch_environment_rejects_raw_app_symlink_and_uncreatable_exact_root(
         ),
     )
 
+    for malformed in (str(tmp_path / "bad\x00root"), str(tmp_path / ("x" * 4096))):
+        _assert_error(
+            contract.E_PATH,
+            lambda malformed=malformed: contract.build_launch_environment(
+                app,
+                host_environment={
+                    "HOME": str(tmp_path),
+                    "VIBECRAFTED_RUNTIME_HOME": malformed,
+                },
+            ),
+        )
+
     non_directory = tmp_path / "runtime-home"
     non_directory.write_text("not a directory\n", encoding="utf-8")
     _assert_error(
@@ -1225,6 +1287,27 @@ def test_launch_environment_rejects_raw_app_symlink_and_uncreatable_exact_root(
             },
         ),
     )
+
+    denied = tmp_path / "permission-denied-runtime"
+    original_mkstemp = tempfile.mkstemp
+
+    def deny_exact_root(*args: Any, **kwargs: Any) -> tuple[int, str]:
+        if kwargs.get("dir") == denied:
+            raise PermissionError("fixture exact root is not writable")
+        return original_mkstemp(*args, **kwargs)
+
+    monkeypatch.setattr(contract.tempfile, "mkstemp", deny_exact_root)
+    _assert_error(
+        contract.E_PATH,
+        lambda: contract.build_launch_environment(
+            app,
+            host_environment={
+                "HOME": str(tmp_path),
+                "VIBECRAFTED_RUNTIME_HOME": str(denied),
+            },
+        ),
+    )
+    assert denied.is_dir()
 
 
 @pytest.mark.parametrize(
@@ -1613,6 +1696,21 @@ def test_transaction_product_referent_runs_semantic_launch_binding(
     _assert_error(contract.E_TRANSACTION, lambda: contract.verify_transaction(receipt))
 
 
+@pytest.mark.parametrize("artifact", ["app", "runtime"])
+def test_transaction_schema_and_runtime_reject_relocated_canonical_referents(
+    tmp_path: Path, macho_executable: Path, artifact: str
+) -> None:
+    receipt = tmp_path / "transaction.json"
+    payload = _transaction_fixture(receipt, macho_executable)
+    payload["new"][artifact]["manifest_path"] = f"relocated/{artifact}.json"
+    payload["active"] = copy.deepcopy(payload["new"])
+
+    _assert_error(contract.E_SCHEMA, lambda: contract.validate_schema_document(payload))
+
+    _write_json(receipt, payload)
+    _assert_error(contract.E_TRANSACTION, lambda: contract.verify_transaction(receipt))
+
+
 def test_walkaround_receipt_requires_exact_artifact_and_every_proof(
     tmp_path: Path,
     macho_executable: Path,
@@ -1623,10 +1721,10 @@ def test_walkaround_receipt_requires_exact_artifact_and_every_proof(
     live_calls: list[tuple[Path, Path]] = []
     _patch_walkaround_runtime(monkeypatch, expected, live_calls=live_calls)
     assert contract.verify_walkaround(receipt) == expected
-    assert live_calls == [(Path(expected["app_path"]), Path(expected["dmg_path"]))]
+    assert live_calls == []
 
     failed = copy.deepcopy(expected)
-    failed["proofs"]["gatekeeper"]["exit_code"] = 1
+    failed["proofs"]["app_gatekeeper"]["exit_code"] = 1
     _write_json(receipt, failed)
     _assert_error(
         contract.E_PROOF,
@@ -1634,7 +1732,7 @@ def test_walkaround_receipt_requires_exact_artifact_and_every_proof(
     )
 
     wrong_command = copy.deepcopy(expected)
-    wrong_command["proofs"]["codesign"]["command"] = ["true"]
+    wrong_command["proofs"]["app_codesign"]["command"] = ["true"]
     _write_json(receipt, wrong_command)
     _assert_error(
         contract.E_PROOF,
@@ -1661,7 +1759,7 @@ def test_walkaround_receipt_requires_exact_artifact_and_every_proof(
     )
 
     _write_json(receipt, expected)
-    Path(expected["dmg_path"]).write_bytes(b"tampered\n")
+    (tmp_path / "Vibecrafted.dmg").write_bytes(b"tampered\n")
     _assert_error(
         contract.E_SIZE,
         lambda: contract.verify_walkaround(receipt),
@@ -1679,8 +1777,6 @@ def test_walkaround_binds_the_runner_to_one_requested_release_tuple(
     expected = {
         "release_output_path": tmp_path / "release-output.json",
         "release_signature_path": tmp_path / "release-output.json.sig",
-        "app_path": Path(payload["app_path"]),
-        "dmg_path": Path(payload["dmg_path"]),
     }
 
     assert contract.verify_walkaround(receipt, **expected) == payload
@@ -1704,12 +1800,12 @@ def test_walkaround_proof_artifacts_cannot_escape_through_symlinked_parent(
     payload = _walkaround_fixture(receipt, macho_executable)
     outside = tmp_path.parent / f"{tmp_path.name}-outside"
     outside.mkdir()
-    escaped = outside / "codesign.stdout"
+    escaped = outside / "app_codesign.stdout"
     escaped.write_text("fabricated evidence\n", encoding="utf-8")
     proof_parent = tmp_path / "proof-link"
     proof_parent.symlink_to(outside, target_is_directory=True)
-    payload["proofs"]["codesign"]["stdout"] = {
-        "path": "proof-link/codesign.stdout",
+    payload["proofs"]["app_codesign"]["stdout"] = {
+        "path": "proof-link/app_codesign.stdout",
         "sha256": _sha256(escaped),
         "size": escaped.stat().st_size,
     }
@@ -1828,15 +1924,267 @@ def test_signed_release_output_binds_live_artifacts_and_signer_policy(
         contract, "_verify_release_signature", lambda payload, _: payload.read_bytes()
     )
     monkeypatch.setattr(contract, "_codesign_release_evidence", lambda _: signer)
+    _patch_release_mount(monkeypatch, app)
 
-    assert (
-        contract.verify_release_output(
-            receipt,
-            signature,
-            app_path=app.resolve(),
-            dmg_path=dmg.resolve(),
+    assert contract.verify_release_output(receipt, signature) == payload
+
+
+def test_canonical_walkaround_commands_are_all_real_argv_and_pin_dmg_gatekeeper_context() -> (
+    None
+):
+    commands = contract._canonical_runner_commands()
+
+    assert set(commands) == contract._WALKAROUND_CHECKS
+    assert all(
+        command and command[1:2] != ["walkaround-probe"]
+        for command in commands.values()
+    )
+    assert commands["dmg_gatekeeper"] == [
+        "spctl",
+        "--assess",
+        "--type",
+        "open",
+        "--context",
+        "context:primary-signature",
+        "--verbose=4",
+        "{DMG}",
+    ]
+
+
+def test_dmg_gatekeeper_uses_primary_signature_context_and_fails_on_nonzero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = tmp_path / "Vibecrafted.app"
+    dmg = tmp_path / "Vibecrafted.dmg"
+    calls: list[list[str]] = []
+    expected = [
+        "spctl",
+        "--assess",
+        "--type",
+        "open",
+        "--context",
+        "context:primary-signature",
+        "--verbose=4",
+        str(dmg),
+    ]
+
+    def fake_run(command: list[str], **_: Any) -> subprocess.CompletedProcess[bytes]:
+        calls.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            1 if command == expected else 0,
+            b"",
+            b"Gatekeeper rejected fixture" if command == expected else b"",
         )
-        == payload
+
+    monkeypatch.setattr(contract, "_required_tool", lambda name, **_: name)
+    monkeypatch.setattr(contract.subprocess, "run", fake_run)
+
+    _assert_error(
+        contract.E_PROOF,
+        lambda: contract._run_live_release_checks(app, dmg),
+    )
+    assert expected in calls
+
+
+def test_walkaround_runner_creates_and_reverifies_output_without_unsigned_mount_selector(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = tmp_path / "release-output.json"
+    signature = tmp_path / "release-output.json.sig"
+    output = tmp_path / "walkaround.json"
+    release.write_text("{}\n", encoding="utf-8")
+    signature.write_bytes(b"fixture-signature")
+    observations = {
+        name: {
+            "probe_id": contract._walkaround_probe_id(name),
+            "command": command,
+            "exit_code": 0,
+            "stdout_sha256": "0" * 64,
+            "stderr_sha256": "0" * 64,
+        }
+        for name, command in contract._canonical_runner_commands().items()
+    }
+    monkeypatch.setattr(
+        contract,
+        "_verify_release_output",
+        lambda *_: ({"schema": contract.RELEASE_OUTPUT_SCHEMA}, observations),
+    )
+
+    payload = contract.produce_walkaround(release, signature, output)
+
+    assert output.is_file()
+    assert "mount_path" not in payload
+    assert set(payload) == {
+        "schema",
+        "release_output",
+        "release_signature",
+        "observations",
+    }
+    contract.validate_schema_document(payload)
+    monkeypatch.setattr(contract, "verify_release_output", lambda *_: {})
+    assert contract.verify_walkaround(output) == payload
+
+
+@pytest.mark.parametrize(
+    ("mutation", "schema_code", "runtime_code"),
+    [
+        ("signature_algorithm", contract.E_SCHEMA, contract.E_SCHEMA),
+        ("absolute_dmg_path", contract.E_SCHEMA, contract.E_SCHEMA),
+        ("zero_dmg_size", contract.E_SCHEMA, contract.E_SIZE),
+        ("product_version", None, contract.E_PROOF),
+        ("product_build", None, contract.E_PROOF),
+        ("product_architecture", contract.E_SCHEMA, contract.E_SCHEMA),
+        ("product_minimum_macos", contract.E_SCHEMA, contract.E_SCHEMA),
+        ("product_manifest_path", contract.E_SCHEMA, contract.E_SCHEMA),
+        ("product_manifest_hash", None, contract.E_PROOF),
+        ("outer_path", contract.E_SCHEMA, contract.E_SCHEMA),
+        ("outer_raw_hash", None, contract.E_HASH),
+        ("outer_code_identity", contract.E_SCHEMA, contract.E_SCHEMA),
+        ("outer_code_hash", None, contract.E_HASH),
+        ("outer_cdhash", None, contract.E_PROOF),
+        ("signer_team", contract.E_SCHEMA, contract.E_SCHEMA),
+        ("signer_requirement", contract.E_SCHEMA, contract.E_SCHEMA),
+        ("signer_runtime", contract.E_SCHEMA, contract.E_SCHEMA),
+        ("signer_entitlements", contract.E_SCHEMA, contract.E_SCHEMA),
+        ("code_resources_path", contract.E_SCHEMA, contract.E_SCHEMA),
+        ("code_resources_hash", None, contract.E_HASH),
+        ("module_manifest_path", None, contract.E_PROOF),
+        ("module_manifest_hash", None, contract.E_PROOF),
+        ("module_receipt_path", None, contract.E_PROOF),
+        ("module_receipt_hash", None, contract.E_PROOF),
+        ("module_git_sha", None, contract.E_PROOF),
+        ("source_revision", None, contract.E_PROOF),
+        ("source_terminal", None, contract.E_PROOF),
+        ("source_frame", None, contract.E_PROOF),
+        ("app_ticket", contract.E_SCHEMA, contract.E_SCHEMA),
+        ("app_gatekeeper", contract.E_SCHEMA, contract.E_SCHEMA),
+        ("dmg_codesign", contract.E_SCHEMA, contract.E_SCHEMA),
+        ("dmg_ticket", contract.E_SCHEMA, contract.E_SCHEMA),
+        ("dmg_gatekeeper", contract.E_SCHEMA, contract.E_SCHEMA),
+        ("dmg_hash", None, contract.E_HASH),
+        ("dmg_size", None, contract.E_SIZE),
+    ],
+)
+def test_release_schema_and_runtime_boundary_mutation_matrix(
+    tmp_path: Path,
+    macho_executable: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+    schema_code: int | None,
+    runtime_code: int,
+) -> None:
+    app = tmp_path / "Vibecrafted.app"
+    _app_fixture(app, macho_executable)
+    dmg = tmp_path / "Vibecrafted.dmg"
+    dmg.write_bytes(b"synthetic-dmg\n")
+    receipt, signature, payload, signer = _release_output_fixture(tmp_path, app, dmg)
+
+    if mutation == "signature_algorithm":
+        payload["signature_policy"]["algorithm"] = "attacker"
+    elif mutation == "absolute_dmg_path":
+        payload["dmg"]["path"] = str(dmg)
+    elif mutation == "zero_dmg_size":
+        payload["dmg"]["size"] = 0
+    elif mutation == "product_version":
+        payload["product"]["version"] = "9.9.9"
+    elif mutation == "product_build":
+        payload["product"]["build"] = "999"
+    elif mutation == "product_architecture":
+        payload["product"]["architecture"] = "x86_64"
+    elif mutation == "product_minimum_macos":
+        payload["product"]["minimum_macos"] = "13.0"
+    elif mutation == "product_manifest_path":
+        payload["product"]["manifest"]["path"] = "product-manifest.json"
+    elif mutation == "product_manifest_hash":
+        payload["product"]["manifest"]["sha256"] = "0" * 64
+    elif mutation == "outer_path":
+        payload["outer_executable"]["path"] = "Contents/MacOS/Other"
+    elif mutation == "outer_raw_hash":
+        payload["outer_executable"]["sha256"] = "0" * 64
+    elif mutation == "outer_code_identity":
+        payload["outer_executable"]["code_identity"] = "identity"
+    elif mutation == "outer_code_hash":
+        payload["outer_executable"]["code_sha256"] = "0" * 64
+    elif mutation == "outer_cdhash":
+        payload["outer_executable"]["cdhash"] = "0" * 40
+    elif mutation == "signer_team":
+        payload["outer_executable"]["signer_policy"]["team_id"] = "ATTACKER"
+    elif mutation == "signer_requirement":
+        payload["outer_executable"]["signer_policy"]["designated_requirement"] = (
+            "attacker"
+        )
+    elif mutation == "signer_runtime":
+        payload["outer_executable"]["signer_policy"]["hardened_runtime"] = False
+    elif mutation == "signer_entitlements":
+        payload["outer_executable"]["signer_policy"]["entitlements"] = {"debug": True}
+    elif mutation == "code_resources_path":
+        payload["code_resources"]["path"] = "Contents/CodeResources"
+    elif mutation == "code_resources_hash":
+        payload["code_resources"]["sha256"] = "0" * 64
+    elif mutation == "module_manifest_hash":
+        payload["modules"]["vc-terminal"]["manifest"]["sha256"] = "0" * 64
+    elif mutation == "module_manifest_path":
+        payload["modules"]["vc-terminal"]["manifest"]["path"] = "moved.json"
+    elif mutation == "module_receipt_path":
+        payload["modules"]["vc-terminal"]["assembly_receipt"]["path"] = "moved.json"
+    elif mutation == "module_receipt_hash":
+        payload["modules"]["vc-terminal"]["assembly_receipt"]["sha256"] = "0" * 64
+    elif mutation == "module_git_sha":
+        payload["modules"]["vc-terminal"]["git_sha"] = "0" * 40
+    elif mutation == "source_revision":
+        payload["source_revisions"]["vibecrafted"] = "0" * 40
+    elif mutation == "source_terminal":
+        payload["source_revisions"]["vc-terminal"] = "0" * 40
+    elif mutation == "source_frame":
+        payload["source_revisions"]["vc-frame"] = "0" * 40
+    elif mutation == "app_ticket":
+        payload["notarization"]["app"]["ticket"] = False
+    elif mutation == "app_gatekeeper":
+        payload["notarization"]["app"]["gatekeeper"] = False
+    elif mutation == "dmg_codesign":
+        payload["notarization"]["dmg"]["codesign"] = False
+    elif mutation == "dmg_ticket":
+        payload["notarization"]["dmg"]["ticket"] = False
+    elif mutation == "dmg_gatekeeper":
+        payload["notarization"]["dmg"]["gatekeeper"] = False
+    elif mutation == "dmg_hash":
+        payload["dmg"]["sha256"] = "0" * 64
+    else:
+        payload["dmg"]["size"] += 1
+
+    if schema_code is None:
+        contract.validate_schema_document(payload)
+    else:
+        _assert_error(schema_code, lambda: contract.validate_schema_document(payload))
+    _write_canonical_json(receipt, payload)
+    monkeypatch.setattr(
+        contract, "_verify_release_signature", lambda path, _: path.read_bytes()
+    )
+    monkeypatch.setattr(contract, "_codesign_release_evidence", lambda _: signer)
+    _patch_release_mount(monkeypatch, app)
+    _assert_error(
+        runtime_code, lambda: contract.verify_release_output(receipt, signature)
+    )
+
+
+def test_release_output_validates_public_schema_before_indexing_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    receipt = tmp_path / "release-output.json"
+    signature = tmp_path / "release-output.json.sig"
+    _write_canonical_json(receipt, {})
+    signature.write_bytes(b"fixture")
+    monkeypatch.setattr(
+        contract, "_verify_release_signature", lambda path, _: path.read_bytes()
+    )
+
+    _assert_error(
+        contract.E_SCHEMA,
+        lambda: contract.verify_release_output(receipt, signature),
     )
 
 
@@ -1860,16 +2208,9 @@ def test_release_output_parses_the_exact_bytes_verified_by_the_signature_step(
 
     monkeypatch.setattr(contract, "_verify_release_signature", verify_then_swap)
     monkeypatch.setattr(contract, "_codesign_release_evidence", lambda _: signer)
+    _patch_release_mount(monkeypatch, app)
 
-    assert (
-        contract.verify_release_output(
-            receipt,
-            signature,
-            app_path=app.resolve(),
-            dmg_path=dmg.resolve(),
-        )
-        == payload
-    )
+    assert contract.verify_release_output(receipt, signature) == payload
     assert json.loads(receipt.read_text(encoding="utf-8")) == replacement
 
 
@@ -1925,7 +2266,7 @@ def test_codesign_release_evidence_fails_closed_when_entitlements_are_unreadable
     _assert_error(contract.E_PROOF, lambda: contract._codesign_release_evidence(app))
 
 
-def test_codesign_release_evidence_accepts_explicit_success_without_entitlements(
+def test_codesign_release_evidence_rejects_empty_success_entitlements_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1950,13 +2291,54 @@ def test_codesign_release_evidence_accepts_explicit_success_without_entitlements
     )
     monkeypatch.setattr(contract.subprocess, "run", fake_run)
 
-    assert contract._codesign_release_evidence(app) == {
-        "cdhash": "a" * 40,
-        "team_id": "MW223P3NPX",
-        "designated_requirement": contract._release_policy()["designated_requirement"],
-        "hardened_runtime": True,
-        "entitlements": {},
-    }
+    _assert_error(contract.E_PROOF, lambda: contract._codesign_release_evidence(app))
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["display", "requirements", "semantic-requirement", "malformed-entitlements"],
+)
+def test_codesign_release_evidence_fails_closed_at_every_subprocess_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    app = tmp_path / "Vibecrafted.app"
+    metadata = (
+        "CDHash=" + "a" * 40 + "\n"
+        "TeamIdentifier=MW223P3NPX\n"
+        "CodeDirectory v=20500 size=1 flags=0x10000(runtime)\n"
+    )
+
+    def fake_run(command: list[str], **_: Any) -> subprocess.CompletedProcess[Any]:
+        if "--requirements" in command:
+            return subprocess.CompletedProcess(
+                command,
+                1 if failure == "requirements" else 0,
+                "",
+                "designated => fixture requirement\n",
+            )
+        if "--test-requirement" in command:
+            return subprocess.CompletedProcess(
+                command, 1 if failure == "semantic-requirement" else 0, "", ""
+            )
+        if "--entitlements" in command:
+            entitlement = (
+                b"not-a-plist"
+                if failure == "malformed-entitlements"
+                else plistlib.dumps({})
+            )
+            return subprocess.CompletedProcess(command, 0, entitlement, b"")
+        return subprocess.CompletedProcess(
+            command, 1 if failure == "display" else 0, metadata, ""
+        )
+
+    monkeypatch.setattr(
+        contract, "_required_tool", lambda *_args, **_kwargs: "codesign"
+    )
+    monkeypatch.setattr(contract.subprocess, "run", fake_run)
+
+    _assert_error(contract.E_PROOF, lambda: contract._codesign_release_evidence(app))
 
 
 def test_release_output_rejects_zero_byte_dmg_even_when_hash_and_size_match(
@@ -1973,15 +2355,11 @@ def test_release_output_rejects_zero_byte_dmg_even_when_hash_and_size_match(
         contract, "_verify_release_signature", lambda payload, _: payload.read_bytes()
     )
     monkeypatch.setattr(contract, "_codesign_release_evidence", lambda _: signer)
+    _patch_release_mount(monkeypatch, app)
 
     _assert_error(
         contract.E_SIZE,
-        lambda: contract.verify_release_output(
-            receipt,
-            signature,
-            app_path=app.resolve(),
-            dmg_path=dmg.resolve(),
-        ),
+        lambda: contract.verify_release_output(receipt, signature),
     )
 
 
@@ -2022,15 +2400,55 @@ def test_release_output_rejects_foreign_signer_or_entitlement_drift_even_with_sa
         contract, "_verify_release_signature", lambda payload, _: payload.read_bytes()
     )
     monkeypatch.setattr(contract, "_codesign_release_evidence", lambda _: signer)
+    _patch_release_mount(monkeypatch, app)
 
     _assert_error(
         contract.E_PROOF,
-        lambda: contract.verify_release_output(
-            receipt,
-            signature,
-            app_path=app.resolve(),
-            dmg_path=dmg.resolve(),
-        ),
+        lambda: contract.verify_release_output(receipt, signature),
+    )
+
+
+@pytest.mark.parametrize(
+    "foreign_entitlements",
+    [None, {"com.apple.security.get-task-allow": True}],
+)
+def test_release_output_rejects_real_foreign_resign_without_mocking_codesign(
+    tmp_path: Path,
+    macho_executable: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    foreign_entitlements: dict[str, bool] | None,
+) -> None:
+    app = tmp_path / "Vibecrafted.app"
+    product = _app_fixture(app, macho_executable)
+    executable = app / "Contents/MacOS/Vibecrafted"
+    original_code_identity = contract._macho_code_sha256(executable)
+    command = ["codesign", "--force", "--sign", "-", "--options", "runtime"]
+    if foreign_entitlements is not None:
+        entitlement_path = tmp_path / "foreign-entitlements.plist"
+        with entitlement_path.open("wb") as handle:
+            plistlib.dump(foreign_entitlements, handle)
+        command.extend(["--entitlements", str(entitlement_path)])
+    result = subprocess.run(
+        [*command, str(app)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert contract._macho_code_sha256(executable) == original_code_identity
+    assert product["outer_bundle_code"]["code_sha256"] == original_code_identity
+
+    dmg = tmp_path / "Vibecrafted.dmg"
+    dmg.write_bytes(b"synthetic-dmg\n")
+    receipt, signature, _, _ = _release_output_fixture(tmp_path, app, dmg)
+    monkeypatch.setattr(
+        contract, "_verify_release_signature", lambda payload, _: payload.read_bytes()
+    )
+    _patch_release_mount(monkeypatch, app)
+
+    _assert_error(
+        contract.E_PROOF,
+        lambda: contract.verify_release_output(receipt, signature),
     )
 
 

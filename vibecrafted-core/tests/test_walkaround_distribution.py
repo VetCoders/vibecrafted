@@ -16,7 +16,10 @@ EXPECTED_SPKI = "521ed59d3c446c540afe1557c2dbc39c9c190775f99896b2b65206c32814b25
 
 
 def _run(
-    command: list[str], *, cwd: Path = REPO_ROOT
+    command: list[str],
+    *,
+    cwd: Path = REPO_ROOT,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
@@ -24,6 +27,7 @@ def _run(
         check=False,
         capture_output=True,
         text=True,
+        env=env,
     )
 
 
@@ -38,43 +42,65 @@ def test_packaged_public_key_matches_release_lineage() -> None:
     assert hashlib.sha256(result.stdout).hexdigest() == EXPECTED_SPKI
 
 
-def test_runner_verify_executes_one_bound_walkaround_transaction(
+def test_runner_implements_frozen_release_and_walkaround_commands(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    paths = [
-        tmp_path / name
-        for name in ("release.json", "release.sig", "app", "dmg", "walkaround.json")
-    ]
-    calls: list[tuple[Path, dict[str, Path]]] = []
+    release = tmp_path / "release-output.json"
+    signature = tmp_path / "release-output.json.sig"
+    output = tmp_path / "walkaround.json"
+    release_calls: list[tuple[Path, Path]] = []
+    walkaround_calls: list[tuple[Path, Path, Path]] = []
 
-    def verify_walkaround(path: Path, **kwargs: Path) -> dict[str, str]:
-        calls.append((path, kwargs))
+    def produce_walkaround(
+        release_path: Path, signature_path: Path, output_path: Path
+    ) -> dict[str, str]:
+        walkaround_calls.append((release_path, signature_path, output_path))
+        output_path.write_text("{}\n", encoding="utf-8")
         return {"schema": "fixture"}
 
     monkeypatch.setattr(
-        walkaround_runner.product_contract, "verify_walkaround", verify_walkaround
+        walkaround_runner.product_contract, "produce_walkaround", produce_walkaround
     )
     monkeypatch.setattr(
         walkaround_runner.product_contract,
         "verify_release_output",
-        lambda *_args, **_kwargs: pytest.fail("runner split the release transaction"),
+        lambda receipt, detached: release_calls.append((receipt, detached)) or {},
     )
 
-    assert walkaround_runner.main(["verify", *(str(path) for path in paths)]) == 0
-    assert calls == [
-        (
-            paths[4],
-            {
-                "release_output_path": paths[0],
-                "release_signature_path": paths[1],
-                "app_path": paths[2],
-                "dmg_path": paths[3],
-            },
+    assert (
+        walkaround_runner.main(
+            [
+                "verify-release",
+                "--release-output",
+                str(release),
+                "--signature",
+                str(signature),
+            ]
         )
-    ]
-    assert capsys.readouterr().out == "verified verify\n"
+        == 0
+    )
+    assert release_calls == [(release, signature)]
+    assert capsys.readouterr().out == "verified verify-release\n"
+
+    assert (
+        walkaround_runner.main(
+            [
+                "walkaround",
+                "--release-output",
+                str(release),
+                "--signature",
+                str(signature),
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    assert walkaround_calls == [(release, signature, output)]
+    assert output.is_file()
+    assert capsys.readouterr().out == "verified walkaround\n"
 
 
 @pytest.mark.skipif(
@@ -102,6 +128,23 @@ def test_noneditable_wheel_trust_probe_accepts_release_key_and_rejects_attacker(
     assert installed.returncode == 0, installed.stderr
     runner = venv / "bin/verify-vibecrafted-walkaround"
     assert runner.is_file()
+    external_cwd = tmp_path / "outside-checkout"
+    external_cwd.mkdir()
+    isolated_env = dict(os.environ)
+    isolated_env.pop("PYTHONPATH", None)
+    isolated_env.pop("PYTHONHOME", None)
+    isolated_env["PYTHONNOUSERSITE"] = "1"
+    provenance = _run(
+        [
+            str(python),
+            "-c",
+            "import vibecrafted_core; print(vibecrafted_core.__file__)",
+        ],
+        cwd=external_cwd,
+        env=isolated_env,
+    )
+    assert provenance.returncode == 0, provenance.stderr
+    assert Path(provenance.stdout.strip()).is_relative_to(venv)
 
     challenge = tmp_path / "challenge.json"
     challenge.write_text(
@@ -132,7 +175,9 @@ def test_noneditable_wheel_trust_probe_accepts_release_key_and_rejects_attacker(
     )
     assert authorized.returncode == 0, authorized.stderr
     accepted = _run(
-        [str(runner), "trust-probe", str(challenge), str(authorized_signature)]
+        [str(runner), "trust-probe", str(challenge), str(authorized_signature)],
+        cwd=external_cwd,
+        env=isolated_env,
     )
     assert accepted.returncode == 0, accepted.stderr
 
@@ -156,7 +201,9 @@ def test_noneditable_wheel_trust_probe_accepts_release_key_and_rejects_attacker(
     )
     assert forged.returncode == 0, forged.stderr
     rejected = _run(
-        [str(runner), "trust-probe", str(challenge), str(attacker_signature)]
+        [str(runner), "trust-probe", str(challenge), str(attacker_signature)],
+        cwd=external_cwd,
+        env=isolated_env,
     )
     assert rejected.returncode == 33
     assert "VCPC033" in rejected.stderr

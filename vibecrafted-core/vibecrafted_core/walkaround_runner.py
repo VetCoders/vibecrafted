@@ -20,14 +20,18 @@ def _parser() -> argparse.ArgumentParser:
     probe.add_argument("challenge", type=Path)
     probe.add_argument("signature", type=Path)
     verify = commands.add_parser(
-        "verify",
-        help="verify the signed release output and mounted-DMG walk-around",
+        "verify-release",
+        help="verify the signed release output and its selected DMG/app",
     )
-    verify.add_argument("release_output", type=Path)
-    verify.add_argument("release_signature", type=Path)
-    verify.add_argument("app", type=Path)
-    verify.add_argument("dmg", type=Path)
-    verify.add_argument("walkaround", type=Path)
+    verify.add_argument("--release-output", type=Path, required=True)
+    verify.add_argument("--signature", type=Path, required=True)
+    walkaround = commands.add_parser(
+        "walkaround",
+        help="verify canonical walk-around evidence for one signed release",
+    )
+    walkaround.add_argument("--release-output", type=Path, required=True)
+    walkaround.add_argument("--signature", type=Path, required=True)
+    walkaround.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -36,13 +40,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "trust-probe":
             product_contract.verify_trust_probe(args.challenge, args.signature)
+        elif args.command == "verify-release":
+            product_contract.verify_release_output(args.release_output, args.signature)
         else:
-            product_contract.verify_walkaround(
-                args.walkaround,
-                release_output_path=args.release_output,
-                release_signature_path=args.release_signature,
-                app_path=args.app,
-                dmg_path=args.dmg,
+            product_contract.produce_walkaround(
+                args.release_output,
+                args.signature,
+                args.output,
             )
     except product_contract.ProductContractError as exc:
         print(f"VCPC{exc.code:03d}: {exc}", file=sys.stderr)

@@ -16,7 +16,12 @@ from xml.parsers.expat import ExpatError
 
 import tomllib
 
-from .package_resources import deck_path, runtime_path, skills_path
+from .package_resources import (
+    deck_path,
+    release_contract_paths,
+    runtime_path,
+    skills_path,
+)
 from .vc_frame_delivery import (
     OPERATOR_SCRIPT_NAMES,
     classify_view_path,
@@ -423,8 +428,8 @@ def _installer_module() -> Any:
 
 
 def _packaged_asset_findings() -> list[_Finding]:
-    """Verify runtime/skills/deck package assets are present under the package dir."""
-    checks = (
+    """Verify runtime, UI and release-trust assets under the installed package."""
+    checks = [
         (
             "runtime",
             runtime_path() / "scripts" / "await.sh",
@@ -436,6 +441,15 @@ def _packaged_asset_findings() -> list[_Finding]:
             "packaged canonical skills present",
         ),
         ("deck", deck_path(), "packaged command deck present"),
+    ]
+    release_assets = release_contract_paths()
+    checks.extend(
+        (
+            "release-contract",
+            path,
+            f"packaged release contract present: {path.name}",
+        )
+        for path in release_assets
     )
     findings: list[_Finding] = []
     for component, path, ok_message in checks:
