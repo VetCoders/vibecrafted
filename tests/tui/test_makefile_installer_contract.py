@@ -957,6 +957,20 @@ def test_foundations_product_binaries_are_validation_only() -> None:
     assert "will not guess crates, npm packages, or local checkout paths" in aicx_block
 
 
+def test_foundations_builds_vc_frame_outside_the_living_tree() -> None:
+    text = (REPO_ROOT / "scripts" / "install-foundations.sh").read_text(
+        encoding="utf-8"
+    )
+    block = text.split("install_vcframe() {", 1)[1].split(
+        "# ---------------------------------------------------------------------------\n# Claude Code",
+        1,
+    )[0]
+
+    assert "${XDG_CACHE_HOME:-$HOME/.cache}/vibecrafted/build/vc-frame" in block
+    assert 'CARGO_TARGET_DIR="$vcframe_target_root"' in block
+    assert 'make -C "$sibling" --no-print-directory install' in block
+
+
 def test_foundations_never_overwrite_uv_owned_python_entrypoints() -> None:
     text = (REPO_ROOT / "scripts" / "install-foundations.sh").read_text(
         encoding="utf-8"

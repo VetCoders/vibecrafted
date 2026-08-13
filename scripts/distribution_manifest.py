@@ -543,6 +543,44 @@ def _expected_git_payload(
     return entries, directories
 
 
+def _materialize_git_payload(root: Path, destination: Path, revision: str) -> None:
+    """Materialize the allowlisted payload from immutable Git objects.
+
+    An exact checkout is an identity provider, not an archive input directory.
+    Reading the committed tree prevents ignored or untracked local artifacts from
+    silently joining a release while still allowing the worktree drift guard to
+    reject modifications to tracked payload paths.
+    """
+    entries, directories = _expected_git_payload(root, revision)
+    for relative in sorted(
+        directories, key=lambda path: (len(path.parts), path.as_posix())
+    ):
+        path = destination / relative
+        path.mkdir(parents=True, exist_ok=True)
+        path.chmod(0o755)
+    for relative, (mode, object_type, object_id) in sorted(entries.items()):
+        if object_type != "blob" or mode not in {"100644", "100755", "120000"}:
+            raise ManifestError(
+                f"unsupported Git payload entry: {relative.as_posix()}:{mode}:{object_type}"
+            )
+        path = destination / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        raw = _git_bytes(root, "cat-file", "blob", object_id)
+        if mode == "120000":
+            try:
+                target = raw.decode("utf-8")
+            except UnicodeError as exc:
+                raise ManifestError(
+                    f"symlink target is not UTF-8: {relative.as_posix()}"
+                ) from exc
+            if error := _symlink_target_error(relative, target):
+                raise ManifestError(error)
+            path.symlink_to(target)
+        else:
+            path.write_bytes(raw)
+            path.chmod(0o755 if mode == "100755" else 0o644)
+
+
 def _distribution_tree_record_from_git(root: Path, revision: str) -> dict[str, object]:
     """Derive the payload identity from immutable Git tree/blob objects."""
     entries, directories = _expected_git_payload(root, revision)
@@ -671,8 +709,6 @@ def _assert_git_payload_matches_revision(root: Path, revision: str) -> None:
             "-z",
             "--",
         ),
-        ("ls-files", "--others", "--exclude-standard", "-z"),
-        ("ls-files", "--others", "--ignored", "--exclude-standard", "-z"),
     ):
         changed_paths.update(_git_paths(root, *arguments))
 
@@ -1435,18 +1471,25 @@ def _stage_payload_into(
 ) -> None:
     destination_root.mkdir(parents=True, exist_ok=True)
     destination_root.chmod(0o755)
-    for item in sorted(
-        source_root.iterdir(),
-        key=lambda entry: _canonical_relative_path_bytes(Path(entry.name)),
-    ):
-        if provenance is not None and item.name == SOURCE_PROVENANCE_FILE:
-            continue
-        _copy_included(
+    if provenance is not None and _is_exact_git_root(source_root):
+        _materialize_git_payload(
             source_root,
-            item,
-            destination_root / item.name,
-            preserve_empty_directories=inherited_carrier_bytes is not None,
+            destination_root,
+            str(provenance["source_revision"]),
         )
+    else:
+        for item in sorted(
+            source_root.iterdir(),
+            key=lambda entry: _canonical_relative_path_bytes(Path(entry.name)),
+        ):
+            if provenance is not None and item.name == SOURCE_PROVENANCE_FILE:
+                continue
+            _copy_included(
+                source_root,
+                item,
+                destination_root / item.name,
+                preserve_empty_directories=inherited_carrier_bytes is not None,
+            )
     for alias, canonical in CANONICAL_PROJECTIONS.items():
         projection = destination_root / alias
         canonical_dir = destination_root / canonical

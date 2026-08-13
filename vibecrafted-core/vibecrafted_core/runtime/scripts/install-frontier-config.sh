@@ -8,10 +8,11 @@ Usage: install-frontier-config.sh [--source <repo-root>] [--dry-run] [--mode sym
 Install the repo-owned frontier shell presets:
 - starship
 - atuin
-- vc-frame (config + layouts)
+- optional host-terminal sidecars
 
 By default this creates sidecar symlinks in $HOME/.config/vetcoders/frontier so the
 repo remains the source of truth without taking over your global shell layout.
+vc-frame config projections are owned exclusively by vc_frame_delivery.py.
 EOF_USAGE
 }
 
@@ -135,16 +136,6 @@ printf '  frontier root: %s\n' "$frontier_root"
 
 migrate_legacy_backup_links
 
-# Prefer staged tools store when present; fall back to checkout (--source).
-vc_frame_src="$repo_root/config/vc-frame"
-if [[ -n "${VIBECRAFTED_PREFER_REPO_VC_FRAME:-}" ]]; then
-  vc_frame_src="$repo_root/config/vc-frame"
-elif [[ -d "${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools/vibecrafted-current/config/vc-frame" ]]; then
-  vc_frame_src="${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools/vibecrafted-current/config/vc-frame"
-elif [[ -d "$HOME/.local/share/vibecrafted/tools/vibecrafted-current/config/vc-frame" ]]; then
-  vc_frame_src="$HOME/.local/share/vibecrafted/tools/vibecrafted-current/config/vc-frame"
-fi
-
 install_one "$repo_root/config/starship.toml" "$frontier_root/starship.toml"
 install_one "$repo_root/config/atuin/config.toml" "$frontier_root/atuin/config.toml"
 # Host-terminal sidecars (optional — only when present in this generation).
@@ -158,22 +149,6 @@ fi
 if [[ -f "$repo_root/config/shell/atuin-up.zsh" ]]; then
   install_one "$repo_root/config/shell/atuin-up.zsh" "$frontier_root/shell/atuin-up.zsh"
 fi
-install_one "$vc_frame_src/config.kdl" "$frontier_root/vc-frame/config.kdl"
-install_one "$vc_frame_src/layouts/research.kdl" "$frontier_root/vc-frame/layouts/research.kdl"
-install_one "$vc_frame_src/layouts/workflow.kdl" "$frontier_root/vc-frame/layouts/workflow.kdl"
-install_one "$vc_frame_src/layouts/marbles.kdl" "$frontier_root/vc-frame/layouts/marbles.kdl"
-install_one "$vc_frame_src/layouts/dashboard.kdl" "$frontier_root/vc-frame/layouts/dashboard.kdl"
-install_one "$vc_frame_src/layouts/operator.kdl" "$frontier_root/vc-frame/layouts/operator.kdl"
-install_one "$vc_frame_src/auto-theme.sh" "$frontier_root/vc-frame/auto-theme.sh"
-
-# themes/ — link each theme file (and keep directory shape)
-if [[ -d "$vc_frame_src/themes" ]]; then
-  while IFS= read -r -d '' theme_file; do
-    rel="${theme_file#"$vc_frame_src/"}"
-    install_one "$theme_file" "$frontier_root/vc-frame/$rel"
-  done < <(find "$vc_frame_src/themes" -type f -print0 2>/dev/null)
-fi
-
 # Legacy zombie cleanup: remove dangling symlinks under frontier (incl. old zellij/)
 if (( ! dry_run )); then
   if [[ -d "$frontier_root" ]]; then

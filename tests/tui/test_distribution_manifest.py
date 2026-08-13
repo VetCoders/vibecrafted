@@ -689,7 +689,7 @@ def test_required_stage_checks_all_provenance_providers_before_copy(
     assert not destination.exists()
 
 
-def test_required_stage_proves_git_bytes_without_an_explicit_pair(
+def test_required_stage_materializes_git_bytes_without_an_explicit_pair(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _clear_source_provenance_environment(monkeypatch)
@@ -697,17 +697,17 @@ def test_required_stage_proves_git_bytes_without_an_explicit_pair(
     destination = tmp_path / "payload"
     _filter_clean_git_source(source)
 
-    with pytest.raises(
-        manifest.ManifestError, match="bytes:scripts/vetcoders_install.py"
-    ):
-        manifest.stage_payload(
-            source,
-            destination,
-            mirror=True,
-            require_source_provenance=True,
-        )
+    manifest.stage_payload(
+        source,
+        destination,
+        mirror=True,
+        require_source_provenance=True,
+    )
 
-    assert not (destination / manifest.SOURCE_PROVENANCE_FILE).exists()
+    assert (destination / "scripts" / "vetcoders_install.py").read_text(
+        encoding="utf-8"
+    ) == "COMMIT-BLOB\n"
+    assert (destination / manifest.SOURCE_PROVENANCE_FILE).is_file()
 
 
 def test_manifest_cli_check_requires_and_matches_source_provenance(
@@ -1351,7 +1351,6 @@ def test_archive_accepts_clean_committed_included_payload(
     [
         ("tracked", "scripts/vetcoders_install.py"),
         ("index", "scripts/runtime_paths.py"),
-        ("untracked", "scripts/untracked-archive-input.py"),
         ("deleted", "scripts/distribution_manifest.py"),
     ],
 )
@@ -1370,8 +1369,6 @@ def test_archive_rejects_every_included_git_drift_shape(
         path.write_text("changed included payload\n", encoding="utf-8")
         if mutation == "index":
             _git(source, "add", relative)
-    elif mutation == "untracked":
-        path.write_text("untracked included payload\n", encoding="utf-8")
     elif mutation == "deleted":
         path.unlink()
     else:  # pragma: no cover - parametrization owns the closed mutation set.
@@ -1387,6 +1384,36 @@ def test_archive_rejects_every_included_git_drift_shape(
         )
 
     assert relative in str(exc_info.value)
+
+
+@pytest.mark.parametrize("ignored", [False, True])
+def test_archive_projects_git_tree_without_local_untracked_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    ignored: bool,
+) -> None:
+    _clear_source_provenance_environment(monkeypatch)
+    source = tmp_path / "source"
+    archive_path = tmp_path / "vibecrafted-projected.tar.gz"
+    revision = _committed_git_source(source)
+    relative = Path("scripts/local-archive-input.py")
+    path = source / relative
+    path.write_text("host-local payload\n", encoding="utf-8")
+    if ignored:
+        (source / ".git" / "info" / "exclude").write_text(
+            f"/{relative.as_posix()}\n", encoding="utf-8"
+        )
+
+    manifest.create_archive(
+        source,
+        archive_path,
+        root_name="vibecrafted-projected",
+        owner_repo=SOURCE_OWNER_REPO,
+        source_revision=revision,
+    )
+
+    with tarfile.open(archive_path, "r:gz") as archive:
+        assert f"vibecrafted-projected/{relative.as_posix()}" not in archive.getnames()
 
 
 def test_archive_allows_tracked_and_untracked_excluded_dev_paths(
@@ -1492,7 +1519,7 @@ def test_stage_cannot_launder_dirty_git_into_a_source_carrier(
     assert not destination.exists()
 
 
-def test_filter_clean_but_byte_different_payload_is_rejected_before_carrier(
+def test_filter_clean_worktree_is_projected_from_commit_objects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _clear_source_provenance_environment(monkeypatch)
@@ -1507,30 +1534,31 @@ def test_filter_clean_but_byte_different_payload_is_rejected_before_carrier(
     )
     assert target.read_text(encoding="utf-8") == "WORKTREE-ORIGINAL\n"
 
-    with pytest.raises(
-        manifest.ManifestError, match="bytes:scripts/vetcoders_install.py"
-    ):
-        manifest.stage_payload(
-            source,
-            destination,
-            mirror=True,
-            owner_repo=SOURCE_OWNER_REPO,
-            source_revision=revision,
-            require_source_provenance=True,
-        )
-    assert not (destination / manifest.SOURCE_PROVENANCE_FILE).exists()
+    manifest.stage_payload(
+        source,
+        destination,
+        mirror=True,
+        owner_repo=SOURCE_OWNER_REPO,
+        source_revision=revision,
+        require_source_provenance=True,
+    )
+    assert (destination / "scripts" / "vetcoders_install.py").read_text(
+        encoding="utf-8"
+    ) == "COMMIT-BLOB\n"
 
-    with pytest.raises(
-        manifest.ManifestError, match="bytes:scripts/vetcoders_install.py"
-    ):
-        manifest.create_archive(
-            source,
-            archive_path,
-            root_name="vibecrafted-filtered",
-            owner_repo=SOURCE_OWNER_REPO,
-            source_revision=revision,
+    manifest.create_archive(
+        source,
+        archive_path,
+        root_name="vibecrafted-filtered",
+        owner_repo=SOURCE_OWNER_REPO,
+        source_revision=revision,
+    )
+    with tarfile.open(archive_path, "r:gz") as archive:
+        member = archive.extractfile(
+            "vibecrafted-filtered/scripts/vetcoders_install.py"
         )
-    assert not archive_path.exists()
+        assert member is not None
+        assert member.read() == b"COMMIT-BLOB\n"
 
 
 @pytest.mark.parametrize(
@@ -1551,31 +1579,28 @@ def test_copy_time_destination_swap_is_rejected_before_carrier(
     source = tmp_path / "source"
     destination = tmp_path / "staged"
     revision = _committed_git_source(source)
-    target = source / "scripts" / "vetcoders_install.py"
-    original_copy = manifest._copy_included
+    relative = Path("scripts/vetcoders_install.py")
+    original_materialize = manifest._materialize_git_payload
     swapped = False
 
-    def swap_after_copy(
-        source_root: Path,
-        source_path: Path,
-        destination_path: Path,
-        **kwargs: object,
+    def swap_after_materialize(
+        source_root: Path, destination_root: Path, source_revision: str
     ) -> None:
         nonlocal swapped
-        original_copy(source_root, source_path, destination_path, **kwargs)
-        if source_path == target and not swapped:
-            if mutation == "bytes":
-                destination_path.write_text("COPY-TIME-RACE\n", encoding="utf-8")
-            elif mutation == "mode":
-                destination_path.chmod(destination_path.stat().st_mode | 0o111)
-            elif mutation == "type":
-                destination_path.unlink()
-                destination_path.symlink_to("../VERSION")
-            else:  # pragma: no cover - parametrization owns the mutation set.
-                raise AssertionError(mutation)
-            swapped = True
+        original_materialize(source_root, destination_root, source_revision)
+        destination_path = destination_root / relative
+        if mutation == "bytes":
+            destination_path.write_text("COPY-TIME-RACE\n", encoding="utf-8")
+        elif mutation == "mode":
+            destination_path.chmod(destination_path.stat().st_mode | 0o111)
+        elif mutation == "type":
+            destination_path.unlink()
+            destination_path.symlink_to("../VERSION")
+        else:  # pragma: no cover - parametrization owns the mutation set.
+            raise AssertionError(mutation)
+        swapped = True
 
-    monkeypatch.setattr(manifest, "_copy_included", swap_after_copy)
+    monkeypatch.setattr(manifest, "_materialize_git_payload", swap_after_materialize)
 
     with pytest.raises(manifest.ManifestError, match=expected_issue):
         manifest.stage_payload(

@@ -661,7 +661,7 @@ _vcframe_run_remote_or_local_installer() {
 }
 
 install_vcframe() {
-  local sibling local_install_sh
+  local sibling local_install_sh vcframe_target_root
   local need_binary=0
 
   if binary_runs vc-frame; then
@@ -678,7 +678,10 @@ install_vcframe() {
         info "  make -C $sibling install"
       else
         info "Installing vc-frame from sibling Living Tree: $sibling"
-        if make -C "$sibling" --no-print-directory install; then
+        vcframe_target_root="${XDG_CACHE_HOME:-$HOME/.cache}/vibecrafted/build/vc-frame"
+        mkdir -p "$vcframe_target_root"
+        if CARGO_TARGET_DIR="$vcframe_target_root" \
+          make -C "$sibling" --no-print-directory install; then
           if binary_runs vc-frame; then
             ok "vc-frame installed from checkout: $(command -v vc-frame)"
             need_binary=0
