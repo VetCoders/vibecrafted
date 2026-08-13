@@ -1201,28 +1201,34 @@ case "$runtime:$PLATFORM_OS" in
     ;;
 esac
 
-# Pre-flight tool check — on missing tools, emit a copy-pasteable install
-# hint for the detected platform (Plan 03). Cross-platform tar/make/python3
-# are widely available; the hint only fires when they really are missing
-# (slim container, fresh VM, etc.). macOS path preserved exactly.
-preflight_require() {
-  local tool="$1"
-  command -v "$tool" >/dev/null 2>&1 && return 0
-  printf 'Error: %s is required\n' "$tool" >&2
-  preflight_pkg_hint "$tool"
+# Pre-flight tool check — ALL missing tools are reported at once with ONE
+# copy-pasteable install hint for the detected platform. A stranger on a
+# fresh machine must never pay one full rerun per missing tool (observed:
+# make → rerun → python3 → rerun → git discovered mid-install at phase 4).
+preflight_require_all() {
+  local missing=()
+  local tool
+  for tool in "$@"; do
+    command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+  done
+  [[ ${#missing[@]} -eq 0 ]] && return 0
+  printf 'Error: missing required tools: %s\n' "${missing[*]}" >&2
+  preflight_pkg_hint "${missing[*]}"
   exit 1
 }
 
-preflight_require tar
-preflight_require make
-preflight_require python3
+# git is consumed later by install-tools-held; without it the install used
+# to die mid-flight AFTER three green phases — it belongs in pre-flight.
+preflight_tools=(tar make python3 git)
+if [[ -z "$archive_file" ]]; then
+  preflight_tools+=(curl)
+fi
+preflight_require_all "${preflight_tools[@]}"
 bootstrap_python="$(command -v python3)"
 [[ -n "$bootstrap_python" && -f "$bootstrap_python" ]] \
   || die "Could not resolve the bootstrap-owned Python interpreter"
 export VIBECRAFTED_TOOLS_HOME="$tools_dir"
-if [[ -z "$archive_file" ]]; then
-  preflight_require curl
-else
+if [[ -n "$archive_file" ]]; then
   [[ -f "$archive_file" ]] || die "Archive file not found: $archive_file"
 fi
 
