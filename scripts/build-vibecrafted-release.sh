@@ -22,6 +22,9 @@ TEMP_KEYCHAIN_PATH=""
 ORIGINAL_DEFAULT_KEYCHAIN=""
 CODESIGN_KEYCHAIN_ARGS=()
 export MACOSX_DEPLOYMENT_TARGET=14.0
+# Release payloads must not remember the operator account, Cargo registry, or
+# living checkout locations through Rust panic/debug metadata.
+export RUSTFLAGS="--remap-path-prefix=$REPO_ROOT=/usr/src/vibecrafted --remap-path-prefix=$TERMINAL_REPO=/usr/src/vc-terminal --remap-path-prefix=$FRAME_REPO=/usr/src/vc-frame --remap-path-prefix=$HOME=/usr/src/operator-home"
 
 case "${1:-}" in
   --app-only) MODE="app" ;;
