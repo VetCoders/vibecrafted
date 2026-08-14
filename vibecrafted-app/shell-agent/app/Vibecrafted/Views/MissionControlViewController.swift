@@ -24,6 +24,14 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
     }
   }
 
+  private static let iso8601DateFormatter = ISO8601DateFormatter()
+  private static let failureDateFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "yyyy-MM-dd HH:mm"
+    return formatter
+  }()
+
   private let scrollView = NSScrollView()
   private let contentView = NSView()
   private let stackView = NSStackView()
@@ -588,14 +596,11 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
   }
 
   private func dateTime(_ value: String?) -> String {
-    guard let value, let date = ISO8601DateFormatter().date(from: value) else {
+    guard let value, let date = Self.iso8601DateFormatter.date(from: value) else {
       return "—"
     }
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "en_US_POSIX")
-    formatter.timeZone = .current
-    formatter.dateFormat = "yyyy-MM-dd HH:mm"
-    return formatter.string(from: date)
+    Self.failureDateFormatter.timeZone = .current
+    return Self.failureDateFormatter.string(from: date)
   }
 
   private func focusSection(_ sectionID: String) {

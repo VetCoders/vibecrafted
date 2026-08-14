@@ -132,6 +132,9 @@ def test_mission_control_failure_board_exposes_absolute_failure_time() -> None:
 
     assert '("Date", "DATE", 145)' in view
     assert 'case "DATE": return dateTime(item.occurredAt)' in view
+    assert "private static let iso8601DateFormatter" in view
+    assert "private static let failureDateFormatter" in view
+    assert "ISO8601DateFormatter().date" not in view
     assert "pub occurred_at: Option<String>" in ffi
     assert "occurred_at: Some(record.completed_at.to_rfc3339())" in mission
 
