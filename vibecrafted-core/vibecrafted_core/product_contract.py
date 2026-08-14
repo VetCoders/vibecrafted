@@ -2050,7 +2050,10 @@ def _codesign_release_evidence(app: Path) -> dict[str, Any]:
         except (plistlib.InvalidFileException, ExpatError, ValueError) as exc:
             _fail(E_PROOF, f"final app entitlements are malformed: {exc}")
     else:
-        _fail(E_PROOF, "final app entitlements output is empty")
+        # codesign exits successfully with an empty stdout when the signature
+        # carries no entitlement blob. That is the required release policy,
+        # distinct from an unreadable query (non-zero exit above).
+        entitlements = {}
     if not isinstance(entitlements, dict):
         _fail(E_PROOF, "final app entitlements are not a dictionary")
     return {

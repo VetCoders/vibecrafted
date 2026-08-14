@@ -2413,7 +2413,7 @@ def test_codesign_release_evidence_fails_closed_when_entitlements_are_unreadable
     _assert_error(contract.E_PROOF, lambda: contract._codesign_release_evidence(app))
 
 
-def test_codesign_release_evidence_rejects_empty_success_entitlements_output(
+def test_codesign_release_evidence_accepts_empty_success_as_no_entitlements(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2438,7 +2438,8 @@ def test_codesign_release_evidence_rejects_empty_success_entitlements_output(
     )
     monkeypatch.setattr(contract.subprocess, "run", fake_run)
 
-    _assert_error(contract.E_PROOF, lambda: contract._codesign_release_evidence(app))
+    evidence = contract._codesign_release_evidence(app)
+    assert evidence["entitlements"] == {}
 
 
 @pytest.mark.parametrize(
