@@ -161,10 +161,14 @@ def test_install_shell_shim_prefers_current_control_plane_before_home_store(
     )
 
     shim = (config / "vetcoders" / "vc-skills.sh").read_text(encoding="utf-8")
-    tools_path = '"$crafted_tools_home/vibecrafted-current/runtime/shell/vetcoders.sh"'
+    tools_path = (
+        '"$crafted_tools_home/vibecrafted-current/vibecrafted-core/'
+        'vibecrafted_core/runtime/shell/vetcoders.sh"'
+    )
     home_path = '"$crafted_home/runtime/shell/vetcoders.sh"'
 
     assert shim.index(tools_path) < shim.index(home_path)
+    assert "vibecrafted-current/runtime/shell/vetcoders.sh" not in shim
     assert str(REPO_ROOT) not in shim
     assert "DEV MODE OPT-IN: live repo override via VIBECRAFTED_ROOT" in shim
 

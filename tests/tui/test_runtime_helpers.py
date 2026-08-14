@@ -82,7 +82,14 @@ def _write_capture_command(bin_dir: Path, name: str, capture_file: Path) -> None
 
 
 def _install_runtime_probe_helper(helper_root: Path, marker: str) -> None:
-    helper_target = helper_root / "runtime" / "helpers" / "vetcoders-runtime-core.sh"
+    helper_target = (
+        helper_root
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "helpers"
+        / "vetcoders-runtime-core.sh"
+    )
     helper_target.parent.mkdir(parents=True, exist_ok=True)
     helper_target.write_text(
         textwrap.dedent(

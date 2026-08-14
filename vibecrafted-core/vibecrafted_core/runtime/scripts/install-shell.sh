@@ -89,16 +89,16 @@ _vibecrafted_helper_candidates() {
   # Without env set, resolver uses canonical install paths only —
   # so mid-rebase intermediate states do NOT break other shells.
   if [[ -n "\${VIBECRAFTED_ROOT:-}" ]]; then
-    printf '%s\n' "\$VIBECRAFTED_ROOT/runtime/shell/vetcoders.sh"
-    printf '%s\n' "\$VIBECRAFTED_ROOT/runtime/shell/vetcoders.zsh"
+    printf '%s\n' "\$VIBECRAFTED_ROOT/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
+    printf '%s\n' "\$VIBECRAFTED_ROOT/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.zsh"
   fi
   # CANONICAL INSTALL PATHS (always emitted, operator-agnostic):
   # vibecrafted-current symlinks to the active vibecrafted-<channel> install,
   # so this path stays stable across versions and points at the staged source
   # tree the installer copied into the XDG data runtime.
   printf '%s\n' \
-    "\$crafted_tools_home/vibecrafted-current/runtime/shell/vetcoders.sh" \
-    "\$crafted_tools_home/vibecrafted-current/runtime/shell/vetcoders.zsh" \
+    "\$crafted_tools_home/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh" \
+    "\$crafted_tools_home/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.zsh" \
     "\$crafted_home/runtime/shell/vetcoders.sh" \
     "\$crafted_home/runtime/shell/vetcoders.zsh"
 }

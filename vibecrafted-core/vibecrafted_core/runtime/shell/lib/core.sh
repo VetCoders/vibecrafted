@@ -46,7 +46,7 @@ _vetcoders_runtime_helper_candidates() {
     printf '%s/runtime/helpers/vetcoders-runtime-core.sh\n' "$repo_root"
     printf '%s/vibecrafted-core/vibecrafted_core/runtime/helpers/vetcoders-runtime-core.sh\n' "$repo_root"
   fi
-  printf '%s/vibecrafted-current/runtime/helpers/vetcoders-runtime-core.sh\n' "${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}"
+  printf '%s/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/helpers/vetcoders-runtime-core.sh\n' "${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}"
 }
 
 _vetcoders_source_runtime_helpers() {

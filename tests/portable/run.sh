@@ -239,6 +239,7 @@ require_file "$config_dir/zsh/vc-skills.zsh"
 assert_contains "$config_dir/vetcoders/vc-skills.sh" '𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. helper shim'
 bad_helper_candidate="\${VIBECRAFTED_ROOT:-}/runtime/shell/vetcoders.sh"
 assert_not_contains "$config_dir/vetcoders/vc-skills.sh" "$bad_helper_candidate"
+assert_not_contains "$config_dir/vetcoders/vc-skills.sh" "vibecrafted-current/runtime/shell/vetcoders.sh"
 # Host-shell helper sourcing is intentionally retired (install-shell.sh:
 # the helper is loaded by vc-start, never by the ordinary host shell).
 # --write-shell-rc now means: PATH-only launcher guard in an rcfile, and any
