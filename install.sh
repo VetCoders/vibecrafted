@@ -1152,11 +1152,12 @@ platform_banner
 
 if [[ "$PLATFORM_OS" == "unsupported" ]]; then
   info ""
-  info "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. v1.x ships native Linux + macOS + WSL paths."
-  info "On native Windows the installer must run inside WSL2:"
+  info "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. ships macOS, Linux and WSL2 paths."
+  info "There is no native Windows build; on Windows the installer runs"
+  info "inside WSL2. Install WSL2 once, then bootstrap inside it:"
+  info "    wsl --install"
   info "    wsl bash -c 'curl -fsSL https://vibecrafted.io/install.sh | bash'"
-  info "Or open: https://github.com/vetcoders/vibecrafted/issues to track v2.x"
-  info "native Windows support."
+  info "Full per-platform matrix: docs/INSTALL.md"
   die "Unsupported platform: $(uname -s). Re-run inside WSL2."
 fi
 

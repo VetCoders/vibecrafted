@@ -1,12 +1,13 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Vibecrafted Windows installer entry point (v1.x — WSL-required).
+    Vibecrafted Windows entry point (WSL2-required).
 
 .DESCRIPTION
-    Vibecrafted v1.x ships a POSIX-shell installer (`install.sh`). Native
-    Windows execution is deferred to v2.x — see
-    docs/INSTALL.md for the roadmap.
+    Vibecrafted ships a POSIX-shell installer (`install.sh`) and assumes a
+    POSIX process model at runtime. There is no native Windows build; on
+    Windows the supported path is WSL2. See docs/INSTALL.md for the full
+    per-platform channel matrix.
 
     This script:
       1. Verifies PowerShell >= 5.1.
@@ -21,15 +22,21 @@
     tells you exactly what to run next, or it tells you what is missing.
 
 .EXAMPLE
-    PS> iwr -useb https://vibecrafted.io/install.ps1 | iex
     PS> .\install.ps1
+
+    Run from a repository checkout. The hosted form
+    (`iwr -useb https://vibecrafted.io/install.ps1 | iex`) is not served yet;
+    until it is, use the checkout form above or run the WSL bootstrap directly:
+    PS> wsl bash -c 'curl -fsSL https://vibecrafted.io/install.sh | bash'
 
 .NOTES
     Branding: 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 
     Roadmap:
-      - v1.x: WSL-required (this script).
-      - v2.x: Native Windows binaries (PowerShell module + signed installer).
+      - Now: WSL2-required (this script hands off to install.sh inside WSL).
+      - Not scheduled: native Windows binaries (PowerShell module + signed
+        installer). WSL2 is the supported answer; do not document a native
+        Windows build as imminent.
 
     Plan source: docs/plans/META_22_SCAFFOLD_TO_RELEASE.md — Plan 03.
 #>
