@@ -218,6 +218,9 @@ def _app_fixture(app: Path, macho_executable: Path) -> dict[str, Any]:
     terminal_config = app / "Contents/Resources/terminal/vibecrafted.toml"
     terminal_config.parent.mkdir(parents=True, exist_ok=True)
     terminal_config.write_text("[shell]\nprogram = 'vc-start'\n", encoding="utf-8")
+    icon = app / "Contents/Resources" / contract.PRODUCT_ICON_FILE
+    icon.parent.mkdir(parents=True, exist_ok=True)
+    icon.write_bytes(b"icns-fixture")
     plist = app / "Contents/Info.plist"
     plist.parent.mkdir(parents=True, exist_ok=True)
     with plist.open("wb") as handle:
@@ -225,6 +228,7 @@ def _app_fixture(app: Path, macho_executable: Path) -> dict[str, Any]:
             {
                 "CFBundleIdentifier": contract.PRODUCT_BUNDLE_ID,
                 "CFBundleExecutable": contract.PRODUCT_EXECUTABLE,
+                "CFBundleIconFile": contract.PRODUCT_ICON_FILE,
                 "CFBundleShortVersionString": "1.0.0",
                 "CFBundleVersion": "1",
             },
@@ -330,6 +334,11 @@ def _app_fixture(app: Path, macho_executable: Path) -> dict[str, Any]:
         },
         "files": [
             _entry(app, "Contents/Info.plist", kind="config"),
+            _entry(
+                app,
+                f"Contents/Resources/{contract.PRODUCT_ICON_FILE}",
+                kind="resource",
+            ),
             terminal_product_entry,
             frame_product_entry,
             _entry(app, terminal_binding["manifest_path"], kind="config"),
@@ -583,6 +592,17 @@ def _release_output_fixture(
     return receipt, signature, payload, signer
 
 
+def _canonical_release_dmg_path(root: Path, app: Path) -> Path:
+    product = json.loads(
+        (app / "Contents/Resources/product-manifest.json").read_text(encoding="utf-8")
+    )
+    return root / contract.canonical_release_dmg_name(
+        version=product["version"],
+        release_date="20260814",
+        source_revision=product["git_sha"],
+    )
+
+
 def _sign_release_receipt(receipt: Path, signature: Path) -> None:
     signing_key = Path.home() / ".keys/vibecrafted-signing.key"
     result = subprocess.run(
@@ -637,14 +657,14 @@ def _developer_id_release_app(root: Path, macho_executable: Path) -> Path:
 
 
 def _create_signed_release_dmg(
-    root: Path, app: Path, *, name: str = contract.RELEASE_DMG_NAME
+    root: Path, app: Path, *, name: str | None = None
 ) -> Path:
     """Create a real UDZO with one top-level app, then Developer-ID sign it."""
     staging = root / "dmg-staging"
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True)
     shutil.copytree(app, staging / "Vibecrafted.app", copy_function=shutil.copy2)
-    dmg = root / name
+    dmg = root / name if name is not None else _canonical_release_dmg_path(root, app)
     dmg.unlink(missing_ok=True)
     created = subprocess.run(
         [
@@ -755,9 +775,12 @@ def test_versioned_json_schema_matches_runtime_contract_ids() -> None:
     assert schema["$defs"]["releaseOutput"]["properties"]["schema"]["const"] == (
         contract.RELEASE_OUTPUT_SCHEMA
     )
-    assert schema["$defs"]["releaseOutput"]["properties"]["dmg"]["properties"][
-        "path"
-    ] == {"const": contract.RELEASE_DMG_NAME}
+    assert (
+        schema["$defs"]["releaseOutput"]["properties"]["dmg"]["properties"]["path"][
+            "pattern"
+        ]
+        == contract.RELEASE_DMG_PATTERN
+    )
 
 
 def test_versioned_json_schema_accepts_every_valid_contract_fixture(
@@ -767,7 +790,7 @@ def test_versioned_json_schema_accepts_every_valid_contract_fixture(
     validator = contract.UnifiedProductValidator(schema)
     release_app = tmp_path / "ReleaseFixture.app"
     _app_fixture(release_app, macho_executable)
-    release_dmg = tmp_path / "Vibecrafted.dmg"
+    release_dmg = _canonical_release_dmg_path(tmp_path, release_app)
     release_dmg.write_bytes(b"synthetic-dmg\n")
     _release_output_fixture(tmp_path, release_app, release_dmg)
     walkaround = _runner_walkaround_fixture(tmp_path)
@@ -1869,7 +1892,7 @@ def test_signed_release_output_binds_live_artifacts_and_signer_policy(
 ) -> None:
     app = tmp_path / "Vibecrafted.app"
     _app_fixture(app, macho_executable)
-    dmg = tmp_path / "Vibecrafted.dmg"
+    dmg = _canonical_release_dmg_path(tmp_path, app)
     dmg.write_bytes(b"synthetic-dmg\n")
     receipt, signature, payload, signer = _release_output_fixture(tmp_path, app, dmg)
     monkeypatch.setattr(contract, "_verify_release_signature", _captured_signature_pair)
@@ -2136,7 +2159,7 @@ def test_release_schema_and_runtime_boundary_mutation_matrix(
 ) -> None:
     app = tmp_path / "Vibecrafted.app"
     _app_fixture(app, macho_executable)
-    dmg = tmp_path / "Vibecrafted.dmg"
+    dmg = _canonical_release_dmg_path(tmp_path, app)
     dmg.write_bytes(b"synthetic-dmg\n")
     receipt, signature, payload, signer = _release_output_fixture(tmp_path, app, dmg)
 
@@ -2278,7 +2301,9 @@ def test_release_output_runtime_guard_rejects_noncanonical_dmg_selector(
     with pytest.raises(contract.ProductContractError) as exc_info:
         contract.verify_release_output(receipt, signature)
     assert exc_info.value.code == contract.E_PROOF
-    assert "release DMG path must be Vibecrafted.dmg" in str(exc_info.value)
+    assert "release DMG path must bind version, date and source revision" in str(
+        exc_info.value
+    )
 
 
 @pytest.mark.parametrize("swapped_member", ["receipt", "signature"])
@@ -2290,7 +2315,7 @@ def test_release_output_consumes_only_the_captured_signed_tuple_after_replace(
 ) -> None:
     app = tmp_path / "Vibecrafted.app"
     _app_fixture(app, macho_executable)
-    dmg = tmp_path / "Vibecrafted.dmg"
+    dmg = _canonical_release_dmg_path(tmp_path, app)
     dmg.write_bytes(b"synthetic-dmg\n")
     receipt, signature, payload, signer = _release_output_fixture(tmp_path, app, dmg)
     captured = _captured_signature_pair(receipt, signature)
@@ -2329,7 +2354,7 @@ def test_release_output_mounts_the_captured_dmg_when_source_path_is_swapped(
 ) -> None:
     app = tmp_path / "Vibecrafted.app"
     _app_fixture(app, macho_executable)
-    dmg = tmp_path / "Vibecrafted.dmg"
+    dmg = _canonical_release_dmg_path(tmp_path, app)
     signed_bytes = b"signed-dmg-bytes\n"
     dmg.write_bytes(signed_bytes)
     receipt, signature, payload, signer = _release_output_fixture(tmp_path, app, dmg)
@@ -2742,7 +2767,7 @@ def test_release_output_rejects_zero_byte_dmg_even_when_hash_and_size_match(
 ) -> None:
     app = tmp_path / "Vibecrafted.app"
     _app_fixture(app, macho_executable)
-    dmg = tmp_path / "Vibecrafted.dmg"
+    dmg = _canonical_release_dmg_path(tmp_path, app)
     dmg.write_bytes(b"")
     receipt, signature, _, signer = _release_output_fixture(tmp_path, app, dmg)
     monkeypatch.setattr(contract, "_verify_release_signature", _captured_signature_pair)
@@ -2770,7 +2795,7 @@ def test_release_output_rejects_foreign_signer_or_entitlement_drift_even_with_sa
 ) -> None:
     app = tmp_path / "Vibecrafted.app"
     product = _app_fixture(app, macho_executable)
-    dmg = tmp_path / "Vibecrafted.dmg"
+    dmg = _canonical_release_dmg_path(tmp_path, app)
     dmg.write_bytes(b"synthetic-dmg\n")
     signer = {
         "cdhash": "b" * 40,
@@ -2828,7 +2853,7 @@ def test_release_output_rejects_real_foreign_resign_without_mocking_codesign(
     assert contract._macho_code_sha256(executable) == original_code_identity
     assert product["outer_bundle_code"]["code_sha256"] == original_code_identity
 
-    dmg = tmp_path / "Vibecrafted.dmg"
+    dmg = _canonical_release_dmg_path(tmp_path, app)
     dmg.write_bytes(b"synthetic-dmg\n")
     receipt, signature, _, _ = _release_output_fixture(tmp_path, app, dmg)
     monkeypatch.setattr(contract, "_verify_release_signature", _captured_signature_pair)

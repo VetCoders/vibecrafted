@@ -3,9 +3,9 @@
 ## Public product
 
 - Owner: `vetcoders/vibecrafted`
-- Artifact: one installable `Vibecrafted.dmg`
+- Artifact: one installable `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`
 - App: `Vibecrafted.app`
-- Download: `https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg`
+- Download: `https://github.com/vetcoders/vibecrafted/releases/latest` → `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`
 - Embedded donors: `vc-terminal`, `vc-frame`
 - Entry: bundled `vc-start` with durable `workspace_id`
 
@@ -26,11 +26,8 @@ assets.
 
 ## Public CTA
 
-```bash
-curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg \
-  -o Vibecrafted.dmg
-open Vibecrafted.dmg
-```
+Download the canonical `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg` and its
+`.dmg.sha256` from the latest release, verify the checksum, and open the DMG.
 
 ## Required proof
 

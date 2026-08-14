@@ -18,11 +18,9 @@ updates, the terminal host, the session interior and the runtime generation.
 
 ## Download
 
-```bash
-curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg \
-  -o Vibecrafted.dmg
-open Vibecrafted.dmg
-```
+Open the [latest release](https://github.com/vetcoders/vibecrafted/releases/latest),
+download `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`, verify it with the
+adjacent `.dmg.sha256`, and open the DMG.
 
 Drag `Vibecrafted.app` to Applications and launch it. The app always enters a
 new or restored workspace through its bundled `vc-start` and durable

@@ -58,6 +58,8 @@ fn run() -> Result<(), String> {
         .arg(&shell)
         .args(env::args_os().skip(1))
         .env("PATH", runtime_path)
+        .env("PYTHONNOUSERSITE", "1")
+        .env("PYTHONDONTWRITEBYTECODE", "1")
         .env("VIBECRAFTED_PYTHON", runtime.join("bin/python3"))
         .env("VIBECRAFTED_APP_ROOT", &app)
         .env("VIBECRAFTED_ROOT", &runtime)

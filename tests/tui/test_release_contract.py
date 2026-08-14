@@ -3,9 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DMG_URL = (
-    "https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg"
-)
+RELEASE_PAGE = "https://github.com/vetcoders/vibecrafted/releases/latest"
 
 
 def test_public_install_surfaces_point_at_the_single_dmg() -> None:
@@ -16,7 +14,8 @@ def test_public_install_surfaces_point_at_the_single_dmg() -> None:
     )
     for relative in surfaces:
         text = (REPO_ROOT / relative).read_text(encoding="utf-8")
-        assert DMG_URL in text, f"{relative} must point to the unified DMG"
+        assert RELEASE_PAGE in text, f"{relative} must point to the unified release"
+        assert "Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg" in text
         assert "vc-frame/releases/latest/download/install.sh" not in text
 
 
@@ -44,12 +43,15 @@ def test_macos_publisher_cold_verifies_exact_uploaded_bytes() -> None:
 
     assert "publish-release:" in makefile
     assert "scripts/publish-vibecrafted-release.sh" in makefile
-    assert 'DMG="$DIST/Vibecrafted.dmg"' in publisher
+    assert 'DMG_NAME="$(uv run python3' in publisher
+    assert 'DMG="$DIST/$DMG_NAME"' in publisher
+    assert 'DMG_CHECKSUM="$DMG.sha256"' in publisher
     assert 'test "$(uname -s)" = "Darwin"' in publisher
     assert "verify-vibecrafted-walkaround verify-release" in publisher
     assert "verify-vibecrafted-walkaround walkaround" in publisher
     assert 'gh release download "$TAG"' in publisher
-    assert 'cmp "$DMG" "$DOWNLOAD_DIR/Vibecrafted.dmg"' in publisher
+    assert 'cmp "$DMG" "$DOWNLOAD_DIR/$DMG_NAME"' in publisher
+    assert 'shasum -a 256 -c "$DMG_NAME.sha256"' in publisher
     assert "xcrun stapler validate" in publisher
     assert "spctl --assess --type open" in publisher
     assert "code-scanning/alerts?state=open&ref=refs/heads/main" in publisher
@@ -57,10 +59,61 @@ def test_macos_publisher_cold_verifies_exact_uploaded_bytes() -> None:
 
     expected_assets = publisher.split('EXPECTED_ASSETS="', 1)[1].split('"', 1)[0]
     assert expected_assets.splitlines() == [
-        "Vibecrafted.dmg",
+        "$DMG_NAME",
+        "$DMG_NAME.sha256",
         "release-output.json",
         "release-output.json.sig",
     ]
+
+
+def test_builder_emits_the_canonical_versioned_dmg_and_checksum() -> None:
+    builder = (REPO_ROOT / "scripts/build-vibecrafted-release.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'RELEASE_DATE="${VIBECRAFTED_RELEASE_DATE:-$(date -u +%Y%m%d)}"' in builder
+    assert (
+        'DMG_NAME="Vibecrafted_${VERSION}-${RELEASE_DATE}-${ROOT_SHA:0:8}.dmg"'
+        in builder
+    )
+    assert 'DMG_CHECKSUM="$DMG.sha256"' in builder
+    assert 'LEGACY_DMG="$DIST_DIR/Vibecrafted.dmg"' in builder
+    assert 'rm -f "$DMG_CHECKSUM" "$LEGACY_DMG"' in builder
+    assert '/usr/bin/shasum -a 256 "$DMG_NAME"' in builder
+    assert "-type d -name __pycache__" in builder
+    assert "-name '*.pyc'" in builder
+
+
+def test_release_bundle_binds_the_vibecrafted_app_icon() -> None:
+    project = (REPO_ROOT / "vibecrafted-app/shell-agent/app/project.yml").read_text(
+        encoding="utf-8"
+    )
+    manifest = (REPO_ROOT / "scripts/unified_product_manifest.py").read_text(
+        encoding="utf-8"
+    )
+    icon = REPO_ROOT / "vibecrafted-app/shell-agent/app/Vibecrafted/Vibecrafted.icns"
+
+    assert "INFOPLIST_KEY_CFBundleIconFile: Vibecrafted" in project
+    assert 'plist["CFBundleIconFile"] = contract.PRODUCT_ICON_FILE' in manifest
+    assert icon.is_file()
+    assert icon.stat().st_size > 100_000
+
+
+def test_signed_bundle_runtime_cannot_write_python_bytecode() -> None:
+    builder = (REPO_ROOT / "scripts/build-vibecrafted-release.sh").read_text(
+        encoding="utf-8"
+    )
+    app_delegate = (
+        REPO_ROOT / "vibecrafted-app/shell-agent/app/Vibecrafted/AppDelegate.swift"
+    ).read_text(encoding="utf-8")
+    vc_start = (REPO_ROOT / "vibecrafted-app/tui-agent/src/bin/vc_start.rs").read_text(
+        encoding="utf-8"
+    )
+
+    assert "export PYTHONDONTWRITEBYTECODE=1" in builder
+    assert 'environment["PYTHONDONTWRITEBYTECODE"] = "1"' in app_delegate
+    assert '.env("PYTHONDONTWRITEBYTECODE", "1")' in vc_start
+    assert '"$runtime/bin/python3" -c' in builder
+    assert "bundled Python mutated the signed application payload" in builder
 
 
 def test_publisher_writes_the_mandatory_release_report() -> None:

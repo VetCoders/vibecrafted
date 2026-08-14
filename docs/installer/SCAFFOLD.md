@@ -3,7 +3,7 @@
 Current truth as of 2026-04-10:
 
 - Public front door: browser-guided installer in `scripts/installer_gui.py`
-- Public CTA: `curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg -o Vibecrafted.dmg && open Vibecrafted.dmg`
+- Public CTA: open the [latest release](https://github.com/vetcoders/vibecrafted/releases/latest), verify and open `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`
 - Local terminal-native entrypoint: `make install`
 - Local browser GUI entrypoint: `make wizard` (alias: `make gui-install`)
 - Maintainer automation entrypoint: `make install-auto`
@@ -86,7 +86,7 @@ Every release surface should agree on these points:
 
 - promise: `Release engine for AI-built software.`
 - supporting line: `Ship AI-built software without the vibe hangover.`
-- primary CTA: `curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg -o Vibecrafted.dmg && open Vibecrafted.dmg`
+- primary CTA: open the [latest release](https://github.com/vetcoders/vibecrafted/releases/latest), verify and open `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`
 - secondary CTA: source-checkout `make install` for maintainers only
 - first verification step after install: `vibecrafted doctor`
 

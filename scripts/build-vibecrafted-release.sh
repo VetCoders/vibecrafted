@@ -7,14 +7,23 @@ FRAME_REPO="${VIBECRAFTED_FRAME_REPO:-$REPO_ROOT/../vc-frame}"
 DIST_DIR="${VIBECRAFTED_RELEASE_DIR:-$REPO_ROOT/dist}"
 BUILD_DIR="$REPO_ROOT/build/unified-release"
 APP="$DIST_DIR/Vibecrafted.app"
-DMG="$DIST_DIR/Vibecrafted.dmg"
+VERSION="$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")"
+RELEASE_DATE="${VIBECRAFTED_RELEASE_DATE:-$(date -u +%Y%m%d)}"
+ROOT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+[[ "$RELEASE_DATE" =~ ^[0-9]{8}$ ]] || {
+  printf 'FATAL: VIBECRAFTED_RELEASE_DATE must be YYYYMMDD\n' >&2
+  exit 1
+}
+DMG_NAME="Vibecrafted_${VERSION}-${RELEASE_DATE}-${ROOT_SHA:0:8}.dmg"
+DMG="$DIST_DIR/$DMG_NAME"
+DMG_CHECKSUM="$DMG.sha256"
+LEGACY_DMG="$DIST_DIR/Vibecrafted.dmg"
 KEYS="${KEYS:-$HOME/.keys}"
 SIGNING_IDENTITY_FILE="$KEYS/signing-identity.txt"
 CERT_P12="$KEYS/Certificates.p12"
 CERT_PASSWORD_FILE="$KEYS/cert_password.txt"
 SIGNING_KEY="$KEYS/vibecrafted-signing.key"
 NOTARY_ENV="$KEYS/.notary.env"
-VERSION="$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")"
 BUILD_NUMBER="${BUILD_NUMBER:-$(date -u +%Y%m%d%H%M%S)}"
 MODE="release"
 SIGNING_IDENTITY=""
@@ -202,6 +211,12 @@ build_product() {
   /bin/cp -RL "$REPO_ROOT/vibecrafted-core/vibecrafted_core/runtime" \
     "$runtime/runtime"
   /bin/cp -RL "$REPO_ROOT/config/." "$runtime/config/"
+  # The Living Tree may contain ignored interpreter caches. They are never
+  # product inputs: adjacent verifier bytecode could shadow the signed source.
+  find "$runtime/vibecrafted-core" "$runtime/runtime" \
+    -type d -name __pycache__ -prune -exec rm -rf {} +
+  find "$runtime/vibecrafted-core" "$runtime/runtime" \
+    -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 
   log "Embedding a private Python runtime; no shell profile or host Python is used"
   local python_seed seed_python python_home
@@ -225,6 +240,8 @@ build_product() {
     '#!/bin/bash' \
     'set -euo pipefail' \
     'runtime_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"' \
+    'export PYTHONNOUSERSITE=1' \
+    'export PYTHONDONTWRITEBYTECODE=1' \
     'export PYTHONPATH="$runtime_root/vibecrafted-core:$runtime_root/python-site"' \
     'exec "$runtime_root/python/bin/python3.12" "$@"' \
     > "$runtime/bin/python3"
@@ -248,6 +265,12 @@ build_product() {
     --frame-sha "$(git_sha "$FRAME_REPO")"
   codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" \
     "${CODESIGN_KEYCHAIN_ARGS[@]}" "$APP"
+  log "Probing the signed bundled Python without mutating the app seal"
+  "$runtime/bin/python3" -c 'import jsonschema, yaml, vibecrafted_core.product_contract'
+  if find "$APP/Contents" \( -type d -name __pycache__ -o -type f -name '*.py[co]' \) \
+      -print -quit | grep -q .; then
+    die "bundled Python mutated the signed application payload"
+  fi
   codesign --verify --deep --strict --verbose=2 "$APP"
   "$REPO_ROOT/scripts/verify-vibecrafted-product.sh" app "$APP" --require-clean
 }
@@ -255,6 +278,7 @@ build_product() {
 create_dmg() {
   local staging="$BUILD_DIR/dmg-staging"
   rm -rf "$staging" "$DMG"
+  rm -f "$DMG_CHECKSUM" "$LEGACY_DMG"
   mkdir -p "$staging"
   /usr/bin/ditto "$APP" "$staging/Vibecrafted.app"
   ln -s /Applications "$staging/Applications"
@@ -286,6 +310,10 @@ emit_release_tuple() {
     -out "$DIST_DIR/release-output.json.sig" "$DIST_DIR/release-output.json"
   "$REPO_ROOT/scripts/verify-vibecrafted-product.sh" release-output \
     "$DIST_DIR/release-output.json" "$DIST_DIR/release-output.json.sig"
+  (
+    cd "$DIST_DIR"
+    /usr/bin/shasum -a 256 "$DMG_NAME" > "$(basename "$DMG_CHECKSUM")"
+  )
 }
 
 if [[ "$MODE" == "notarize" ]]; then

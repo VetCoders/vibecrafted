@@ -137,6 +137,7 @@ def produce_app(args: argparse.Namespace) -> None:
         plist = plistlib.load(handle)
     plist["CFBundleIdentifier"] = contract.PRODUCT_BUNDLE_ID
     plist["CFBundleExecutable"] = contract.PRODUCT_EXECUTABLE
+    plist["CFBundleIconFile"] = contract.PRODUCT_ICON_FILE
     plist["CFBundleShortVersionString"] = args.version
     plist["CFBundleVersion"] = args.build
     with plist_path.open("wb") as handle:
@@ -266,7 +267,7 @@ def produce_release(args: argparse.Namespace) -> None:
             "sha256": contract._sha256(app / "Contents/_CodeSignature/CodeResources"),
         },
         "dmg": {
-            "path": contract.RELEASE_DMG_NAME,
+            "path": dmg.name,
             "sha256": contract._sha256(dmg),
             "size": dmg.stat().st_size,
         },
@@ -294,8 +295,14 @@ def produce_release(args: argparse.Namespace) -> None:
             "dmg": {"codesign": True, "ticket": True, "gatekeeper": True},
         },
     }
-    if dmg.parent != root or dmg.name != contract.RELEASE_DMG_NAME:
-        raise SystemExit("release DMG must be the canonical sibling Vibecrafted.dmg")
+    if dmg.parent != root or not contract.is_canonical_release_dmg_name(
+        dmg.name,
+        version=product["version"],
+        source_revision=product["git_sha"],
+    ):
+        raise SystemExit(
+            "release DMG must be a canonical sibling bound to version, date, and source"
+        )
     _write(args.output, payload, canonical=True)
 
 

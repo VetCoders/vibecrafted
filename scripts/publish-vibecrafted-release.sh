@@ -8,7 +8,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="$ROOT/dist"
 VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
 TAG="v$VERSION"
-DMG="$DIST/Vibecrafted.dmg"
 RELEASE_OUTPUT="$DIST/release-output.json"
 RELEASE_SIGNATURE="$DIST/release-output.json.sig"
 REPORT_DATE="$(date +%Y_%m%d)"
@@ -26,7 +25,6 @@ for command_name in git gh uv shasum xcrun spctl hdiutil; do
 done
 test "$(uname -s)" = "Darwin" || die "the notarized DMG publisher must run on macOS"
 test -n "${GH_TOKEN:-}" || die "GH_TOKEN must name an authenticated release publisher"
-test -s "$DMG" || die "missing $DMG; run make release first"
 test -s "$RELEASE_OUTPUT" || die "missing $RELEASE_OUTPUT"
 test -s "$RELEASE_SIGNATURE" || die "missing $RELEASE_SIGNATURE"
 
@@ -37,12 +35,20 @@ test "$(git cat-file -t "$TAG" 2>/dev/null || true)" = "tag" || die "$TAG must b
 test "$(git rev-list -n 1 "$TAG")" = "$HEAD_SHA" || die "$TAG does not point at HEAD"
 REMOTE_TAG_SHA="$(git ls-remote origin "refs/tags/$TAG^{}" | awk '{print $1}')"
 test "$REMOTE_TAG_SHA" = "$HEAD_SHA" || die "$TAG is not published at the exact HEAD"
-test "$(uv run python3 -c 'import json; print(json.load(open("dist/release-output.json"))["source_revisions"]["vibecrafted"])')" = "$HEAD_SHA" \
-  || die "release-output does not name the exact root revision"
-
 uv run --project vibecrafted-core verify-vibecrafted-walkaround verify-release \
   --release-output "$RELEASE_OUTPUT" \
   --signature "$RELEASE_SIGNATURE"
+test "$(uv run python3 -c 'import json; print(json.load(open("dist/release-output.json"))["source_revisions"]["vibecrafted"])')" = "$HEAD_SHA" \
+  || die "release-output does not name the exact root revision"
+DMG_NAME="$(uv run python3 -c 'import json; print(json.load(open("dist/release-output.json"))["dmg"]["path"])')"
+DMG="$DIST/$DMG_NAME"
+DMG_CHECKSUM="$DMG.sha256"
+test -s "$DMG" || die "missing $DMG; run make release first"
+test -s "$DMG_CHECKSUM" || die "missing $DMG_CHECKSUM"
+(
+  cd "$DIST"
+  shasum -a 256 -c "$(basename "$DMG_CHECKSUM")"
+)
 xcrun stapler validate "$DMG"
 spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
 
@@ -64,7 +70,8 @@ else
 fi
 
 gh release upload "$TAG" --repo "$REPO" \
-  "$DMG#Vibecrafted.dmg" \
+  "$DMG" \
+  "$DMG_CHECKSUM" \
   "$RELEASE_OUTPUT#release-output.json" \
   "$RELEASE_SIGNATURE#release-output.json.sig" \
   --clobber
@@ -73,14 +80,20 @@ DOWNLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vibecrafted-published.XXXXXX")"
 trap 'rm -rf "$DOWNLOAD_DIR"' EXIT
 gh release download "$TAG" --repo "$REPO" --dir "$DOWNLOAD_DIR"
 
-EXPECTED_ASSETS="Vibecrafted.dmg
+EXPECTED_ASSETS="$DMG_NAME
+$DMG_NAME.sha256
 release-output.json
 release-output.json.sig"
 ACTUAL_ASSETS="$(find "$DOWNLOAD_DIR" -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort)"
 test "$ACTUAL_ASSETS" = "$EXPECTED_ASSETS" || die "draft release contains unexpected assets"
-cmp "$DMG" "$DOWNLOAD_DIR/Vibecrafted.dmg"
+cmp "$DMG" "$DOWNLOAD_DIR/$DMG_NAME"
+cmp "$DMG_CHECKSUM" "$DOWNLOAD_DIR/$DMG_NAME.sha256"
 cmp "$RELEASE_OUTPUT" "$DOWNLOAD_DIR/release-output.json"
 cmp "$RELEASE_SIGNATURE" "$DOWNLOAD_DIR/release-output.json.sig"
+(
+  cd "$DOWNLOAD_DIR"
+  shasum -a 256 -c "$DMG_NAME.sha256"
+)
 
 uv run --project vibecrafted-core verify-vibecrafted-walkaround verify-release \
   --release-output "$DOWNLOAD_DIR/release-output.json" \
@@ -89,15 +102,15 @@ uv run --project vibecrafted-core verify-vibecrafted-walkaround walkaround \
   --release-output "$DOWNLOAD_DIR/release-output.json" \
   --signature "$DOWNLOAD_DIR/release-output.json.sig" \
   --output "$DOWNLOAD_DIR/walkaround.json"
-xcrun stapler validate "$DOWNLOAD_DIR/Vibecrafted.dmg"
+xcrun stapler validate "$DOWNLOAD_DIR/$DMG_NAME"
 spctl --assess --type open --context context:primary-signature --verbose=2 \
-  "$DOWNLOAD_DIR/Vibecrafted.dmg"
+  "$DOWNLOAD_DIR/$DMG_NAME"
 
-DMG_SHA="$(shasum -a 256 "$DOWNLOAD_DIR/Vibecrafted.dmg" | awk '{print $1}')"
-DMG_SIZE="$(stat -f %z "$DOWNLOAD_DIR/Vibecrafted.dmg")"
+DMG_SHA="$(shasum -a 256 "$DOWNLOAD_DIR/$DMG_NAME" | awk '{print $1}')"
+DMG_SIZE="$(stat -f %z "$DOWNLOAD_DIR/$DMG_NAME")"
 VC_FRAME_SHA="$(uv run python3 -c 'import json; print(json.load(open("dist/release-output.json"))["source_revisions"]["vc-frame"])')"
 VC_TERMINAL_SHA="$(uv run python3 -c 'import json; print(json.load(open("dist/release-output.json"))["source_revisions"]["vc-terminal"])')"
-DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/Vibecrafted.dmg"
+DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/$DMG_NAME"
 
 mkdir -p "$REPORT_DIR"
 umask 022
@@ -141,7 +154,7 @@ Source tuple:
 
 ## Sign-off
 
-PASS — the release has one installable artifact, \`Vibecrafted.dmg\`, and no donor repo owns a competing app, installer or update channel.
+PASS — the release has one canonically named installable artifact, \`$DMG_NAME\`, and no donor repo owns a competing app, installer or update channel.
 EOF
 
 gh release edit "$TAG" --repo "$REPO" --notes-file "$REPORT" --draft=false --latest

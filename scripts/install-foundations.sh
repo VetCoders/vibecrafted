@@ -680,7 +680,7 @@ install_vcframe() {
       warn "  make -C $sibling release"
     fi
     warn "  set VIBECRAFTED_VC_FRAME_SOURCE to a checkout and rerun"
-    warn "  end users should install the single Vibecrafted.dmg"
+    warn "  end users should install the canonical versioned Vibecrafted DMG"
     return 1
   fi
 

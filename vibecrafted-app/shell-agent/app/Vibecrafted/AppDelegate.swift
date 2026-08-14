@@ -102,6 +102,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var environment = Dictionary(
       uniqueKeysWithValues: inherited.compactMap { key in host[key].map { (key, $0) } })
     environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+    environment["PYTHONNOUSERSITE"] = "1"
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
     environment["VIBECRAFTED_RUNTIME_HOME"] = runtimeHome
     environment["VIBECRAFTED_APP_ROOT"] = appRoot.path
     environment["VIBECRAFTED_VC_FRAME_BIN"] = frame.path

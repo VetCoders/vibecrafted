@@ -161,11 +161,10 @@ The `//` is not decoration. It is the mark.
 One signed product carries the terminal substrate, session interior and the
 matching Vibecrafted runtime:
 
-```bash
-curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg \
-  -o Vibecrafted.dmg
-open Vibecrafted.dmg
-```
+Open the [latest release](https://github.com/vetcoders/vibecrafted/releases/latest),
+download the canonically named
+`Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`, verify its adjacent
+`.dmg.sha256`, then open the DMG.
 
 Drag `Vibecrafted.app` to Applications and launch it. Every new or restored
 `workspace_id` enters through the bundled `vc-start`; the app sources its own

@@ -42,6 +42,7 @@ TRUST_PROBE_DOMAIN = "io.vetcoders.vibecrafted.release-trust-probe.v1"
 PRODUCT_NAME = "Vibecrafted"
 PRODUCT_BUNDLE_ID = "io.vetcoders.vibecrafted"
 PRODUCT_EXECUTABLE = "Vibecrafted"
+PRODUCT_ICON_FILE = "Vibecrafted.icns"
 SUPPORTED_MODULES = frozenset({"vc-terminal", "vc-frame"})
 SUPPORTED_ARCHITECTURES = frozenset({"arm64"})
 MINIMUM_MACOS = (14, 0)
@@ -51,10 +52,45 @@ OUTER_BUNDLE_CODE_IDENTITY = "outer-bundle-codesign-v1"
 MACHO_CODE_IDENTITY = "macho-code-v1"
 TRUSTED_RUNNER_PUBLIC_KEY_NAME = "vibecrafted-signing-v1.pub"
 RELEASE_POLICY_NAME = "release-policy.v1.json"
-RELEASE_DMG_NAME = "Vibecrafted.dmg"
+RELEASE_DMG_PATTERN = (
+    r"^Vibecrafted_[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?-"
+    r"[0-9]{8}-[0-9a-f]{8}\.dmg$"
+)
 RELEASE_KEY_SPKI_SHA256 = (
     "521ed59d3c446c540afe1557c2dbc39c9c190775f99896b2b65206c32814b25b"
 )
+
+
+def canonical_release_dmg_name(
+    *, version: str, release_date: str, source_revision: str
+) -> str:
+    """Return the immutable public DMG name bound to version, date and source."""
+
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", version):
+        raise ValueError("release version must be canonical SemVer")
+    if not re.fullmatch(r"[0-9]{8}", release_date):
+        raise ValueError("release date must be YYYYMMDD")
+    revision = source_revision.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40,64}", revision):
+        raise ValueError("release source revision must be a full Git object id")
+    return f"Vibecrafted_{version}-{release_date}-{revision[:8]}.dmg"
+
+
+def is_canonical_release_dmg_name(
+    name: str, *, version: str, source_revision: str
+) -> bool:
+    """Validate the public name and its bindings without trusting its date."""
+
+    if re.fullmatch(RELEASE_DMG_PATTERN, name) is None:
+        return False
+    revision = source_revision.strip().lower()
+    if re.fullmatch(r"[0-9a-f]{40,64}", revision) is None:
+        return False
+    prefix = f"Vibecrafted_{version}-"
+    suffix = f"-{revision[:8]}.dmg"
+    return name.startswith(prefix) and name.endswith(suffix)
+
+
 RUNTIME_GENERATION_SCHEMA = "vibecrafted.runtime-generation.v2"
 RUNTIME_GENERATION_MANIFEST_NAME = "runtime-manifest.json"
 SOURCE_PROVENANCE_NAME = "source-provenance.json"
@@ -1957,6 +1993,13 @@ def verify_app(app_path: str | Path, *, require_clean: bool = False) -> dict[str
         _fail(E_BUNDLE, f"Info.plist bundle id must be {PRODUCT_BUNDLE_ID}")
     if plist.get("CFBundleExecutable") != PRODUCT_EXECUTABLE:
         _fail(E_BUNDLE, f"Info.plist executable must be {PRODUCT_EXECUTABLE}")
+    if plist.get("CFBundleIconFile") != PRODUCT_ICON_FILE:
+        _fail(E_BUNDLE, f"Info.plist icon must be {PRODUCT_ICON_FILE}")
+    icon_path = app / "Contents/Resources" / PRODUCT_ICON_FILE
+    if not icon_path.is_file() or icon_path.is_symlink():
+        _fail(E_BUNDLE, f"application icon is missing: {PRODUCT_ICON_FILE}")
+    if f"Contents/Resources/{PRODUCT_ICON_FILE}" not in validated.entries:
+        _fail(E_INVENTORY, "application icon is absent from the signed inventory")
     if plist.get("CFBundleShortVersionString") != version:
         _fail(E_BUNDLE, "Info.plist marketing version does not match product manifest")
     if plist.get("CFBundleVersion") != build:
@@ -2320,8 +2363,12 @@ def _verify_release_output(
     if payload["signature_policy"] != expected_signature_policy:
         _fail(E_PROOF, "release output signature policy violates packaged policy")
     raw_dmg = payload["dmg"]
-    if raw_dmg["path"] != RELEASE_DMG_NAME:
-        _fail(E_PROOF, f"release DMG path must be {RELEASE_DMG_NAME}")
+    if not is_canonical_release_dmg_name(
+        raw_dmg["path"],
+        version=payload["product"]["version"],
+        source_revision=payload["source_revisions"]["vibecrafted"],
+    ):
+        _fail(E_PROOF, "release DMG path must bind version, date and source revision")
     dmg = _release_relative_path(receipt.parent, raw_dmg["path"], field="dmg.path")
     if not dmg.is_file() or dmg.is_symlink():
         _fail(E_MISSING, "release DMG is missing")
@@ -3248,6 +3295,9 @@ def _self_test() -> int:
         terminal_config = app / _LAUNCH_CONFIG
         terminal_config.parent.mkdir(parents=True, exist_ok=True)
         terminal_config.write_text("[shell]\nprogram = 'vc-start'\n", encoding="utf-8")
+        icon_path = app / "Contents/Resources" / PRODUCT_ICON_FILE
+        icon_path.parent.mkdir(parents=True, exist_ok=True)
+        icon_path.write_bytes(b"icns-fixture")
         plist_path = app / "Contents/Info.plist"
         plist_path.parent.mkdir(parents=True, exist_ok=True)
         with plist_path.open("wb") as handle:
@@ -3255,6 +3305,7 @@ def _self_test() -> int:
                 {
                     "CFBundleIdentifier": PRODUCT_BUNDLE_ID,
                     "CFBundleExecutable": PRODUCT_EXECUTABLE,
+                    "CFBundleIconFile": PRODUCT_ICON_FILE,
                     "CFBundleShortVersionString": "1.0.0",
                     "CFBundleVersion": "1",
                 },
@@ -3364,6 +3415,11 @@ def _self_test() -> int:
             },
             "files": [
                 _fixture_entry(app, "Contents/Info.plist", kind="config"),
+                _fixture_entry(
+                    app,
+                    f"Contents/Resources/{PRODUCT_ICON_FILE}",
+                    kind="resource",
+                ),
                 terminal_product_entry,
                 frame_product_entry,
                 _fixture_entry(app, terminal_binding["manifest_path"], kind="config"),

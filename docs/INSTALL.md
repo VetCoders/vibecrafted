@@ -2,11 +2,9 @@
 
 The public product is one signed and notarized macOS artifact:
 
-```bash
-curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg \
-  -o Vibecrafted.dmg
-open Vibecrafted.dmg
-```
+Open the [latest release](https://github.com/vetcoders/vibecrafted/releases/latest),
+download `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`, verify it with the
+adjacent `.dmg.sha256`, and open the DMG.
 
 Drag `Vibecrafted.app` to Applications and launch it. The app carries matching
 builds of `vc-terminal`, `vc-frame`, `vc-start` and the complete Vibecrafted

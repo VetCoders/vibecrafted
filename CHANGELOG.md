@@ -6,7 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## 3.7.1 — 2026-08-14
 
 > **One Vibecrafted.** The first release whose installable boundary is exactly
-> one signed and notarized `Vibecrafted.dmg`.
+> one signed and notarized `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`.
 
 ### Added
 

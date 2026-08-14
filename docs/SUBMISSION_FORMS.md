@@ -113,7 +113,7 @@ That means the positioning has to stay sharp:
   macOS, Linux
 
 - Guided install CTA
-  `curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg -o Vibecrafted.dmg && open Vibecrafted.dmg`
+  open the [latest release](https://github.com/vetcoders/vibecrafted/releases/latest), verify and open `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`
 
 - Direct install CTA
   Checkout-only maintainer staging: `make install-auto`
@@ -165,7 +165,7 @@ shows the old direct-only install CTA or the older self-referential promise.
 Every public surface should agree on:
 
 - promise: `Release engine for AI-built software.`
-- primary CTA: `curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg -o Vibecrafted.dmg && open Vibecrafted.dmg`
+- primary CTA: open the [latest release](https://github.com/vetcoders/vibecrafted/releases/latest), verify and open `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`
 - secondary CTA: checkout-only maintainer staging with `make install-auto`
 - audience: founders and teams shipping AI-generated repos into production
 
@@ -299,7 +299,7 @@ launch fields:
 | Docs             | `https://vibecrafted.io/en/quickstart/`                                                                                                                                                                                                                 |
 | Category         | `Developer Tools`, `AI Agents`, `Release Engineering`                                                                                                                                                                                                   |
 | Pricing          | `Free for personal use and startups. Enterprise licensing available.`                                                                                                                                                                                   |
-| Primary CTA      | `curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg -o Vibecrafted.dmg && open Vibecrafted.dmg`                                                                                                                 |
+| Primary CTA      | Open the [latest release](https://github.com/vetcoders/vibecrafted/releases/latest), verify and open `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`                                                                                                      |
 | Backup CTA       | Source-checkout maintainer staging with `make install-auto`                                                                                                                                                                                             |
 | 160-char summary | `Vibecrafted hardens AI-generated repos through structural mapping, convergence loops, install audits, and launch-ready packaging.`                                                                                                                     |
 | 300-char summary | `Vibecrafted is the release engine for AI-built software. It takes the repo your agents already produced and drives it through perception, verification, convergence loops, install truth, and launch-readiness work until the product is fit to ship.` |

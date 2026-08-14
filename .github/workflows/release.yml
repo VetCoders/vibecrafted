@@ -52,6 +52,8 @@ jobs:
       - name: Confirm macOS publication boundary
         run: |
           set -euo pipefail
-          test ! -e dist/Vibecrafted.dmg
           test -x scripts/publish-vibecrafted-release.sh
-          command rg -n 'Vibecrafted\.dmg' scripts/publish-vibecrafted-release.sh
+          command rg -n 'Vibecrafted_.*YYYYMMDD|DMG_NAME|\.dmg\.sha256' \
+            scripts/build-vibecrafted-release.sh \
+            scripts/publish-vibecrafted-release.sh \
+            docs/RELEASE_KICKOFF.md

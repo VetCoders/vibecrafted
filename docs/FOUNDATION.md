@@ -110,13 +110,13 @@ not the first path.
    - Never replace a product-managed prebuilt with a stale local `target/release`
      copy without an explicit force path.
 
-| Foundation     | Prebuilt channel                         | Fallback                          |
-| -------------- | ---------------------------------------- | --------------------------------- |
-| loctree / loct | npm + GitHub releases                    | cargo (preflighted)               |
-| aicx           | npm `@loctree/aicx` + GitHub releases    | cargo (preflighted)               |
-| prview         | crates.io / release binaries             | cargo (preflighted)               |
-| screenscribe   | PyPI                                     | source install with doctor check  |
-| vc-frame       | embedded in the single `Vibecrafted.dmg` | local donor build for integrators |
+| Foundation     | Prebuilt channel                               | Fallback                          |
+| -------------- | ---------------------------------------------- | --------------------------------- |
+| loctree / loct | npm + GitHub releases                          | cargo (preflighted)               |
+| aicx           | npm `@loctree/aicx` + GitHub releases          | cargo (preflighted)               |
+| prview         | crates.io / release binaries                   | cargo (preflighted)               |
+| screenscribe   | PyPI                                           | source install with doctor check  |
+| vc-frame       | embedded in the single canonical versioned DMG | local donor build for integrators |
 
 ## Foundation in the Installer
 
@@ -131,7 +131,7 @@ pair: `loctree-mcp` plus `aicx-mcp`.
 
 The recommended install order:
 
-1. `Vibecrafted.app` from the signed and notarized `Vibecrafted.dmg`
+1. `Vibecrafted.app` from the signed and notarized canonical versioned DMG
 2. Foundation binaries via **prebuilt-first** (`make foundations` — prefers
    release/npm/crates/PyPI paths; cargo only after preflight)
 3. Agent CLIs (claude, codex, agy, junie, grok)

@@ -100,8 +100,8 @@ newest first. House rules visible in recent entries:
 ## Verifying a fresh install
 
 ```bash
-curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg -o Vibecrafted.dmg
-open Vibecrafted.dmg
+open https://github.com/vetcoders/vibecrafted/releases/latest
+# Download and verify Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg, then open it.
 vibecrafted doctor      # audits the installed generation
 vibecrafted --version   # version + build provenance
 ```

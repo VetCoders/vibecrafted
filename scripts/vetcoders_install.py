@@ -3000,6 +3000,10 @@ _RUNTIME_VERIFIER_E_HASH = 24
 _RUNTIME_VERIFIER_E_DEPENDENCY = 27
 _RUNTIME_VERIFIER_E_TRANSACTION = 28
 _RUNTIME_VERIFIER_E_PROOF = 33
+_RUNTIME_RELEASE_DMG_PATTERN = (
+    r"^Vibecrafted_[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?-"
+    r"[0-9]{8}-[0-9a-f]{8}\.dmg$"
+)
 _RUNTIME_VERIFIER_SCHEMA_DEFS = frozenset(
     {
         "architecture",
@@ -8117,15 +8121,15 @@ def _validate_runtime_verifier_schema(raw: bytes) -> None:
             "candidate unified-product schema partial matcher inventory drifted"
         )
     try:
-        dmg_name = definitions["releaseOutput"]["properties"]["dmg"]["properties"][
+        dmg_pattern = definitions["releaseOutput"]["properties"]["dmg"]["properties"][
             "path"
-        ]["const"]
+        ]["pattern"]
     except (KeyError, TypeError) as exc:
         raise OSError(
             "candidate unified-product schema has no canonical DMG path"
         ) from exc
-    if dmg_name != "Vibecrafted.dmg":
-        raise OSError("candidate unified-product schema canonical DMG path drifted")
+    if dmg_pattern != _RUNTIME_RELEASE_DMG_PATTERN:
+        raise OSError("candidate unified-product schema canonical DMG pattern drifted")
 
 
 def _write_runtime_verifier_snapshot(

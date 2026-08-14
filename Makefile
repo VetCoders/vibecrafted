@@ -32,7 +32,7 @@ help:
 	@printf "  make uninstall    \033[2mReverse the install\033[0m\n"
 	@printf "  make test         \033[2mRun the gates\033[0m\n"
 	@printf "  make check        \033[2mLint shell scripts\033[0m\n"
-	@printf "  make release      \033[2mBuild, sign, notarize the single Vibecrafted.dmg\033[0m\n"
+	@printf "  make release      \033[2mBuild, sign, notarize the canonical versioned DMG\033[0m\n"
 	@printf "  make publish-release \033[2mCold-verify and publish that DMG\033[0m\n"
 	@printf "\n"
 	@printf "  \033[2mdev targets: make help-dev\033[0m\n"

@@ -2,11 +2,9 @@
 
 ## 1. Install the one product
 
-```bash
-curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg \
-  -o Vibecrafted.dmg
-open Vibecrafted.dmg
-```
+Open the [latest release](https://github.com/vetcoders/vibecrafted/releases/latest),
+download `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`, verify it with the
+adjacent `.dmg.sha256`, and open the DMG.
 
 Drag `Vibecrafted.app` to Applications, then launch it. The DMG is Developer ID
 signed, notarized and carries the exact matching `vc-terminal`, `vc-frame` and

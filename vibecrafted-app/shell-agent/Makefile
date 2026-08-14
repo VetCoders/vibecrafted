@@ -34,9 +34,9 @@ app: bindings xcode
 			exit 1; \
 		fi; \
 		cp -R "$$BUILT_APP" build/Vibecrafted.app
-	@/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile icon1" build/Vibecrafted.app/Contents/Info.plist 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string icon1" build/Vibecrafted.app/Contents/Info.plist
+	@/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile Vibecrafted" build/Vibecrafted.app/Contents/Info.plist 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string Vibecrafted" build/Vibecrafted.app/Contents/Info.plist
 	@mkdir -p build/Vibecrafted.app/Contents/Resources
-	@cp ../icon1.icns build/Vibecrafted.app/Contents/Resources/icon1.icns
+	@cp app/Vibecrafted/Vibecrafted.icns build/Vibecrafted.app/Contents/Resources/Vibecrafted.icns
 	@./scripts/fix-dylib-install-names.sh build/Vibecrafted.app
 	@codesign --force --deep --sign - build/Vibecrafted.app
 	@echo "App built: build/Vibecrafted.app"
