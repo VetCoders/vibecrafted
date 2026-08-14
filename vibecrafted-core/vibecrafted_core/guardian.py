@@ -148,6 +148,14 @@ class GuardianLockSecurityError(GuardianStateError):
 CursorToken = int | str
 
 
+def _truncate_utf8_bytes(value: str, maximum: int = MAX_STATE_TEXT_BYTES) -> str:
+    """Return the longest valid UTF-8 prefix whose encoding fits `maximum`."""
+    encoded = value.encode("utf-8")
+    if len(encoded) <= maximum:
+        return value
+    return encoded[:maximum].decode("utf-8", errors="ignore")
+
+
 def _bounded_text(
     value: object,
     *,
@@ -2373,10 +2381,10 @@ def _terminal_triage_failure_reason(run_id: str) -> str:
     if isinstance(last_error, dict):
         reason = str(last_error.get("reason") or "").strip()
         if reason:
-            return reason[:MAX_STATE_TEXT_BYTES]
-    return str(payload.get("triage_reason") or "triage_incomplete")[
-        :MAX_STATE_TEXT_BYTES
-    ]
+            return _truncate_utf8_bytes(reason)
+    return _truncate_utf8_bytes(
+        str(payload.get("triage_reason") or "triage_incomplete")
+    )
 
 
 def _terminal_triage_reason_is_permanent(reason: str) -> bool:
@@ -2426,7 +2434,7 @@ def _dead_letter_terminal_triage_outbox_locked(
                 "schema": TERMINAL_TRIAGE_DEAD_LETTER_SCHEMA,
                 "run_id": record.run_id,
                 "attempts": record.attempts + 1,
-                "reason": reason[:MAX_STATE_TEXT_BYTES],
+                "reason": _truncate_utf8_bytes(reason),
                 "dead_lettered_at_ns": time.time_ns(),
             },
             ensure_ascii=False,
@@ -2494,7 +2502,7 @@ def _refresh_terminal_triage_outbox(
                     attempts=attempts,
                     next_retry_at_ns=time.time_ns()
                     + int(delay_seconds * 1_000_000_000),
-                    last_reason=reason[:MAX_STATE_TEXT_BYTES],
+                    last_reason=_truncate_utf8_bytes(reason),
                 )
             ),
         )

@@ -1555,6 +1555,28 @@ def test_terminal_triage_retry_has_backoff_and_preserves_budget_on_reschedule(
     assert rescheduled.next_retry_at_ns == backed_off.next_retry_at_ns
 
 
+def test_terminal_triage_retry_reason_is_bounded_by_utf8_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
+    path = guardian_module._persist_terminal_triage_outbox("run-unicode-reason")
+    first = guardian_module._read_terminal_triage_outbox(path)
+    reason = "x" * (guardian_module.MAX_STATE_TEXT_BYTES - 1) + "€tail"
+
+    assert guardian_module._refresh_terminal_triage_outbox(
+        "run-unicode-reason",
+        expected_generation=first.queued_at_ns,
+        reason=reason,
+    )
+
+    refreshed = guardian_module._read_terminal_triage_outbox(path)
+    assert refreshed.last_reason == "x" * (guardian_module.MAX_STATE_TEXT_BYTES - 1)
+    assert len(refreshed.last_reason.encode("utf-8")) <= (
+        guardian_module.MAX_STATE_TEXT_BYTES
+    )
+
+
 def test_permanent_terminal_triage_failure_dead_letters_without_invoking_vc_frame(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
