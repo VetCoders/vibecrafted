@@ -722,3 +722,70 @@ def test_is_generated_path() -> None:
     assert rr._is_generated_path("target/release/foo")
     assert rr._is_generated_path(".loctree/context-atlas/x")
     assert not rr._is_generated_path("src/main.rs")
+
+
+def test_receipt_text_says_installed_only_instead_of_eight_unknowns():
+    """A plain install has no checkout; repeating the same source-root reason
+    across eight fields per tool reads as breakage to a first-time user."""
+    receipt = {
+        "schema": "x",
+        "cwd_policy": "y",
+        "tools": [
+            {
+                "name": "loct",
+                "primary_drift": "INSTALLED_NOT_ON_PATH",
+                "drift": ["INSTALLED_NOT_ON_PATH"],
+                "chain": {
+                    "owner_repo": {
+                        "value": "unknown",
+                        "reason": "no verified source root",
+                    },
+                    "checkout_sha": {
+                        "value": "unknown",
+                        "reason": "no verified source root",
+                    },
+                },
+                "source": {
+                    "path": {"value": "unknown", "reason": "no verified source root"}
+                },
+                "installed": {"path": "/usr/bin/loct", "sha": "abc"},
+                "remote": {},
+            }
+        ],
+    }
+
+    text = rr.render_receipt_text(receipt)
+
+    assert "installed-only" in text
+    assert text.count("no verified source root") == 0
+    assert "/usr/bin/loct" in text  # what IS known stays visible
+
+
+def test_receipt_text_keeps_full_drift_detail_for_a_real_checkout():
+    receipt = {
+        "schema": "x",
+        "cwd_policy": "y",
+        "tools": [
+            {
+                "name": "loct",
+                "primary_drift": "CLEAN",
+                "drift": [],
+                "chain": {
+                    "owner_repo": "Loctree/loctree-suite",
+                    "checkout_sha": "deadbeef",
+                    "branch": "main",
+                    "dirty": False,
+                },
+                "source": {"path": "/src/loctree", "resolution": "verified_candidate"},
+                "installed": {"path": "/usr/bin/loct", "sha": "deadbeef"},
+                "remote": {"upstream": "origin/main", "ahead": 0, "behind": 0},
+            }
+        ],
+    }
+
+    text = rr.render_receipt_text(receipt)
+
+    assert "source path:" in text
+    assert "checkout SHA:" in text
+    assert "upstream:" in text
+    assert "installed-only" not in text

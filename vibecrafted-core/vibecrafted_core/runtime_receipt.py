@@ -1329,6 +1329,13 @@ def _fmt_link(value: Any) -> str:
     return str(value)
 
 
+def _is_unknown(value: Any) -> bool:
+    """True when a receipt field carries no answer (None or an Unknown marker)."""
+    if value is None:
+        return True
+    return isinstance(value, dict) and value.get("value") == "unknown"
+
+
 def render_receipt_text(receipt: dict[str, Any]) -> str:
     """Render a :func:`build_receipt` payload as the human-readable CLI report."""
     lines: list[str] = []
@@ -1343,22 +1350,36 @@ def render_receipt_text(receipt: dict[str, Any]) -> str:
         lines.append(f"## {name}  [{primary}]")
         lines.append(f"  drift: {drift_list}")
         chain = tool.get("chain") or {}
-        lines.append(f"  owner/repo:     {_fmt_link(chain.get('owner_repo'))}")
         src = tool.get("source") or {}
-        lines.append(f"  source path:   {_fmt_link(src.get('path'))}")
-        lines.append(f"  resolution:    {_fmt_link(src.get('resolution'))}")
-        lines.append(f"  branch:        {_fmt_link(chain.get('branch'))}")
-        lines.append(f"  checkout SHA:  {_fmt_link(chain.get('checkout_sha'))}")
-        dirty = chain.get("dirty")
-        detail = src.get("dirty_detail") or {}
-        if isinstance(dirty, bool):
+        # Source↔install drift is a maintainer question. A plain install has no
+        # checkout at all, and repeating the same "no verified source root"
+        # reason across eight fields per tool read as breakage to anyone who
+        # simply installed the product. Say it once; the JSON payload keeps
+        # every field intact for tooling.
+        source_only_fields_unknown = _is_unknown(src.get("path")) and _is_unknown(
+            chain.get("checkout_sha")
+        )
+        if source_only_fields_unknown:
             lines.append(
-                f"  dirty:         {dirty} "
-                f"(source={_fmt_link(detail.get('source_dirty_count'))}, "
-                f"generated={_fmt_link(detail.get('generated_dirty_count'))})"
+                "  source:        not present (installed-only — normal unless "
+                "you develop this tool)"
             )
         else:
-            lines.append(f"  dirty:         {_fmt_link(dirty)}")
+            lines.append(f"  owner/repo:     {_fmt_link(chain.get('owner_repo'))}")
+            lines.append(f"  source path:   {_fmt_link(src.get('path'))}")
+            lines.append(f"  resolution:    {_fmt_link(src.get('resolution'))}")
+            lines.append(f"  branch:        {_fmt_link(chain.get('branch'))}")
+            lines.append(f"  checkout SHA:  {_fmt_link(chain.get('checkout_sha'))}")
+            dirty = chain.get("dirty")
+            detail = src.get("dirty_detail") or {}
+            if isinstance(dirty, bool):
+                lines.append(
+                    f"  dirty:         {dirty} "
+                    f"(source={_fmt_link(detail.get('source_dirty_count'))}, "
+                    f"generated={_fmt_link(detail.get('generated_dirty_count'))})"
+                )
+            else:
+                lines.append(f"  dirty:         {_fmt_link(dirty)}")
         installed = tool.get("installed") or {}
         lines.append(f"  installed:     {_fmt_link(installed.get('path'))}")
         lines.append(f"  installed SHA: {_fmt_link(installed.get('sha'))}")
@@ -1366,11 +1387,14 @@ def render_receipt_text(receipt: dict[str, Any]) -> str:
         if installed.get("version_line"):
             lines.append(f"  version:       {installed.get('version_line')}")
         remote = tool.get("remote") or {}
-        lines.append(
-            f"  upstream:      {_fmt_link(remote.get('upstream'))} "
-            f"ahead={_fmt_link(remote.get('ahead'))} "
-            f"behind={_fmt_link(remote.get('behind'))}"
-        )
+        # Upstream ahead/behind is a checkout question too — three more
+        # "unknown (no verified source root)" repeats without one.
+        if not source_only_fields_unknown:
+            lines.append(
+                f"  upstream:      {_fmt_link(remote.get('upstream'))} "
+                f"ahead={_fmt_link(remote.get('ahead'))} "
+                f"behind={_fmt_link(remote.get('behind'))}"
+            )
         index = tool.get("index")
         if index:
             lines.append(
