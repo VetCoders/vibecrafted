@@ -29,11 +29,13 @@ notarization status and cold mounted-DMG smoke.
 From any repository:
 
 ```bash
+vibecrafted init claude
+# or
 vibecrafted init codex
 ```
 
-This recovers intentions through AICX, maps the living tree through Loctree and
-checks runtime truth before work begins.
+Choose the agent you are entering. Both forms recover intentions through AICX,
+map the living tree through Loctree and check runtime truth before work begins.
 
 ## 4. Build something
 
