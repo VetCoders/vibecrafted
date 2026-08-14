@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -80,6 +81,7 @@ def test_wrapper_never_executes_retired_sibling_shadow(tmp_path: Path) -> None:
         text=True,
         env=env,
         check=False,
+        timeout=20,
     )
     assert proc.returncode == 0, (proc.stdout, proc.stderr)
     assert "CANONICAL_RAN args=list-sessions" in proc.stdout
@@ -93,6 +95,36 @@ def test_product_entry_prepare_exists_in_shipped_dashboard() -> None:
     dispatch = DISPATCH.read_text(encoding="utf-8")
     assert "_vetcoders_product_entry_prepare" in dispatch
     assert "VIBECRAFTED_PRODUCT_ENTRY_PROBE" in dispatch
+
+
+def test_shipped_deck_routes_workspace_resolution_to_core(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    root = tmp_path / "workspace"
+    home.mkdir()
+    root.mkdir()
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "VIBECRAFTED_HOME": str(home / ".vibecrafted"),
+        "VIBECRAFTED_PYTHON": sys.executable,
+    }
+    proc = subprocess.run(
+        [
+            str(REPO / "scripts/vibecrafted"),
+            "workspace",
+            "resolve",
+            "--root",
+            str(root),
+            "--env",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    assert "VIBECRAFTED_WORKSPACE_ID=" in proc.stdout
+    assert "VIBECRAFTED_OPERATOR_SESSION=workspace-" in proc.stdout
 
 
 def test_wrapper_refuses_product_attach_without_config(tmp_path: Path) -> None:

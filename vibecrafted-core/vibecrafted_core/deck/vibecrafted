@@ -4686,6 +4686,19 @@ cmd_receipt() {
     "$@"
 }
 
+cmd_workspace() {
+  local core_dir
+  core_dir="$(_core_module_dir 2>/dev/null || true)"
+  [[ -n "$core_dir" ]] || {
+    printf '%b✗%b Vibecrafted Core module not found.\n' "$_red" "$_reset" >&2
+    return 1
+  }
+  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" \
+    "$(_vibecrafted_python)" -c \
+      'from vibecrafted_core.workspace_catalog import workspace_cli_main; import sys; raise SystemExit(workspace_cli_main(sys.argv[1:]))' \
+      "$@"
+}
+
 _vc_frame_or_vc_frame_bin() {
   local bin=""
   bin="$(command -v vc-frame 2>/dev/null || true)"
@@ -5412,6 +5425,7 @@ main() {
     tui) cmd_tui "$@" ;;
     doctor|check) cmd_doctor "$@" ;;
     receipt) cmd_receipt "$@" ;;
+    workspace) cmd_workspace "$@" ;;
     scaffold-doctor) cmd_scaffold_doctor "$@" ;;
     dashboard|mc|mission-control|sessions) cmd_dashboard "$@" ;;
     loop) cmd_loop "$@" ;;
