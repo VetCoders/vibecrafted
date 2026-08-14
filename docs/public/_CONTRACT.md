@@ -1,8 +1,16 @@
 # docs/public — authoring contract (not published; underscore files are skipped by sync)
 
 Canonical source tree for the public documentation catalog rendered at
-`vibecrafted.dev/docs` (mirrored into `vibecrafted-io/site/src/content/docs/`
-by `scripts/sync-docs.sh`; never edit the mirror).
+`vibecrafted.io/docs` (mirrored into `vibecrafted-io/site/src/content/docs/`;
+never edit the mirror).
+
+> **Publication gap — known.** `vibecrafted.dev` does not resolve, and the
+> `scripts/sync-docs.sh` mirror script named by earlier revisions of this
+> contract does not exist in the repository. Today only `/docs/`,
+> `/docs/contributing-skills/` and `/docs/docker/` are live; the remaining
+> pages in this tree are authored but unpublished. Restoring the sync path is
+> tracked as a Definition of Undone gap. Author against this contract anyway —
+> the catalog is the source of truth whether or not the mirror is running.
 
 ## Frontmatter (required, exact keys)
 

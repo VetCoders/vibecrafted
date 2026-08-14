@@ -18,7 +18,8 @@ The product has six working layers:
 | --------------------- | ------------------------------------------------------------------------------------------------------------- |
 | Public promise        | `README.md`, `docs/QUICK_START.md`, `docs/FAQ.md`                                                             |
 | Operator runbook      | `docs/RUNBOOK.md` — terminal-first: cold start, dispatch, supervision, recovery                               |
-| Install and support   | `docs/INSTALL.md`, `docs/DOCKER.md`, `make help`, `make help-dev`                                             |
+| Install and support   | `docs/INSTALL.md` (channel matrix + status), `docs/DOCKER.md`, `make help`, `make help-dev`                   |
+| Install (public docs) | `docs/public/getting-started/`: `install.md` · `build-from-source.md` · `first-run.md` · `update.md`          |
 | Command deck          | `scripts/vibecrafted`, `docs/WORKFLOWS.md`, `docs/SKILLS.md`                                                  |
 | Runtime and artifacts | `runtime/README.md`, `docs/runtime/README.md`, `docs/runtime/TOPOLOGY.md`                                     |
 | Skill behavior        | `skills/<skill>/SKILL.md` plus `FLOW.md` and nearby contracts                                                 |
