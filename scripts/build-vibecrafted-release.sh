@@ -178,10 +178,10 @@ build_product() {
   /bin/cp -RL "$REPO_ROOT/config/." "$runtime/config/"
 
   log "Embedding a private Python runtime; no shell profile or host Python is used"
-  rm -rf "$BUILD_DIR/python-seed" "$runtime/python" "$runtime/python-site"
-  uv python install 3.12.3 --install-dir "$BUILD_DIR/python-seed" --no-bin
-  local seed_python python_home
-  seed_python="$(find "$BUILD_DIR/python-seed" -type f -path '*/bin/python3.12' -print -quit)"
+  local python_seed seed_python python_home
+  python_seed="$(mktemp -d "$BUILD_DIR/python-seed.XXXXXX")"
+  uv python install 3.12.3 --install-dir "$python_seed" --no-bin
+  seed_python="$(find "$python_seed" -type f -path '*/bin/python3.12' -print -quit)"
   [[ -n "$seed_python" ]] || die "uv did not produce the requested CPython"
   python_home="$(cd "$(dirname "$seed_python")/.." && pwd)"
   mkdir -p "$runtime/python" "$runtime/python-site"
