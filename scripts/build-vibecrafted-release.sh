@@ -10,11 +10,17 @@ APP="$DIST_DIR/Vibecrafted.app"
 DMG="$DIST_DIR/Vibecrafted.dmg"
 KEYS="${KEYS:-$HOME/.keys}"
 SIGNING_IDENTITY_FILE="$KEYS/signing-identity.txt"
+CERT_P12="$KEYS/Certificates.p12"
+CERT_PASSWORD_FILE="$KEYS/cert_password.txt"
 SIGNING_KEY="$KEYS/vibecrafted-signing.key"
 NOTARY_ENV="$KEYS/.notary.env"
 VERSION="$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")"
 BUILD_NUMBER="${BUILD_NUMBER:-$(date -u +%Y%m%d%H%M%S)}"
 MODE="release"
+SIGNING_IDENTITY=""
+TEMP_KEYCHAIN_PATH=""
+ORIGINAL_DEFAULT_KEYCHAIN=""
+CODESIGN_KEYCHAIN_ARGS=()
 export MACOSX_DEPLOYMENT_TARGET=14.0
 
 case "${1:-}" in
@@ -29,14 +35,57 @@ log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'FATAL: %s\n' "$*" >&2; exit 1; }
 require() { command -v "$1" >/dev/null 2>&1 || die "$1 is required"; }
 
+cleanup() {
+  if [[ -n "$ORIGINAL_DEFAULT_KEYCHAIN" ]]; then
+    security default-keychain -d user -s "$ORIGINAL_DEFAULT_KEYCHAIN" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$TEMP_KEYCHAIN_PATH" ]]; then
+    security delete-keychain "$TEMP_KEYCHAIN_PATH" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+
+read_trimmed_file() {
+  sed -e 's/[[:space:]]*$//' -e '/^$/d' "$1" | head -n1
+}
+
+prepare_signing_identity() {
+  SIGNING_IDENTITY="$(read_trimmed_file "$SIGNING_IDENTITY_FILE")"
+  [[ -n "$SIGNING_IDENTITY" ]] || die "signing identity is empty"
+  if [[ -f "$CERT_P12" && -f "$CERT_PASSWORD_FILE" ]]; then
+    local cert_password temp_password existing_keychains
+    cert_password="$(read_trimmed_file "$CERT_PASSWORD_FILE")"
+    [[ -n "$cert_password" ]] || die "certificate password is empty"
+    temp_password="$(uuidgen)"
+    TEMP_KEYCHAIN_PATH="$DIST_DIR/Vibecrafted-signing.keychain-db"
+    rm -f "$TEMP_KEYCHAIN_PATH"
+    existing_keychains="$(security list-keychains -d user | tr -d '"' | tr '\n' ' ')"
+    ORIGINAL_DEFAULT_KEYCHAIN="$(security default-keychain -d user 2>/dev/null | tr -d ' "' || true)"
+    security create-keychain -p "$temp_password" "$TEMP_KEYCHAIN_PATH"
+    security set-keychain-settings -lut 21600 "$TEMP_KEYCHAIN_PATH"
+    security unlock-keychain -p "$temp_password" "$TEMP_KEYCHAIN_PATH"
+    # shellcheck disable=SC2086
+    security list-keychains -d user -s "$TEMP_KEYCHAIN_PATH" $existing_keychains >/dev/null
+    security default-keychain -d user -s "$TEMP_KEYCHAIN_PATH"
+    security import "$CERT_P12" -k "$TEMP_KEYCHAIN_PATH" -P "$cert_password" \
+      -T /usr/bin/codesign >/dev/null
+    security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+      -k "$temp_password" "$TEMP_KEYCHAIN_PATH" >/dev/null
+    security find-identity -v -p codesigning "$TEMP_KEYCHAIN_PATH" \
+      | grep -Fq "$SIGNING_IDENTITY" \
+      || die "Developer ID identity is absent from temporary keychain"
+    CODESIGN_KEYCHAIN_ARGS=(--keychain "$TEMP_KEYCHAIN_PATH")
+    return
+  fi
+  security find-identity -v -p codesigning | grep -Fq "$SIGNING_IDENTITY" \
+    || die "Developer ID identity is not available in the keychain"
+}
+
 for command in cargo codesign git hdiutil make uv xcodebuild xcodegen xcrun; do
   require "$command"
 done
 [[ -f "$SIGNING_IDENTITY_FILE" ]] || die "missing $SIGNING_IDENTITY_FILE"
-SIGNING_IDENTITY="$(tr -d '\r\n' < "$SIGNING_IDENTITY_FILE")"
-[[ -n "$SIGNING_IDENTITY" ]] || die "signing identity is empty"
-security find-identity -v -p codesigning | grep -Fq "$SIGNING_IDENTITY" \
-  || die "Developer ID identity is not available in the keychain"
+prepare_signing_identity
 
 git_sha() { git -C "$1" rev-parse HEAD; }
 require_clean_repo() {
@@ -68,7 +117,8 @@ sign_macho_tree() {
   while IFS= read -r -d '' candidate; do
     [[ "$candidate" != "$outer" ]] || continue
     if /usr/bin/file -b "$candidate" | grep -q 'Mach-O'; then
-      codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$candidate"
+      codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" \
+        "${CODESIGN_KEYCHAIN_ARGS[@]}" "$candidate"
     fi
   done < <(find "$APP/Contents" -type f -print0)
 }
@@ -168,7 +218,8 @@ build_product() {
     --vibecrafted-sha "$(git_sha "$REPO_ROOT")" \
     --terminal-sha "$(git_sha "$TERMINAL_REPO")" \
     --frame-sha "$(git_sha "$FRAME_REPO")"
-  codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP"
+  codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" \
+    "${CODESIGN_KEYCHAIN_ARGS[@]}" "$APP"
   codesign --verify --deep --strict --verbose=2 "$APP"
   "$REPO_ROOT/scripts/verify-vibecrafted-product.sh" app "$APP" --require-clean
 }
@@ -180,7 +231,8 @@ create_dmg() {
   /usr/bin/ditto "$APP" "$staging/Vibecrafted.app"
   ln -s /Applications "$staging/Applications"
   hdiutil create -volname Vibecrafted -srcfolder "$staging" -ov -format UDZO "$DMG"
-  codesign --force --timestamp --sign "$SIGNING_IDENTITY" "$DMG"
+  codesign --force --timestamp --sign "$SIGNING_IDENTITY" \
+    "${CODESIGN_KEYCHAIN_ARGS[@]}" "$DMG"
 }
 
 notarize_product() {
