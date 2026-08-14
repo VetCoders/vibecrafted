@@ -81,7 +81,7 @@ prepare_signing_identity() {
     || die "Developer ID identity is not available in the keychain"
 }
 
-for command in cargo codesign git hdiutil make uv xcodebuild xcodegen xcrun; do
+for command in cargo codesign git hdiutil install_name_tool make otool uv xcodebuild xcodegen xcrun; do
   require "$command"
 done
 [[ -f "$SIGNING_IDENTITY_FILE" ]] || die "missing $SIGNING_IDENTITY_FILE"
@@ -123,6 +123,25 @@ sign_macho_tree() {
   done < <(find "$APP/Contents" -type f -print0)
 }
 
+remove_ambient_swift_rpath() {
+  local executable="$APP/Contents/MacOS/Vibecrafted"
+  local rpaths
+  rpaths="$(otool -l "$executable" | awk '
+    $1 == "cmd" && $2 == "LC_RPATH" { in_rpath = 1; next }
+    in_rpath && $1 == "path" { print $2; in_rpath = 0 }
+  ')"
+  if grep -Fxq '/usr/lib/swift' <<<"$rpaths"; then
+    install_name_tool -delete_rpath /usr/lib/swift "$executable"
+  fi
+  rpaths="$(otool -l "$executable" | awk '
+    $1 == "cmd" && $2 == "LC_RPATH" { in_rpath = 1; next }
+    in_rpath && $1 == "path" { print $2; in_rpath = 0 }
+  ')"
+  if grep -Eq '^/' <<<"$rpaths"; then
+    die "Swift host contains an ambient absolute LC_RPATH"
+  fi
+}
+
 build_product() {
   require_clean_repo "$REPO_ROOT" vibecrafted
   require_clean_repo "$TERMINAL_REPO" vc-terminal
@@ -157,6 +176,7 @@ build_product() {
   built_app="$(find "$BUILD_DIR/DerivedData" -type d -name Vibecrafted.app -print -quit)"
   [[ -n "$built_app" ]] || die "xcodebuild did not produce Vibecrafted.app"
   /usr/bin/ditto "$built_app" "$APP"
+  remove_ambient_swift_rpath
 
   log "Embedding product modules and the checkout-free runtime"
   local resources="$APP/Contents/Resources"
