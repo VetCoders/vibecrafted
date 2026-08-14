@@ -773,12 +773,14 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
     assert "cargo build --release --locked -p voc" in app_block
     assert "cargo install" not in app_block
     assert (
-        'app_target="$${XDG_CACHE_HOME:-$(HOME)/.cache}/vibecrafted/build/vibecrafted-app"'
-        in app_block
+        "CARGO_BUILD_ROOT ?= $(INSTALLER_CACHE_HOME)/vibecrafted/build/$(INSTALLER_HOST_TAG)"
+        in makefile
     )
-    assert 'CARGO_TARGET_DIR="$$app_target" cargo build' in app_block
+    assert "APP_BUILD_TARGET := $(CARGO_BUILD_ROOT)/vibecrafted-app" in makefile
+    assert 'CARGO_TARGET_DIR="$(APP_BUILD_TARGET)" cargo build' in app_block
     assert (
-        'install -m 0755 "$$app_target/release/$$bin" "$(BIN_DIR)/$$bin"' in app_block
+        'install -m 0755 "$(APP_BUILD_TARGET)/release/$$bin" "$(BIN_DIR)/$$bin"'
+        in app_block
     )
     assert "$(APP_DIR)/target" not in app_block
 
@@ -791,6 +793,10 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
         "\ninstall-server-payload:", 1
     )[0]
     assert "cargo leptos build --release" in server_build_block
+    assert "SERVER_BUILD_TARGET := $(CARGO_BUILD_ROOT)/vibecrafted-server" in makefile
+    assert "SERVER_BUILD_SITE_ROOT := $(SERVER_BUILD_TARGET)/site" in makefile
+    assert 'CARGO_TARGET_DIR="$(SERVER_BUILD_TARGET)"' in server_build_block
+    assert 'LEPTOS_SITE_ROOT="$(SERVER_BUILD_SITE_ROOT)"' in server_build_block
     assert '--bin-cargo-args="--locked"' in server_build_block
     assert '--lib-cargo-args="--locked"' in server_build_block
     assert "cargo tree --locked -p wasm-bindgen --depth 0 --prefix none" in (
@@ -809,6 +815,14 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
         in (server_build_block)
     )
     assert "hydration wasm is missing" in server_build_block
+    assert "$(SERVER_DIR)/target" not in server_build_block
+    server_payload_block = makefile.split("\ninstall-server-payload:", 1)[1].split(
+        "\nifneq", 1
+    )[0]
+    assert '"$(SERVER_BUILD_TARGET)/release/$(SERVER_PACKAGE)"' in (
+        server_payload_block
+    )
+    assert "$(SERVER_DIR)/target" not in server_payload_block
     assert "install-server-payload" in makefile
 
 

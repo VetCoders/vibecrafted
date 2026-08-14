@@ -4289,9 +4289,13 @@ def _teardown_owned_runtime_for_uninstall(
     ) as descriptor:
         os.set_inheritable(descriptor, True)
         with _inherited_tools_install_lease(descriptor):
-            _assert_runtime_loaded_service_owner(shared_home)
-            snapshot = _runtime_service_snapshot(shared_home)
-            if snapshot is not None:
+            if _runtime_service_has_evidence(shared_home):
+                _assert_runtime_loaded_service_owner(shared_home)
+                snapshot = _runtime_service_snapshot(shared_home)
+                if snapshot is None:
+                    raise OSError(
+                        "runtime service evidence exists but no verified launcher is available"
+                    )
                 launcher, status, pair_state = snapshot
                 if status.installed or status.loaded or status.supervisor_live:
                     actions.append("stop and uninstall owned runtime service")

@@ -361,6 +361,7 @@ def test_runtime_teardown_uninstalls_owned_service_and_proves_quiescence(
     monkeypatch.setattr(
         installer, "_assert_runtime_loaded_service_owner", lambda _home: shared_home
     )
+    monkeypatch.setattr(installer, "_runtime_service_has_evidence", lambda _home: True)
     monkeypatch.setattr(
         installer, "_runtime_service_snapshot", lambda _home: next(snapshots)
     )
@@ -380,6 +381,38 @@ def test_runtime_teardown_uninstalls_owned_service_and_proves_quiescence(
 
     assert actions == ("stop and uninstall owned runtime service",)
     assert commands == [("service", "uninstall")]
+
+
+def test_runtime_teardown_does_not_probe_launcher_without_service_evidence(
+    tmp_path: Path, monkeypatch
+) -> None:
+    shared_home = tmp_path / ".vibecrafted"
+
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        installer, "_current_tools_link", lambda _home: tmp_path / "current"
+    )
+    monkeypatch.setattr(
+        installer,
+        "_tools_install_lease",
+        lambda _link, *, operation: nullcontext(9),
+    )
+    monkeypatch.setattr(
+        installer, "_inherited_tools_install_lease", lambda _descriptor: nullcontext()
+    )
+    monkeypatch.setattr(installer.os, "set_inheritable", lambda _fd, _value: None)
+    monkeypatch.setattr(installer, "_runtime_service_has_evidence", lambda _home: False)
+    monkeypatch.setattr(installer, "_retired_vc_frame_process_census", tuple)
+
+    def forbidden_snapshot(_home: Path):
+        raise AssertionError("service status must not run without service evidence")
+
+    monkeypatch.setattr(installer, "_runtime_service_snapshot", forbidden_snapshot)
+
+    assert (
+        installer._teardown_owned_runtime_for_uninstall(shared_home, dry_run=False)
+        == ()
+    )
 
 
 def test_cmd_uninstall_removes_release_contract_assets_with_managed_payload(

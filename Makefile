@@ -15,6 +15,7 @@ INSTALL_TOOLS_SERVICE_POLICY ?= preserve
 INSTALLER_CACHE_HOME ?= $(if $(XDG_CACHE_HOME),$(XDG_CACHE_HOME),$(HOME)/.cache)
 INSTALLER_HOST_TAG := $(shell uname -s | tr '[:upper:]' '[:lower:]')-$(shell uname -m)
 UV_PROJECT_ENVIRONMENT ?= $(INSTALLER_CACHE_HOME)/vibecrafted/venvs/installer-$(INSTALLER_HOST_TAG)
+CARGO_BUILD_ROOT ?= $(INSTALLER_CACHE_HOME)/vibecrafted/build/$(INSTALLER_HOST_TAG)
 # Shared source mounts (sshfs skews mtimes) can serve another host's stale
 # __pycache__ as valid bytecode; route bytecode to a per-host cache so the
 # in-tree cache is never read or written by install lanes.
@@ -355,6 +356,7 @@ install-tools-held:
 # symlink drift, the exact pattern the runtime contract bans in BIN.
 APP_DIR := vibecrafted-app
 APP_BINARIES := voc vc-admin
+APP_BUILD_TARGET := $(CARGO_BUILD_ROOT)/vibecrafted-app
 BIN_DIR := $(HOME)/.local/bin
 VENDORED_FOUNDATION_BINARIES := vc-frame loctree-mcp loct aicx aicx-mcp
 HOST_UNAME_S := $(shell uname -s)
@@ -390,14 +392,12 @@ install-app-binaries:
 		exit 0; \
 	fi; \
 	set -e; \
-	mkdir -p "$(HOME)/.vibecrafted" "$(BIN_DIR)"; \
-	app_target="$${XDG_CACHE_HOME:-$(HOME)/.cache}/vibecrafted/build/vibecrafted-app"; \
-	mkdir -p "$$app_target"; \
+	mkdir -p "$(HOME)/.vibecrafted" "$(BIN_DIR)" "$(APP_BUILD_TARGET)"; \
 	echo "[app] building release binaries ($(APP_BINARIES)) from $(APP_DIR)"; \
-	( cd $(APP_DIR) && CARGO_TARGET_DIR="$$app_target" cargo build --release --locked -p voc $(INSTALL_QUIET) ); \
+	( cd $(APP_DIR) && CARGO_TARGET_DIR="$(APP_BUILD_TARGET)" cargo build --release --locked -p voc $(INSTALL_QUIET) ); \
 	for bin in $(APP_BINARIES); do \
 		rm -f "$(BIN_DIR)/$$bin"; \
-		install -m 0755 "$$app_target/release/$$bin" "$(BIN_DIR)/$$bin"; \
+		install -m 0755 "$(APP_BUILD_TARGET)/release/$$bin" "$(BIN_DIR)/$$bin"; \
 	done; \
 	echo "[app] installed: $(APP_BINARIES) -> $(BIN_DIR)"
 
@@ -834,11 +834,13 @@ SERVER_BIN  := vc-server
 SERVER_COMPAT_BIN := vibecrafted-server-web
 SERVER_ADDR ?= 127.0.0.1:3024
 VIBECRAFTED_RUNTIME_HOME ?= $(HOME)/.local/share/vibecrafted
-SERVER_BUILD_SITE_ROOT := $(SERVER_DIR)/target/site
+SERVER_BUILD_TARGET := $(CARGO_BUILD_ROOT)/vibecrafted-server
+SERVER_BUILD_SITE_ROOT := $(SERVER_BUILD_TARGET)/site
 SERVER_INSTALL_SITE_ROOT := $(VIBECRAFTED_RUNTIME_HOME)/server/site
 
 server-build:
-	@cd $(SERVER_DIR) && cargo build -p $(SERVER_PACKAGE) --no-default-features --features ssr
+	@mkdir -p "$(SERVER_BUILD_TARGET)"
+	@cd $(SERVER_DIR) && CARGO_TARGET_DIR="$(SERVER_BUILD_TARGET)" cargo build -p $(SERVER_PACKAGE) --no-default-features --features ssr
 
 server: server-build
 	@echo "[server] control plane: $${VIBECRAFTED_HOME:-$$HOME/.vibecrafted}/control_plane"
@@ -846,14 +848,14 @@ server: server-build
 	@echo "[server] reads: /api/control/state  /api/control/runs  /api/control/runs/{run_id}"
 	@echo "[server] reads: /api/control/lifecycle  /api/control/lifecycle/{run_id}"
 	@echo "[server] stream: /api/control/events  (SSE, ?since= / Last-Event-ID)"
-	@cd $(SERVER_DIR) && ./target/debug/$(SERVER_PACKAGE) --addr "$(SERVER_ADDR)"
+	@cd $(SERVER_DIR) && "$(SERVER_BUILD_TARGET)/debug/$(SERVER_PACKAGE)" --addr "$(SERVER_ADDR)"
 
 server-check:
-	@cd $(SERVER_DIR) && cargo clippy -p control-core -- -D warnings
-	@cd $(SERVER_DIR) && cargo clippy -p $(SERVER_PACKAGE) --no-default-features --features ssr -- -D warnings
+	@cd $(SERVER_DIR) && CARGO_TARGET_DIR="$(SERVER_BUILD_TARGET)" cargo clippy -p control-core -- -D warnings
+	@cd $(SERVER_DIR) && CARGO_TARGET_DIR="$(SERVER_BUILD_TARGET)" cargo clippy -p $(SERVER_PACKAGE) --no-default-features --features ssr -- -D warnings
 
 server-test:
-	@cd $(SERVER_DIR) && cargo test -p control-core
+	@cd $(SERVER_DIR) && CARGO_TARGET_DIR="$(SERVER_BUILD_TARGET)" cargo test -p control-core
 
 build-server-release:
 	@if ! command -v cargo >/dev/null 2>&1; then \
@@ -879,8 +881,9 @@ build-server-release:
 		fi; \
 	fi; \
 	echo "[server] building release package + hydration assets ($(SERVER_PACKAGE))"; \
-	ulimit -f unlimited; ( cd $(SERVER_DIR) && cargo leptos build --release --bin-cargo-args="--locked" --lib-cargo-args="--locked" ); \
-	if [ ! -x "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" ] || [ ! -d "$(SERVER_BUILD_SITE_ROOT)/pkg" ]; then \
+	mkdir -p "$(SERVER_BUILD_TARGET)"; \
+	ulimit -f unlimited; ( cd $(SERVER_DIR) && CARGO_TARGET_DIR="$(SERVER_BUILD_TARGET)" LEPTOS_SITE_ROOT="$(SERVER_BUILD_SITE_ROOT)" cargo leptos build --release --bin-cargo-args="--locked" --lib-cargo-args="--locked" ); \
+	if [ ! -x "$(SERVER_BUILD_TARGET)/release/$(SERVER_PACKAGE)" ] || [ ! -d "$(SERVER_BUILD_SITE_ROOT)/pkg" ]; then \
 		echo "[server] FATAL: cargo-leptos did not produce the server + site package" >&2; \
 		exit 1; \
 	fi; \
@@ -900,14 +903,14 @@ install-server-payload:
 		echo "[server] cargo not found — preserving the installed server payload" >&2; \
 		exit 0; \
 	fi; \
-	if [ ! -x "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" ]; then \
+	if [ ! -x "$(SERVER_BUILD_TARGET)/release/$(SERVER_PACKAGE)" ]; then \
 		echo "[server] FATAL: release payload is missing; run make build-server-release" >&2; \
 		exit 1; \
 	fi; \
 	mkdir -p "$(HOME)/.vibecrafted" "$(BIN_DIR)" "$(SERVER_INSTALL_SITE_ROOT)"; \
 	rm -f "$(BIN_DIR)/$(SERVER_BIN)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"; \
-	install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_BIN)"; \
-	install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"; \
+	install -m 0755 "$(SERVER_BUILD_TARGET)/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_BIN)"; \
+	install -m 0755 "$(SERVER_BUILD_TARGET)/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"; \
 	echo "[server] copying interactive site assets to $(SERVER_INSTALL_SITE_ROOT)"; \
 	rm -rf "$(SERVER_INSTALL_SITE_ROOT)"/*; \
 	cp -R "$(SERVER_BUILD_SITE_ROOT)/." "$(SERVER_INSTALL_SITE_ROOT)/"; \
