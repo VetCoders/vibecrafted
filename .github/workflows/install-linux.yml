@@ -129,7 +129,9 @@ jobs:
           fi
 
       - name: Run skill-loader smoke
-        run: make test-skills
+        # Installed-runtime health is the immediately preceding owned gate.
+        # Keep this step focused on skill loading before installer fixtures.
+        run: bash tests/skill_loader_smoke.sh --doctor-preverified
 
       - name: Run install.sh / install.ps1 host smoke
         run: make test-install
@@ -251,7 +253,8 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.local/share/vibecrafted/bin:$PATH"
-          make test-skills
+          # Installed-runtime health is the immediately preceding owned gate.
+          bash tests/skill_loader_smoke.sh --doctor-preverified
 
       - name: Run install.sh / install.ps1 host smoke
         run: |
