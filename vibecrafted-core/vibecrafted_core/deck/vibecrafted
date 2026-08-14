@@ -43,6 +43,19 @@ fi
 crafted_skills="$crafted_home/skills"
 crafted_tools="$(_expand_home_path "${VIBECRAFTED_TOOLS_HOME:-$crafted_runtime_home/tools}")/vibecrafted-current"
 
+# The installer stages npm-provided agent CLIs under $crafted_home/tools/node/bin
+# and reports them as installed — but that directory never reaches the user's
+# PATH, so a fresh install answered `vibecrafted init claude` with exit 1 and
+# zero output. Teach the deck where its own installer puts them. Appended, never
+# prepended: an operator's own agent install keeps winning.
+crafted_agent_bin="$crafted_home/tools/node/bin"
+if [[ -d "$crafted_agent_bin" ]]; then
+  case ":${PATH:-}:" in
+    *":$crafted_agent_bin:"*) ;;
+    *) export PATH="${PATH:+$PATH:}$crafted_agent_bin" ;;
+  esac
+fi
+
 _bold='\033[1m'
 _dim='\033[2m'
 _copper='\033[38;5;173m'
@@ -169,6 +182,31 @@ _has_agent() {
     gemini) return 1 ;;  # deprecated - see migration error below
     *) return 1 ;;
   esac
+}
+
+# A missing agent CLI is the stranger's first-use cliff: `init` used to answer
+# a bare `return 1` — exit 1, zero bytes, nothing to act on. Name the gap and
+# hand over the one command that closes it.
+_require_agent_cli() {
+  local agent="${1:-}"
+  command -v "$agent" >/dev/null 2>&1 && return 0
+  local staged="$crafted_agent_bin/$agent"
+  printf '%b✗%b %s CLI is not available.\n' "$_red" "$_reset" "$agent" >&2
+  if [[ -e "$staged" ]]; then
+    printf '  Found at %s but it is not executable from here.\n' "$staged" >&2
+    printf '  Fix: chmod +x %s\n' "$staged" >&2
+  else
+    printf '  Install it, then re-run this command:\n' >&2
+    case "$agent" in
+      claude) printf '    npm install -g @anthropic-ai/claude-code\n' >&2 ;;
+      codex) printf '    npm install -g @openai/codex\n' >&2 ;;
+      junie) printf '    npm install -g @jetbrains/junie\n' >&2 ;;
+      grok) printf '    npm install -g @xai-official/grok\n' >&2 ;;
+      agy) printf '    install Google Antigravity CLI, then: agy install\n' >&2 ;;
+    esac
+    printf '  Or check the whole fleet: vibecrafted doctor\n' >&2
+  fi
+  return 1
 }
 
 _has_mode() {
@@ -4450,13 +4488,7 @@ cmd_init() {
     return 1
   }
 
-  case "$agent" in
-    claude) command -v claude >/dev/null 2>&1 || return 1 ;;
-    codex) command -v codex >/dev/null 2>&1 || return 1 ;;
-    agy) command -v agy >/dev/null 2>&1 || return 1 ;;
-    junie) command -v junie >/dev/null 2>&1 || return 1 ;;
-    grok) command -v grok >/dev/null 2>&1 || return 1 ;;
-  esac
+  _require_agent_cli "$agent" || return 1
 
   [[ $# -gt 0 ]] && shift
   printf '%b⚒%b  Starting %b%s%b with vc-init...\n' "$_copper" "$_reset" "$_bold" "$agent" "$_reset"

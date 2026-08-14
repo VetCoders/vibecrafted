@@ -1183,3 +1183,65 @@ def test_tail_lines_agent_with_plain_text_passes_through_raw_tail(
     assert error == ""
     assert lines[-1] == "line 65"
     assert len(lines) == 40
+
+
+def test_startup_watch_names_the_auth_failure_instead_of_silence(
+    tmp_path, capsys, monkeypatch
+):
+    """A worker that dies on login must not leave the receipt as the last word."""
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text(
+        '{"type":"assistant","error":"authentication_failed",'
+        '"text":"Not logged in · Please run /login"}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VIBECRAFTED_SPAWN_WATCH_SECONDS", "2")
+
+    cli._watch_launch_startup(
+        {"accepted": True, "agent": "claude", "transcript": str(transcript)}
+    )
+
+    err = capsys.readouterr().err
+    assert "Not logged in" in err
+    assert "claude" in err
+    assert str(transcript) in err
+
+
+def test_startup_watch_stays_silent_while_the_worker_works(
+    tmp_path, capsys, monkeypatch
+):
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text('{"type":"assistant","text":"working"}\n', encoding="utf-8")
+    monkeypatch.setenv("VIBECRAFTED_SPAWN_WATCH_SECONDS", "2")
+
+    cli._watch_launch_startup(
+        {"accepted": True, "agent": "claude", "transcript": str(transcript)}
+    )
+
+    assert capsys.readouterr().err == ""
+
+
+def test_startup_watch_is_disabled_by_zero_seconds(tmp_path, capsys, monkeypatch):
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text("Not logged in\n", encoding="utf-8")
+    monkeypatch.setenv("VIBECRAFTED_SPAWN_WATCH_SECONDS", "0")
+
+    cli._watch_launch_startup(
+        {"accepted": True, "agent": "claude", "transcript": str(transcript)}
+    )
+
+    assert capsys.readouterr().err == ""
+
+
+def test_startup_watch_survives_a_null_accepted_field(tmp_path, capsys, monkeypatch):
+    """Launch payloads carry `accepted: null` in practice — a .get(_, True)
+    default reads that as refusal and silences the guard entirely."""
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text("Not logged in\n", encoding="utf-8")
+    monkeypatch.setenv("VIBECRAFTED_SPAWN_WATCH_SECONDS", "2")
+
+    cli._watch_launch_startup(
+        {"accepted": None, "agent": "claude", "transcript": str(transcript)}
+    )
+
+    assert "Not logged in" in capsys.readouterr().err
