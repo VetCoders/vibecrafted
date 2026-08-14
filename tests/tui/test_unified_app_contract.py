@@ -2955,7 +2955,7 @@ def test_unified_release_has_one_top_level_owner() -> None:
     assert 'make -C "$TERMINAL_REPO"' in builder
     assert "release-bins" in builder
     assert 'chmod 0755 "$terminal_source"' in builder
-    assert 'make -C "$FRAME_REPO" release' in builder
+    assert 'make -C "$FRAME_REPO" release-binary' in builder
     assert 'chmod 0755 "$frame_source"' in builder
     assert "build-server-release" in builder
     assert '"$runtime/bin/vc-server"' in builder

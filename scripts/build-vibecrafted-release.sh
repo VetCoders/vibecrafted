@@ -169,8 +169,8 @@ build_product() {
   [[ -x "$terminal_source" ]] || die "vc-terminal release binary is missing"
   chmod 0755 "$terminal_source"
 
-  log "Building vc-frame through its canonical release target"
-  make -C "$FRAME_REPO" release
+  log "Building vc-frame through its provenance-stable donor target"
+  make -C "$FRAME_REPO" release-binary
   local frame_source="$FRAME_REPO/target/release/vc-frame"
   [[ -x "$frame_source" ]] || die "vc-frame release binary is missing"
   chmod 0755 "$frame_source"
