@@ -44,10 +44,12 @@ Check what a given release actually carries before you plan around it:
 gh release view --json assets -q '.assets[].name'
 ```
 
-> **Current status.** The DMG build path is complete and reproducible
-> (`make release` → codesign → notarytool → `make publish-release`), but no
-> published release carries a DMG yet. Until one does, use the bootstrap
-> channel below. Maintainers building the DMG locally: see
+> **Current status.** No published release carries a DMG yet — use the
+> bootstrap channel below. The build path exists end to end
+> (`make release` → codesign → notarytool → `make publish-release`) and its
+> shape is gated by contract tests, but it has not been exercised since the
+> runtime layout changed, so treat it as unproven rather than ready.
+> Maintainers building the DMG locally: see
 > [Build from source](#build-from-source-power-users).
 
 ### Runtime boundary

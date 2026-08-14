@@ -184,9 +184,10 @@ and notarized `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg` carrying matching
 builds of `vc-terminal`, `vc-frame`, `vc-start` and the complete runtime.
 Download it and its adjacent `.dmg.sha256` from the
 [latest release](https://github.com/vetcoders/vibecrafted/releases/latest),
-verify the checksum, then open the DMG. The build path is reproducible today
-(`make release`), but no published release carries a DMG yet — use the
-bootstrap until one does.
+verify the checksum, then open the DMG. No published release carries a DMG yet
+— use the bootstrap until one does. The build path exists (`make release`) but
+has not been exercised since the runtime layout changed, so treat it as
+unproven rather than ready.
 
 Every new or restored `workspace_id` enters through the bundled `vc-start`.
 Vibecrafted sources its own XDG/runtime environment and does not overwrite your

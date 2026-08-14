@@ -112,8 +112,10 @@ Check what a given release actually carries:
 gh release view --json assets -q '.assets[].name'
 ```
 
-The DMG build path is complete and reproducible, but no published release
-carries a DMG yet. Until one does, use the bootstrap channel above.
+No published release carries a DMG yet, so use the bootstrap channel above. The
+build path exists end to end and its shape is gated by contract tests, but it
+has not been exercised since the runtime layout changed — treat it as unproven
+rather than ready.
 
 ### Runtime boundary
 

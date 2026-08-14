@@ -25,9 +25,10 @@ cd vibecrafted && make install
 On macOS the intended end-user artifact is one signed and notarized
 `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg` from the
 [latest release](https://github.com/vetcoders/vibecrafted/releases/latest),
-verified against its adjacent `.dmg.sha256`. The build path is reproducible
-today, but no published release carries a DMG yet — use the bootstrap until one
-does. Every channel and its status: [INSTALL.md](INSTALL.md).
+verified against its adjacent `.dmg.sha256`. No published release carries a DMG
+yet — use the bootstrap until one does. The build path exists but has not been
+exercised since the runtime layout changed, so treat it as unproven rather than
+ready. Every channel and its status: [INSTALL.md](INSTALL.md).
 
 ## 2. Verify
 
