@@ -195,7 +195,7 @@ fi
 
 require_symlink "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current"
 require_file "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current/Makefile"
-require_file "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"
+require_file "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/codex_spawn.sh"
 # Runtime contract (test_install_all_paths_do_not_install_shell_helpers_by_default):
 # the default install lane (install.sh -> make install-auto -> make install) installs
 # tools and views but does NOT wire the legacy shell helpers or touch shell rc files.
@@ -220,9 +220,9 @@ log "stage python launcher tools (uv-tool shim)"
 HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" INSTALL_TOOLS_SERVICE_POLICY=isolated \
   make --no-print-directory -C "$repo_root" install-python-tools
 
-require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"
-require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/claude_spawn.sh"
-require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/agy_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/codex_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/claude_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/agy_spawn.sh"
 require_file "$home_dir/.local/bin/vibecrafted"
 require_symlink "$home_dir/.local/bin/vc-help"
 require_symlink "$home_dir/.local/bin/vc-marbles"
@@ -230,9 +230,9 @@ require_symlink "$home_dir/.local/bin/vc-marbles"
 require_symlink "$home_dir/.agents/skills/vc-agents"
 require_symlink "$home_dir/.codex/skills/vc-agents"
 require_symlink "$home_dir/.claude/skills/vc-agents"
-require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"
-require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/claude_spawn.sh"
-require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/agy_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/codex_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/claude_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/agy_spawn.sh"
 # Canonical + compat helper locations
 require_file "$config_dir/vetcoders/vc-skills.sh"
 require_file "$config_dir/zsh/vc-skills.zsh"
@@ -351,9 +351,9 @@ common_env=(
 )
 
 log "headless spawn smoke"
-env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh" --mode plan --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
-env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/claude_spawn.sh" --mode review --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
-env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/agy_spawn.sh" --mode implement --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
+env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/codex_spawn.sh" --mode plan --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
+env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/claude_spawn.sh" --mode review --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
+env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/agy_spawn.sh" --mode implement --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
 
 codex_meta="$(find "$work_repo/.vibecrafted/reports" -maxdepth 1 -type f -name '*_codex.meta.json' | sort | tail -n 1)"
 claude_meta="$(find "$work_repo/.vibecrafted/reports" -maxdepth 1 -type f -name '*_claude.meta.json' | sort | tail -n 1)"
