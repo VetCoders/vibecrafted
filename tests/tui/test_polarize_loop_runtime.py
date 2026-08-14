@@ -14,7 +14,7 @@ def test_generic_skill_entry_routes_polarize_count_to_loop_runtime(
     script = "\n".join(
         [
             "set -euo pipefail",
-            f"source {REPO_ROOT / 'runtime' / 'shell' / 'vetcoders.sh'}",
+            f"source {REPO_ROOT / 'vibecrafted-core' / 'vibecrafted_core' / 'runtime' / 'shell' / 'vetcoders.sh'}",
             "_vetcoders_marbles() {",
             '  printf "%s\\n" "$@" > "$CAPTURE_FILE"',
             "}",

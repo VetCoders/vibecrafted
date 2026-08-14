@@ -46,7 +46,11 @@ def test_top_level_skill_dirs_are_live_skills_or_foundations() -> None:
     allowed_non_skill_dirs = {"experimental", "foundations", "pl"}
     offenders: list[str] = []
 
-    for path in sorted((bundle.REPO_ROOT / "skills").iterdir()):
+    for path in sorted(
+        (
+            bundle.REPO_ROOT / "vibecrafted-core" / "vibecrafted_core" / "skills"
+        ).iterdir()
+    ):
         if not path.is_dir() or path.name in allowed_non_skill_dirs:
             continue
 

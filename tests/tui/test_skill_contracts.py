@@ -6,7 +6,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_vc_skills_preserve_init_and_loctree_orientation_contract() -> None:
-    skill_files = sorted((REPO_ROOT / "skills").glob("vc-*/SKILL.md"))
+    skill_files = sorted(
+        (REPO_ROOT / "vibecrafted-core" / "vibecrafted_core" / "skills").glob(
+            "vc-*/SKILL.md"
+        )
+    )
     assert skill_files, "No vc-* skill files discovered"
 
     missing: list[str] = []
@@ -33,8 +37,8 @@ def test_vc_skills_preserve_init_and_loctree_orientation_contract() -> None:
 
 def test_loctree_skills_match_literal_and_structural_runtime_truth() -> None:
     paths = [
-        REPO_ROOT / "skills/vc-loctree/SKILL.md",
-        REPO_ROOT / "skills/pl/vc-loctree/SKILL.md",
+        REPO_ROOT / "vibecrafted-core/vibecrafted_core/skills/vc-loctree/SKILL.md",
+        REPO_ROOT / "vibecrafted-core/vibecrafted_core/skills/pl/vc-loctree/SKILL.md",
     ]
     for path in paths:
         text = path.read_text(encoding="utf-8")

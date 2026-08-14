@@ -16,7 +16,9 @@ import textwrap
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS_DIR = REPO_ROOT / "runtime" / "scripts"
+SCRIPTS_DIR = (
+    REPO_ROOT / "vibecrafted-core" / "vibecrafted_core" / "runtime" / "scripts"
+)
 
 
 def _prepare_scripts(tmp_path: Path, capture_file: Path) -> Path:

@@ -11,7 +11,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
+HELPER_SCRIPT = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "shell"
+    / "vetcoders.sh"
+)
 
 
 def _write_fake_marbles_spawn(script_path: Path) -> None:
@@ -39,7 +46,10 @@ def _write_replaying_vc_frame(script_path: Path) -> None:
 def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
-    shutil.copytree(REPO_ROOT / "runtime/scripts/lib", scripts_dir / "lib")
+    shutil.copytree(
+        REPO_ROOT / "vibecrafted-core/vibecrafted_core/runtime/scripts/lib",
+        scripts_dir / "lib",
+    )
 
     for name in (
         "common.sh",
@@ -48,7 +58,14 @@ def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:
         "marbles_verify_watch.sh",
         "marbles_next.sh",
     ):
-        source = REPO_ROOT / "runtime" / "scripts" / name
+        source = (
+            REPO_ROOT
+            / "vibecrafted-core"
+            / "vibecrafted_core"
+            / "runtime"
+            / "scripts"
+            / name
+        )
         target = scripts_dir / name
         shutil.copy2(source, target)
         target.chmod(0o755)
@@ -283,9 +300,14 @@ def _org_repo() -> str:
 
 
 def test_marbles_spawn_chains_with_agent_and_ancestor_plan_contract() -> None:
-    script = (REPO_ROOT / "runtime" / "scripts" / "marbles_spawn.sh").read_text(
-        encoding="utf-8"
-    )
+    script = (
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "scripts"
+        / "marbles_spawn.sh"
+    ).read_text(encoding="utf-8")
 
     assert (
         'success_hook="bash $q_scripts/marbles_next.sh $q_state $count 1 '
@@ -1132,8 +1154,18 @@ def test_marbles_runtime_consumes_ancestor_override_sequence_across_children(
 
 def test_marbles_contract_docs_forbid_worker_worktree_escape() -> None:
     checked_files = [
-        REPO_ROOT / "skills" / "vc-marbles" / "SKILL.md",
-        REPO_ROOT / "skills" / "vc-marbles" / "RECEPTION.md",
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "skills"
+        / "vc-marbles"
+        / "SKILL.md",
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "skills"
+        / "vc-marbles"
+        / "RECEPTION.md",
         REPO_ROOT / "workflows" / "MARBLES.md",
     ]
     forbidden = [
@@ -1734,7 +1766,10 @@ def _run_verification_timeout(state_path: Path, tmp_path: Path) -> None:
     subprocess.run(
         [
             "bash",
-            str(REPO_ROOT / "runtime/scripts/marbles_verify_watch.sh"),
+            str(
+                REPO_ROOT
+                / "vibecrafted-core/vibecrafted_core/runtime/scripts/marbles_verify_watch.sh"
+            ),
             str(state_path),
             "1",
             str(report_path),

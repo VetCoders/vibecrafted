@@ -24,7 +24,7 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "$HERE/.." && pwd)
-CFG_DIR="$REPO_ROOT/config/vc-frame"
+CFG_DIR="$REPO_ROOT/vibecrafted-core/vibecrafted_core/config/vc-frame"
 LAYOUT_DIR="$CFG_DIR/layouts"
 THEMES_FILE="$CFG_DIR/themes/vetcoders-mesh.kdl"
 

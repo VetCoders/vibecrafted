@@ -54,12 +54,9 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-# Find source file (new name first, then compat path)
-source_file="$repo_root/runtime/shell/vetcoders.sh"
-[[ -f "$source_file" ]] || source_file="$repo_root/runtime/shell/vetcoders.zsh"
-[[ -f "$source_file" ]] || source_file="$repo_root/runtime/shell/vetcoders.sh"
-[[ -f "$source_file" ]] || source_file="$repo_root/runtime/shell/vetcoders.zsh"
-[[ -f "$source_file" ]] || die "Helper file not found"
+# The Python package is the sole physical owner of runtime assets in source.
+source_file="$repo_root/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
+[[ -f "$source_file" ]] || die "Helper file not found: $source_file"
 
 # Canonical install location (shell-agnostic)
 config_base="${XDG_CONFIG_HOME:-$HOME/.config}"

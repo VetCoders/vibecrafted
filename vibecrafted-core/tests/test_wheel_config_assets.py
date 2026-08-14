@@ -49,7 +49,9 @@ def test_accessor_returns_existing_tree_from_checkout() -> None:
 def test_repo_root_config_is_canonical_source() -> None:
     """Checkout accessor must land on monorepo config/vc-frame, not a duplicate."""
     source = vc_frame_config_source().resolve()
-    canonical = (REPO_ROOT / "config" / "vc-frame").resolve()
+    canonical = (
+        REPO_ROOT / "vibecrafted-core" / "vibecrafted_core" / "config" / "vc-frame"
+    ).resolve()
     # When package data is also present (editable install after wheel stage),
     # either path is valid if it contains the tree; prefer equality when possible.
     assert (source / "config.kdl").is_file()

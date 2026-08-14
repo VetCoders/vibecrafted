@@ -65,7 +65,14 @@ def _write_complete_source(
         root,
         mirror=True,
     )
-    (root / "runtime" / "shell" / "vetcoders.sh").write_text(helper, encoding="utf-8")
+    (
+        root
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "shell"
+        / "vetcoders.sh"
+    ).write_text(helper, encoding="utf-8")
     if service_lock_contract:
         launcher = launcher.replace(
             "#!/usr/bin/env bash\n",
@@ -312,8 +319,9 @@ def _install_test_walkaround_launcher(
 
 
 def _write_valid_runtime_generation(root: Path) -> None:
-    (root / "skills").mkdir(parents=True)
-    (root / "runtime").mkdir()
+    package = root / "vibecrafted-core" / "vibecrafted_core"
+    (package / "skills").mkdir(parents=True)
+    (package / "runtime").mkdir()
     (root / "VERSION").write_text("9.9.8+gold\n", encoding="utf-8")
     deck = root / "scripts" / "vibecrafted"
     deck.parent.mkdir(parents=True)
@@ -509,9 +517,9 @@ def test_refresh_current_tools_mirrors_shadowing_files(
     assert current_link.is_symlink()
     new_target = current_link.resolve()
     assert new_target != old_target
-    assert (new_target / "runtime" / "shell" / "vetcoders.sh").read_text(
-        encoding="utf-8"
-    ) == 'printf "fresh helper\\n"\n'
+    assert (
+        new_target / "vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
+    ).read_text(encoding="utf-8") == 'printf "fresh helper\\n"\n'
     assert (new_target / "scripts" / "vibecrafted").read_text(
         encoding="utf-8"
     ) == '#!/usr/bin/env bash\nprintf "fresh launcher\\n"\n'
@@ -1264,9 +1272,9 @@ def test_isolated_policy_publishes_without_runtime_service_observation(
 
     assert result == 0
     assert current.is_symlink()
-    assert (current / "runtime" / "shell" / "vetcoders.sh").read_text(
-        encoding="utf-8"
-    ) == 'printf "isolated helper\\n"\n'
+    assert (
+        current / "vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
+    ).read_text(encoding="utf-8") == 'printf "isolated helper\\n"\n'
 
 
 def test_isolated_policy_rolls_back_without_runtime_service_observation(
@@ -7054,9 +7062,9 @@ def test_compact_install_refreshes_current_tools_from_local_checkout(
     )
 
     assert exit_code == 0
-    assert (current_link / "runtime" / "shell" / "vetcoders.sh").read_text(
-        encoding="utf-8"
-    ) == 'printf "fresh installed helper\\n"\n'
+    assert (
+        current_link / "vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
+    ).read_text(encoding="utf-8") == 'printf "fresh installed helper\\n"\n'
     assert (current_link / "scripts" / "vibecrafted").read_text(
         encoding="utf-8"
     ) == '#!/usr/bin/env bash\nprintf "fresh installed launcher\\n"\n'

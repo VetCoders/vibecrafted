@@ -16,7 +16,14 @@ import pytest
 from scripts import vetcoders_install
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SHELL_SH = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
+SHELL_SH = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "shell"
+    / "vetcoders.sh"
+)
 
 
 def _write_fake_command(path: Path, body: str) -> None:
@@ -1214,7 +1221,14 @@ def test_worker_spawn_scripts_default_to_headless(
     env["HOME"] = str(home)
     env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
     env["VIBECRAFTED_INLINE_STARTUP_WATCH"] = "0"
-    spawn_script = REPO_ROOT / "runtime" / "scripts" / f"{agent}_spawn.sh"
+    spawn_script = (
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "scripts"
+        / f"{agent}_spawn.sh"
+    )
     result = subprocess.run(
         [
             "bash",

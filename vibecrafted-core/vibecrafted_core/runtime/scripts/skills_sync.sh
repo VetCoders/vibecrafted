@@ -121,12 +121,8 @@ done
 source_line='[[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" ]] && source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"'
 
 skills=()
-skills_root="$repo_root"
-if [[ -d "$repo_root/skills" ]]; then
-  skills_root="$(cd "$repo_root/skills" && pwd -P)"
-elif [[ -d "$repo_root/vibecrafted-core/vibecrafted_core/skills" ]]; then
-  skills_root="$repo_root/vibecrafted-core/vibecrafted_core/skills"
-fi
+skills_root="$repo_root/vibecrafted-core/vibecrafted_core/skills"
+[[ -d "$skills_root" ]] || die "Canonical skills root not found: $skills_root"
 while IFS= read -r skill; do
   [[ -n "$skill" ]] || continue
   skills+=("$skill")
@@ -241,9 +237,7 @@ for tool in "${tools[@]}"; do
 done
 
 if (( with_shell )); then
-  shell_source="$repo_root/runtime/shell/vetcoders.sh"
-  [[ -f "$shell_source" ]] || shell_source="$repo_root/runtime/shell/vetcoders.zsh"
-  [[ -f "$shell_source" ]] || shell_source="$repo_root/runtime/shell/vetcoders.sh"
+  shell_source="$repo_root/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
   [[ -f "$shell_source" ]] || die "Shell helper file not found: $shell_source"
 
   # shellcheck disable=SC2016

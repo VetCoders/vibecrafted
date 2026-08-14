@@ -349,7 +349,7 @@ spawn_python_core_path() {
     return 0
   fi
   if [[ -n "${_SPAWN_LIB_DIR:-}" ]]; then
-    candidate_core="$(cd "$_SPAWN_LIB_DIR/../../.." && pwd)/vibecrafted-core"
+    candidate_core="$(cd "$_SPAWN_LIB_DIR/../../../.." && pwd)"
     if [[ -d "$candidate_core/vibecrafted_core" ]]; then
       printf '%s\n' "$candidate_core"
       return 0

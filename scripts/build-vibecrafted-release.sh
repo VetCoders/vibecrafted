@@ -12,6 +12,7 @@ APP="$DIST_DIR/Vibecrafted.app"
 VERSION="$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")"
 RELEASE_DATE="${VIBECRAFTED_RELEASE_DATE:-$(date -u +%Y%m%d)}"
 ROOT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+RUNTIME_VERSION="${VERSION}+g${ROOT_SHA:0:8}"
 [[ "$RELEASE_DATE" =~ ^[0-9]{8}$ ]] || {
   printf 'FATAL: VIBECRAFTED_RELEASE_DATE must be YYYYMMDD\n' >&2
   exit 1
@@ -180,6 +181,14 @@ build_product() {
   [[ -x "$start_source" ]] || die "vc-start release binary is missing"
   chmod 0755 "$start_source"
 
+  log "Building the bundled Vibecrafted Server and hydrated site"
+  local server_build_root="$BUILD_DIR/cargo"
+  make -C "$REPO_ROOT" CARGO_BUILD_ROOT="$server_build_root" build-server-release
+  local server_source="$server_build_root/vibecrafted-server/release/vibecrafted-server-web"
+  local server_site="$server_build_root/vibecrafted-server/site"
+  [[ -x "$server_source" ]] || die "Vibecrafted Server release binary is missing"
+  [[ -d "$server_site/pkg" ]] || die "Vibecrafted Server hydrated site is missing"
+
   log "Building the single Swift host app"
   make -C "$REPO_ROOT/vibecrafted-app/shell-agent" bindings xcode
   rm -rf "$BUILD_DIR/DerivedData" "$APP"
@@ -214,22 +223,26 @@ build_product() {
   install -m 0755 "$terminal_source" "$APP/Contents/Helpers/vc-terminal"
   install -m 0755 "$frame_source" "$APP/Contents/Helpers/vc-frame"
   install -m 0755 "$start_source" "$runtime/bin/vc-start"
+  install -m 0755 "$server_source" "$runtime/bin/vc-server"
+  install -m 0755 "$server_source" "$runtime/bin/vibecrafted-server-web"
   install -m 0644 "$REPO_ROOT/config/vc-terminal/vibecrafted.toml" \
     "$resources/terminal/vibecrafted.toml"
-  install -m 0644 "$REPO_ROOT/VERSION" "$runtime/VERSION"
+  printf '%s\n' "$RUNTIME_VERSION" > "$runtime/VERSION"
   mkdir -p "$runtime/scripts" "$runtime/vibecrafted-core" "$runtime/config"
-  install -m 0755 "$REPO_ROOT/scripts/vibecrafted" "$runtime/scripts/vibecrafted"
-  install -m 0755 "$REPO_ROOT/scripts/vibecrafted" "$runtime/bin/vibecrafted"
-  /bin/cp -RL "$REPO_ROOT/vibecrafted-core/vibecrafted_core" \
+  local canonical_deck="$REPO_ROOT/vibecrafted-core/vibecrafted_core/deck/vibecrafted"
+  install -m 0755 "$canonical_deck" "$runtime/scripts/vibecrafted"
+  install -m 0755 "$canonical_deck" "$runtime/bin/vibecrafted"
+  /bin/cp -R "$REPO_ROOT/bin/." "$runtime/bin/"
+  /bin/cp -R "$REPO_ROOT/vibecrafted-core/vibecrafted_core" \
     "$runtime/vibecrafted-core/"
-  /bin/cp -RL "$REPO_ROOT/vibecrafted-core/vibecrafted_core/runtime" \
-    "$runtime/runtime"
-  /bin/cp -RL "$REPO_ROOT/config/." "$runtime/config/"
+  /bin/cp -R "$REPO_ROOT/config/." "$runtime/config/"
+  mkdir -p "$runtime/server/site"
+  /bin/cp -R "$server_site/." "$runtime/server/site/"
   # The Living Tree may contain ignored interpreter caches. They are never
   # product inputs: adjacent verifier bytecode could shadow the signed source.
-  find "$runtime/vibecrafted-core" "$runtime/runtime" \
+  find "$runtime/vibecrafted-core" \
     -type d -name __pycache__ -prune -exec rm -rf {} +
-  find "$runtime/vibecrafted-core" "$runtime/runtime" \
+  find "$runtime/vibecrafted-core" \
     -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 
   log "Embedding a private Python runtime; no shell profile or host Python is used"
@@ -247,6 +260,7 @@ build_product() {
     "$runtime/python/lib/libpython3.12.dylib"
   find "$runtime" -type f -name '*.pyc' -delete
   find "$runtime" -depth -type d -name __pycache__ -empty -delete
+  find "$runtime" -type f -name '.DS_Store' -delete
   # These literals are the relocatable wrapper payload and expand only when
   # the installed wrapper runs inside Vibecrafted.app.
   # shellcheck disable=SC2016
@@ -260,6 +274,22 @@ build_product() {
     'exec "$runtime_root/python/bin/python3.12" "$@"' \
     > "$runtime/bin/python3"
   chmod 0755 "$runtime/bin/python3"
+  for entrypoint_module in \
+    'vc-guardian:vibecrafted_core.guardian' \
+    'vc-server-supervisor:vibecrafted_core.server_supervisor' \
+    'verify-vibecrafted-walkaround:vibecrafted_core.walkaround_runner'; do
+    entrypoint="${entrypoint_module%%:*}"
+    module="${entrypoint_module#*:}"
+    # The wrapper must resolve BASH_SOURCE when it runs, not while this bundle is assembled.
+    # shellcheck disable=SC2016
+    printf '%s\n' \
+      '#!/bin/bash' \
+      'set -euo pipefail' \
+      'bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
+      "exec \"\$bin_dir/python3\" -m $module \"\$@\"" \
+      > "$runtime/bin/$entrypoint"
+    chmod 0755 "$runtime/bin/$entrypoint"
+  done
 
   if find "$APP" -type l -print -quit | grep -q .; then
     die "assembled app contains symlinks"

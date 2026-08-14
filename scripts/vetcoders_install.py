@@ -25,6 +25,7 @@ import errno
 import fcntl
 import hashlib
 import importlib
+import importlib.util
 import json
 import math
 import os
@@ -902,13 +903,7 @@ def detect_cargo() -> str | None:
 
 
 def source_skills_root(repo_root: Path) -> Path:
-    """Locate the skills source directory: the repo's `skills/`, or the packaged
-    vibecrafted_core/skills fallback, or the repo root itself if neither exists.
-    """
-    skills_dir = repo_root / "skills"
-    if skills_dir.is_dir():
-        return skills_dir
-
+    """Locate the one package-owned skills source directory."""
     packaged_skills_dir = repo_root / "vibecrafted-core" / "vibecrafted_core" / "skills"
     if packaged_skills_dir.is_dir():
         return packaged_skills_dir
@@ -3119,7 +3114,7 @@ _RUNTIME_VERIFIER_UNTYPED_OBJECT_MATCHER_PATHS = frozenset(
     }
 )
 _RUNTIME_ACTIVE_TEXT_ROOTS = (
-    Path("config/vc-frame"),
+    Path("vibecrafted-core/vibecrafted_core/config/vc-frame"),
     Path("runtime/generated"),
     Path("vibecrafted-core/vibecrafted_core/runtime"),
 )
@@ -7907,7 +7902,9 @@ def _materialize_vc_frame_generation(runtime_root: Path) -> None:
     module_path = (
         runtime_root / "vibecrafted-core" / "vibecrafted_core" / "vc_frame_staging.py"
     )
-    source = runtime_root / "config" / "vc-frame"
+    source = (
+        runtime_root / "vibecrafted-core" / "vibecrafted_core" / "config" / "vc-frame"
+    )
     destination = runtime_root / "runtime" / "generated" / "vc-frame"
     if not module_path.is_file():
         raise OSError(
@@ -9021,17 +9018,15 @@ def _is_framework_source_root(repo_root: Path) -> bool:
     """True if `repo_root` looks like a complete Vibecrafted framework source checkout (VERSION,
     launcher, skills, and runtime present).
     """
-    skills_dir = repo_root / "skills"
     packaged_skills_dir = repo_root / "vibecrafted-core" / "vibecrafted_core" / "skills"
-    runtime_dir = repo_root / "runtime"
     packaged_runtime_dir = (
         repo_root / "vibecrafted-core" / "vibecrafted_core" / "runtime"
     )
     return (
         (repo_root / "VERSION").is_file()
         and (repo_root / "scripts" / "vibecrafted").is_file()
-        and (skills_dir.is_dir() or packaged_skills_dir.is_dir())
-        and (runtime_dir.is_dir() or packaged_runtime_dir.is_dir())
+        and packaged_skills_dir.is_dir()
+        and packaged_runtime_dir.is_dir()
     )
 
 
@@ -9978,24 +9973,40 @@ def _secure_walkaround_launcher_issues(
 
 
 def _verifier_bytecode_shadow_issues(current_tools: Path) -> list[str]:
-    """Reject adjacent bytecode for the two manifest-bound verifier modules."""
+    """Reject verifier bytecode that can bypass or outlive its bound source.
+
+    CPython's ordinary ``__pycache__`` entries are derived caches and are safe
+    when their source exists: timestamp and checked-hash modes validate the
+    source before use. Adjacent bytecode, orphan caches, and unchecked-hash
+    caches remain fail-closed because they can execute without the manifest-
+    bound ``.py`` bytes governing them.
+    """
     package = current_tools / "vibecrafted-core" / "vibecrafted_core"
     issues: list[str] = []
-    bytecode_patterns = (
-        "product_contract.pyc",
-        "product_contract.pyo",
-        "walkaround_runner.pyc",
-        "walkaround_runner.pyo",
-        "__pycache__/product_contract.*.pyc",
-        "__pycache__/product_contract.*.pyo",
-        "__pycache__/walkaround_runner.*.pyc",
-        "__pycache__/walkaround_runner.*.pyo",
-    )
-    for pattern in bytecode_patterns:
-        for candidate in package.glob(pattern):
-            issues.append(
-                f"{candidate.relative_to(package)}:corrupt:verifier bytecode shadow"
-            )
+    modules = ("product_contract", "walkaround_runner")
+    for module in modules:
+        for suffix in ("pyc", "pyo"):
+            for candidate in package.glob(f"{module}.{suffix}"):
+                issues.append(
+                    f"{candidate.relative_to(package)}:corrupt:verifier bytecode shadow"
+                )
+
+        source = package / f"{module}.py"
+        for candidate in package.glob(f"__pycache__/{module}.*.py[co]"):
+            reason = ""
+            if not source.is_file():
+                reason = "orphan verifier bytecode cache"
+            else:
+                try:
+                    header = candidate.read_bytes()[:8]
+                except OSError:
+                    header = b""
+                if len(header) == 8 and header[:4] == importlib.util.MAGIC_NUMBER:
+                    flags = struct.unpack("<I", header[4:8])[0]
+                    if flags & 0x01 and not flags & 0x02:
+                        reason = "unchecked-hash verifier bytecode cache"
+            if reason:
+                issues.append(f"{candidate.relative_to(package)}:corrupt:{reason}")
     return sorted(set(issues))
 
 
@@ -11102,7 +11113,9 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
     source_root = None
     source_candidate = _doctor_launcher_source_root(store_path)
     if source_candidate is not None:
-        skills_src = source_candidate / "skills"
+        skills_src = (
+            source_candidate / "vibecrafted-core" / "vibecrafted_core" / "skills"
+        )
         if skills_src.is_dir():
             source_root = skills_src
     drifted: list[str] = []
@@ -12363,7 +12376,14 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     # --- Execute: shell helpers ---
     if install_shell:
         print(bold("Installing shell helper..."))
-        shell_script = repo_root / "runtime" / "scripts" / "install-shell.sh"
+        shell_script = (
+            repo_root
+            / "vibecrafted-core"
+            / "vibecrafted_core"
+            / "runtime"
+            / "scripts"
+            / "install-shell.sh"
+        )
         if shell_script.exists():
             shell_cmd = ["bash", str(shell_script), "--source", str(repo_root)]
             if write_shell_rc:
@@ -12845,7 +12865,14 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         # Shell helpers
         if install_shell:
             print("Installing shell helper:")
-            shell_script = repo_root / "runtime" / "scripts" / "install-shell.sh"
+            shell_script = (
+                repo_root
+                / "vibecrafted-core"
+                / "vibecrafted_core"
+                / "runtime"
+                / "scripts"
+                / "install-shell.sh"
+            )
             if shell_script.exists():
                 shell_cmd = ["bash", str(shell_script), "--source", str(repo_root)]
                 if write_shell_rc:

@@ -4,7 +4,15 @@ import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ULIMIT_HELPER = REPO_ROOT / "runtime" / "scripts" / "lib" / "ulimits.sh"
+ULIMIT_HELPER = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "scripts"
+    / "lib"
+    / "ulimits.sh"
+)
 
 
 def test_launcher_ulimit_helper_raises_fsize_and_best_effort_nofile() -> None:
@@ -58,16 +66,58 @@ printf 'still-running\\n'
 
 
 def test_named_launchers_source_shared_ulimit_helper() -> None:
-    common = (REPO_ROOT / "runtime" / "scripts" / "common.sh").read_text()
-    launcher = (REPO_ROOT / "runtime" / "scripts" / "lib" / "launcher.sh").read_text()
-    shell_facade = (REPO_ROOT / "runtime" / "shell" / "vetcoders.sh").read_text()
+    common = (
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "scripts"
+        / "common.sh"
+    ).read_text()
+    launcher = (
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "scripts"
+        / "lib"
+        / "launcher.sh"
+    ).read_text()
+    shell_facade = (
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "shell"
+        / "vetcoders.sh"
+    ).read_text()
     command_deck = (REPO_ROOT / "scripts" / "vibecrafted").read_text()
-    dashboard = (REPO_ROOT / "runtime" / "shell" / "lib" / "dashboard.sh").read_text()
+    dashboard = (
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "shell"
+        / "lib"
+        / "dashboard.sh"
+    ).read_text()
     scripts_vc_frame = (
-        REPO_ROOT / "runtime" / "scripts" / "lib" / "vc_frame.sh"
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "scripts"
+        / "lib"
+        / "vc_frame.sh"
     ).read_text()
     shell_vc_frame = (
-        REPO_ROOT / "runtime" / "shell" / "lib" / "vc_frame.sh"
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "shell"
+        / "lib"
+        / "vc_frame.sh"
     ).read_text()
 
     assert 'source "$_SPAWN_LIB_DIR/ulimits.sh"' in common

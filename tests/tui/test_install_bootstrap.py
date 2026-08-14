@@ -80,12 +80,6 @@ def _materialize_complete_distribution_fixture(source_dir: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
             path.write_text(f"fixture: {relative}\n", encoding="utf-8")
-    runtime = source_dir / "runtime"
-    skills = source_dir / "skills"
-    if not runtime.is_symlink():
-        runtime.symlink_to("vibecrafted-core/vibecrafted_core/runtime")
-    if not skills.is_symlink():
-        skills.symlink_to("vibecrafted-core/vibecrafted_core/skills")
 
 
 def _fixture_tree_record(source_dir: Path) -> dict[str, object]:
@@ -466,7 +460,6 @@ def test_bootstrap_required_shape_mirrors_distribution_writer() -> None:
         "REQUIRED_FILES",
         "REQUIRED_DIRECTORIES",
         "REQUIRED_SURFACE_FILES",
-        "CANONICAL_PROJECTIONS",
         "ALLOWED_TOP_LEVEL",
         "FORBIDDEN_COMPONENTS",
         "FORBIDDEN_SUFFIXES",
@@ -504,9 +497,6 @@ def test_bootstrap_required_shape_mirrors_distribution_writer() -> None:
     assert set(assignments["REQUIRED_SURFACE_FILES"]) == set(
         writer.REQUIRED_SURFACE_FILES.values()
     )
-    assert assignments["CANONICAL_PROJECTIONS"] == {
-        key: value.as_posix() for key, value in writer.CANONICAL_PROJECTIONS.items()
-    }
     assert assignments["ALLOWED_TOP_LEVEL"] == writer.ALLOWED_TOP_LEVEL
     assert assignments["FORBIDDEN_COMPONENTS"] == writer.FORBIDDEN_COMPONENTS
     assert assignments["FORBIDDEN_SUFFIXES"] == writer.FORBIDDEN_SUFFIXES

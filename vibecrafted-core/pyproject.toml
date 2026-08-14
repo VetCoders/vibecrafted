@@ -68,8 +68,8 @@ artifacts = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["vibecrafted_core"]
-# vibecrafted_core/config/vc-frame is a symlink to monorepo config/vc-frame
-# (zero-copy at dev time; hatch follows the symlink into the wheel).
+# Package data is physically owned under vibecrafted_core; builds never follow
+# source-tree aliases.
 
 [tool.pytest.ini_options]
 markers = [

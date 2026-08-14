@@ -215,6 +215,9 @@ _vetcoders_launch_dashboard() {
   if [[ "${VIBECRAFTED_PREFER_REPO_VC_FRAME:-0}" == "1" ]]; then
     repo_source="$(_vetcoders_repo_root)"
     repo_vc_frame_dir="$repo_source/config/vc-frame"
+    if [[ ! -d "$repo_vc_frame_dir" ]]; then
+      repo_vc_frame_dir="$repo_source/vibecrafted-core/vibecrafted_core/config/vc-frame"
+    fi
     if [[ -d "$repo_vc_frame_dir" && -f "$repo_vc_frame_dir/config.kdl" ]]; then
       local repo_layout="$repo_vc_frame_dir/layouts/${layout_name}.kdl"
       if [[ -f "$repo_layout" ]]; then

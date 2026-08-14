@@ -257,10 +257,7 @@ REQUIRED_DIRECTORIES = frozenset(
         "config",
         "docs",
         "plugins",
-        "runtime/scripts",
-        "runtime/shell/lib",
         "scripts/installer",
-        "skills",
         "templates",
         "tools",
         "vibecrafted-app",
@@ -278,10 +275,7 @@ REQUIRED_SURFACE_FILES = frozenset(
         "config/README.md",
         "docs/INSTALL.md",
         "plugins/iterm2/README.md",
-        "runtime/scripts/README.md",
-        "runtime/shell/lib/core.sh",
         "scripts/installer/pyproject.toml",
-        "skills/vc-init/SKILL.md",
         "templates/hooks/install.sh",
         "tools/README.md",
         "vibecrafted-app/Cargo.toml",
@@ -293,11 +287,6 @@ REQUIRED_SURFACE_FILES = frozenset(
         "workflows/MARBLES.md",
     }
 )
-CANONICAL_PROJECTIONS = {
-    "runtime": "vibecrafted-core/vibecrafted_core/runtime",
-    "skills": "vibecrafted-core/vibecrafted_core/skills",
-}
-
 ALLOWED_TOP_LEVEL = frozenset(
     {
         "VERSION",
@@ -319,7 +308,6 @@ ALLOWED_TOP_LEVEL = frozenset(
         "plugins",
         "runtime",
         "scripts",
-        "skills",
         "templates",
         "tools",
         "vibecrafted-app",
@@ -442,24 +430,16 @@ def validate_symlink_target(relative: str, target: str) -> bytes:
 
 
 def validate_required_structure(kinds: dict[str, str]) -> None:
-    def physical(relative: str) -> str:
-        head, separator, tail = relative.partition("/")
-        canonical = CANONICAL_PROJECTIONS.get(head)
-        return f"{canonical}/{tail}" if canonical is not None and separator else relative
-
     missing_files = sorted(
         relative
         for relative in REQUIRED_FILES | REQUIRED_SURFACE_FILES
-        if kinds.get(physical(relative)) != "file"
+        if kinds.get(relative) != "file"
     )
     missing_directories = sorted(
         relative
         for relative in REQUIRED_DIRECTORIES
-        if kinds.get(physical(relative))
-        != ("symlink" if relative in CANONICAL_PROJECTIONS else "directory")
+        if kinds.get(relative) != "directory"
     )
-    if kinds.get("runtime") != "symlink" or kinds.get("skills") != "symlink":
-        fail("runtime and skills must be the exact top-level projection symlinks")
     errors = [
         *(f"missing required file: {relative}" for relative in missing_files),
         *(
@@ -643,11 +623,6 @@ def archive_entries(archive_path: Path) -> tuple[str, bytes, dict[str, object], 
                     if member.mode != 0o777 or member.size != 0:
                         fail(f"noncanonical symlink member: {relative}")
                     target = validate_symlink_target(relative, member.linkname)
-                    expected_target = CANONICAL_PROJECTIONS.get(relative)
-                    if expected_target is not None and member.linkname != expected_target:
-                        fail(
-                            f"noncanonical projection symlink: {relative} -> {member.linkname}"
-                        )
                     records[relative] = (raw_path, b"l", 0o777, target)
                     member_types[relative] = "symlink"
                 else:
@@ -782,9 +757,6 @@ def filesystem_entries(root: Path) -> tuple[bytes, dict[str, object], list[tuple
             ):
                 fail(f"symlink changed during integrity preflight: {relative}")
             payload = validate_symlink_target(relative, target)
-            expected_target = CANONICAL_PROJECTIONS.get(relative)
-            if expected_target is not None and target != expected_target:
-                fail(f"noncanonical projection symlink: {relative} -> {target}")
             records.append((raw_path, b"l", 0o777, payload))
             kinds[relative] = "symlink"
         elif stat.S_ISDIR(metadata.st_mode):

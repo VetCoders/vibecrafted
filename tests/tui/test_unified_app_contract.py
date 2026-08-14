@@ -724,7 +724,7 @@ def _patch_release_mount(monkeypatch: pytest.MonkeyPatch, app: Path) -> None:
     monkeypatch.setattr(contract, "_run_live_release_checks", lambda *_: {})
 
 
-def test_native_app_launches_only_the_bundled_product_entry() -> None:
+def test_native_app_bootstraps_and_launches_only_the_canonical_product_entry() -> None:
     delegate = (
         REPO_ROOT / "vibecrafted-app/shell-agent/app/Vibecrafted/AppDelegate.swift"
     ).read_text(encoding="utf-8")
@@ -737,7 +737,16 @@ def test_native_app_launches_only_the_bundled_product_entry() -> None:
 
     assert "launchWorkspaceTerminal()" in delegate
     assert "Contents/Helpers/vc-terminal" in delegate
-    assert "Contents/Resources/runtime/bin/vc-start" in delegate
+    assert 'appendingPathComponent("releases", isDirectory: true)' in delegate
+    assert 'appendingPathComponent("active.json")' in delegate
+    assert 'generation.appendingPathComponent("bin/vc-start")' in delegate
+    assert "let runtimeEntries = try manager.contentsOfDirectory" in delegate
+    assert "launcherHome.appendingPathComponent(name)" in delegate
+    assert 'generation.appendingPathComponent("bin/vc-server")' in delegate
+    assert 'generation.appendingPathComponent("bin/vc-guardian")' in delegate
+    assert 'generation.appendingPathComponent("bin/vc-server-supervisor")' in delegate
+    assert "rename(temporary.path, destination.path)" in delegate
+    assert "assertNoSymlinks(below: generation)" in delegate
     assert 'environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"' in delegate
     assert "shell-agent" not in delegate
     assert 'name = "vc-start"' in cargo
@@ -745,6 +754,15 @@ def test_native_app_launches_only_the_bundled_product_entry() -> None:
     assert '"--norc"' in launcher
     assert 'source "$1"; shift; vc-start "$@"' in launcher
     assert 'Command::new("/bin/bash")' in launcher
+
+
+def test_tracked_product_source_contains_no_symlinks() -> None:
+    index = subprocess.check_output(["git", "ls-files", "-s"], cwd=REPO_ROOT, text=True)
+    tracked_symlinks = [
+        line for line in index.splitlines() if line.startswith("120000 ")
+    ]
+
+    assert tracked_symlinks == []
 
 
 def test_versioned_json_schema_matches_runtime_contract_ids() -> None:
@@ -2939,12 +2957,16 @@ def test_unified_release_has_one_top_level_owner() -> None:
     assert 'chmod 0755 "$terminal_source"' in builder
     assert 'make -C "$FRAME_REPO" release' in builder
     assert 'chmod 0755 "$frame_source"' in builder
+    assert "build-server-release" in builder
+    assert '"$runtime/bin/vc-server"' in builder
+    assert '"$runtime/server/site/"' in builder
     assert "uv python install 3.12.3" in builder
     assert "install_name_tool -id '@loader_path/libpython3.12.dylib'" in builder
     assert "--remap-path-prefix=$HOME=/usr/src/operator-home" in builder
     assert "install_name_tool -delete_rpath /usr/lib/swift" in builder
     assert "--noprofile" not in builder  # vc-start, not the release shell, owns this
     assert "vc-frame.real" not in builder
+    assert '"$runtime/runtime"' not in builder
     assert "$(MAKE) -C ../.. release" in shell_makefile
     assert not (REPO_ROOT / "vibecrafted-app/shell-agent/scripts/build-dmg.sh").exists()
 

@@ -78,12 +78,20 @@ def test_builder_emits_the_canonical_versioned_dmg_and_checksum() -> None:
         'DMG_NAME="Vibecrafted_${VERSION}-${RELEASE_DATE}-${ROOT_SHA:0:8}.dmg"'
         in builder
     )
+    assert 'RUNTIME_VERSION="${VERSION}+g${ROOT_SHA:0:8}"' in builder
+    assert 'printf \'%s\\n\' "$RUNTIME_VERSION" > "$runtime/VERSION"' in builder
     assert 'DMG_CHECKSUM="$DMG.sha256"' in builder
     assert 'LEGACY_DMG="$DIST_DIR/Vibecrafted.dmg"' in builder
     assert 'rm -f "$DMG_CHECKSUM" "$LEGACY_DMG"' in builder
     assert '/usr/bin/shasum -a 256 "$DMG_NAME"' in builder
     assert "-type d -name __pycache__" in builder
     assert "-name '*.pyc'" in builder
+    assert "-name '.DS_Store'" in builder
+    assert "build-server-release" in builder
+    assert 'install -m 0755 "$server_source" "$runtime/bin/vc-server"' in builder
+    assert '"$runtime/server/site/"' in builder
+    assert "vc-server-supervisor:vibecrafted_core.server_supervisor" in builder
+    assert '"$runtime/runtime"' not in builder
 
 
 def test_release_bundle_binds_the_vibecrafted_app_icon() -> None:
@@ -174,8 +182,13 @@ def test_publisher_writes_the_mandatory_release_report() -> None:
 
 
 def test_vc_release_skill_locks_four_mandatory_report_sections() -> None:
-    skill = (REPO_ROOT / "skills/vc-release/SKILL.md").read_text(encoding="utf-8")
-    template = REPO_ROOT / "skills/vc-release/references/release-report-template.md"
+    skill = (
+        REPO_ROOT / "vibecrafted-core/vibecrafted_core/skills/vc-release/SKILL.md"
+    ).read_text(encoding="utf-8")
+    template = (
+        REPO_ROOT
+        / "vibecrafted-core/vibecrafted_core/skills/vc-release/references/release-report-template.md"
+    )
 
     assert "## Release Report Contract" in skill
     for required in (

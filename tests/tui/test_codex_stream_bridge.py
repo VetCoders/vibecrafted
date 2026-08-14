@@ -27,7 +27,14 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-BRIDGE_PATH = REPO_ROOT / "runtime" / "scripts" / "codex_stream_bridge.py"
+BRIDGE_PATH = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "scripts"
+    / "codex_stream_bridge.py"
+)
 
 
 # ---------------------------------------------------------------------------

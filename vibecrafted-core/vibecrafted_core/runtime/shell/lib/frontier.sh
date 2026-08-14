@@ -10,7 +10,9 @@ _vetcoders_frontier_candidates() {
     "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier" \
     "$crafted_sidecar" \
     "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/config}" \
-    "$repo_root/config"
+    "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/vibecrafted-core/vibecrafted_core/config}" \
+    "$repo_root/config" \
+    "$repo_root/vibecrafted-core/vibecrafted_core/config"
   do
     [[ -n "$candidate" && -d "$candidate" ]] || continue
     case ":$seen:" in
@@ -63,7 +65,8 @@ _vetcoders_frontier_source_root() {
       *":$candidate:"*) continue ;;
     esac
     seen="${seen:+$seen:}$candidate"
-    if [[ -f "$candidate/config/starship.toml" ]]; then
+    if [[ -f "$candidate/config/starship.toml" ]] \
+      || [[ -f "$candidate/vibecrafted-core/vibecrafted_core/config/starship.toml" ]]; then
       printf '%s\n' "$candidate"
       return 0
     fi

@@ -14,8 +14,15 @@ _vetcoders_spawn_home() {
   local legacy_store="$HOME/.runtime/skills/vc-agents"
   local candidate
 
-  if [[ -f "$repo_root/VERSION" && -f "$repo_root/scripts/vibecrafted" ]]; then
+  if [[ -f "$repo_root/VERSION" ]]; then
+    # Installed generations physically own runtime/; source checkouts own the
+    # same tree inside the Python package. Neither path is an alias.
     candidate="$repo_root/runtime"
+    if [[ -d "$candidate/scripts" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+    candidate="$repo_root/vibecrafted-core/vibecrafted_core/runtime"
     if [[ -d "$candidate/scripts" ]]; then
       printf '%s' "$candidate"
       return 0

@@ -101,12 +101,6 @@ def _materialize_complete_distribution_fixture(source_dir: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
             path.write_text(f"fixture: {relative}\n", encoding="utf-8")
-    runtime = source_dir / "runtime"
-    skills = source_dir / "skills"
-    if not runtime.is_symlink():
-        runtime.symlink_to("vibecrafted-core/vibecrafted_core/runtime")
-    if not skills.is_symlink():
-        skills.symlink_to("vibecrafted-core/vibecrafted_core/skills")
 
 
 def _fixture_tree_record(source_dir: Path) -> dict[str, object]:

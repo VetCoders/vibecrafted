@@ -8,8 +8,22 @@ import textwrap
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
-RUNTIME_HELPER = REPO_ROOT / "runtime" / "helpers" / "vetcoders-runtime-core.sh"
+HELPER_SCRIPT = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "shell"
+    / "vetcoders.sh"
+)
+RUNTIME_HELPER = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "helpers"
+    / "vetcoders-runtime-core.sh"
+)
 
 
 def _run_vetcoders_helper(
@@ -142,7 +156,10 @@ def test_vetcoders_spawn_script_path_stays_command_compatible() -> None:
     assert result.returncode == 0
     spawn_script = Path(result.stdout.strip())
     assert spawn_script.name == "codex_spawn.sh"
-    assert spawn_script.parent == REPO_ROOT / "runtime" / "scripts"
+    assert (
+        spawn_script.parent
+        == REPO_ROOT / "vibecrafted-core" / "vibecrafted_core" / "runtime" / "scripts"
+    )
     assert spawn_script.is_file()
 
 

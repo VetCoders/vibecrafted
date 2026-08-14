@@ -282,7 +282,7 @@ _helper_candidates() {
   local repo_source repo_helper package_root
   repo_source="$(_repo_source_root 2>/dev/null || true)"
   package_root="$(_package_resource_root 2>/dev/null || true)"
-  repo_helper="$(_script_repo_root)/runtime/shell/vetcoders.sh"
+  repo_helper="$(_script_repo_root)/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
   if [[ -n "$repo_source" ]]; then
     printf '%s\n' "$repo_source/runtime/shell/vetcoders.sh"
     printf '%s\n' "$repo_source/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
@@ -392,7 +392,7 @@ _loop_script() {
     "${repo_source:+$repo_source/vibecrafted-core/vibecrafted_core/runtime/scripts/vibecrafted-loop.sh}" \
     "${package_root:+$package_root/runtime/scripts/vibecrafted-loop.sh}" \
     "$crafted_tools/runtime/scripts/vibecrafted-loop.sh" \
-    "$(_script_repo_root)/runtime/scripts/vibecrafted-loop.sh"; do
+    "$(_script_repo_root)/vibecrafted-core/vibecrafted_core/runtime/scripts/vibecrafted-loop.sh"; do
     [[ -n "$candidate" && -f "$candidate" ]] || continue
     printf '%s\n' "$candidate"
     return 0
@@ -409,7 +409,7 @@ _cron_script() {
     "${repo_source:+$repo_source/vibecrafted-core/vibecrafted_core/runtime/scripts/vibecrafted-cron.sh}" \
     "${package_root:+$package_root/runtime/scripts/vibecrafted-cron.sh}" \
     "$crafted_tools/runtime/scripts/vibecrafted-cron.sh" \
-    "$(_script_repo_root)/runtime/scripts/vibecrafted-cron.sh"; do
+    "$(_script_repo_root)/vibecrafted-core/vibecrafted_core/runtime/scripts/vibecrafted-cron.sh"; do
     [[ -n "$candidate" && -f "$candidate" ]] || continue
     printf '%s\n' "$candidate"
     return 0
@@ -3519,7 +3519,7 @@ cmd_server() {
         return 1
       fi
 
-      local site_root="${VIBECRAFTED_RUNTIME_HOME:-$HOME/.local/share/vibecrafted}/server/site"
+      local site_root="${VIBECRAFTED_RUNTIME_ROOT:-${VIBECRAFTED_RUNTIME_HOME:-$HOME/.local/share/vibecrafted}}/server/site"
       if [[ ! -d "$site_root" ]]; then
         printf "%b✗%b site assets directory not found at %s. Please run 'make install-all' or 'make install-server' first.\n" "$_red" "$_reset" "$site_root" >&2
         return 1
@@ -3844,7 +3844,7 @@ cmd_server() {
       fi
 
       # 2. Site root & Fonts check
-      local site_root="${VIBECRAFTED_RUNTIME_HOME:-$HOME/.local/share/vibecrafted}/server/site"
+      local site_root="${VIBECRAFTED_RUNTIME_ROOT:-${VIBECRAFTED_RUNTIME_HOME:-$HOME/.local/share/vibecrafted}}/server/site"
       if [[ -d "$site_root" ]]; then
         printf "  [%b✓%b] Site root present at %s\n" "$_green" "$_reset" "$site_root"
         if [[ -d "$site_root/fonts" ]]; then

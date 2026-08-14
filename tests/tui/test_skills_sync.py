@@ -5,8 +5,22 @@ import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SKILLS_SYNC = REPO_ROOT / "runtime" / "scripts" / "skills_sync.sh"
-INSTALL_SHELL = REPO_ROOT / "runtime" / "scripts" / "install-shell.sh"
+SKILLS_SYNC = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "scripts"
+    / "skills_sync.sh"
+)
+INSTALL_SHELL = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "scripts"
+    / "install-shell.sh"
+)
 
 
 def _write_stub_command(bin_dir: Path, name: str, body: str) -> None:

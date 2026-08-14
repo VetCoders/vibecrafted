@@ -9,7 +9,15 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DISPATCH = REPO_ROOT / "runtime" / "shell" / "lib" / "dispatch.sh"
+DISPATCH = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "shell"
+    / "lib"
+    / "dispatch.sh"
+)
 
 
 def _stub_deck(bin_dir: Path) -> Path:
