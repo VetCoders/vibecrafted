@@ -472,7 +472,8 @@ def _vc_frame_delivery_findings(
     findings: list[_Finding] = []
     view = vc_frame_user_config_dir(home)
     current = tools_current_path(tools_home)
-    store_cfg = current
+    package = current / "vibecrafted-core" / "vibecrafted_core"
+    store_cfg = package / "config" / "vc-frame"
     checkout = None
     try:
         from .frontier_assets import vc_frame_config_source
@@ -481,7 +482,7 @@ def _vc_frame_delivery_findings(
     except FileNotFoundError:
         pass
     use_repo = prefer_repo_vc_frame()
-    generated = current / "runtime" / "generated" / "vc-frame"
+    generated = package / "runtime" / "generated" / "vc-frame"
     materialized_paths = (
         generated / "config.kdl",
         generated / "layouts",
@@ -819,14 +820,15 @@ def _vc_frame_truth_drift_findings(
 
     The delivery checks prove the FORM of the view (symlink channels, dangling
     links). This proves the CONTENT: the published generation must agree with
-    itself (config/ vs runtime/generated/), the dev checkout may run ahead of
-    the store but never silently, and no projection link may resolve into a
-    parked generation instead of vibecrafted-current.
+    itself (package config/ vs package runtime/generated/), the dev checkout
+    may run ahead of the store but never silently, and no projection link may
+    resolve into a parked generation instead of vibecrafted-current.
     """
     findings: list[_Finding] = []
     current = tools_current_path(tools_home)
-    store_cfg = current / "config" / "vc-frame"
-    generated = current / "runtime" / "generated" / "vc-frame"
+    package = current / "vibecrafted-core" / "vibecrafted_core"
+    store_cfg = package / "config" / "vc-frame"
+    generated = package / "runtime" / "generated" / "vc-frame"
 
     store_map = _hash_config_tree(store_cfg)
     generated_map = _hash_config_tree(generated)

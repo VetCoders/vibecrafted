@@ -422,8 +422,9 @@ def _truth_sandbox(tmp_path: Path, monkeypatch) -> tuple[Path, Path, Path]:
     monkeypatch.setattr(frontier_assets, "vc_frame_config_source", no_checkout)
     tools = tmp_path / "tools"
     generation = tools / "vibecrafted-generation-test"
-    _seed_truth(generation / "config" / "vc-frame")
-    _seed_truth(generation / "runtime" / "generated" / "vc-frame")
+    package = generation / "vibecrafted-core" / "vibecrafted_core"
+    _seed_truth(package / "config" / "vc-frame")
+    _seed_truth(package / "runtime" / "generated" / "vc-frame")
     tools.mkdir(parents=True, exist_ok=True)
     (tools / "vibecrafted-current").symlink_to(generation)
     home = tmp_path / "home"
@@ -440,11 +441,47 @@ def test_truth_drift_ok_when_generation_agrees(tmp_path: Path, monkeypatch) -> N
     assert all(finding.component == "vc-frame:truth" for finding in findings)
 
 
+def test_delivery_reads_package_owned_runtime_generation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    tools, generation, home = _truth_sandbox(tmp_path, monkeypatch)
+    generated = (
+        generation
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "generated"
+        / "vc-frame"
+    )
+    (generated / "themes").mkdir()
+    (generated / "vc-composer.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", "0")
+
+    findings = doctor._vc_frame_delivery_findings(home=home, tools_home=tools)
+
+    runtime = [
+        finding for finding in findings if finding.component == "vc-frame:runtime"
+    ]
+    assert len(runtime) == 1
+    assert runtime[0].level == "ok"
+    assert "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame" in (
+        runtime[0].message
+    )
+
+
 def test_truth_drift_fails_when_generation_disagrees_with_itself(
     tmp_path: Path, monkeypatch
 ) -> None:
     tools, generation, home = _truth_sandbox(tmp_path, monkeypatch)
-    drifted = generation / "runtime" / "generated" / "vc-frame" / "config.kdl"
+    drifted = (
+        generation
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "generated"
+        / "vc-frame"
+        / "config.kdl"
+    )
     drifted.write_text("layout drifted\n", encoding="utf-8")
 
     findings = doctor._vc_frame_truth_drift_findings(home=home, tools_home=tools)
@@ -477,12 +514,18 @@ def test_truth_drift_fails_on_projection_into_parked_generation(
 ) -> None:
     tools, _, home = _truth_sandbox(tmp_path, monkeypatch)
     parked = tools / "vibecrafted-generation-parked"
-    _seed_truth(parked / "runtime" / "generated" / "vc-frame")
+    parked_generated = (
+        parked
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "generated"
+        / "vc-frame"
+    )
+    _seed_truth(parked_generated)
     view = home / ".config" / "vc-frame"
     view.mkdir(parents=True)
-    (view / "config.kdl").symlink_to(
-        parked / "runtime" / "generated" / "vc-frame" / "config.kdl"
-    )
+    (view / "config.kdl").symlink_to(parked_generated / "config.kdl")
 
     findings = doctor._vc_frame_truth_drift_findings(home=home, tools_home=tools)
 
