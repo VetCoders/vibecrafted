@@ -2895,6 +2895,7 @@ def test_unified_release_has_one_top_level_owner() -> None:
     assert 'make -C "$FRAME_REPO" release' in builder
     assert 'chmod 0755 "$frame_source"' in builder
     assert "uv python install 3.12.3" in builder
+    assert "install_name_tool -id '@loader_path/libpython3.12.dylib'" in builder
     assert "--remap-path-prefix=$HOME=/usr/src/operator-home" in builder
     assert "install_name_tool -delete_rpath /usr/lib/swift" in builder
     assert "--noprofile" not in builder  # vc-start, not the release shell, owns this

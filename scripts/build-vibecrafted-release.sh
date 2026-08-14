@@ -214,6 +214,8 @@ build_product() {
   /bin/cp -RL "$python_home/." "$runtime/python/"
   uv pip install --python "$seed_python" --target "$runtime/python-site" \
     'jsonschema>=4.23,<5' 'PyYAML>=6.0,<7'
+  install_name_tool -id '@loader_path/libpython3.12.dylib' \
+    "$runtime/python/lib/libpython3.12.dylib"
   find "$runtime" -type f -name '*.pyc' -delete
   find "$runtime" -depth -type d -name __pycache__ -empty -delete
   # These literals are the relocatable wrapper payload and expand only when
