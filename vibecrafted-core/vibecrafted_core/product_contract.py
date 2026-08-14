@@ -109,8 +109,17 @@ _GIT_SHA_RE = re.compile(r"[0-9a-f]{40}")
 _MODE_RE = re.compile(r"0[0-7]{3}")
 _MACOS_RE = re.compile(r"([0-9]+)\.([0-9]+)")
 _BUILD_HOST_PATH_RE = re.compile(
-    rb"(?:^|[\s\"'=:(])(?P<path>/(?:Volumes|Users|opt/homebrew|usr/local)/[^\s\"'\x00]{0,512})"
+    rb"(?:^|[\s\"'=:(])(?<![A-Za-z]:)(?P<path>/(?:Volumes|Users|opt/homebrew|usr/local)/[^\s\"'\x00]{0,512})"
 )
+_EMBEDDED_DOCUMENTATION_PATHS = {
+    "Contents/Resources/runtime/python/lib/libpython3.12.dylib": frozenset(
+        {
+            "/usr/local/lib/python2.5/site-packages",
+            "/usr/local/lib/python2.5/site-packages/bar",
+            "/usr/local/lib/python2.5/site-packages/foo",
+        }
+    ),
+}
 _FILE_KINDS = frozenset({"executable", "dylib", "resource", "config"})
 _APP_ENTRYPOINTS = frozenset({"app", "terminal", "frame"})
 _WALKAROUND_CHECKS = frozenset(
@@ -1105,9 +1114,11 @@ def _reject_host_bound_paths(path: Path, *, relative: str, kind: str) -> None:
         content = path.read_bytes()
     except OSError:
         return
-    match = _BUILD_HOST_PATH_RE.search(content)
-    if match:
+    documentation_paths = _EMBEDDED_DOCUMENTATION_PATHS.get(relative, frozenset())
+    for match in _BUILD_HOST_PATH_RE.finditer(content):
         host_path = match.group("path").decode("utf-8", errors="replace")
+        if host_path in documentation_paths:
+            continue
         _fail(
             E_PATH,
             f"host-bound absolute path in {relative}: {host_path}",

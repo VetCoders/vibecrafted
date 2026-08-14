@@ -155,16 +155,19 @@ build_product() {
     DEPLOYMENT_TARGET='MACOSX_DEPLOYMENT_TARGET=14.0' release-bins
   local terminal_source="$TERMINAL_REPO/target/release/alacritty"
   [[ -x "$terminal_source" ]] || die "vc-terminal release binary is missing"
+  chmod 0755 "$terminal_source"
 
   log "Building vc-frame through its canonical release target"
   make -C "$FRAME_REPO" release
   local frame_source="$FRAME_REPO/target/release/vc-frame"
   [[ -x "$frame_source" ]] || die "vc-frame release binary is missing"
+  chmod 0755 "$frame_source"
 
   log "Building the native hermetic vc-start"
   (cd "$REPO_ROOT/vibecrafted-app" && cargo build -p voc --bin vc-start --release)
   local start_source="$REPO_ROOT/vibecrafted-app/target/release/vc-start"
   [[ -x "$start_source" ]] || die "vc-start release binary is missing"
+  chmod 0755 "$start_source"
 
   log "Building the single Swift host app"
   make -C "$REPO_ROOT/vibecrafted-app/shell-agent" bindings xcode

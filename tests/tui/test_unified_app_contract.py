@@ -854,6 +854,51 @@ def test_module_negative_controls_fail_closed_with_stable_codes(
     _assert_error(expected_code, lambda: contract.verify_module(root))
 
 
+def test_host_path_scan_distinguishes_windows_examples_from_unix_paths(
+    tmp_path: Path,
+) -> None:
+    payload = tmp_path / "payload"
+    payload.write_bytes(b"splitroot('C:/Users/Barney')")
+    contract._reject_host_bound_paths(
+        payload,
+        relative="payload",
+        kind="executable",
+    )
+
+    payload.write_bytes(b"panic at /Users/operator/src/main.rs")
+    _assert_error(
+        contract.E_PATH,
+        lambda: contract._reject_host_bound_paths(
+            payload,
+            relative="payload",
+            kind="executable",
+        ),
+    )
+
+
+def test_host_path_scan_allows_only_known_libpython_documentation_paths(
+    tmp_path: Path,
+) -> None:
+    payload = tmp_path / "libpython3.12.dylib"
+    relative = "Contents/Resources/runtime/python/lib/libpython3.12.dylib"
+    payload.write_bytes(
+        b"example /usr/local/lib/python2.5/site-packages "
+        b"/usr/local/lib/python2.5/site-packages/bar "
+        b"/usr/local/lib/python2.5/site-packages/foo"
+    )
+    contract._reject_host_bound_paths(payload, relative=relative, kind="dylib")
+
+    payload.write_bytes(b"load /usr/local/lib/libescape.dylib")
+    _assert_error(
+        contract.E_PATH,
+        lambda: contract._reject_host_bound_paths(
+            payload,
+            relative=relative,
+            kind="dylib",
+        ),
+    )
+
+
 @pytest.mark.parametrize(
     ("actual_architecture", "actual_minimum"),
     [("x86_64", "13.0"), ("arm64", "13.0")],
@@ -2846,7 +2891,9 @@ def test_unified_release_has_one_top_level_owner() -> None:
     assert "release:\n\t@zsh -ic" in makefile
     assert 'make -C "$TERMINAL_REPO"' in builder
     assert "release-bins" in builder
+    assert 'chmod 0755 "$terminal_source"' in builder
     assert 'make -C "$FRAME_REPO" release' in builder
+    assert 'chmod 0755 "$frame_source"' in builder
     assert "uv python install 3.12.3" in builder
     assert "--remap-path-prefix=$HOME=/usr/src/operator-home" in builder
     assert "install_name_tool -delete_rpath /usr/lib/swift" in builder
