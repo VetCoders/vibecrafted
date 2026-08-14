@@ -56,8 +56,11 @@ RUN_ID="$(gh run list --repo "$REPO" --workflow release.yml --commit "$HEAD_SHA"
   --json databaseId,status,conclusion --jq 'map(select(.status == "completed" and .conclusion == "success"))[0].databaseId // empty')"
 test -n "$RUN_ID" || die "no successful Release source gate exists for $HEAD_SHA"
 
-OPEN_ALERTS="$(gh api --paginate "/repos/$REPO/code-scanning/alerts?state=open&ref=refs/heads/main&per_page=100" \
-  --slurp --jq 'add | length')"
+# Publication needs a boolean zero-open-alert gate, not a full alert census.
+# Asking for one result avoids gh(1)'s incompatible --slurp/--jq combination
+# while still proving that the filtered result set is empty.
+OPEN_ALERTS="$(gh api "/repos/$REPO/code-scanning/alerts?state=open&ref=refs/heads/main&per_page=1" \
+  --jq 'length')"
 test "$OPEN_ALERTS" = "0" || die "$OPEN_ALERTS open CodeQL alert(s) remain on main"
 
 if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then

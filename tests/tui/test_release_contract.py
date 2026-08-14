@@ -55,6 +55,9 @@ def test_macos_publisher_cold_verifies_exact_uploaded_bytes() -> None:
     assert "xcrun stapler validate" in publisher
     assert "spctl --assess --type open" in publisher
     assert "code-scanning/alerts?state=open&ref=refs/heads/main" in publisher
+    assert "per_page=1" in publisher
+    assert "gh api --paginate" not in publisher
+    assert "--slurp --jq" not in publisher
     assert 'gh release edit "$TAG"' in publisher
 
     expected_assets = publisher.split('EXPECTED_ASSETS="', 1)[1].split('"', 1)[0]
