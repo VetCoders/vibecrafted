@@ -2887,6 +2887,10 @@ def test_cli_returns_distinct_nonzero_codes_for_hash_and_dylib_failures(
     assert "VCPC027" in capsys.readouterr().err
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="real product-contract self-test requires the macOS signing toolchain",
+)
 def test_shell_front_door_self_test_exercises_real_verifier() -> None:
     env = {
         "HOME": os.environ["HOME"],
