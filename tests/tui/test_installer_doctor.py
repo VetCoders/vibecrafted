@@ -855,7 +855,7 @@ _LEGACY_RUNTIME_GENERATION_HASH_PATHS = frozenset(
     {
         "VERSION",
         "scripts/vibecrafted",
-        "runtime/generated/vc-frame/config.kdl",
+        "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame/config.kdl",
         installer._RUNTIME_GENERATION_ENTRYPOINT.as_posix(),
     }
 )
@@ -863,9 +863,9 @@ _LEGACY_RUNTIME_GENERATION_HASH_PATHS = frozenset(
 _RUNTIME_GENERATION_FIXTURE_SOURCES = {
     Path("VERSION"): Path("VERSION"),
     Path("scripts/vibecrafted"): Path("scripts/vibecrafted"),
-    Path("runtime/generated/vc-frame/config.kdl"): Path(
-        "vibecrafted-core/vibecrafted_core/config/vc-frame/config.kdl"
-    ),
+    Path(
+        "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame/config.kdl"
+    ): Path("vibecrafted-core/vibecrafted_core/config/vc-frame/config.kdl"),
     installer._RUNTIME_GENERATION_ENTRYPOINT: installer._RUNTIME_GENERATION_ENTRYPOINT,
     Path("vibecrafted-core/vibecrafted_core/product_contract.py"): Path(
         "vibecrafted-core/vibecrafted_core/product_contract.py"

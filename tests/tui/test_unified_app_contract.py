@@ -1722,13 +1722,14 @@ def test_transaction_rejects_exact_legacy_four_hash_runtime_manifest(
     manifest_path = tmp_path / identity["manifest_path"]
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["hashes"] = {
-        relative: manifest["hashes"][relative]
-        for relative in (
-            "VERSION",
-            "scripts/vibecrafted",
-            "runtime/generated/vc-frame/config.kdl",
-            "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
-        )
+        "VERSION": manifest["hashes"]["VERSION"],
+        "scripts/vibecrafted": manifest["hashes"]["scripts/vibecrafted"],
+        "runtime/generated/vc-frame/config.kdl": manifest["hashes"][
+            "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame/config.kdl"
+        ],
+        "vibecrafted-core/vibecrafted_core/deck/vibecrafted": manifest["hashes"][
+            "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
+        ],
     }
     _write_json(manifest_path, manifest)
     identity["runtime_manifest_sha256"] = _sha256(manifest_path)

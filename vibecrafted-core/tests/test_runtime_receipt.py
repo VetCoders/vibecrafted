@@ -22,7 +22,7 @@ _SOURCE_PAYLOAD = {
 _RUNTIME_FILE_BYTES = {
     "VERSION": f"{_RUNTIME_VERSION}\n".encode(),
     "scripts/vibecrafted": b"#!/usr/bin/env bash\n",
-    "runtime/generated/vc-frame/config.kdl": b"layout {}\n",
+    pc.RUNTIME_GENERATION_CANONICAL_CONFIG: b"layout {}\n",
     pc.RUNTIME_GENERATION_ENTRYPOINT: b"#!/usr/bin/env bash\n",
     "vibecrafted-core/vibecrafted_core/product_contract.py": b"contract = True\n",
     "vibecrafted-core/vibecrafted_core/walkaround_runner.py": b"runner = True\n",
@@ -354,13 +354,12 @@ def test_installed_runtime_manifest_rejects_noncanonical_manifest(
         hashes["VERSION"] = "A" * 64
     elif mutation == "legacy_four_hashes":
         manifest["hashes"] = {
-            relative: hashes[relative]
-            for relative in (
-                "VERSION",
-                "scripts/vibecrafted",
-                "runtime/generated/vc-frame/config.kdl",
-                pc.RUNTIME_GENERATION_ENTRYPOINT,
-            )
+            "VERSION": hashes["VERSION"],
+            "scripts/vibecrafted": hashes["scripts/vibecrafted"],
+            pc.RUNTIME_GENERATION_PROJECTED_CONFIG: hashes[
+                pc.RUNTIME_GENERATION_CANONICAL_CONFIG
+            ],
+            pc.RUNTIME_GENERATION_ENTRYPOINT: hashes[pc.RUNTIME_GENERATION_ENTRYPOINT],
         }
     elif mutation == "missing_source_payload":
         manifest.pop("source_payload")
@@ -540,40 +539,34 @@ def test_installed_runtime_manifest_accepts_internal_runtime_projection(
 
 
 @pytest.mark.parametrize("alias_component", ("generated", "config"))
-def test_installed_runtime_manifest_rejects_nested_runtime_projection_alias(
+def test_installed_runtime_manifest_rejects_canonical_config_alias(
     tmp_path: Path, alias_component: str
 ) -> None:
     generation, deck, _manifest = _runtime_generation_fixture(tmp_path)
-    projected = generation / pc.RUNTIME_GENERATION_PROJECTED_CONFIG
     canonical = generation / pc.RUNTIME_GENERATION_CANONICAL_CONFIG
-    canonical.parent.mkdir(parents=True, exist_ok=True)
-    canonical.write_bytes(projected.read_bytes())
 
     if alias_component == "generated":
-        generated = generation / "runtime/generated"
-        generated.rename(generation / "runtime/generated.unbound")
-        generated.symlink_to(
-            "../vibecrafted-core/vibecrafted_core/runtime/generated",
-            target_is_directory=True,
-        )
+        generated = canonical.parents[1]
+        generated.rename(generated.with_name("generated.unbound"))
+        generated.symlink_to("generated.unbound", target_is_directory=True)
     else:
-        projected.unlink()
-        projected.symlink_to(
-            "../../../vibecrafted-core/vibecrafted_core/runtime/"
-            "generated/vc-frame/config.kdl"
-        )
+        backing = canonical.with_name("config.unbound.kdl")
+        canonical.rename(backing)
+        canonical.symlink_to(backing.name)
 
     with pytest.raises(pc.ProductContractError) as captured:
         pc.verify_installed_runtime_generation(generation, expected_entrypoint=deck)
     assert captured.value.code == pc.E_PATH
 
 
-def test_installed_runtime_manifest_rejects_escaping_runtime_projection(
+def test_installed_runtime_manifest_rejects_escaping_canonical_config(
     tmp_path: Path,
 ) -> None:
-    generation, deck, _manifest = _runtime_generation_fixture(
-        tmp_path, runtime_projection="external"
-    )
+    generation, deck, _manifest = _runtime_generation_fixture(tmp_path)
+    canonical = generation / pc.RUNTIME_GENERATION_CANONICAL_CONFIG
+    external = tmp_path / "escaping-config.kdl"
+    canonical.rename(external)
+    canonical.symlink_to(external)
 
     with pytest.raises(pc.ProductContractError) as captured:
         pc.verify_installed_runtime_generation(generation, expected_entrypoint=deck)

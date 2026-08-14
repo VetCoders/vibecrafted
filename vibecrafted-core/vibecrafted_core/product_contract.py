@@ -105,7 +105,7 @@ RUNTIME_GENERATION_REQUIRED_HASHES = frozenset(
     {
         "VERSION",
         "scripts/vibecrafted",
-        RUNTIME_GENERATION_PROJECTED_CONFIG,
+        RUNTIME_GENERATION_CANONICAL_CONFIG,
         RUNTIME_GENERATION_ENTRYPOINT,
         "vibecrafted-core/vibecrafted_core/product_contract.py",
         "vibecrafted-core/vibecrafted_core/walkaround_runner.py",

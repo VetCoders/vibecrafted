@@ -5702,7 +5702,7 @@ def test_secure_walkaround_launcher_rejects_bound_file_hardlinks(
     assert "not a unique regular file" in result.stderr
 
 
-def test_secure_walkaround_launcher_accepts_internal_runtime_projection(
+def test_secure_walkaround_launcher_uses_canonical_runtime_config_without_alias(
     tmp_path: Path,
 ) -> None:
     tools = tmp_path / "tools"
@@ -5710,18 +5710,11 @@ def test_secure_walkaround_launcher_accepts_internal_runtime_projection(
     generation = _write_walkaround_generation(
         tools, "vibecrafted-generation-projection", 'print("projection-ok")\n'
     )
-    projected = generation / "runtime/generated/vc-frame/config.kdl"
-    canonical = (
+    assert not (generation / "runtime").exists()
+    assert (
         generation
         / "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame/config.kdl"
-    )
-    canonical.parent.mkdir(parents=True, exist_ok=True)
-    projected.rename(canonical)
-    shutil.rmtree(generation / "runtime")
-    (generation / "runtime").symlink_to(
-        "vibecrafted-core/vibecrafted_core/runtime", target_is_directory=True
-    )
-    _rewrite_walkaround_manifest(generation)
+    ).is_file()
     current.symlink_to(generation.name)
     _managed, public = _install_test_walkaround_launcher(tmp_path, current)
 
@@ -5731,7 +5724,7 @@ def test_secure_walkaround_launcher_accepts_internal_runtime_projection(
     assert result.stdout == "projection-ok\n"
 
 
-def test_secure_walkaround_launcher_rejects_nested_runtime_projection_alias(
+def test_secure_walkaround_launcher_rejects_canonical_config_parent_alias(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5740,18 +5733,13 @@ def test_secure_walkaround_launcher_rejects_nested_runtime_projection_alias(
     generation = _write_walkaround_generation(
         tools, "vibecrafted-generation-nested-alias", 'print("must-not-run")\n'
     )
-    projected = generation / "runtime/generated/vc-frame/config.kdl"
     canonical = (
         generation
         / "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame/config.kdl"
     )
-    canonical.parent.mkdir(parents=True, exist_ok=True)
-    projected.rename(canonical)
-    shutil.rmtree(generation / "runtime/generated")
-    (generation / "runtime/generated").symlink_to(
-        "../vibecrafted-core/vibecrafted_core/runtime/generated",
-        target_is_directory=True,
-    )
+    generated = canonical.parents[1]
+    generated.rename(generated.with_name("generated.unbound"))
+    generated.symlink_to("generated.unbound", target_is_directory=True)
     _rewrite_walkaround_manifest(generation)
     current.symlink_to(generation.name)
     managed, public = _install_test_walkaround_launcher(tmp_path, current)
@@ -5762,13 +5750,12 @@ def test_secure_walkaround_launcher_rejects_nested_runtime_projection_alias(
 
     assert result.returncode == 70
     assert result.stdout == ""
-    assert "runtime projection topology is not canonical" in result.stderr
-    assert any(
-        "runtime projection topology is not canonical" in item for item in issues
-    )
+    assert "manifest-bound file" in result.stderr
+    assert "is aliased" in result.stderr
+    assert any("manifest-bound file is aliased" in item for item in issues)
 
 
-def test_secure_walkaround_launcher_rejects_escaping_runtime_projection(
+def test_secure_walkaround_launcher_rejects_escaping_canonical_config(
     tmp_path: Path,
 ) -> None:
     tools = tmp_path / "tools"
@@ -5776,20 +5763,21 @@ def test_secure_walkaround_launcher_rejects_escaping_runtime_projection(
     generation = _write_walkaround_generation(
         tools, "vibecrafted-generation-escape", 'print("must-not-run")\n'
     )
-    external = tmp_path / "external"
-    external_config = external / "generated/vc-frame/config.kdl"
-    external_config.parent.mkdir(parents=True)
-    projected = generation / "runtime/generated/vc-frame/config.kdl"
-    external_config.write_bytes(projected.read_bytes())
-    shutil.rmtree(generation / "runtime")
-    (generation / "runtime").symlink_to(external, target_is_directory=True)
+    canonical = (
+        generation
+        / "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame/config.kdl"
+    )
+    external_config = tmp_path / "escaping-config.kdl"
+    canonical.rename(external_config)
+    canonical.symlink_to(external_config)
     current.symlink_to(generation.name)
     _managed, public = _install_test_walkaround_launcher(tmp_path, current)
 
     result = subprocess.run([str(public)], check=False, capture_output=True, text=True)
 
     assert result.returncode == 70
-    assert "runtime projection topology is not canonical" in result.stderr
+    assert "manifest-bound file" in result.stderr
+    assert "is aliased" in result.stderr
 
 
 def test_secure_walkaround_launcher_resists_hostile_python_and_path_environment(
@@ -5957,6 +5945,8 @@ def test_runtime_generation_pointer_swap_never_removes_current(
                 raw_target = Path(source_path).parent / raw_target
             materialized_before_publish = (
                 raw_target.resolve()
+                / "vibecrafted-core"
+                / "vibecrafted_core"
                 / "runtime"
                 / "generated"
                 / "vc-frame"

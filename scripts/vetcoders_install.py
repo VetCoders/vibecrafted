@@ -2962,7 +2962,7 @@ _RUNTIME_GENERATION_REQUIRED_HASHES = (
         {
             Path("VERSION"),
             Path("scripts/vibecrafted"),
-            _RUNTIME_GENERATION_PROJECTED_CONFIG,
+            _RUNTIME_GENERATION_CANONICAL_CONFIG,
             _RUNTIME_GENERATION_ENTRYPOINT,
         }
     )
@@ -7905,7 +7905,14 @@ def _materialize_vc_frame_generation(runtime_root: Path) -> None:
     source = (
         runtime_root / "vibecrafted-core" / "vibecrafted_core" / "config" / "vc-frame"
     )
-    destination = runtime_root / "runtime" / "generated" / "vc-frame"
+    destination = (
+        runtime_root
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "generated"
+        / "vc-frame"
+    )
     if not module_path.is_file():
         raise OSError(
             f"candidate runtime has no vc-frame staging implementation: {module_path}"
@@ -8493,13 +8500,16 @@ def _validate_runtime_verifier_semantics(runtime_root: Path) -> None:
         if not isinstance(legacy_hashes, dict):  # pragma: no cover - loader owns this.
             raise OSError("captured runtime manifest has no hash inventory")
         legacy_manifest["hashes"] = {
-            relative.as_posix(): legacy_hashes[relative.as_posix()]
-            for relative in (
-                Path("VERSION"),
-                Path("scripts/vibecrafted"),
-                _RUNTIME_GENERATION_PROJECTED_CONFIG,
-                _RUNTIME_GENERATION_ENTRYPOINT,
-            )
+            Path("VERSION").as_posix(): legacy_hashes[Path("VERSION").as_posix()],
+            Path("scripts/vibecrafted").as_posix(): legacy_hashes[
+                Path("scripts/vibecrafted").as_posix()
+            ],
+            _RUNTIME_GENERATION_PROJECTED_CONFIG.as_posix(): legacy_hashes[
+                _RUNTIME_GENERATION_CANONICAL_CONFIG.as_posix()
+            ],
+            _RUNTIME_GENERATION_ENTRYPOINT.as_posix(): legacy_hashes[
+                _RUNTIME_GENERATION_ENTRYPOINT.as_posix()
+            ],
         }
         _write_runtime_verifier_snapshot(
             legacy_snapshot,
@@ -9944,6 +9954,15 @@ def _secure_walkaround_launcher_issues(
                 issues.append(
                     f"{SECURE_WALKAROUND_LAUNCHER}:corrupt:"
                     f"manifest-bound file is invalid:{relative}:{exc}"
+                )
+                continue
+            if (
+                relative != _RUNTIME_GENERATION_PROJECTED_CONFIG
+                and resolved != candidate
+            ):
+                issues.append(
+                    f"{SECURE_WALKAROUND_LAUNCHER}:corrupt:"
+                    f"manifest-bound file is aliased:{relative}"
                 )
                 continue
             allowed = {candidate}
