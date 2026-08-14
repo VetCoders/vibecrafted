@@ -3232,6 +3232,15 @@ class _RuntimeLaunchAgentBackup:
     service_arguments: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class _RetiredVcFrameProcess:
+    """One same-user process proven to execute the retired vc-frame sibling."""
+
+    pid: int
+    birth: tuple[str, int, int]
+    argv: tuple[str, ...]
+
+
 _SERVER_CONFIG_MODULE: Any | None = None
 
 
@@ -4185,6 +4194,153 @@ def _runtime_service_launcher(shared_home: Path) -> Path | None:
     # each status/stop call would let a concurrent publication silently switch
     # the authority used halfway through the legacy drain.
     return resolved
+
+
+def _retired_vc_frame_process_census() -> tuple[_RetiredVcFrameProcess, ...]:
+    """Return stable same-user processes whose argv[0] is exactly vc-frame.real."""
+    if sys.platform != "darwin":
+        return ()
+    retired = (vibecrafted_launcher_bin() / "vc-frame.real").resolve(strict=False)
+    records: list[_RetiredVcFrameProcess] = []
+    for pid in _darwin_process_ids():
+        if pid == os.getpid():
+            continue
+        try:
+            first_birth = _darwin_process_birth(pid)
+            if first_birth[1] != os.geteuid():
+                continue
+            first_argv = _darwin_process_arguments(pid, pointer_size=first_birth[2])
+            second_argv = _darwin_process_arguments(pid, pointer_size=first_birth[2])
+            second_birth = _darwin_process_birth(pid)
+        except ProcessLookupError:
+            continue
+        if first_birth != second_birth or first_argv != second_argv:
+            raise OSError(
+                f"Darwin process {pid} changed during retired vc-frame census"
+            )
+        if (
+            first_argv
+            and Path(first_argv[0]).expanduser().resolve(strict=False) == retired
+        ):
+            records.append(_RetiredVcFrameProcess(pid, first_birth, first_argv))
+    return tuple(sorted(records, key=lambda record: (record.pid, record.birth)))
+
+
+def _retired_vc_frame_process_still_matches(record: _RetiredVcFrameProcess) -> bool:
+    """Re-prove birth identity and argv before signaling a retired process."""
+    try:
+        birth = _darwin_process_birth(record.pid)
+        argv = _darwin_process_arguments(record.pid, pointer_size=birth[2])
+    except ProcessLookupError:
+        return False
+    return birth == record.birth and argv == record.argv
+
+
+def _terminate_retired_vc_frame_processes(
+    records: Sequence[_RetiredVcFrameProcess], *, timeout_seconds: float = 5.0
+) -> None:
+    """Terminate only re-verified retired processes and require a zero-leftover postcondition."""
+    for record in records:
+        if _retired_vc_frame_process_still_matches(record):
+            try:
+                os.kill(record.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+    deadline = time.monotonic() + timeout_seconds
+    pending = tuple(records)
+    while pending and time.monotonic() < deadline:
+        pending = tuple(
+            record
+            for record in pending
+            if _retired_vc_frame_process_still_matches(record)
+        )
+        if pending:
+            time.sleep(0.1)
+    for record in pending:
+        if _retired_vc_frame_process_still_matches(record):
+            try:
+                os.kill(record.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    kill_deadline = time.monotonic() + max(0.5, min(timeout_seconds, 2.0))
+    while pending and time.monotonic() < kill_deadline:
+        pending = tuple(
+            record
+            for record in pending
+            if _retired_vc_frame_process_still_matches(record)
+        )
+        if pending:
+            time.sleep(0.05)
+    if pending:
+        raise OSError("retired vc-frame.real process remains after verified teardown")
+
+
+def _teardown_owned_runtime_for_uninstall(
+    shared_home: Path, *, dry_run: bool
+) -> tuple[str, ...]:
+    """Stop the owned service plane and retired vc-frame processes before deleting files."""
+    if sys.platform != "darwin":
+        return ()
+    actions: list[str] = []
+    current_link = _current_tools_link(shared_home)
+    with _tools_install_lease(
+        current_link,
+        operation="runtime-uninstall",
+    ) as descriptor:
+        os.set_inheritable(descriptor, True)
+        with _inherited_tools_install_lease(descriptor):
+            _assert_runtime_loaded_service_owner(shared_home)
+            snapshot = _runtime_service_snapshot(shared_home)
+            if snapshot is not None:
+                launcher, status, pair_state = snapshot
+                if status.installed or status.loaded or status.supervisor_live:
+                    actions.append("stop and uninstall owned runtime service")
+                    if not dry_run:
+                        result = _run_runtime_service_command(
+                            launcher,
+                            shared_home,
+                            "service",
+                            "uninstall",
+                        )
+                        if result.returncode != 0:
+                            detail = (
+                                result.stderr.strip()
+                                or result.stdout.strip()
+                                or f"exit={result.returncode}"
+                            )
+                            raise OSError(
+                                f"owned runtime service uninstall failed ({detail})"
+                            )
+                        final = _runtime_service_snapshot(shared_home)
+                        if final is None:
+                            raise OSError(
+                                "runtime launcher disappeared before teardown postcondition"
+                            )
+                        _, final_status, final_pair = final
+                        if (
+                            final_status.installed
+                            or not final_status.quiescent
+                            or final_pair != "stopped"
+                        ):
+                            raise OSError(
+                                "owned runtime service remains after uninstall"
+                            )
+                elif pair_state != "stopped":
+                    raise OSError(
+                        "runtime service is unowned but its server pair is not stopped"
+                    )
+            retired = _retired_vc_frame_process_census()
+            if retired:
+                actions.append(
+                    f"terminate {len(retired)} retired vc-frame.real process(es)"
+                )
+                if not dry_run:
+                    _terminate_retired_vc_frame_processes(retired)
+                    if _retired_vc_frame_process_census():
+                        raise OSError(
+                            "retired vc-frame.real processes remain after teardown"
+                        )
+    return tuple(actions)
 
 
 def _runtime_service_environment(
@@ -13166,6 +13322,7 @@ def _build_uninstall_inventory(
         add("shell-helper", helper)
     for _launcher_dir, launcher in launchers:
         add("launcher", launcher)
+    add("retired-launcher", vibecrafted_launcher_bin() / "vc-frame.real")
     for rcfile in rc_cleanup_targets:
         add("shell-rc", rcfile, "edit", "remove Vibecrafted-managed lines only")
 
@@ -13388,7 +13545,11 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         launchers=launchers,
         rc_cleanup_targets=rc_cleanup_targets,
     )
-    has_work = any(
+    runtime_evidence = sys.platform == "darwin" and (
+        _runtime_service_has_evidence(shared_home)
+        or bool(_retired_vc_frame_process_census())
+    )
+    has_work = runtime_evidence or any(
         record.action in {"remove", "edit"}
         or (
             record.action == "remove-if-empty"
@@ -13415,6 +13576,11 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         return 0
 
     _print_uninstall_inventory(inventory)
+    if runtime_evidence:
+        print(
+            "  teardown runtime: verified service plane and retired vc-frame processes"
+        )
+        print()
 
     if _IS_TTY and not dry_run:
         if not ask_yn("Remove the installed 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. bundle?", default=False):
@@ -13430,10 +13596,25 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
             print(f"  {OK} {_backup_root(store_path) / backup_ts}")
         print()
 
+    try:
+        runtime_actions = _teardown_owned_runtime_for_uninstall(
+            shared_home,
+            dry_run=dry_run,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(red(bold("Uninstall incomplete before file removal.")))
+        print(f"  runtime teardown: {exc}")
+        if backup_ts:
+            print(f"  Restore with: {_restore_command(backup_ts)}")
+        print()
+        return 1
+
     applied, preserved, failures = _apply_uninstall_inventory(
         inventory, dry_run=dry_run
     )
     if dry_run:
+        for action in runtime_actions:
+            print(f"  runtime: {action}")
         print("Would remove or edit:")
         for record in applied:
             print(f"  {record.kind}: {record.path}")
@@ -13454,6 +13635,8 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         return 1
 
     print(green(bold("Removed managed paths:")))
+    for action in runtime_actions:
+        print(f"  runtime: {action}")
     for record in applied:
         print(f"  {record.kind}: {record.path}")
     if preserved:

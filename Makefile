@@ -391,11 +391,13 @@ install-app-binaries:
 	fi; \
 	set -e; \
 	mkdir -p "$(HOME)/.vibecrafted" "$(BIN_DIR)"; \
+	app_target="$${XDG_CACHE_HOME:-$(HOME)/.cache}/vibecrafted/build/vibecrafted-app"; \
+	mkdir -p "$$app_target"; \
 	echo "[app] building release binaries ($(APP_BINARIES)) from $(APP_DIR)"; \
-	( cd $(APP_DIR) && cargo build --release --locked -p voc $(INSTALL_QUIET) ); \
+	( cd $(APP_DIR) && CARGO_TARGET_DIR="$$app_target" cargo build --release --locked -p voc $(INSTALL_QUIET) ); \
 	for bin in $(APP_BINARIES); do \
 		rm -f "$(BIN_DIR)/$$bin"; \
-		install -m 0755 "$(APP_DIR)/target/release/$$bin" "$(BIN_DIR)/$$bin"; \
+		install -m 0755 "$$app_target/release/$$bin" "$(BIN_DIR)/$$bin"; \
 	done; \
 	echo "[app] installed: $(APP_BINARIES) -> $(BIN_DIR)"
 

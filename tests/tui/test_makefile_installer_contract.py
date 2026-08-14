@@ -772,9 +772,15 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
     app_block = makefile.split("\ninstall-app-binaries:", 1)[1].split("\nskills:", 1)[0]
     assert "cargo build --release --locked -p voc" in app_block
     assert "cargo install" not in app_block
-    assert 'install -m 0755 "$(APP_DIR)/target/release/$$bin" "$(BIN_DIR)/$$bin"' in (
-        app_block
+    assert (
+        'app_target="$${XDG_CACHE_HOME:-$(HOME)/.cache}/vibecrafted/build/vibecrafted-app"'
+        in app_block
     )
+    assert 'CARGO_TARGET_DIR="$$app_target" cargo build' in app_block
+    assert (
+        'install -m 0755 "$$app_target/release/$$bin" "$(BIN_DIR)/$$bin"' in app_block
+    )
+    assert "$(APP_DIR)/target" not in app_block
 
     assert "make --no-print-directory install-vendored-binaries" in manifest
     assert "make --no-print-directory install-app-binaries" in manifest

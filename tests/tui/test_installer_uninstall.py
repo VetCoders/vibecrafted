@@ -1,10 +1,23 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from argparse import Namespace
+from contextlib import nullcontext
 from pathlib import Path
 
+import pytest
+
 from scripts import vetcoders_install as installer
+
+
+@pytest.fixture(autouse=True)
+def _isolate_uninstall_from_live_runtime(monkeypatch) -> None:
+    """A unit-test HOME must never inspect or mutate the host's real LaunchAgent."""
+    monkeypatch.setattr(installer, "_runtime_loaded_service_home", lambda: None)
+    monkeypatch.setattr(installer, "_runtime_service_snapshot", lambda _home: None)
+    monkeypatch.setattr(installer, "_darwin_process_ids", tuple)
 
 
 def _write_executable(path: Path, body: str | None = None) -> None:
@@ -83,11 +96,14 @@ def test_cmd_uninstall_removes_launchers_and_compat_pack_wrappers(
     home, _crafted_home, store_path, helper_file, zshrc = _setup_installed_surface(
         tmp_path, monkeypatch
     )
+    retired_frame = home / ".local" / "bin" / "vc-frame.real"
+    _write_executable(retired_frame)
 
     exit_code = installer.cmd_uninstall(Namespace(dry_run=False))
 
     assert exit_code == 0
     assert not helper_file.exists()
+    assert not retired_frame.exists()
     assert installer._launcher_path_line() not in zshrc.read_text(encoding="utf-8")
     assert not (store_path / "vc-init").exists()
     assert not (home / ".codex" / "skills" / "vc-init").exists()
@@ -112,6 +128,258 @@ def test_cmd_uninstall_removes_launchers_and_compat_pack_wrappers(
         assert (launcher_bin_dir / "unrelated-tool").exists()
 
     assert not collect_names(installer.collect_installed_launchers())
+
+
+def test_cmd_uninstall_tears_down_runtime_before_removing_files(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home, _crafted_home, store_path, _helper_file, _zshrc = _setup_installed_surface(
+        tmp_path, monkeypatch
+    )
+    events: list[str] = []
+
+    def teardown(_shared_home: Path, *, dry_run: bool) -> tuple[str, ...]:
+        assert not dry_run
+        assert (store_path / "vc-init").exists()
+        events.append("runtime")
+        return ("stop owned runtime",)
+
+    monkeypatch.setattr(installer, "_teardown_owned_runtime_for_uninstall", teardown)
+
+    assert installer.cmd_uninstall(Namespace(dry_run=False)) == 0
+    assert events == ["runtime"]
+    assert not (home / ".local" / "bin" / "vibecrafted").exists()
+
+
+def test_cmd_uninstall_aborts_file_removal_when_runtime_teardown_fails(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home, _crafted_home, store_path, helper_file, _zshrc = _setup_installed_surface(
+        tmp_path, monkeypatch
+    )
+
+    def teardown(_shared_home: Path, *, dry_run: bool) -> tuple[str, ...]:
+        assert not dry_run
+        raise OSError("owned supervisor remains")
+
+    monkeypatch.setattr(installer, "_teardown_owned_runtime_for_uninstall", teardown)
+
+    assert installer.cmd_uninstall(Namespace(dry_run=False)) == 1
+    assert (store_path / "vc-init").exists()
+    assert helper_file.exists()
+    assert (home / ".local" / "bin" / "vibecrafted").exists()
+
+
+def test_cmd_uninstall_treats_unlinked_retired_process_as_runtime_work(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    record = installer._RetiredVcFrameProcess(
+        101,
+        ("darwin:1:1", os.geteuid(), 8),
+        (str(home / ".local" / "bin" / "vc-frame.real"), "--server", "/tmp/old"),
+    )
+    calls: list[tuple[Path, bool]] = []
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
+    monkeypatch.setattr(installer, "_IS_TTY", False)
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    monkeypatch.setattr(installer, "_runtime_service_has_evidence", lambda _home: False)
+    monkeypatch.setattr(
+        installer, "_retired_vc_frame_process_census", lambda: (record,)
+    )
+
+    def teardown(shared_home: Path, *, dry_run: bool) -> tuple[str, ...]:
+        calls.append((shared_home, dry_run))
+        return ("terminate 1 retired vc-frame.real process(es)",)
+
+    monkeypatch.setattr(installer, "_teardown_owned_runtime_for_uninstall", teardown)
+
+    assert installer.cmd_uninstall(Namespace(dry_run=False)) == 0
+    assert calls == [(crafted_home, False)]
+
+
+def test_retired_vc_frame_census_requires_exact_stable_same_user_argv0(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    retired = home / ".local" / "bin" / "vc-frame.real"
+    _write_executable(retired)
+    births = {
+        101: ("darwin:1:1", os.geteuid(), 8),
+        102: ("darwin:2:2", os.geteuid(), 8),
+        103: ("darwin:3:3", os.geteuid() + 1, 8),
+    }
+    arguments = {
+        101: (str(retired), "--server", "/tmp/Finalized runs"),
+        102: (str(retired.with_name("vc-frame")), "--server", "/tmp/live"),
+        103: (str(retired), "--server", "/tmp/foreign"),
+    }
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    monkeypatch.setattr(installer, "_darwin_process_ids", lambda: (101, 102, 103))
+    monkeypatch.setattr(installer, "_darwin_process_birth", births.__getitem__)
+    monkeypatch.setattr(
+        installer,
+        "_darwin_process_arguments",
+        lambda pid, *, pointer_size: arguments[pid],
+    )
+
+    assert installer._retired_vc_frame_process_census() == (
+        installer._RetiredVcFrameProcess(101, births[101], arguments[101]),
+    )
+
+
+def test_terminate_retired_vc_frame_reproves_identity_before_signal(
+    monkeypatch,
+) -> None:
+    record = installer._RetiredVcFrameProcess(
+        101,
+        ("darwin:1:1", os.geteuid(), 8),
+        ("/Users/test/.local/bin/vc-frame.real", "--server", "/tmp/finalized"),
+    )
+    alive = {101: True}
+    signals: list[tuple[int, int]] = []
+
+    monkeypatch.setattr(
+        installer,
+        "_retired_vc_frame_process_still_matches",
+        lambda observed: alive[observed.pid],
+    )
+
+    def kill(pid: int, sent_signal: int) -> None:
+        signals.append((pid, sent_signal))
+        alive[pid] = False
+
+    monkeypatch.setattr(installer.os, "kill", kill)
+
+    installer._terminate_retired_vc_frame_processes((record,), timeout_seconds=0)
+
+    assert signals == [(101, installer.signal.SIGTERM)]
+
+
+def test_terminate_retired_vc_frame_escalates_stubborn_exact_process(
+    monkeypatch,
+) -> None:
+    record = installer._RetiredVcFrameProcess(
+        101,
+        ("darwin:1:1", os.geteuid(), 8),
+        ("/Users/test/.local/bin/vc-frame.real", "--server", "/tmp/failed"),
+    )
+    alive = {101: True}
+    signals: list[tuple[int, int]] = []
+
+    monkeypatch.setattr(
+        installer,
+        "_retired_vc_frame_process_still_matches",
+        lambda observed: alive[observed.pid],
+    )
+
+    def kill(pid: int, sent_signal: int) -> None:
+        signals.append((pid, sent_signal))
+        if sent_signal == installer.signal.SIGKILL:
+            alive[pid] = False
+
+    monkeypatch.setattr(installer.os, "kill", kill)
+
+    installer._terminate_retired_vc_frame_processes((record,), timeout_seconds=0)
+
+    assert signals == [
+        (101, installer.signal.SIGTERM),
+        (101, installer.signal.SIGKILL),
+    ]
+
+
+def test_terminate_retired_vc_frame_does_not_signal_reused_pid(monkeypatch) -> None:
+    record = installer._RetiredVcFrameProcess(
+        101,
+        ("darwin:1:1", os.geteuid(), 8),
+        ("/Users/test/.local/bin/vc-frame.real", "--server", "/tmp/old"),
+    )
+    signals: list[tuple[int, int]] = []
+
+    monkeypatch.setattr(
+        installer,
+        "_retired_vc_frame_process_still_matches",
+        lambda _observed: False,
+    )
+    monkeypatch.setattr(
+        installer.os,
+        "kill",
+        lambda pid, sent_signal: signals.append((pid, sent_signal)),
+    )
+
+    installer._terminate_retired_vc_frame_processes((record,), timeout_seconds=0)
+
+    assert signals == []
+
+
+def test_runtime_teardown_uninstalls_owned_service_and_proves_quiescence(
+    tmp_path: Path, monkeypatch
+) -> None:
+    shared_home = tmp_path / ".vibecrafted"
+    launcher = tmp_path / "bin" / "vibecrafted"
+    healthy = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=True,
+        supervisor_live=True,
+        supervisor_verified=True,
+        supervisor_service_managed=True,
+        build_current=True,
+        pair_healthy=True,
+        supervisor_pid=42,
+    )
+    quiescent = installer._RuntimeServiceStatus(
+        installed=False,
+        loaded=False,
+        supervisor_live=False,
+        supervisor_verified=False,
+        supervisor_service_managed=False,
+        build_current=False,
+        pair_healthy=False,
+        supervisor_pid=None,
+    )
+    snapshots = iter(((launcher, healthy, "running"), (launcher, quiescent, "stopped")))
+    commands: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        installer, "_current_tools_link", lambda _home: tmp_path / "current"
+    )
+    monkeypatch.setattr(
+        installer,
+        "_tools_install_lease",
+        lambda _link, *, operation: nullcontext(9),
+    )
+    monkeypatch.setattr(
+        installer, "_inherited_tools_install_lease", lambda _descriptor: nullcontext()
+    )
+    monkeypatch.setattr(installer.os, "set_inheritable", lambda _fd, _value: None)
+    monkeypatch.setattr(
+        installer, "_assert_runtime_loaded_service_owner", lambda _home: shared_home
+    )
+    monkeypatch.setattr(
+        installer, "_runtime_service_snapshot", lambda _home: next(snapshots)
+    )
+    monkeypatch.setattr(installer, "_retired_vc_frame_process_census", tuple)
+
+    def run_command(
+        _launcher: Path, _home: Path, *arguments: str
+    ) -> subprocess.CompletedProcess[str]:
+        commands.append(arguments)
+        return subprocess.CompletedProcess(arguments, 0, "", "")
+
+    monkeypatch.setattr(installer, "_run_runtime_service_command", run_command)
+
+    actions = installer._teardown_owned_runtime_for_uninstall(
+        shared_home, dry_run=False
+    )
+
+    assert actions == ("stop and uninstall owned runtime service",)
+    assert commands == [("service", "uninstall")]
 
 
 def test_cmd_uninstall_removes_release_contract_assets_with_managed_payload(
