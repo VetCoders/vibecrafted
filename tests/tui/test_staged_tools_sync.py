@@ -92,10 +92,12 @@ def _write_source_provenance_fixture(
         "source_revision": source_revision,
         "payload": installer._distribution_manifest._distribution_tree_record(root),
     }
-    (root / "source-provenance.json").write_text(
+    carrier = root / "source-provenance.json"
+    carrier.write_text(
         json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
+    carrier.chmod(0o644)
     return provenance
 
 
@@ -138,7 +140,8 @@ def _write_walkaround_generation(
     (generation / installer._RUNTIME_GENERATION_MANIFEST).write_text(
         json.dumps(manifest, sort_keys=True), encoding="utf-8"
     )
-    (generation / "source-provenance.json").write_text(
+    carrier = generation / "source-provenance.json"
+    carrier.write_text(
         json.dumps(
             {
                 "schema": installer._SOURCE_PROVENANCE_SCHEMA,
@@ -153,6 +156,7 @@ def _write_walkaround_generation(
         + "\n",
         encoding="utf-8",
     )
+    carrier.chmod(0o644)
     return generation
 
 

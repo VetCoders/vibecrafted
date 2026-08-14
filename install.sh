@@ -173,7 +173,11 @@ platform_banner() {
 extract_tarball() {
   local archive="$1"
   local destination="$2"
-  local tar_args=(-xzf "$archive" -C "$destination")
+  # The archive preflight admits only canonical 0755 directories, 0644/0755
+  # files, and 0777 symlinks. Preserve those verified modes explicitly: a
+  # hardened operator umask (for example 077) must not make our own extracted
+  # tree fail the post-extraction identity check.
+  local tar_args=(-xzf "$archive" -C "$destination" -p)
 
   # Release archives can carry macOS LIBARCHIVE/PAX xattrs. GNU tar prints a
   # wall of harmless "unknown keyword" warnings on Linux unless we quiet them.

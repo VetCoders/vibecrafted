@@ -34,10 +34,12 @@ def _write_test_source_provenance(
         "source_revision": source_revision,
         "payload": installer._distribution_manifest._distribution_tree_record(root),
     }
-    (root / "source-provenance.json").write_text(
+    carrier = root / "source-provenance.json"
+    carrier.write_text(
         json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
+    carrier.chmod(0o644)
     return provenance
 
 
@@ -1036,10 +1038,12 @@ def test_runtime_manifest_retains_clean_exact_git_source_carrier(
         owner_repo=None,
         source_revision=None,
     )
-    (current_tools / "source-provenance.json").write_text(
+    carrier = current_tools / "source-provenance.json"
+    carrier.write_text(
         json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
+    carrier.chmod(0o644)
     installer._write_runtime_generation_manifest(
         current_tools,
         source_root=source,
