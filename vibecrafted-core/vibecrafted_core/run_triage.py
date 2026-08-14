@@ -133,6 +133,7 @@ _TRUTHY_OFF = {"0", "false", "no", "off"}
 _PERMANENT_SKIP_REASONS = {
     "disabled",
     "foreign_tab",
+    "headless",
     "no_run_id",
     "no_session",
     "shared_tab",
@@ -1821,6 +1822,14 @@ def plan_triage(
 
     if str(env.get("VIBECRAFTED_TRIAGE_RUN", "") or "").strip().lower() in _TRUTHY_OFF:
         return TriagePlan(should_run=False, skip_reason="disabled")
+
+    runtime = (
+        str(meta.get("runtime") or env.get("VIBECRAFTED_RUNTIME", "") or "")
+        .strip()
+        .lower()
+    )
+    if runtime == "headless":
+        return TriagePlan(should_run=False, skip_reason="headless")
 
     run_id = str(meta.get("run_id", "") or "").strip() or _env(
         "SPAWN_RUN_ID", "VIBECRAFTED_RUN_ID"

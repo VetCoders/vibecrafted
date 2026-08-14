@@ -39,6 +39,7 @@ from vibecrafted_core.run_triage import (
     VERDICT_FINALIZED,
     VERDICT_NEEDS_ATTENTION,
     KernelAxes,
+    TriageOutcome,
     TriagePlan,
     bucket_for_exit_code,
     classify_run,
@@ -48,6 +49,7 @@ from vibecrafted_core.run_triage import (
     read_run_signals,
     reconcile_untriaged_runs,
     triage_finished_run,
+    triage_outcome_is_complete,
 )
 from vibecrafted_core.runtime_transcript import write_runtime_transcript_manifest
 from vibecrafted_core.settlement import (
@@ -780,6 +782,24 @@ def test_operator_can_switch_triage_off(value: str) -> None:
     )
     assert plan.should_run is False
     assert plan.skip_reason == "disabled"
+
+
+@pytest.mark.parametrize(
+    ("meta", "env"),
+    [
+        ({"run_id": "r1", "runtime": "headless"}, make_env()),
+        ({"run_id": "r1"}, make_env(VIBECRAFTED_RUNTIME="headless")),
+    ],
+)
+def test_headless_runtime_never_enters_terminal_triage(
+    meta: dict[str, object], env: dict[str, str]
+) -> None:
+    plan = plan_triage(meta, env)
+    assert plan.should_run is False
+    assert plan.skip_reason == "headless"
+    assert triage_outcome_is_complete(
+        TriageOutcome(outcome=OUTCOME_SKIPPED, reason="headless")
+    )
 
 
 def test_tab_defaults_to_run_id() -> None:
