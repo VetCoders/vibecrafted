@@ -128,11 +128,11 @@ jobs:
             make doctor
           fi
 
-      - name: Run install.sh / install.ps1 host smoke
-        run: make test-install
-
       - name: Run skill-loader smoke
         run: make test-skills
+
+      - name: Run install.sh / install.ps1 host smoke
+        run: make test-install
 
   # ---------------------------------------------------------------------------
   # Debian 12 (Bookworm) — bare container. Tests the prereq pre-flight + hints.
@@ -247,17 +247,17 @@ jobs:
             make doctor
           fi
 
-      - name: Run install.sh / install.ps1 host smoke
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.local/share/vibecrafted/bin:$PATH"
-          make test-install
-
       - name: Run skill-loader smoke
         run: |
           set -euo pipefail
           export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.local/share/vibecrafted/bin:$PATH"
           make test-skills
+
+      - name: Run install.sh / install.ps1 host smoke
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.local/share/vibecrafted/bin:$PATH"
+          make test-install
 
   # ---------------------------------------------------------------------------
   # Docker build smoke — verifies the shipped Dockerfile still builds and
