@@ -164,7 +164,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ?? "CoreText rejected SpotMono.ttc"
       // A system-installed Spot Mono can already occupy the session scope.
       // Accept that case only when CoreText resolves the required family.
-      let descriptor = CTFontDescriptorCreateWithNameAndSize("Spot Mono" as CFString, 14.5)
+      let descriptor = CTFontDescriptorCreateWithAttributes(
+        [kCTFontFamilyNameAttribute as String: "Spot Mono"] as CFDictionary)
       guard let match = CTFontDescriptorCreateMatchingFontDescriptor(descriptor, nil),
         CTFontDescriptorCopyAttribute(match, kCTFontFamilyNameAttribute) as? String == "Spot Mono"
       else {

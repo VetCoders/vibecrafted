@@ -145,10 +145,13 @@ def test_release_bundle_binds_the_canonical_terminal_policy_and_font() -> None:
     assert "/Users/" not in terminal
     assert "Contents/Resources/fonts/SpotMono.ttc" in app_delegate
     assert "CTFontManagerRegisterFontsForURL" in app_delegate
+    assert "kCTFontFamilyNameAttribute as String" in app_delegate
+    assert 'CTFontDescriptorCreateWithNameAndSize("Spot Mono"' not in app_delegate
     assert "let terminalConfig = generation.appendingPathComponent" in app_delegate
     assert 'productConfig.appendingPathComponent("terminal.toml")' not in app_delegate
     assert 'install -m 0644 "$SPOT_MONO_FONT" "$resources/fonts/SpotMono.ttc"' in builder
     assert "missing licensed Spot Mono input" in builder
+    assert "(OpenType|TrueType) font collection data" in builder
 
 
 def test_mission_control_failure_board_exposes_absolute_failure_time() -> None:

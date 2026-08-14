@@ -102,8 +102,9 @@ for command in cargo codesign file git hdiutil install_name_tool make otool uv x
 done
 [[ -f "$SIGNING_IDENTITY_FILE" ]] || die "missing $SIGNING_IDENTITY_FILE"
 [[ -f "$SPOT_MONO_FONT" ]] || die "missing licensed Spot Mono input: $SPOT_MONO_FONT"
-file -b "$SPOT_MONO_FONT" | grep -Fq 'OpenType font collection data' \
-  || die "Spot Mono input is not an OpenType font collection"
+LC_ALL=C file -b "$SPOT_MONO_FONT" \
+  | grep -Eq '(OpenType|TrueType) font collection data' \
+  || die "Spot Mono input is not an OpenType/TrueType font collection"
 prepare_signing_identity
 
 git_sha() { git -C "$1" rev-parse HEAD; }
