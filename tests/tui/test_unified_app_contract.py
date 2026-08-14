@@ -703,6 +703,29 @@ def _patch_release_mount(monkeypatch: pytest.MonkeyPatch, app: Path) -> None:
     monkeypatch.setattr(contract, "_run_live_release_checks", lambda *_: {})
 
 
+def test_native_app_launches_only_the_bundled_product_entry() -> None:
+    delegate = (
+        REPO_ROOT / "vibecrafted-app/shell-agent/app/Vibecrafted/AppDelegate.swift"
+    ).read_text(encoding="utf-8")
+    cargo = (REPO_ROOT / "vibecrafted-app/tui-agent/Cargo.toml").read_text(
+        encoding="utf-8"
+    )
+    launcher = (REPO_ROOT / "vibecrafted-app/tui-agent/src/bin/vc_start.rs").read_text(
+        encoding="utf-8"
+    )
+
+    assert "launchWorkspaceTerminal()" in delegate
+    assert "Contents/Helpers/vc-terminal" in delegate
+    assert "Contents/Resources/runtime/bin/vc-start" in delegate
+    assert 'environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"' in delegate
+    assert "shell-agent" not in delegate
+    assert 'name = "vc-start"' in cargo
+    assert '"--noprofile"' in launcher
+    assert '"--norc"' in launcher
+    assert 'source "$1"; shift; vc-start "$@"' in launcher
+    assert 'Command::new("/bin/bash")' in launcher
+
+
 def test_versioned_json_schema_matches_runtime_contract_ids() -> None:
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 

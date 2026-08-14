@@ -23,6 +23,10 @@ path = "src/bin/vc_admin.rs"
 name = "vc-procs"
 path = "src/bin/vc_procs.rs"
 
+[[bin]]
+name = "vc-start"
+path = "src/bin/vc_start.rs"
+
 [dependencies]
 control-core = { path = "../../vibecrafted-server/control-core" }
 rmcp-mux = { path = "../mux-agent", version = "0.4.0", package = "rmcp-mux" }
