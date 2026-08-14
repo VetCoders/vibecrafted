@@ -117,6 +117,8 @@ def test_shell_helper_prefers_current_control_plane_over_home_store(
         / "vibecrafted"
         / "tools"
         / "vibecrafted-current"
+        / "vibecrafted-core"
+        / "vibecrafted_core"
         / "skills"
         / "vc-agents"
     )
