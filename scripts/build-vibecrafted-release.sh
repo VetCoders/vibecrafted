@@ -109,6 +109,13 @@ require_clean_repo() {
     || die "$label is dirty; release receipts refuse moving source"
 }
 
+run_bundled_verifier() {
+  local verifier="$APP/Contents/Resources/runtime/bin/python3"
+  [[ -x "$verifier" ]] || die "bundled product verifier is missing: $verifier"
+  PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 \
+    "$verifier" -m vibecrafted_core.product_contract "$@"
+}
+
 notary_submit() {
   local artifact="$1"
   if [[ -n "${NOTARY_PROFILE:-}" ]]; then
@@ -316,7 +323,7 @@ build_product() {
     die "bundled Python mutated the signed application payload"
   fi
   codesign --verify --deep --strict --verbose=2 "$APP"
-  "$REPO_ROOT/scripts/verify-vibecrafted-product.sh" app "$APP" --require-clean
+  run_bundled_verifier app "$APP" --require-clean
 }
 
 create_dmg() {
@@ -352,7 +359,7 @@ emit_release_tuple() {
     --app "$APP" --dmg "$DMG" --output "$DIST_DIR/release-output.json"
   /usr/bin/openssl dgst -sha256 -sign "$SIGNING_KEY" \
     -out "$DIST_DIR/release-output.json.sig" "$DIST_DIR/release-output.json"
-  "$REPO_ROOT/scripts/verify-vibecrafted-product.sh" release-output \
+  run_bundled_verifier release-output \
     "$DIST_DIR/release-output.json" "$DIST_DIR/release-output.json.sig"
   (
     cd "$DIST_DIR"

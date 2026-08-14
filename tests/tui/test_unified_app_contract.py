@@ -2965,6 +2965,10 @@ def test_unified_release_has_one_top_level_owner() -> None:
     assert "install_name_tool -id '@loader_path/libpython3.12.dylib'" in builder
     assert "--remap-path-prefix=$HOME=/usr/src/operator-home" in builder
     assert "install_name_tool -delete_rpath /usr/lib/swift" in builder
+    assert 'run_bundled_verifier app "$APP" --require-clean' in builder
+    assert "run_bundled_verifier release-output" in builder
+    assert '"$verifier" -m vibecrafted_core.product_contract "$@"' in builder
+    assert '"$REPO_ROOT/scripts/verify-vibecrafted-product.sh"' not in builder
     assert "--noprofile" not in builder  # vc-start, not the release shell, owns this
     assert "vc-frame.real" not in builder
     assert '"$runtime/runtime"' not in builder
