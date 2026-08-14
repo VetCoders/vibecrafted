@@ -23,7 +23,8 @@ Set `VIBECRAFTED_HOME` **before** the first install if you want the state root s
 
 ```bash
 export VIBECRAFTED_HOME="$HOME/work/vibecrafted-state"
-curl -fsSL https://vibecrafted.io/install.sh | bash
+curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg -o Vibecrafted.dmg
+open Vibecrafted.dmg
 ```
 
 ## Provenance discovery (receipt)

@@ -113,10 +113,10 @@ That means the positioning has to stay sharp:
   macOS, Linux
 
 - Guided install CTA
-  `curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui`
+  `curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg -o Vibecrafted.dmg && open Vibecrafted.dmg`
 
 - Direct install CTA
-  `curl -fsSL https://vibecrafted.io/install.sh | bash`
+  Checkout-only maintainer staging: `make install-auto`
 
 ## Canonical submission packet
 
@@ -165,8 +165,8 @@ shows the old direct-only install CTA or the older self-referential promise.
 Every public surface should agree on:
 
 - promise: `Release engine for AI-built software.`
-- primary CTA: `curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui`
-- secondary CTA: `curl -fsSL https://vibecrafted.io/install.sh | bash`
+- primary CTA: `curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg -o Vibecrafted.dmg && open Vibecrafted.dmg`
+- secondary CTA: checkout-only maintainer staging with `make install-auto`
 - audience: founders and teams shipping AI-generated repos into production
 
 ## Directory-specific notes
@@ -299,8 +299,8 @@ launch fields:
 | Docs             | `https://vibecrafted.io/en/quickstart/`                                                                                                                                                                                                                 |
 | Category         | `Developer Tools`, `AI Agents`, `Release Engineering`                                                                                                                                                                                                   |
 | Pricing          | `Free for personal use and startups. Enterprise licensing available.`                                                                                                                                                                                   |
-| Primary CTA      | `curl -fsSL https://vibecrafted.io/install.sh &#124; bash -s -- --gui`                                                                                                                                                                                  |
-| Backup CTA       | `curl -fsSL https://vibecrafted.io/install.sh &#124; bash`                                                                                                                                                                                              |
+| Primary CTA      | `curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg -o Vibecrafted.dmg && open Vibecrafted.dmg`                                                                                                                 |
+| Backup CTA       | Source-checkout maintainer staging with `make install-auto`                                                                                                                                                                                             |
 | 160-char summary | `Vibecrafted hardens AI-generated repos through structural mapping, convergence loops, install audits, and launch-ready packaging.`                                                                                                                     |
 | 300-char summary | `Vibecrafted is the release engine for AI-built software. It takes the repo your agents already produced and drives it through perception, verification, convergence loops, install truth, and launch-readiness work until the product is fit to ship.` |
 

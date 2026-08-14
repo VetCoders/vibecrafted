@@ -105,24 +105,19 @@ def test_unified_product_contract_gate_executes_installed_runner() -> None:
         assert required_test in gate
 
 
-def test_release_workflow_calls_the_unified_contract_gate_and_uses_checkout_head() -> (
-    None
-):
+def test_release_workflow_is_read_only_and_validates_the_exact_tag_source() -> None:
     workflow = (REPO_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
     assert "run: make unified-product-contract-gate" in workflow
-    assert "source_revision=$(git rev-parse HEAD)" in workflow
-    assert (
-        '--source-revision "${{ steps.version.outputs.source_revision }}"' in workflow
-    )
-    assert (
-        '--expected-source-revision "${{ steps.version.outputs.source_revision }}"'
-        in workflow
-    )
-    assert 'mktemp "$workspace_parent/.vibecrafted-release.XXXXXX"' in workflow
-    assert '--output "$candidate_archive"' in workflow
-    assert '--publish-output "dist/${archive_name}.tar.gz"' in workflow
-    assert "os.replace(sys.argv[1], sys.argv[2])" not in workflow
+    assert "run: make test-core" in workflow
+    assert "run: make semgrep" in workflow
+    assert 'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"' in workflow
+    assert 'test "$(git cat-file -t "$GITHUB_REF_NAME")" = "tag"' in workflow
+    assert "permissions:\n  contents: read" in workflow
+    assert "contents: write" not in workflow
+    assert "gh release create" not in workflow
+    assert "gh release upload" not in workflow
+    assert "gh release edit" not in workflow
 
 
 def test_bootstrap_help_requires_canonical_provenance_archives() -> None:
@@ -969,7 +964,11 @@ def test_foundations_builds_vc_frame_outside_the_living_tree() -> None:
 
     assert "${XDG_CACHE_HOME:-$HOME/.cache}/vibecrafted/build/vc-frame" in block
     assert 'CARGO_TARGET_DIR="$vcframe_target_root"' in block
-    assert 'make -C "$sibling" --no-print-directory install' in block
+    assert 'make -C "$sibling" --no-print-directory release' in block
+    assert 'install -m 0755 "$donor_binary" "$LAUNCHER_PREFIX/vc-frame"' in block
+    assert "tools/install.sh" not in block
+    assert "VCFRAME_INSTALL_URL" not in block
+    assert "releases/latest/download/install.sh" not in block
 
 
 def test_foundations_never_overwrite_uv_owned_python_entrypoints() -> None:

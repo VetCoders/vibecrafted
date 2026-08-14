@@ -3,55 +3,39 @@
 All notable changes to 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## 3.7.1 — 2026-08-08
+## 3.7.1 — 2026-08-14
 
-> **The bootstrap onion.** Patch release that took the root `curl | bash`
-> install path from seven stacked failure layers to a green matrix on every
-> runner — and sealed the P0 class where a test stub could lose to the
-> operator's live launcher and fire a real dispatch.
-
-### Fixed
-
-- **Deck resolution gate** — single `_vetcoders_resolve_deck_bin` for every
-  shell path that reaches the installed deck: `VIBECRAFTED_DECK_BIN` wins
-  verbatim, `VIBECRAFTED_TEST_MODE=1` never discovers a live deck, no deck
-  reports a clean 127; wrapper fallback restores spawn/marbles/help on bare
-  hosts. Kills the measured stub-escape (a pytest run had launched a live
-  `--dangerously-skip-permissions` worker).
-- **Launcher twin parity** — forward-ported both one-sided hunks
-  (product-entry choke, trusted pane-id predicate); `scripts/vibecrafted`
-  and the packaged deck are byte-equal again.
-- **`vc-polarize --task`** routes through the shell band gate again
-  (abort/memo/pass/doctrine + prism.json); the python deck rejects the flag
-  (port-debt: `docs/RC_RUNTIME_POLARIZE.md`).
-- **Bootstrap layers** — vc-frame cockpit install defers loudly while its
-  release does not exist (`REQUIRE_FOUNDATIONS=1` re-arms); server shell
-  defers without cargo-leptos while CI provisions the full leptos toolchain
-  and builds it for real; uv sh-wrapper entrypoints under long venv paths
-  are recognized as uv-owned (kernel shebang limit); doctor runs from a
-  neutral cwd (no living-tree shadowing) with persistent `safe.directory`
-  in containers; `vc-frame:truth` compares against a fresh host-adapted
-  materialization instead of raw hashes; unpublished slack provider defers.
-- **Portable rc contract** — asserts the PATH-only guard and the absence of
-  retired `vc-skills.sh` sourcing.
-- **Shell gate** honestly skips files whose interpreter is missing on the
-  host, and Linux CI installs zsh so `.zsh` sources are really checked.
-- **Research arity keywords** — `uno|duo|trio` expand to exact agent lists
-  and fail closed on wrong lane counts; public variadic argv preserved.
+> **One Vibecrafted.** The first release whose installable boundary is exactly
+> one signed and notarized `Vibecrafted.dmg`.
 
 ### Added
 
-- **Ownership canary catalog** — 17-agent sweep cataloged 2842
-  def/class/module units across 103 production python files and added 1999
-  docstrings where none existed (comment-content preserved; zero logic
-  changes); catalog artifact shipped to the operator artifact store.
+- `Vibecrafted.app` now carries the exact matching `vc-terminal`, `vc-frame`
+  and complete runtime, with signed source/module receipts.
+- Durable `workspace_id` and automatic bundled `vc-start` entry for every new
+  or restored workspace.
+- App-owned XDG/runtime environment: the product does not overwrite user
+  terminal, shell or vc-frame configuration.
+- Fail-closed macOS publication target that downloads draft assets back from
+  GitHub, byte-compares them, verifies signed release-output, mounts the DMG,
+  runs the walk-around probes and only then publishes.
 
-### Notes
+### Changed
 
-- Verdict source: gate colours on main (Portable, Skill Loader, Install
-  Matrix after #35, vibecrafted-server, docker+doctor). Site channel
-  (`make site-release`) and the vc-frame release remain manual operator
-  actions.
+- `vibecrafted` is the sole owner of app/DMG/install/update.
+- `vc-terminal` is a deterministic binary donor; its standalone App/DMG/MSI,
+  signing, notarization and install surfaces were retired.
+- `vc-frame` is the session interior; its standalone installer, release assets,
+  packaging workflow and update channel were retired.
+- Tag CI is read-only source validation. Apple signing/notarization and release
+  publication remain on the explicit macOS operator boundary.
+
+### Security
+
+- Tailscale auth keys are injected only into the launch process and are never
+  stored by the onboarding wizard or generated `.env` files.
+- Mermaid SVG links use a positive URL-scheme allowlist.
+- All GitHub workflows declare least-privilege permissions.
 
 ## 3.7.0 — 2026-07-27
 

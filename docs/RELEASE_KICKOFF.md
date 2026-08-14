@@ -1,176 +1,46 @@
-# Release Kickoff
+# Vibecrafted release kickoff
 
-This is the pre-release operator sheet for 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.
+## Public product
 
-Rule zero: do not let the repo, installer, portal, and marketplace copy disagree
-about what the product is.
+- Owner: `vetcoders/vibecrafted`
+- Artifact: one installable `Vibecrafted.dmg`
+- App: `Vibecrafted.app`
+- Download: `https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg`
+- Embedded donors: `vc-terminal`, `vc-frame`
+- Entry: bundled `vc-start` with durable `workspace_id`
 
-## One-line truth
+The donor repositories never publish an app, DMG, MSI, installer or update
+channel. The root tag workflow is read-only. Apple signing, notarization and
+publication run from the explicit macOS operator boundary:
 
-- Product: 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.
-- Promise: Release engine for AI-built software.
-- Primary CTA: `curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui`
-- Secondary CTA: `curl -fsSL https://vibecrafted.io/install.sh | bash`
-- Human front door: browser-guided installer, chosen for TwinSweep-style
-  effortlessness.
-- Automation path: compact CLI installer, still available for scripts and CI.
-- Adjacent pattern kept for inspiration, not as the public front door:
-  `rmcp-memex`-style wizard/TUI.
+```bash
+make release
+GH_TOKEN=... make publish-release
+```
 
-## Positioning guardrails
+`publish-release` refuses a dirty tree, a non-annotated or unpushed tag, a
+failed source gate, any open CodeQL alert on `main`, an invalid signature,
+unexpected release assets, failed Apple validation or failed mounted-DMG
+walk-around. It publishes only after downloading and byte-comparing the draft
+assets.
 
-- Do not pitch Vibecrafted as another code generator.
-- Do not pitch it as an IDE replacement or pair-programmer shell alone.
-- Do pitch it as the post-generation layer: the thing you run after agents have
-  already produced the repo and before a stranger touches it.
-- Adjacent tools such as Cursor, Windsurf, Cline, Devin, Lovable, and Bolt help
-  write or generate software. Vibecrafted hardens, packages, verifies, and
-  prepares that software to ship.
+## Public CTA
 
-## Kickoff checklist
+```bash
+curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg \
+  -o Vibecrafted.dmg
+open Vibecrafted.dmg
+```
 
-1. Repo truth
-   Run the pre-release gates from this repo:
+## Required proof
 
-   ```bash
-   make bundle-check
-   make check
-   make test-core
-   make test
-   make semgrep
-   env -u VC_FRAME -u VC_FRAME_PANE_ID -u VC_FRAME_SESSION_NAME -u VIBECRAFTED_OPERATOR_SESSION bash scripts/check-portable.sh
-   ```
+The generated release report must contain:
 
-   `make test-core` is the complete Python runtime suite, not a substitute for
-   the installer-facing `make test` suite. `make semgrep` is the security gate;
-   the local pre-commit and
-   pre-push hooks under `scripts/hooks/` run the same invocation, so a
-   green hook on the release commit gives the same answer as the gate.
-   Any blocking finding must be fixed, accepted in writing inside the
-   release report, or deferred with a tracked follow-up — no silent
-   skips.
+1. Security gate.
+2. Exposed surface inventory.
+3. Deployment topology and rollback decision.
+4. Post-release smoke from the published URL.
 
-2. Installer truth
-   Confirm every public install surface keeps the same contract:
-   - guided GUI path is the first CTA for humans
-   - compact path stays available for automation
-   - `doctor` remains the first verification step after install
-
-3. Portal truth
-   Treat `vibecrafted-io/site/src` as the portal source of truth and its repo
-   root / generated `docs/` files as the deploy mirror. Rebuild and redeploy
-   that mirror before launch if any derived file still advertises the old
-   direct-only install path or the older self-referential promise. The
-   homepage, quickstart, FAQ, `install.sh`, and README must all match the
-   release-engine narrative and the guided installer CTA.
-   Because `vibecrafted-io` is a separate git root, treat its build/deploy pass
-   as a separate lane from this repo commit. Minimum rebuild command:
-
-   ```bash
-   pnpm --dir "<vibecrafted-io-checkout>/site" build
-   ```
-
-   Minimum drift checks before any public launch (run from your
-   `vibecrafted-io` checkout):
-
-   ```bash
-   rg -n "Interactive terminals always enter the installer TUI|curl -fsSL https://vibecrafted.io/install.sh \\| bash$" \
-     README.md \
-     docs/install.sh \
-     docs/QUICK_START.md \
-     site/src
-   ```
-
-   If that grep still finds old TUI-only or direct-only wording in the portal
-   repo root / built `docs/`, the deploy mirror is stale and launch should
-   pause until that separate lane is rebuilt and redeployed.
-
-4. Asset truth
-   Capture and store these before submission day:
-   - guided installer screenshot
-   - command deck screenshot
-   - quickstart screenshot
-   - marbles / convergence screenshot
-   - landing-page hero screenshot
-   - one short walkthrough video
-
-5. Marketplace order
-   Submit in this order:
-   1. There’s An AI For That
-   2. Future Tools
-   3. Futurepedia
-   4. Toolify
-   5. TopAI.tools
-   6. Uneed
-   7. Product Hunt
-
-6. Uneed dry run
-   Treat Uneed as the softer rehearsal launch once AI-directory listings are
-   already live:
-   - use the guided installer screenshot as the hero asset
-   - keep the explanation founder-readable, not taxonomy-heavy
-   - watch which screenshot / blurb combination gets the cleanest conversion
-
-7. Product Hunt day
-   Do not schedule Product Hunt until:
-   - the maker posting account has Product Hunt post access
-   - the founder comment is prewritten
-   - the portal and installer are both ready for real strangers
-   - someone is available to answer comments for the full launch window
-
-## Release integrity path
-
-The tag workflow is deliberately publish-last:
-
-1. It runs shell checks, the full `make test-core` runtime suite, Semgrep, and
-   the installer-facing tests.
-2. It builds the exact runtime archive, marketplace plugin, and public
-   `install.sh` that will become release assets.
-3. It records all three payloads in one `SHA256SUMS`, signs each payload with
-   the existing RSA release key, then verifies the checksums, detached
-   signatures, archive contents, and plugin ZIP before touching a GitHub
-   Release.
-4. GitHub OIDC creates a Sigstore-backed provenance attestation for the same
-   checksummed payload set. No long-lived attestation credential is stored.
-5. The workflow uploads the verified files to a draft release, downloads every
-   draft asset, compares it byte-for-byte with the local build, and only then
-   publishes the release. A rerun refuses to replace assets on an already
-   published release.
-
-### Current signing truth
-
-The operational signing mechanism today is the existing RSA private key exposed
-to the workflow as `VIBECRAFTED_SIGNING_KEY`; the matching public key ships as
-`vibecrafted-signing.pub`. The workflow's OIDC attestation complements that
-signature with build provenance. It does not replace the installer-compatible
-RSA path.
-
-Vibecrafted does **not** yet claim a Vetcoders organization GPG trust root. GPG
-is a separate future trust path: create an offline Vetcoders certification key,
-issue bounded product signing subkeys, publish and pin their fingerprints, and
-define revocation/rotation before enabling GPG signatures in CI. Do not relabel
-the current RSA key as GPG, and do not silently reuse another organization's
-identity as the permanent Vetcoders root. Keep RSA verification operational
-during any announced migration or dual-signing period.
-
-## Release report contract
-
-Every release run produces a report under
-`$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/`
-that follows the canonical template at
-[`skills/vc-release/references/release-report-template.md`](../skills/vc-release/references/release-report-template.md).
-The four mandatory sections — security gate, exposed surface inventory,
-deployment mode decision, and post-release install smoke from the
-published artefact — are non-negotiable. A release without all four
-sections populated is blocked, not "almost done."
-
-## Supporting docs
-
-- [Quick Start](./QUICK_START.md)
-- [Marketplace Listing](./MARKETPLACE_LISTING.md)
-- [Submission Forms](./SUBMISSION_FORMS.md)
-- [Installer Reference](./installer/REFERENCE.md)
-- [Release Report Template](../skills/vc-release/references/release-report-template.md)
-- [Deployment Reality Matrix](../skills/vc-release/references/deployment-reality.md)
-
-`//𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.`
+The canonical report lives under
+`~/.vibecrafted/artifacts/vetcoders/vibecrafted/<YYYY_MMDD>/reports/` and is
+also used as the GitHub Release notes.

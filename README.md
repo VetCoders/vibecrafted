@@ -135,7 +135,7 @@ preflighted last fallback. Full doctrine: [docs/FOUNDATION.md](docs/FOUNDATION.m
 | **AICX** (`aicx`)    | Agent-session memory — catalog, search, intents     | [npm `@loctree/aicx`](https://www.npmjs.com/package/@loctree/aicx) · GitHub releases |
 | **prview**           | PR review artifact generator                        | [crates.io](https://crates.io/crates/prview)                                         |
 | **screenscribe**     | Screencast → structured engineering findings        | [PyPI](https://pypi.org/project/screenscribe/)                                       |
-| **vc-frame**         | Operator cockpit (session rail, layouts)            | Vendored in site bundle · companion repo release binary                              |
+| **vc-frame**         | Operator cockpit (session rail, layouts)            | Embedded inside `Vibecrafted.app`; no separate installer or update channel           |
 
 The installer verifies these foundations on every run (`vibecrafted doctor`)
 and never silently replaces a product-managed binary with a stale copy.
@@ -158,40 +158,31 @@ The `//` is not decoration. It is the mark.
 
 ## Install
 
-Non-destructive. Interactive. Transparent. Reversible.
-
-Prefer the guided browser path when you are onboarding a founder, PM, or less terminal-native operator:
-
-```bash
-curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui
-```
-
-Both entrypoints use the same trust-first bootstrap: it explains what it will do and asks before proceeding on an attended terminal. Pass `--yes` when you
-want to pre-approve that bootstrap prompt.
-
-The guided path stages the local control plane, bootstraps the foundation layer, runs the same compact installer truth used by automation, and leaves a readable `START_HERE.md` behind.
-
-Use the direct compact path when you are scripting the install or you already know you want the terminal-only flow:
+One signed product carries the terminal substrate, session interior and the
+matching Vibecrafted runtime:
 
 ```bash
-curl -fsSL https://vibecrafted.io/install.sh | bash
+curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg \
+  -o Vibecrafted.dmg
+open Vibecrafted.dmg
 ```
 
-The bootstrap prints the snapshot source, staging location, and next installer
-step before it stages or installs anything on your machine.
+Drag `Vibecrafted.app` to Applications and launch it. Every new or restored
+`workspace_id` enters through the bundled `vc-start`; the app sources its own
+XDG/runtime environment and does not overwrite your Alacritty, Zellij,
+vc-frame or shell configuration. `vc-terminal` and `vc-frame` are internal
+donors, not additional products to install.
 
-Inside a local checkout, `make install` opens the terminal-native installer
-wizard. `make setup-dev` opens the same meta-installer with advanced options,
-and `make install-auto` is the auto-approved automation path. `make help` shows
-the operator surface; `make help-dev` shows the full target inventory.
+Inside a source checkout, `make install` remains a developer/control-plane
+staging tool. It is not the public app installation or update channel.
 
 Shell is the everyday operator entry. When a browser-guided install is the
 better human surface, run `make wizard` or `make gui-install`.
 
-Verify:
+Verify the installed product:
 
 ```bash
-make -C $VIBECRAFTED_ROOT/.vibecrafted/tools/vibecrafted-current doctor
+vibecrafted doctor
 ```
 
 Prefer a containerized operator runtime when you want the framework isolated

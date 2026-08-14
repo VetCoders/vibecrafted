@@ -12,6 +12,9 @@ on:
       - develop
       - "release/*"
 
+permissions:
+  contents: read
+
 jobs:
   skill-loader:
     name: skill-loader (${{ matrix.os }})

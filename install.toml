@@ -62,8 +62,8 @@ reason = """
 We will install the backyard product spine (one path, no install loops):
 
   - product foundations: loctree / aicx (canonical product installers)
-  - vc-frame BINARY for real (sibling checkout make install, or release
-    tools/install.sh — never re-enter vibecrafted.io/install.sh here)
+  - vc-frame donor BINARY built from sibling source and installed only by
+    Vibecrafted (no companion installer or release channel)
   - framework-owned support tools when needed
   - frontier config + operator scripts (Composer / Super binds projection)
   - shared skills, launchers, and mirrored agent views

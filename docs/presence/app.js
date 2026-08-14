@@ -1766,6 +1766,17 @@ function shuffleArr(a) {
     }
   }
 
+  function isSafeSvgReference(rawValue) {
+    var value = (rawValue || "").trim();
+    if (value.charAt(0) === "#") return true;
+    try {
+      var protocol = new URL(value, document.baseURI).protocol.toLowerCase();
+      return protocol === "http:" || protocol === "https:" || protocol === "mailto:";
+    } catch (_err) {
+      return false;
+    }
+  }
+
   function renderMermaidPreview(svgMarkup) {
     var parser = new DOMParser();
     var parsed = parser.parseFromString(svgMarkup, "image/svg+xml");
@@ -1790,11 +1801,10 @@ function shuffleArr(a) {
     Array.prototype.forEach.call(svg.querySelectorAll("*"), function (node) {
       Array.prototype.forEach.call(node.attributes || [], function (attr) {
         var name = attr.name.toLowerCase();
-        var value = (attr.value || "").trim().toLowerCase();
         if (
           name.indexOf("on") === 0 ||
           ((name === "href" || name === "xlink:href") &&
-            value.indexOf("javascript:") === 0)
+            !isSafeSvgReference(attr.value))
         ) {
           node.removeAttribute(attr.name);
         }

@@ -33,13 +33,13 @@ everywhere.
 
 ## Quick start
 
-### 1. Setup .env
+### 1. Setup non-secret environment
 
 ```bash
 cd vc-runtime/vc-workspace
 cp .env.example .env
-# Edit .env — set TAILSCALE_AUTHKEY (tskey-auth-...) + TAILSCALE_HOSTNAME
-#            + VC_RUNTIME_DIR (host path to the multiroot, mounted at /workspace)
+# Edit .env — set TAILSCALE_HOSTNAME + VC_RUNTIME_DIR
+# Never put TAILSCALE_AUTHKEY in this file.
 ```
 
 ### 2. Build (multi-arch via buildx)
@@ -54,7 +54,10 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 ### 3. Run (local dev with mounts)
 
 ```bash
-docker compose up -d
+# Optional Tailscale: inject an ephemeral key from your secret manager into
+# this process only. Without it, the container starts without joining tailnet.
+TAILSCALE_AUTHKEY="$(your-secret-manager read tailscale-ephemeral-key)" \
+  docker compose up -d
 docker compose exec dev zsh
 ```
 
@@ -103,8 +106,9 @@ The container expects these host paths (mounted automatically by
 Tailscale runs in **userspace mode** (`tailscaled --tun=userspace-networking`),
 no host kernel module needed. Container joins tailnet as a regular node:
 
-- Get an auth key from https://login.tailscale.com/admin/settings/keys
-- Set `TAILSCALE_AUTHKEY=tskey-auth-...` in `.env`
+- Get an ephemeral auth key from https://login.tailscale.com/admin/settings/keys
+- Inject `TAILSCALE_AUTHKEY` only into the `docker compose up` process; never
+  persist it in `.env`, generated config or shell history
 - Optionally set `TAILSCALE_TAGS=tag:devbox` for ACL routing
 - Container appears in tailnet as `${TAILSCALE_HOSTNAME}` on first boot
 

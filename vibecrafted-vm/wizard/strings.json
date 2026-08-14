@@ -169,26 +169,22 @@
       "en": "Tailnet mesh"
     },
     "intro": {
-      "pl": "Container może dołączyć do Twojej tailnet sieci jako pełnoprawny node. Wymaga to klucza auth z panelu Tailscale.",
-      "en": "Container can join your tailnet mesh as a regular node. Requires an auth key from the Tailscale admin panel."
+      "pl": "Container może dołączyć do Twojej tailnet sieci jako pełnoprawny node. Klucz auth podasz tylko w środowisku procesu przy uruchomieniu — kreator go nie zapisuje.",
+      "en": "The container can join your tailnet mesh as a regular node. Inject the auth key only in the launch process environment; the wizard never stores it."
     },
     "skip_or_provide": {
-      "pl": "Pomiń tailnet (możesz dołączyć później ręcznie), czy podać klucz teraz?",
-      "en": "Skip tailnet (you can join manually later) or provide a key now?"
+      "pl": "Pominąć tailnet czy przygotować konfigurację do bezpiecznego wstrzyknięcia klucza przy starcie?",
+      "en": "Skip tailnet or prepare the configuration for secure key injection at launch?"
     },
     "options": {
       "pl": [
         "Pomiń — skonfiguruję później",
-        "Podam klucz teraz"
+        "Włącz — klucz wstrzyknę przy starcie"
       ],
       "en": [
         "Skip — I'll set it up later",
-        "Provide key now"
+        "Enable — I'll inject the key at launch"
       ]
-    },
-    "auth_key_prompt": {
-      "pl": "Wklej tailscale auth key (tskey-auth-...)",
-      "en": "Paste tailscale auth key (tskey-auth-...)"
     },
     "hostname_prompt": {
       "pl": "Nazwa hosta w tailnet (np. devbox-maciej)",

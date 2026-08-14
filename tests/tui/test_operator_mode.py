@@ -141,6 +141,30 @@ def _expected_operator_session(run_id: str | None = None) -> str:
     return f"{base}-{run_id}" if run_id else base
 
 
+def _resolved_workspace_session(env: dict[str, str]) -> str:
+    result = subprocess.run(
+        [
+            "bash",
+            str(REPO_ROOT / "scripts" / "vibecrafted"),
+            "workspace",
+            "resolve",
+            "--env",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    match = re.search(
+        r"^VIBECRAFTED_OPERATOR_SESSION=(workspace-[0-9a-f]{8})$",
+        result.stdout,
+        re.MULTILINE,
+    )
+    assert match, result.stdout
+    return match.group(1)
+
+
 def _org_repo() -> str:
     remote = subprocess.check_output(
         ["git", "-C", str(REPO_ROOT), "remote", "get-url", "origin"],
@@ -172,6 +196,8 @@ def test_vc_start_launches_operator_entrypoint_layout(tmp_path: Path) -> None:
     env.pop("VC_FRAME_PANE_ID", None)
     env.pop("VC_FRAME_SESSION_NAME", None)
 
+    expected_session = _resolved_workspace_session(env)
+
     subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-start'],
         check=True,
@@ -181,7 +207,7 @@ def test_vc_start_launches_operator_entrypoint_layout(tmp_path: Path) -> None:
 
     payload = capture_file.read_text(encoding="utf-8").splitlines()
     assert "--session" in payload
-    assert _expected_operator_session() in payload
+    assert expected_session in payload
     assert "--new-session-with-layout" in payload
     assert (
         str(REPO_ROOT / "config" / "vc-frame" / "layouts" / "operator.kdl") in payload
@@ -216,12 +242,13 @@ def test_vc_start_with_stale_frame_env_creates_session_foreground(
     env["CAPTURE_FILE"] = str(capture_file)
     env["VIBECRAFTED_TEST_ALLOW_NON_TTY_VC_FRAME"] = "1"
     env.pop("VC_FRAME_CONFIG_DIR", None)
+    expected_session = _resolved_workspace_session(env)
     # Stale leak: session-name exports and pane markers WITHOUT pane ids,
     # with the stale name equal to the target operator session.
     env["VC_FRAME"] = "0"
     env["ZELLIJ"] = "0"
-    env["VC_FRAME_SESSION_NAME"] = _expected_operator_session()
-    env["ZELLIJ_SESSION_NAME"] = _expected_operator_session()
+    env["VC_FRAME_SESSION_NAME"] = expected_session
+    env["ZELLIJ_SESSION_NAME"] = expected_session
     env.pop("VC_FRAME_PANE_ID", None)
     env.pop("ZELLIJ_PANE_ID", None)
 
@@ -234,7 +261,7 @@ def test_vc_start_with_stale_frame_env_creates_session_foreground(
 
     payload = capture_file.read_text(encoding="utf-8").splitlines()
     assert "--session" in payload
-    assert _expected_operator_session() in payload
+    assert expected_session in payload
     assert "--new-session-with-layout" in payload
     assert "switch-session" not in payload
 

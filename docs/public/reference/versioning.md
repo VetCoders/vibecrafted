@@ -100,7 +100,8 @@ newest first. House rules visible in recent entries:
 ## Verifying a fresh install
 
 ```bash
-curl -fsSL https://vibecrafted.io/install.sh | bash
+curl -fL https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted.dmg -o Vibecrafted.dmg
+open Vibecrafted.dmg
 vibecrafted doctor      # audits the installed generation
 vibecrafted --version   # version + build provenance
 ```
