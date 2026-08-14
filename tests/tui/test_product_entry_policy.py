@@ -293,7 +293,18 @@ def test_vc_start_probe_pins_product_config(tmp_path: Path) -> None:
     _write_fake_bin(
         bin_dir,
         "vibecrafted",
-        "#!/usr/bin/env bash\nexit 1\n",
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env bash
+            if [[ "$*" == "workspace resolve --env" ]]; then
+              echo VIBECRAFTED_WORKSPACE_ID=019ff97a-3328-7660-b6cd-f957b1b163f8
+              echo VIBECRAFTED_WORKSPACE_INSTANCE_ID=019ff97a-3328-7660-b6cd-f957b1b163f9
+              echo VIBECRAFTED_OPERATOR_SESSION=workspace-b1b163f8
+              exit 0
+            fi
+            exit 1
+            """
+        ),
     )
 
     env = {
@@ -326,6 +337,14 @@ def test_vc_start_probe_pins_product_config(tmp_path: Path) -> None:
     assert f"VC_FRAME_CONFIG_DIR={frontier}" in proc.stdout
     assert "VC_FRAME_CONFIG_KDL=present" in proc.stdout
     assert "OPERATOR_LAYOUT_PRESENT=1" in proc.stdout
+    assert (
+        "VIBECRAFTED_WORKSPACE_ID=019ff97a-3328-7660-b6cd-f957b1b163f8" in proc.stdout
+    )
+    assert (
+        "VIBECRAFTED_WORKSPACE_INSTANCE_ID=019ff97a-3328-7660-b6cd-f957b1b163f9"
+        in proc.stdout
+    )
+    assert "VIBECRAFTED_OPERATOR_SESSION=workspace-b1b163f8" in proc.stdout
     assert "should-not-run-in-probe" not in out
 
 
@@ -347,7 +366,22 @@ def test_vc_start_probe_twice_is_stable(tmp_path: Path) -> None:
     )
     _write_fake_bin(bin_dir, "vc-frame", "#!/usr/bin/env bash\nexit 0\n")
     _write_fake_bin(bin_dir, "python3", "#!/usr/bin/env bash\nexit 1\n")
-    _write_fake_bin(bin_dir, "vibecrafted", "#!/usr/bin/env bash\nexit 1\n")
+    _write_fake_bin(
+        bin_dir,
+        "vibecrafted",
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env bash
+            if [[ "$*" == "workspace resolve --env" ]]; then
+              echo VIBECRAFTED_WORKSPACE_ID=019ff97a-3328-7660-b6cd-f957b1b163f8
+              echo VIBECRAFTED_WORKSPACE_INSTANCE_ID=019ff97a-3328-7660-b6cd-f957b1b163f9
+              echo VIBECRAFTED_OPERATOR_SESSION=workspace-b1b163f8
+              exit 0
+            fi
+            exit 1
+            """
+        ),
+    )
 
     env = {
         **{k: v for k, v in os.environ.items() if not k.startswith("VC_FRAME")},

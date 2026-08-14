@@ -33,10 +33,28 @@ _vetcoders_dashboard_session_name() {
   printf '%s\n' "$base_session"
 }
 
+_vetcoders_product_workspace_prepare() {
+  command -v vibecrafted >/dev/null 2>&1 || return 0
+  local line key value resolved
+  resolved="$(vibecrafted workspace resolve --env 2>/dev/null || true)"
+  [[ -n "$resolved" ]] || return 0
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      VIBECRAFTED_WORKSPACE_ID|VIBECRAFTED_SESSION_ID|VIBECRAFTED_WORKSPACE_INSTANCE_ID|VIBECRAFTED_BUILD_ID|VIBECRAFTED_OPERATOR_SESSION|VIBECRAFTED_WORKSPACE_ROOT)
+        export "$key=$value"
+        ;;
+    esac
+  done <<< "$resolved"
+}
+
 # Product lifecycle choke shared by shell `vc-start` and deck `cmd_start`.
 # Pins product config, projects Super/scripts when available, pokes control-plane
 # eye (best-effort). Never loads into ordinary PATH-only shells unless called.
 _vetcoders_product_entry_prepare() {
+  _vetcoders_product_workspace_prepare
+
   # Normalize ambient context first so frontier resolution is stable.
   if declare -F _vetcoders_normalize_ambient_context >/dev/null 2>&1; then
     _vetcoders_normalize_ambient_context || true
@@ -92,6 +110,9 @@ _vetcoders_product_entry_probe_print() {
     printf 'VC_FRAME_CONFIG_KDL=missing\n'
   fi
   printf 'OPERATOR_LAYOUT=%s\n' "${layout:-}"
+  printf 'VIBECRAFTED_WORKSPACE_ID=%s\n' "${VIBECRAFTED_WORKSPACE_ID:-}"
+  printf 'VIBECRAFTED_WORKSPACE_INSTANCE_ID=%s\n' "${VIBECRAFTED_WORKSPACE_INSTANCE_ID:-}"
+  printf 'VIBECRAFTED_OPERATOR_SESSION=%s\n' "${VIBECRAFTED_OPERATOR_SESSION:-}"
   if [[ -n "$layout" && -f "$layout" ]]; then
     printf 'OPERATOR_LAYOUT_PRESENT=1\n'
   else

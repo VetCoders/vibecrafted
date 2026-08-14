@@ -710,6 +710,12 @@ def worker_host_display_label(
     return f"{label} [{short_workspace_token(workspace_id)}]"
 
 
+def operator_session_name(workspace_id: str) -> str:
+    """Stable vc-frame product session bound to one durable workspace."""
+
+    return f"workspace-{short_workspace_token(workspace_id)}"
+
+
 # ---------------------------------------------------------------------------
 # catalog lifecycle
 # ---------------------------------------------------------------------------
@@ -1688,6 +1694,13 @@ def workspace_cli_main(argv: Sequence[str] | None = None) -> int:
     materialize_p.add_argument("--root", default=os.getcwd())
     materialize_p.add_argument("--json", action="store_true")
 
+    resolve_p = sub.add_parser(
+        "resolve", help="resolve or create the workspace used by vc-start"
+    )
+    resolve_p.add_argument("--root", default="")
+    resolve_p.add_argument("--env", action="store_true")
+    resolve_p.add_argument("--json", action="store_true")
+
     counts_p = sub.add_parser(
         "settlement-counts", help="F/X/N projection scoped to workspace_id"
     )
@@ -1762,6 +1775,27 @@ def workspace_cli_main(argv: Sequence[str] | None = None) -> int:
                 workspace_id=args.workspace_id, root=args.root
             )
             return _emit(instance.to_payload(), as_json=args.json)
+        if args.action == "resolve":
+            environ = dict(os.environ)
+            selected = selected_workspace()
+            if not environ.get(ENV_WORKSPACE_ID) and selected is not None:
+                environ[ENV_WORKSPACE_ID] = selected.workspace_id
+            root = args.root or (
+                selected.canonical_root if selected is not None else os.getcwd()
+            )
+            identity = resolve_run_workspace_identity(root=root, env=environ)
+            payload = {
+                **identity.to_env(),
+                "VIBECRAFTED_OPERATOR_SESSION": operator_session_name(
+                    identity.workspace_id
+                ),
+                "VIBECRAFTED_WORKSPACE_ROOT": str(Path(root).expanduser().resolve()),
+            }
+            if args.env:
+                for key, value in payload.items():
+                    print(f"{key}={value}")
+                return 0
+            return _emit(payload, as_json=args.json)
         if args.action == "settlement-counts":
             return _emit(
                 settlement_counts_for_workspace(args.workspace_id),
@@ -1803,6 +1837,7 @@ __all__ = [
     "materialize_instance",
     "migrate_legacy_workspaces",
     "new_uuid7",
+    "operator_session_name",
     "read_catalog",
     "read_snapshot_manifest",
     "recover_workspace",

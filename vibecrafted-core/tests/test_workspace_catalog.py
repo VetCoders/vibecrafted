@@ -121,6 +121,38 @@ def test_run_identity_fields_on_resolve(home: Path, tmp_path: Path) -> None:
     assert wc.short_workspace_token(created.workspace_id) in meta["worker_host_session"]
 
 
+def test_workspace_resolve_cli_reuses_selected_identity_and_stable_session(
+    home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    created = wc.create_workspace(root=root, display_label="repo", select=True)
+
+    assert wc.workspace_cli_main(["resolve", "--env"]) == 0
+    first = dict(
+        line.split("=", 1)
+        for line in capsys.readouterr().out.splitlines()
+        if "=" in line
+    )
+    assert first[wc.ENV_WORKSPACE_ID] == created.workspace_id
+    assert first["VIBECRAFTED_WORKSPACE_ROOT"] == str(root)
+    assert first["VIBECRAFTED_OPERATOR_SESSION"] == wc.operator_session_name(
+        created.workspace_id
+    )
+
+    assert wc.workspace_cli_main(["resolve", "--env"]) == 0
+    second = dict(
+        line.split("=", 1)
+        for line in capsys.readouterr().out.splitlines()
+        if "=" in line
+    )
+    assert second[wc.ENV_WORKSPACE_ID] == first[wc.ENV_WORKSPACE_ID]
+    assert second[wc.ENV_WORKSPACE_INSTANCE_ID] == first[wc.ENV_WORKSPACE_INSTANCE_ID]
+    assert (
+        second["VIBECRAFTED_OPERATOR_SESSION"] == first["VIBECRAFTED_OPERATOR_SESSION"]
+    )
+
+
 def test_new_uuid7_fallback_emits_uuid7(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delattr(wc.uuid, "uuid7", raising=False)
     generated = [uuid.UUID(wc.new_uuid7()) for _ in range(8)]
