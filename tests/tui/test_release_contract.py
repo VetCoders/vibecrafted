@@ -126,6 +126,31 @@ def test_release_bundle_binds_the_vibecrafted_app_icon() -> None:
     assert 'cmp -s "$ICONSET/icon_128x128.png" "$REFERENCE"' in icon_builder
 
 
+def test_release_bundle_binds_the_canonical_terminal_policy_and_font() -> None:
+    terminal = (REPO_ROOT / "config/vc-terminal/vibecrafted.toml").read_text(
+        encoding="utf-8"
+    )
+    app_delegate = (
+        REPO_ROOT
+        / "vibecrafted-app/shell-agent/app/Vibecrafted/AppDelegate.swift"
+    ).read_text(encoding="utf-8")
+    builder = (REPO_ROOT / "scripts/build-vibecrafted-release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'family = "Spot Mono"' in terminal
+    assert 'size = 14.5' in terminal
+    assert 'background = "#0b0b12"' in terminal
+    assert 'chars = "\\u001b[101;9u"' in terminal
+    assert "/Users/" not in terminal
+    assert "Contents/Resources/fonts/SpotMono.ttc" in app_delegate
+    assert "CTFontManagerRegisterFontsForURL" in app_delegate
+    assert "let terminalConfig = generation.appendingPathComponent" in app_delegate
+    assert 'productConfig.appendingPathComponent("terminal.toml")' not in app_delegate
+    assert 'install -m 0644 "$SPOT_MONO_FONT" "$resources/fonts/SpotMono.ttc"' in builder
+    assert "missing licensed Spot Mono input" in builder
+
+
 def test_mission_control_failure_board_exposes_absolute_failure_time() -> None:
     view = (
         REPO_ROOT
