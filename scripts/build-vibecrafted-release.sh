@@ -4,6 +4,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TERMINAL_REPO="${VIBECRAFTED_TERMINAL_REPO:-$REPO_ROOT/../vc-terminal}"
 FRAME_REPO="${VIBECRAFTED_FRAME_REPO:-$REPO_ROOT/../vc-frame}"
+ICON_SOURCE="${VIBECRAFTED_ICON_SOURCE:-$TERMINAL_REPO/assets/icon/vc-terminal-icon.png}"
+ICON_REFERENCE="${VIBECRAFTED_ICON_REFERENCE:-$TERMINAL_REPO/assets/icon/terminal.png}"
 DIST_DIR="${VIBECRAFTED_RELEASE_DIR:-$REPO_ROOT/dist}"
 BUILD_DIR="$REPO_ROOT/build/unified-release"
 APP="$DIST_DIR/Vibecrafted.app"
@@ -191,10 +193,22 @@ build_product() {
   built_app="$(find "$BUILD_DIR/DerivedData" -type d -name Vibecrafted.app -print -quit)"
   [[ -n "$built_app" ]] || die "xcodebuild did not produce Vibecrafted.app"
   /usr/bin/ditto "$built_app" "$APP"
+  local resources="$APP/Contents/Resources"
+  mkdir -p "$resources"
+  log "Binding the canonical vc-terminal icon to Vibecrafted.app"
+  "$REPO_ROOT/scripts/build-vibecrafted-icon.sh" \
+    "$ICON_SOURCE" "$resources/Vibecrafted.icns" "$ICON_REFERENCE"
+  if find "$resources" -maxdepth 1 -type f -name '*.icns' \
+      ! -name 'Vibecrafted.icns' -print -quit | grep -q .; then
+    die "assembled app contains a non-canonical application icon"
+  fi
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile Vibecrafted.icns" \
+    "$APP/Contents/Info.plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string Vibecrafted.icns" \
+      "$APP/Contents/Info.plist"
   remove_ambient_swift_rpath
 
   log "Embedding product modules and the checkout-free runtime"
-  local resources="$APP/Contents/Resources"
   local runtime="$resources/runtime"
   mkdir -p "$APP/Contents/Helpers" "$resources/terminal" "$runtime/bin"
   install -m 0755 "$terminal_source" "$APP/Contents/Helpers/vc-terminal"

@@ -20,6 +20,7 @@ targets:
         excludes:
           - "Bridge/vibecrafted_shell_ffiFFI.h"
           - "Bridge/vibecrafted_shell_ffiFFI.modulemap"
+          - "Info.plist"
     preBuildScripts:
       - name: "Build Rust FFI"
         script: |
@@ -31,15 +32,11 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.vetcoders.vibecrafted
-        INFOPLIST_GENERATION_MODE: GeneratedFile
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: 1
-        GENERATE_INFOPLIST_FILE: true
-        INFOPLIST_KEY_NSPrincipalClass: NSApplication
-        INFOPLIST_KEY_CFBundleExecutable: Vibecrafted
-        INFOPLIST_KEY_CFBundleName: Vibecrafted
-        INFOPLIST_KEY_CFBundleIconFile: Vibecrafted
-        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        GENERATE_INFOPLIST_FILE: false
+        INFOPLIST_FILE: Vibecrafted/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
         SWIFT_OBJC_BRIDGING_HEADER: "Vibecrafted/Bridge/vibecrafted_shell_ffiFFI.h"
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Manual

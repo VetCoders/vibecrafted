@@ -1114,6 +1114,21 @@ def test_valid_app_has_one_bundle_identity_and_three_bound_entrypoints(
     )
 
 
+def test_app_rejects_legacy_icon_resource(
+    tmp_path: Path, macho_executable: Path
+) -> None:
+    app = tmp_path / "Vibecrafted.app"
+    manifest = _app_fixture(app, macho_executable)
+    legacy_icon = app / "Contents/Resources/icon1.icns"
+    legacy_icon.write_bytes(b"legacy-icon")
+    manifest["files"].append(
+        _entry(app, "Contents/Resources/icon1.icns", kind="resource")
+    )
+    _write_app_manifest(app, manifest, sign=True)
+
+    _assert_error(contract.E_BUNDLE, lambda: contract.verify_app(app))
+
+
 def test_outer_macho_code_digest_rejects_substitution_after_resigning(
     tmp_path: Path, macho_executable: Path
 ) -> None:

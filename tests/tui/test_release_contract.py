@@ -87,15 +87,50 @@ def test_release_bundle_binds_the_vibecrafted_app_icon() -> None:
     project = (REPO_ROOT / "vibecrafted-app/shell-agent/app/project.yml").read_text(
         encoding="utf-8"
     )
+    info_plist = (
+        REPO_ROOT / "vibecrafted-app/shell-agent/app/Vibecrafted/Info.plist"
+    ).read_text(encoding="utf-8")
     manifest = (REPO_ROOT / "scripts/unified_product_manifest.py").read_text(
+        encoding="utf-8"
+    )
+    builder = (REPO_ROOT / "scripts/build-vibecrafted-release.sh").read_text(
+        encoding="utf-8"
+    )
+    icon_builder = (REPO_ROOT / "scripts/build-vibecrafted-icon.sh").read_text(
         encoding="utf-8"
     )
     icon = REPO_ROOT / "vibecrafted-app/shell-agent/app/Vibecrafted/Vibecrafted.icns"
 
-    assert "INFOPLIST_KEY_CFBundleIconFile: Vibecrafted" in project
+    assert "INFOPLIST_FILE: Vibecrafted/Info.plist" in project
+    assert "<key>CFBundleIconFile</key>" in info_plist
+    assert "<string>Vibecrafted.icns</string>" in info_plist
     assert 'plist["CFBundleIconFile"] = contract.PRODUCT_ICON_FILE' in manifest
     assert icon.is_file()
     assert icon.stat().st_size > 100_000
+    assert "$TERMINAL_REPO/assets/icon/vc-terminal-icon.png" in builder
+    assert "$TERMINAL_REPO/assets/icon/terminal.png" in builder
+    assert '"$ICON_SOURCE" "$resources/Vibecrafted.icns" "$ICON_REFERENCE"' in builder
+    assert "! -name 'Vibecrafted.icns'" in builder
+    assert "iconutil -c icns" in icon_builder
+    assert 'cmp -s "$ICONSET/icon_128x128.png" "$REFERENCE"' in icon_builder
+
+
+def test_mission_control_failure_board_exposes_absolute_failure_time() -> None:
+    view = (
+        REPO_ROOT
+        / "vibecrafted-app/shell-agent/app/Vibecrafted/Views/MissionControlViewController.swift"
+    ).read_text(encoding="utf-8")
+    ffi = (REPO_ROOT / "vibecrafted-app/shell-agent/ffi/src/lib.rs").read_text(
+        encoding="utf-8"
+    )
+    mission = (
+        REPO_ROOT / "vibecrafted-app/tui-agent/src/mission_control.rs"
+    ).read_text(encoding="utf-8")
+
+    assert '("Date", "DATE", 145)' in view
+    assert 'case "DATE": return dateTime(item.occurredAt)' in view
+    assert "pub occurred_at: Option<String>" in ffi
+    assert "occurred_at: Some(record.completed_at.to_rfc3339())" in mission
 
 
 def test_signed_bundle_runtime_cannot_write_python_bytecode() -> None:

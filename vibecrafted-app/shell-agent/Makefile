@@ -34,9 +34,10 @@ app: bindings xcode
 			exit 1; \
 		fi; \
 		cp -R "$$BUILT_APP" build/Vibecrafted.app
-	@/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile Vibecrafted" build/Vibecrafted.app/Contents/Info.plist 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string Vibecrafted" build/Vibecrafted.app/Contents/Info.plist
+	@/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile Vibecrafted.icns" build/Vibecrafted.app/Contents/Info.plist 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string Vibecrafted.icns" build/Vibecrafted.app/Contents/Info.plist
 	@mkdir -p build/Vibecrafted.app/Contents/Resources
-	@cp app/Vibecrafted/Vibecrafted.icns build/Vibecrafted.app/Contents/Resources/Vibecrafted.icns
+	@../../scripts/build-vibecrafted-icon.sh ../../../vc-terminal/assets/icon/vc-terminal-icon.png build/Vibecrafted.app/Contents/Resources/Vibecrafted.icns ../../../vc-terminal/assets/icon/terminal.png
+	@! find build/Vibecrafted.app/Contents/Resources -maxdepth 1 -type f -name '*.icns' ! -name 'Vibecrafted.icns' -print -quit | grep -q .
 	@./scripts/fix-dylib-install-names.sh build/Vibecrafted.app
 	@codesign --force --deep --sign - build/Vibecrafted.app
 	@echo "App built: build/Vibecrafted.app"
