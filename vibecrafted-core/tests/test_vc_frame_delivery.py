@@ -137,6 +137,42 @@ def test_stage_rewires_stale_frontier_composer(tmp_path: Path, monkeypatch) -> N
     assert "VC_COMPOSER_CARET" in body or "guicursor" in body or "t_SI" in body
 
 
+def test_wire_can_force_managed_frontier_without_claiming_user_view(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    runtime = _seed_complete_runtime(tools)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    foreign = tmp_path / "checkout"
+    (foreign / "layouts").mkdir(parents=True)
+    (foreign / "layouts" / "operator.kdl").write_text(
+        "foreign layout\n", encoding="utf-8"
+    )
+    user_view = home / ".config" / "vc-frame"
+    frontier = home / ".config" / "vetcoders" / "frontier" / "vc-frame"
+    user_view.mkdir(parents=True)
+    frontier.mkdir(parents=True)
+    (user_view / "layouts").symlink_to(foreign / "layouts")
+    (frontier / "layouts").symlink_to(foreign / "layouts")
+
+    wire_vc_frame_config(
+        home=home,
+        tools_home=tools,
+        prefer_repo=False,
+        force_frontier=True,
+    )
+
+    assert (user_view / "layouts").resolve() == (foreign / "layouts").resolve()
+    assert (frontier / "layouts").resolve() == (
+        runtime / "runtime" / "generated" / "vc-frame" / "layouts"
+    ).resolve()
+    assert (foreign / "layouts" / "operator.kdl").read_text(
+        encoding="utf-8"
+    ) == "foreign layout\n"
+
+
 def test_wire_only_requires_pre_materialized_runtime(
     tmp_path: Path, monkeypatch
 ) -> None:

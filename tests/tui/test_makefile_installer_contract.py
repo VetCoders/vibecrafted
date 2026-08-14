@@ -549,6 +549,7 @@ def test_make_install_stages_vc_frame_from_published_runtime() -> None:
     assert (
         "from vibecrafted_core.vc_frame_delivery import wire_vc_frame_config"
     ) in install_block
+    assert "wire_vc_frame_config(force_frontier=True)" in install_block
     assert "ensure_zshrc" not in install_block
     assert "stage_vc_frame_config" not in install_block
     assert "vc-frame config delivery skipped" not in install_block
