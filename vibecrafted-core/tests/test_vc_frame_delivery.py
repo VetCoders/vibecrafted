@@ -21,6 +21,10 @@ from vibecrafted_core.vc_frame_staging import (
 )
 
 
+def _runtime_payload(runtime: Path) -> Path:
+    return runtime / "vibecrafted-core" / "vibecrafted_core" / "runtime"
+
+
 def _seed_complete_runtime(
     tools: Path,
     *,
@@ -30,15 +34,15 @@ def _seed_complete_runtime(
 ) -> Path:
     runtime = tools / "vibecrafted-full"
     (runtime / "vibecrafted-core").mkdir(parents=True)
-    (runtime / "runtime" / "scripts").mkdir(parents=True)
+    (_runtime_payload(runtime) / "scripts").mkdir(parents=True)
     (runtime / "Makefile").write_text("all:\n\t@true\n", encoding="utf-8")
-    (runtime / "runtime" / "scripts" / "codex_spawn.sh").write_text(
+    (_runtime_payload(runtime) / "scripts" / "codex_spawn.sh").write_text(
         "#!/usr/bin/env bash\n", encoding="utf-8"
     )
     if with_config:
         materialize_vc_frame_config(
             vc_frame_config_source(),
-            runtime / "runtime" / "generated" / "vc-frame",
+            _runtime_payload(runtime) / "generated" / "vc-frame",
             pane_shell=resolve_pane_shell(path_env),
             clipboard_command=resolve_clipboard_command(path_env),
         )
@@ -92,10 +96,12 @@ def test_stage_wires_view_through_current(tmp_path: Path, monkeypatch) -> None:
     assert current.resolve() == runtime.resolve()
     assert (current / "Makefile").is_file()
     assert (current / "vibecrafted-core").is_dir()
-    assert (current / "runtime" / "scripts" / "codex_spawn.sh").is_file()
-    assert (current / "runtime" / "generated" / "vc-frame" / "config.kdl").exists()
+    assert (_runtime_payload(current) / "scripts" / "codex_spawn.sh").is_file()
+    assert (
+        _runtime_payload(current) / "generated" / "vc-frame" / "config.kdl"
+    ).exists()
     # Operator scripts + frontier projection (VC_FRAME_CONFIG_DIR) are install-owned.
-    generated = current / "runtime" / "generated" / "vc-frame"
+    generated = _runtime_payload(current) / "generated" / "vc-frame"
     assert (generated / "vc-composer.sh").is_file()
     composer_view = view / "vc-composer.sh"
     assert composer_view.is_symlink()
@@ -166,7 +172,7 @@ def test_wire_can_force_managed_frontier_without_claiming_user_view(
 
     assert (user_view / "layouts").resolve() == (foreign / "layouts").resolve()
     assert (frontier / "layouts").resolve() == (
-        runtime / "runtime" / "generated" / "vc-frame" / "layouts"
+        _runtime_payload(runtime) / "generated" / "vc-frame" / "layouts"
     ).resolve()
     assert (foreign / "layouts" / "operator.kdl").read_text(
         encoding="utf-8"
@@ -197,7 +203,7 @@ def test_wire_only_never_mutates_published_generation(
     runtime = _seed_complete_runtime(tools)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     stage_vc_frame_config(home=home, tools_home=tools, prefer_repo=False)
-    generated = runtime / "runtime" / "generated" / "vc-frame"
+    generated = _runtime_payload(runtime) / "generated" / "vc-frame"
     before = {
         path.relative_to(generated): (
             "link"
@@ -300,7 +306,7 @@ def test_stage_keeps_mirrored_runtime_source_distinct_from_generated_view(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     materialize_vc_frame_config(
         source,
-        runtime / "runtime" / "generated" / "vc-frame",
+        _runtime_payload(runtime) / "generated" / "vc-frame",
         pane_shell="sh",
         clipboard_command=None,
     )
@@ -316,7 +322,7 @@ def test_stage_keeps_mirrored_runtime_source_distinct_from_generated_view(
     )
 
     assert (source / "config.kdl").read_text(encoding="utf-8").startswith("theme")
-    generated = runtime / "runtime" / "generated" / "vc-frame"
+    generated = _runtime_payload(runtime) / "generated" / "vc-frame"
     assert (generated / "config.kdl").is_file()
     assert (home / ".config" / "vc-frame" / "config.kdl").resolve() == (
         generated / "config.kdl"
@@ -488,7 +494,7 @@ def test_config_refresh_preserves_runtime_pointer_and_view_paths(
     assert (tools / "vibecrafted-current").resolve() == runtime.resolve()
     assert (runtime / "Makefile").is_file()
     assert (runtime / "vibecrafted-core").is_dir()
-    assert (runtime / "runtime" / "scripts" / "codex_spawn.sh").is_file()
+    assert (_runtime_payload(runtime) / "scripts" / "codex_spawn.sh").is_file()
     assert view_cfg.resolve().is_file()
 
 
@@ -509,7 +515,7 @@ def test_stage_rewires_legacy_store_view_to_generated_assets(
 
     stage_vc_frame_config(home=home, tools_home=tools, prefer_repo=False)
 
-    generated = runtime / "runtime" / "generated" / "vc-frame" / "config.kdl"
+    generated = _runtime_payload(runtime) / "generated" / "vc-frame" / "config.kdl"
     assert (view / "config.kdl").resolve() == generated.resolve()
 
 
@@ -553,7 +559,7 @@ def test_pane_shell_substitution_on_stage_without_zsh(
         prefer_repo=False,
         path_env=str(fake_bin),
     )
-    staged_root = runtime / "runtime" / "generated" / "vc-frame"
+    staged_root = _runtime_payload(runtime) / "generated" / "vc-frame"
     staged = staged_root / "layouts"
     assert plan.pane_shell == "bash"
     research = (staged / "research.kdl").read_text(encoding="utf-8")

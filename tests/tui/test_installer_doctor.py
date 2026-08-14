@@ -1900,12 +1900,12 @@ def test_describe_dumb_terminal_noise_flags_starship_and_stdout() -> None:
 
 def _seed_complete_vibecrafted_runtime(tools: Path) -> Path:
     runtime = tools / "vibecrafted-local"
-    (runtime / "vibecrafted-core").mkdir(parents=True)
-    (runtime / "runtime" / "scripts").mkdir(parents=True)
+    runtime_payload = runtime / "vibecrafted-core" / "vibecrafted_core" / "runtime"
+    (runtime_payload / "scripts").mkdir(parents=True)
     (runtime / "Makefile").write_text("install:\n", encoding="utf-8")
     materialize_vc_frame_config(
         vc_frame_config_source(),
-        runtime / "runtime" / "generated" / "vc-frame",
+        runtime_payload / "generated" / "vc-frame",
         pane_shell=resolve_pane_shell(),
         clipboard_command=resolve_clipboard_command(),
     )
