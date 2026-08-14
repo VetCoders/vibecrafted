@@ -22,6 +22,7 @@ DMG="$DIST_DIR/$DMG_NAME"
 DMG_CHECKSUM="$DMG.sha256"
 LEGACY_DMG="$DIST_DIR/Vibecrafted.dmg"
 KEYS="${KEYS:-$HOME/.keys}"
+SPOT_MONO_FONT="${VIBECRAFTED_SPOT_MONO_FONT:-$KEYS/fonts/SpotMono.ttc}"
 SIGNING_IDENTITY_FILE="$KEYS/signing-identity.txt"
 CERT_P12="$KEYS/Certificates.p12"
 CERT_PASSWORD_FILE="$KEYS/cert_password.txt"
@@ -96,10 +97,13 @@ prepare_signing_identity() {
     || die "Developer ID identity is not available in the keychain"
 }
 
-for command in cargo codesign git hdiutil install_name_tool make otool uv xcodebuild xcodegen xcrun; do
+for command in cargo codesign file git hdiutil install_name_tool make otool uv xcodebuild xcodegen xcrun; do
   require "$command"
 done
 [[ -f "$SIGNING_IDENTITY_FILE" ]] || die "missing $SIGNING_IDENTITY_FILE"
+[[ -f "$SPOT_MONO_FONT" ]] || die "missing licensed Spot Mono input: $SPOT_MONO_FONT"
+file -b "$SPOT_MONO_FONT" | grep -Fq 'OpenType font collection data' \
+  || die "Spot Mono input is not an OpenType font collection"
 prepare_signing_identity
 
 git_sha() { git -C "$1" rev-parse HEAD; }
@@ -222,6 +226,9 @@ build_product() {
     "$APP/Contents/Info.plist" 2>/dev/null \
     || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string Vibecrafted.icns" \
       "$APP/Contents/Info.plist"
+  log "Embedding the canonical Spot Mono terminal family"
+  mkdir -p "$resources/fonts"
+  install -m 0644 "$SPOT_MONO_FONT" "$resources/fonts/SpotMono.ttc"
   remove_ambient_swift_rpath
 
   log "Embedding product modules and the checkout-free runtime"

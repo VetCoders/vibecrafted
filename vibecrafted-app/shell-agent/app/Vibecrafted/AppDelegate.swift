@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import Darwin
 
 private struct CanonicalRuntimeInstall {
@@ -107,6 +108,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       print("Canonical terminal config is missing: \(install.terminalConfig.path)")
       return
     }
+    do {
+      try registerBundledFonts()
+    } catch {
+      print("Cannot register the bundled terminal font: \(error)")
+      return
+    }
 
     let host = ProcessInfo.processInfo.environment
     let inherited = [
@@ -139,6 +146,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       terminalProcess = process
     } catch {
       print("Failed to launch bundled vc-terminal: \(error)")
+    }
+  }
+
+  private func registerBundledFonts() throws {
+    let font = Bundle.main.bundleURL.appendingPathComponent(
+      "Contents/Resources/fonts/SpotMono.ttc")
+    guard FileManager.default.fileExists(atPath: font.path) else {
+      throw NSError(
+        domain: "io.vetcoders.vibecrafted.fonts", code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "bundled SpotMono.ttc is missing"])
+    }
+
+    var registrationError: Unmanaged<CFError>?
+    if !CTFontManagerRegisterFontsForURL(font as CFURL, .session, &registrationError) {
+      let message = registrationError?.takeRetainedValue().localizedDescription
+        ?? "CoreText rejected SpotMono.ttc"
+      // A system-installed Spot Mono can already occupy the session scope.
+      // Accept that case only when CoreText resolves the required family.
+      let descriptor = CTFontDescriptorCreateWithNameAndSize("Spot Mono" as CFString, 14.5)
+      guard let match = CTFontDescriptorCreateMatchingFontDescriptor(descriptor, nil),
+        CTFontDescriptorCopyAttribute(match, kCTFontFamilyNameAttribute) as? String == "Spot Mono"
+      else {
+        throw NSError(
+          domain: "io.vetcoders.vibecrafted.fonts", code: 2,
+          userInfo: [NSLocalizedDescriptionKey: message])
+      }
     }
   }
 
@@ -205,12 +238,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     try assertNoSymlinks(below: generation)
     let bin = generation.appendingPathComponent("bin", isDirectory: true)
 
-    let sourceTerminalConfig = generation.appendingPathComponent(
+    // The terminal policy is part of the signed, version-bound runtime. Do not
+    // copy it into the user's config tree: a stale first-install copy would
+    // survive upgrades and silently override the policy shipped by the app.
+    let terminalConfig = generation.appendingPathComponent(
       "config/vc-terminal/vibecrafted.toml")
-    let terminalConfig = productConfig.appendingPathComponent("terminal.toml")
-    if !manager.fileExists(atPath: terminalConfig.path) {
-      try manager.copyItem(at: sourceTerminalConfig, to: terminalConfig)
-    }
     let sourceFrameConfig = generation.appendingPathComponent(
       "vibecrafted-core/vibecrafted_core/config/vc-frame", isDirectory: true)
     let frameConfig = productConfig.appendingPathComponent("vc-frame", isDirectory: true)
