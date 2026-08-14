@@ -1,4 +1,4 @@
-.PHONY: gates fmt fmt-check lint test check workspace-check clean help bindings xcode app app-debug dmg dmg-signed
+.PHONY: gates fmt fmt-check lint test check workspace-check clean help bindings xcode app app-debug dmg dmg-signed notarize release
 
 gates: fmt-check lint test
 
@@ -35,10 +35,16 @@ app-debug:
 	@$(MAKE) -C shell-agent app-debug
 
 dmg:
-	@$(MAKE) -C shell-agent dmg
+	@$(MAKE) -C .. dmg
 
 dmg-signed:
-	@$(MAKE) -C shell-agent dmg-signed
+	@$(MAKE) -C .. dmg-signed
+
+notarize:
+	@$(MAKE) -C .. notarize
+
+release:
+	@$(MAKE) -C .. release
 
 # Help colors
 HELP_C_CYAN   := \033[36m
@@ -47,4 +53,4 @@ HELP_C_YELLOW := \033[33m
 HELP_C_RESET  := \033[0m
 
 help:
-	@printf '%s\n' 'targets: gates fmt fmt-check lint test check workspace-check clean bindings xcode app app-debug dmg dmg-signed'
+	@printf '%s\n' 'targets: gates fmt fmt-check lint test check workspace-check clean bindings xcode app app-debug dmg dmg-signed notarize release'

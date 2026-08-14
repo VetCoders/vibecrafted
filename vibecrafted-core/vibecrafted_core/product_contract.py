@@ -3167,6 +3167,7 @@ def _write_fixture_macho(path: Path) -> None:
     )
     if result.returncode != 0:
         _fail(E_PROOF, f"self-test could not compile Mach-O fixture: {result.stderr}")
+    path.chmod(0o755)
 
 
 def _self_test() -> int:

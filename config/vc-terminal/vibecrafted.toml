@@ -1,0 +1,21 @@
+# Vibecrafted-owned terminal host policy. This file is loaded explicitly by
+# Vibecrafted.app; it never imports or mutates a user's Alacritty configuration.
+[general]
+live_config_reload = false
+
+[window]
+title = "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍."
+decorations = "Transparent"
+startup_mode = "Maximized"
+option_as_alt = "Both"
+blur = true
+opacity = 0.9
+padding = { x = 0, y = 0 }
+dynamic_padding = true
+
+[scrolling]
+history = 50000
+multiplier = 3
+
+[mouse]
+hide_when_typing = true

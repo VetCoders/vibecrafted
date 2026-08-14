@@ -97,6 +97,7 @@ def _compile_macho(
         text=True,
     )
     assert result.returncode == 0, result.stderr
+    path.chmod(0o755)
 
 
 @pytest.fixture(scope="session")
@@ -2831,3 +2832,67 @@ def test_shell_front_door_self_test_exercises_real_verifier() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "self-test: PASS valid=4 negative=2 error_codes=24,27" in result.stdout
+
+
+def test_unified_release_has_one_top_level_owner() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    builder = (REPO_ROOT / "scripts/build-vibecrafted-release.sh").read_text(
+        encoding="utf-8"
+    )
+    shell_makefile = (REPO_ROOT / "vibecrafted-app/shell-agent/Makefile").read_text(
+        encoding="utf-8"
+    )
+
+    assert "release:\n\t@zsh -ic" in makefile
+    assert 'make -C "$TERMINAL_REPO"' in builder
+    assert "release-bins" in builder
+    assert 'make -C "$FRAME_REPO" release' in builder
+    assert "uv python install 3.12.3" in builder
+    assert "--noprofile" not in builder  # vc-start, not the release shell, owns this
+    assert "vc-frame.real" not in builder
+    assert "$(MAKE) -C ../.. release" in shell_makefile
+    assert not (REPO_ROOT / "vibecrafted-app/shell-agent/scripts/build-dmg.sh").exists()
+
+
+def test_manifest_producer_emits_an_app_accepted_by_the_runtime_verifier(
+    tmp_path: Path, macho_executable: Path
+) -> None:
+    app = tmp_path / "Vibecrafted.app"
+    _app_fixture(app, macho_executable)
+    script = REPO_ROOT / "scripts/unified_product_manifest.py"
+    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "vibecrafted-core")}
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "app",
+            "--app",
+            str(app),
+            "--terminal-source",
+            str(macho_executable),
+            "--frame-source",
+            str(macho_executable),
+            "--version",
+            "1.0.0",
+            "--build",
+            "1",
+            "--vibecrafted-sha",
+            "2" * 40,
+            "--terminal-sha",
+            "4" * 40,
+            "--frame-sha",
+            "6" * 40,
+        ],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    _codesign_app(app)
+    product = contract.verify_app(app, require_clean=True)
+    assert [item["module"] for item in product["modules"]] == [
+        "vc-terminal",
+        "vc-frame",
+    ]

@@ -33,7 +33,7 @@ fn run() -> Result<(), String> {
     let app = app_root()?;
     let resources = app.join("Contents/Resources");
     let runtime = resources.join("runtime");
-    let shell = runtime.join("shell/vetcoders.sh");
+    let shell = runtime.join("runtime/shell/vetcoders.sh");
     let frame = app.join("Contents/Helpers/vc-frame");
     if !shell.is_file() {
         return Err(format!(
@@ -58,8 +58,9 @@ fn run() -> Result<(), String> {
         .arg(&shell)
         .args(env::args_os().skip(1))
         .env("PATH", runtime_path)
+        .env("VIBECRAFTED_PYTHON", runtime.join("bin/python3"))
         .env("VIBECRAFTED_APP_ROOT", &app)
-        .env("VIBECRAFTED_ROOT", &resources)
+        .env("VIBECRAFTED_ROOT", &runtime)
         .env("VIBECRAFTED_VC_FRAME_BIN", &frame);
 
     let error = command.exec();

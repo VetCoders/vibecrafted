@@ -72,8 +72,9 @@ We will install the backyard product spine (one path, no install loops):
   - vendored foundation binaries from bin/vendor/<platform> when present
   - Rust app/server binaries (voc, vc-admin, vc-server) in ~/.local/bin
 
-Host app (Vibecrafted.app / vc-terminal) is still a separate release artifact
-when not on disk; the operator path that always works is: vc-frame + vc-start.
+The public macOS install is one Vibecrafted.app carrying vc-terminal, vc-frame,
+vc-start, and the Vibecrafted runtime. It does not rewrite user shell or terminal
+configuration; the app injects only its bundled environment at process start.
 """
 cmd = [
     "bash",
