@@ -257,14 +257,7 @@ doctor_log="$(mktemp -t vc-doctor.XXXXXX)"
 trap 'rm -f "$doctor_log"' EXIT
 
 doctor_exit=0
-if [[ "${CI:-}" == "true" ]] && command -v vibecrafted >/dev/null 2>&1; then
-  doctor_cwd="${RUNNER_TEMP:-/tmp}"
-  doctor_runner=(vibecrafted doctor)
-else
-  doctor_cwd="$REPO_ROOT"
-  doctor_runner=(make doctor)
-fi
-if (cd "$doctor_cwd" && "${doctor_runner[@]}") >"$doctor_log" 2>&1; then
+if (cd "$REPO_ROOT" && make doctor) >"$doctor_log" 2>&1; then
   doctor_exit=0
 else
   doctor_exit=$?
@@ -288,7 +281,7 @@ if [[ -z "$summary_line" ]]; then
   log_fail "doctor: summary line missing or unparseable"
 elif (( fail_count > 0 )); then
   log_fail "doctor: $fail_count failures reported"
-  grep -E '(^|[[:space:]])(✗|FAIL|failure)' "$doctor_log" | tail -n 12 >&2 || true
+  tail -n 80 "$doctor_log" >&2
 elif (( doctor_exit != 0 )); then
   log_fail "doctor: exited $doctor_exit despite a zero-failure summary"
 elif (( ok_count == 0 )); then
