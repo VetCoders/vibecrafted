@@ -134,9 +134,10 @@ vibecrafted release codex --prompt "Prepare release steps"
 
 ## 5. Sessions, tabs, and the operator's view (vc-frame)
 
-- Worker tabs are hosted in **per-project sessions** named after the repo
-  basename — never in the operator's own session. `VIBECRAFTED_WORKER_SESSION`
-  overrides; a repo/session name collision routes to `<repo> workers`.
+- Worker tabs are hosted in **per-project sessions** named
+  `<repo basename> workers` — never in the operator's own session, which is
+  the bare `<repo basename>` card. `VIBECRAFTED_WORKER_SESSION` overrides;
+  nothing else (the dispatcher's seat name included) changes the host.
   The launch log's `operator_session` field records the _actual_ host.
 - Missing host session → created on demand via `attach --create-background`;
   a double failure is loud (exit ≠ 0, `last_error` set), never silent.

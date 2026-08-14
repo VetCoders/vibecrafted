@@ -1,82 +1,41 @@
 # Quick Start
 
-You have an AI-built repo. You want to ship it without the vibe hangover.
+## 1. Install the one product
 
-## 1. Install
+Open the [latest release](https://github.com/vetcoders/vibecrafted/releases/latest),
+download `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`, verify it with the
+adjacent `.dmg.sha256`, and open the DMG.
 
-Browser-guided path for the human kickoff:
+Drag `Vibecrafted.app` to Applications, then launch it. The DMG is Developer ID
+signed, notarized and carries the exact matching `vc-terminal`, `vc-frame` and
+Vibecrafted runtime. There are no per-repository installers to run.
 
-```bash
-curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui
-```
-
-The bootstrap explains what it will do and asks before proceeding on an
-attended terminal. Pass `--yes` if you want to pre-approve that bootstrap
-prompt.
-
-This path stages the control plane, bootstraps the foundation layer, and runs
-the compact installer truth used by automation as well.
-
-Compact path for scripting or terminal-only installs:
-
-```bash
-curl -fsSL https://vibecrafted.io/install.sh | bash
-```
-
-Non-destructive. Interactive. Tells you what it does before it does it.
-Asks before touching your shell config. Everything reversible with
-`make -C $VIBECRAFTED_ROOT/.vibecrafted/tools/vibecrafted-current uninstall`.
-
-Inside a local checkout, `make install` runs the terminal-native installer
-wizard with checkpoints and REASON. Use `make setup-dev` for the same
-meta-installer with advanced options, or `make install-auto` for the
-auto-approved automation path. If you prefer the browser-guided surface, run
-`make wizard` or the alias `make gui-install`.
-
-Use `make help` for the six operator targets. Use `make help-dev` when you need
-the full maintainer inventory.
-
-After install, open a new terminal or:
-
-```bash
-source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"
-```
+The app creates or restores a durable `workspace_id`, starts through its
+bundled `vc-start`, and sources an app-owned XDG/runtime environment. Your
+terminal, shell and vc-frame configuration files are not replaced.
 
 ## 2. Verify
 
 ```bash
 vibecrafted doctor
 vibecrafted --version
-# optional stamp check after a local checkout install:
-# cat ~/.local/share/vibecrafted/tools/vibecrafted-current/VERSION
 ```
 
-Green means ready. Yellow means the doctor tells you what is weak and what to
-check next.
-
-**Daily CLI ≠ floating git checkout.** After you pull runtime changes into a
-local tree, re-run `make install` (or `install-auto`) so the staged tools home
-and `VERSION` `+g<sha>` match the intended HEAD. Finished-run SESSIONS rail
-(`f · x · n`), origin stamp, and research-vs-bucket placement:
-[runtime/TRIAGE_AND_SESSIONS.md](runtime/TRIAGE_AND_SESSIONS.md).
+The release report on GitHub records the exact source tuple, DMG SHA-256,
+notarization status and cold mounted-DMG smoke.
 
 ## 3. Orient your agent
 
-Go to any git repo:
+From any repository:
 
 ```bash
-cd $VIBECRAFTED_ROOT/your-project
 vibecrafted init claude
+# or
+vibecrafted init codex
 ```
 
-This runs `vibecrafted init claude` — the command-deck front door for `vc-init`.
-Your agent gets three things before touching anything:
-
-- **Intentions** — what was done before (indexed session history)
-- **Sight** — what the code looks like now (structural map via loctree)
-- **Ground truth** — whether quality gates actually pass
-
-Your agent now has orientation instead of assumptions.
+Choose the agent you are entering. Both forms recover intentions through AICX,
+map the living tree through Loctree and check runtime truth before work begins.
 
 ## 4. Build something
 
@@ -84,97 +43,10 @@ Your agent now has orientation instead of assumptions.
 vibecrafted implement codex --prompt "Add user authentication with JWT"
 ```
 
-`vibecrafted implement` runs the ship WRITE delivery contract in `vc-implement`.
-For prompt-typed Just Do posture (not a ship stage), use `vibecrafted justdo`
-instead (ADR-0001 — not an implement alias):
+Use `vibecrafted help` for the full operator surface.
 
-- **Orient** — map the repo, load prior intent, and choose the smallest shape that works
-- **Implement** — make the change, add tests, and integrate with the live runtime
-- **Converge** — run followup, then `vc-marbles` if P0 or P1 findings remain
-- **Return** — hand back a verified surface with the next truthful move called out
+## Developer checkout path
 
-## 5. Run phases individually
-
-```bash
-vibecrafted scaffold claude --prompt "Plan the auth architecture"   # vc-scaffold
-vibecrafted init claude                                             # vc-init
-vibecrafted intents codex --prompt "Audit what from the plan landed" # vc-intents
-vibecrafted workflow claude --prompt "Plan and implement auth"      # vc-workflow
-vibecrafted review codex --prompt "Audit the auth changes"          # vc-review
-vibecrafted marbles codex --count 3 --depth 3                       # vc-marbles
-vibecrafted ownership codex --prompt "Take this surface to done"    # vc-ownership
-vibecrafted dou claude --prompt "Audit launch readiness"            # vc-dou
-vibecrafted decorate codex --prompt "Polish the surface"            # vc-decorate
-vibecrafted hydrate codex --prompt "Package the product"            # vc-hydrate
-vibecrafted release codex --prompt "Prepare release steps"          # vc-release
-```
-
-## 6. Multi-agent research
-
-For hard problems, send the same question to multiple planners:
-
-```
-Research: what is the best auth strategy for this codebase?
-```
-
-`vc-partner` sends the same plan to Claude, Codex, and Gemini independently.
-You get three expert opinions. Synthesize the strongest parts. Resume the
-winning agent into implementation.
-
-## 7. Convergence loops
-
-When the code is close but not done:
-
-```bash
-vibecrafted marbles codex --prompt "Fill the gaps on the auth module" --count 3
-```
-
-The agent enters a convergence loop — tools find what is wrong, agent fixes it,
-tools check the new landscape, repeat. Stops when no tool can find a single
-remaining accusation.
-
-## 8. Operator surfaces
-
-The command deck stays small on purpose:
-
-```bash
-vibecrafted help
-vibecrafted help --all
-vibecrafted gui
-vibecrafted tui
-vibecrafted dispatch path/to/run.dispatch.toml --doctor
-```
-
-Inside a dispatch plan, pin a model per cut to match its class — the pin rides
-the plan into the launcher, and an unpinned cut falls back to the account
-default:
-
-```toml
-[[cuts]]
-id = "refactor-parser"
-agent = "codex"
-workflow = "implement"
-model = "<provider-model-id>" # exact provider pin; omit to use the account default
-prompt = "..."
-```
-
-`gui`, `tui`, `dashboard`, `dispatch`, and telemetry commands are real runtime
-surfaces. They are second-visit tools, not the first thing a new operator needs
-to memorize.
-
-## The tab trick
-
-Type `vibecrafted help` for the command deck. Once shell helpers are loaded,
-`vc-` wrappers stay available as shortcuts.
-
-For the full route inventory, see [SKILLS](./SKILLS.md). For the framework-wide
-flow map, see [WORKFLOWS](./WORKFLOWS.md). For the documentation truth spine,
-see [DOCUMENTATION_MAP](./DOCUMENTATION_MAP.md).
-
-Preparing the public launch surface and directory submissions?
-Use [Release Kickoff](./RELEASE_KICKOFF.md) together with
-[Submission Forms](./SUBMISSION_FORMS.md).
-
----
-
-`//𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.`
+`make install`, `make install-auto` and the legacy curl bootstrap remain
+maintainer/control-plane staging tools for non-app development. They are not a
+second end-user product, DMG, terminal installer or vc-frame update channel.

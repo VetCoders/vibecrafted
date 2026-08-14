@@ -116,6 +116,7 @@ Grounded in `vibecrafted_core.cli.LAUNCHERS` + shell wrappers + lifecycle meta. 
 | Launcher    | Skill                                   | Worker CLI                      | Interactive     | Notes                                                                                           |
 | ----------- | --------------------------------------- | ------------------------------- | --------------- | ----------------------------------------------------------------------------------------------- |
 | `justdo`    | [`vc-justdo`](vc-justdo/SKILL.md)       | `vibecrafted justdo <agent>`    | `/vc-justdo`    | **Standalone posture** — not a ship stage; not `implement`. Task type from the prompt. ADR-0001 |
+| `canary`    | [`vc-canary`](vc-canary/SKILL.md)       | `vibecrafted canary <agent>`    | `/vc-canary`    | Ownership catalog: atlas sense → 1 agent/scope → one commit → findings report                   |
 | `research`  | [`vc-research`](vc-research/SKILL.md)   | `vibecrafted research …`        | `/vc-research`  | Swarm-capable; default multi-agent research                                                     |
 | `ownership` | [`vc-ownership`](vc-ownership/SKILL.md) | `vibecrafted ownership <agent>` | `/vc-ownership` | Full-spectrum ownership delivery                                                                |
 | `partner`   | [`vc-partner`](vc-partner/SKILL.md)     | `vibecrafted partner <agent>`   | `/vc-partner`   | Shared steering with operator                                                                   |

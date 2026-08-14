@@ -8,9 +8,9 @@ order: 10
 # Dispatch Overview
 
 `vibecrafted dispatch` runs a `vibecrafted.dispatch.v1` TOML plan through a
-deterministic supervisor: a serial loop that executes a predefined line of
-cuts, launches one worker per cut, runs machine-checkable verifiers after
-each, and applies explicit repair and failure policies. Where the
+deterministic, dependency-aware supervisor. It launches all ready cuts up to
+the declared concurrency limit, runs machine-checkable verifiers after each,
+and applies explicit repair and failure policies. Where the
 [lifecycle](/docs/lifecycle-overview/) relays one mission through eleven
 generic stages, dispatch executes a plan you already decomposed — every cut
 named, every success condition written down before anything launches.
@@ -24,12 +24,13 @@ vibecrafted dispatch plan.dispatch.toml --dry-run --json
 vibecrafted dispatch plan.dispatch.toml --resume <run-id>
 ```
 
-| Flag                | Effect                                                                   |
-| ------------------- | ------------------------------------------------------------------------ |
-| `--doctor`          | Validate only; exit non-zero on dispatch-doctor errors                   |
-| `--dry-run`         | Render every worker prompt under `reports_dir/dry-run` without launching |
-| `--json`            | Machine-readable output                                                  |
-| `--resume <run-id>` | Continue a previous dispatch run                                         |
+| Flag                         | Effect                                                                       |
+| ---------------------------- | ---------------------------------------------------------------------------- |
+| `--doctor`                   | Validate only; exit non-zero on dispatch-doctor errors                       |
+| `--dry-run`                  | Render prompts in the canonical artifact plane without launching             |
+| `--json`                     | Machine-readable output                                                      |
+| `--resume <run-id>`          | Reconcile receipts/Git and continue without duplicating live or settled cuts |
+| `--cleanup-settled <run-id>` | Remove settled worker checkouts/targets; retain branches and evidence        |
 
 Run `--doctor` before every real launch: it parses the plan, checks the
 schema, and enforces the policy rules (for example, READ cuts must declare a
@@ -39,37 +40,44 @@ would receive — placeholders rendered, briefs inlined, baton attached.
 
 ## What the supervisor does per cut
 
-For each `[[cut]]` in order, the supervisor:
+For each ready `[[cut]]`, the supervisor:
 
-1. Renders the cut's prompt: shared `[common]` text, then the cut's brief
+1. Resolves the cut's dependency SHA and creates or validates its canonical
+   linked checkout. Only a named integrator receives the main checkout.
+2. Renders the cut's prompt: shared `[common]` text, then the cut's brief
    file or inline prompt, then `extra`, then the current baton state as JSON.
-2. Launches the cut's agent through the named workflow as a tracked run.
-3. Awaits the worker (poll and timeout from `[policy.await]`).
-4. Runs the cut's verifiers and matches their output against the declared
-   expectations (`contains`, `equals`, `matches`, `not_contains`,
+3. Launches the cut's agent through the named workflow as a tracked run, with
+   `CARGO_TARGET_DIR=<worker-checkout>/target`.
+4. Awaits the worker (poll and timeout from `[policy.await]`).
+5. Runs the cut's verifiers in that same checkout and matches their output
+   against the declared expectations (`contains`, `equals`, `matches`, `not_contains`,
    `exit_code`).
-5. Records a verdict with verifier evidence, appends it to the baton, and
+6. Records a verdict with verifier evidence, appends it to the baton, and
    applies policy: repair rounds on failure, `recovery` jumps when declared,
    and `on_critical_fail` / `on_timeout` behavior.
 
-The baton accumulates one state per cut (`[x]` verified, `[!]` failed,
+Independent ready cuts overlap. A join waits until every `depends_on` cut
+settles successfully; integrators are exclusive. The baton accumulates one
+state per cut (`[x]` verified, `[!]` failed,
 `[~]` worker done but unverified, `[ ]` pending) — later cuts see the full
 history in their prompt, so an audit cut can read what actually happened.
 
 ## Artifacts
 
-A full dispatch writes its evidence next to the plan's `reports_dir`:
+A full dispatch writes durable evidence under
+`~/.vibecrafted/artifacts/<org>/<repo>/YYYY_MMDD` and runtime receipts under
+`~/.vibecrafted/control_plane/dispatches/<run-id>`:
 
 ```text
 tracker.md              # per-cut state line
 journal.md              # supervisor journal
 handoff.md              # operator handoff
 dispatch-result.json    # machine-readable result
+receipts.json           # scheduler/worktree/runtime ledger (control plane)
 ```
 
-Exit codes: the supervisor exits with the worker's exit code when a worker
-fails, and with `2` when the worker exited cleanly but the artifact contract
-failed (for example, no report was delivered).
+The CLI exits zero only when every cut is supervisor-verified; any failed,
+stopped, or unknown cut returns non-zero.
 
 ## Dispatch vs ship
 

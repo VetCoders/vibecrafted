@@ -25,9 +25,13 @@ This module verifies:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import shutil
+import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -39,6 +43,51 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MAKEFILE = REPO_ROOT / "Makefile"
 INSTALL_SH = REPO_ROOT / "install.sh"
 VERSION_FILE = REPO_ROOT / "VERSION"
+TREE_DOMAIN = b"vibecrafted.distribution-tree.v1\0"
+FIXTURE_REQUIRED_FILES = {
+    "VERSION",
+    "LICENSE",
+    "README.md",
+    "Makefile",
+    "install.sh",
+    "install.ps1",
+    "install.toml",
+    "scripts/distribution_manifest.py",
+    "scripts/vetcoders_install.py",
+    "scripts/runtime_paths.py",
+    "scripts/vibecrafted",
+    "scripts/verify-vibecrafted-product.sh",
+    "vibecrafted-core/pyproject.toml",
+    "vibecrafted-core/vibecrafted_core/VERSION",
+    "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
+    "vibecrafted-core/vibecrafted_core/product_contract.py",
+    "vibecrafted-core/vibecrafted_core/walkaround_runner.py",
+    "vibecrafted-core/vibecrafted_core/schemas/unified_product.schema.v1.json",
+    "vibecrafted-core/vibecrafted_core/trust/release-policy.v1.json",
+    "vibecrafted-core/vibecrafted_core/trust/vibecrafted-signing-v1.pub",
+    "vibecrafted-mcp/pyproject.toml",
+    "plugins/iterm2/pyproject.toml",
+    "vibecrafted-app/Cargo.toml",
+    "vibecrafted-app/Cargo.lock",
+    "vibecrafted-server/Cargo.toml",
+    "vibecrafted-server/Cargo.lock",
+}
+FIXTURE_REQUIRED_SURFACES = {
+    "bin/vc-workflow",
+    "config/README.md",
+    "docs/INSTALL.md",
+    "plugins/iterm2/README.md",
+    "vibecrafted-core/vibecrafted_core/runtime/scripts/README.md",
+    "vibecrafted-core/vibecrafted_core/runtime/shell/lib/core.sh",
+    "scripts/installer/pyproject.toml",
+    "vibecrafted-core/vibecrafted_core/skills/vc-init/SKILL.md",
+    "templates/hooks/install.sh",
+    "tools/README.md",
+    "vibecrafted-core/vibecrafted_core/runtime/README.md",
+    "vibecrafted-core/vibecrafted_core/skills/LIVING_TREE_RULE.md",
+    "vibecrafted-vm/Containerfile",
+    "workflows/MARBLES.md",
+}
 
 
 def _write_executable(path: Path, body: str) -> None:
@@ -46,7 +95,68 @@ def _write_executable(path: Path, body: str) -> None:
     path.chmod(0o755)
 
 
+def _materialize_complete_distribution_fixture(source_dir: Path) -> None:
+    for relative in sorted(FIXTURE_REQUIRED_FILES | FIXTURE_REQUIRED_SURFACES):
+        path = source_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_text(f"fixture: {relative}\n", encoding="utf-8")
+    runtime = source_dir / "runtime"
+    skills = source_dir / "skills"
+    if not runtime.is_symlink():
+        runtime.symlink_to("vibecrafted-core/vibecrafted_core/runtime")
+    if not skills.is_symlink():
+        skills.symlink_to("vibecrafted-core/vibecrafted_core/skills")
+
+
+def _fixture_tree_record(source_dir: Path) -> dict[str, object]:
+    entries: list[tuple[bytes, bytes, int, bytes]] = []
+    for current, directory_names, file_names in os.walk(source_dir, followlinks=False):
+        current_path = Path(current)
+        directory_names.sort()
+        file_names.sort()
+        for name in [*directory_names, *file_names]:
+            path = current_path / name
+            relative = path.relative_to(source_dir)
+            if relative.as_posix() == "source-provenance.json":
+                continue
+            raw_path = relative.as_posix().encode("utf-8")
+            metadata = path.lstat()
+            if stat.S_ISLNK(metadata.st_mode):
+                entries.append((raw_path, b"l", 0o777, os.readlink(path).encode()))
+            elif stat.S_ISDIR(metadata.st_mode):
+                entries.append((raw_path, b"d", 0o755, b""))
+            else:
+                raw = path.read_bytes()
+                mode = 0o755 if metadata.st_mode & 0o111 else 0o644
+                entries.append(
+                    (
+                        raw_path,
+                        b"f",
+                        mode,
+                        struct.pack(">Q", len(raw)) + hashlib.sha256(raw).digest(),
+                    )
+                )
+    entries.sort(key=lambda entry: entry[0])
+    digest = hashlib.sha256(TREE_DOMAIN)
+    digest.update(struct.pack(">Q", len(entries)))
+    for raw_path, kind, mode, payload in entries:
+        digest.update(kind)
+        digest.update(struct.pack(">Q", len(raw_path)))
+        digest.update(raw_path)
+        digest.update(struct.pack(">I", mode))
+        digest.update(struct.pack(">Q", len(payload)))
+        digest.update(payload)
+    return {
+        "schema": "vibecrafted.distribution-tree.v1",
+        "algorithm": "sha256",
+        "tree_sha256": digest.hexdigest(),
+        "entry_count": len(entries),
+    }
+
+
 def _write_distribution_manifest_stub(source_dir: Path) -> None:
+    _materialize_complete_distribution_fixture(source_dir)
     path = source_dir / "scripts" / "distribution_manifest.py"
     path.write_text(
         """#!/usr/bin/env python3
@@ -60,12 +170,48 @@ if sys.argv[1] != "stage":
     raise SystemExit(2)
 source = Path(sys.argv[sys.argv.index("--source") + 1])
 destination = Path(sys.argv[sys.argv.index("--destination") + 1])
+if "--require-source-provenance" in sys.argv:
+    provenance = source / "source-provenance.json"
+    if not provenance.is_file():
+        print("missing required path: source-provenance.json", file=sys.stderr)
+        raise SystemExit(2)
 if destination.exists():
     shutil.rmtree(destination)
 shutil.copytree(source, destination, symlinks=True)
 """,
         encoding="utf-8",
     )
+    provenance = {
+        "schema": "vibecrafted.source-provenance.v2",
+        "owner_repo": "vetcoders/vibecrafted",
+        "source_revision": "0123456789abcdef0123456789abcdef01234567",
+        "payload": _fixture_tree_record(source_dir),
+    }
+    (source_dir / "source-provenance.json").write_text(
+        json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (source_dir / "source-provenance.json").chmod(0o644)
+
+
+def _canonical_tar_info(info: tarfile.TarInfo) -> tarfile.TarInfo:
+    if info.isdir():
+        info.mode = 0o755
+    elif info.issym():
+        info.mode = 0o777
+    elif info.isreg():
+        info.mode = 0o755 if info.mode & 0o111 else 0o644
+    return info
+
+
+def _write_v2_archive(source_dir: Path, archive_path: Path, root_name: str) -> None:
+    with tarfile.open(archive_path, "w:gz") as archive:
+        archive.add(
+            source_dir,
+            arcname=root_name,
+            recursive=True,
+            filter=_canonical_tar_info,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -309,8 +455,7 @@ def test_install_sh_reports_version_from_staged_tree(tmp_path: Path) -> None:
     (scripts_dir / "placeholder").write_text("", encoding="utf-8")
     _write_distribution_manifest_stub(source_dir)
 
-    with tarfile.open(archive_path, "w:gz") as archive:
-        archive.add(source_dir, arcname="vibecrafted-main")
+    _write_v2_archive(source_dir, archive_path, "vibecrafted-main")
 
     _write_executable(
         fake_bin / "make",
@@ -347,10 +492,10 @@ def test_install_sh_reports_version_from_staged_tree(tmp_path: Path) -> None:
     assert "vibecrafted vibecrafted-main" not in banner
 
 
-def test_install_sh_banner_falls_back_when_version_absent(tmp_path: Path) -> None:
-    """If the staged tree has no VERSION file, the banner must say
-    'unknown', not the archive basename.
-    """
+def test_install_sh_rejects_distribution_without_required_version(
+    tmp_path: Path,
+) -> None:
+    """A digest-consistent but structurally incomplete archive fails closed."""
     source_dir = tmp_path / "source"
     scripts_dir = source_dir / "scripts"
     archive_path = tmp_path / "vibecrafted-exotic.tar.gz"
@@ -366,12 +511,18 @@ def test_install_sh_banner_falls_back_when_version_absent(tmp_path: Path) -> Non
         ".DEFAULT_GOAL := help\ninstall:\n\t@echo ok\n",
         encoding="utf-8",
     )
-    # No VERSION file on purpose.
     (scripts_dir / "placeholder").write_text("", encoding="utf-8")
     _write_distribution_manifest_stub(source_dir)
+    (source_dir / "VERSION").unlink()
+    provenance_path = source_dir / "source-provenance.json"
+    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    provenance["payload"] = _fixture_tree_record(source_dir)
+    provenance_path.write_text(
+        json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
-    with tarfile.open(archive_path, "w:gz") as archive:
-        archive.add(source_dir, arcname="vibecrafted-exotic")
+    _write_v2_archive(source_dir, archive_path, "vibecrafted-exotic")
 
     _write_executable(
         fake_bin / "make",
@@ -396,14 +547,12 @@ def test_install_sh_banner_falls_back_when_version_absent(tmp_path: Path) -> Non
         env=env,
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
     )
 
-    banner = result.stdout + result.stderr
-    assert "vibecrafted unknown" in banner, (
-        "missing VERSION file should degrade to 'unknown', not to "
-        f"archive basename; got:\n{banner}"
-    )
+    assert result.returncode != 0
+    assert "missing required file: VERSION" in result.stderr
+    assert not make_capture.exists()
 
 
 def test_repo_version_file_exists_and_is_non_empty() -> None:

@@ -183,6 +183,21 @@ def _origin_fields_from_env(env: Mapping[str, str] | None = None) -> dict[str, s
     pane = _get("VC_FRAME_PANE_ID", "ZELLIJ_PANE_ID")
     if session and pane and tab and _get("VC_FRAME_TAB_NAME") == tab:
         fields["origin_pane_id"] = pane
+    dispatch_fields = {
+        "resolved_worktree_path": "VIBECRAFTED_DISPATCH_WORKTREE",
+        "branch": "VIBECRAFTED_DISPATCH_BRANCH",
+        "baseline_sha": "VIBECRAFTED_DISPATCH_BASELINE_SHA",
+        "target_path": "CARGO_TARGET_DIR",
+        "artifact_path": "VIBECRAFTED_DISPATCH_ARTIFACT_PATH",
+        "dependency_set": "VIBECRAFTED_DISPATCH_DEPENDENCIES",
+        "scheduler_slot": "VIBECRAFTED_DISPATCH_SCHEDULER_SLOT",
+        "integrator_exclusivity": "VIBECRAFTED_DISPATCH_INTEGRATOR",
+        "cut_id": "VIBECRAFTED_DISPATCH_CUT_ID",
+    }
+    for metadata_field, variable in dispatch_fields.items():
+        value = _get(variable)
+        if value:
+            fields[metadata_field] = value
     return fields
 
 
@@ -357,6 +372,7 @@ class AsyncRunHandle:
     resume_command: str = ""
     heartbeat_monotonic: float = 0.0
     worker_identity: dict[str, object] | None = None
+    workspace_fields: dict[str, object] = field(default_factory=dict)
     operator_stopped: bool = False
     operator_stop_reason: str = ""
 
@@ -408,6 +424,21 @@ class AsyncSupervisor:
             merged_env.update(env)
         session_id = ensure_session_id(merged_env.get("VIBECRAFTED_SESSION_ID"))
         merged_env["VIBECRAFTED_SESSION_ID"] = session_id
+        workspace_fields: dict[str, object] = {}
+        try:
+            from .workspace_catalog import resolve_run_workspace_identity
+
+            workspace_identity = resolve_run_workspace_identity(
+                root=cwd,
+                env=merged_env,
+                create_if_missing=True,
+            )
+            workspace_fields = workspace_identity.to_meta_fields()
+            merged_env.update(workspace_identity.to_env())
+            session_id = workspace_identity.vibecrafted_session_id
+            merged_env["VIBECRAFTED_SESSION_ID"] = session_id
+        except Exception:  # noqa: BLE001, S110 — supervisor launch remains fail-open.
+            pass
         merged_env["VIBECRAFTED_RUN_ID"] = run_id
         merged_env["SPAWN_RUN_ID"] = run_id
         if meta_path is not None:
@@ -460,6 +491,7 @@ class AsyncSupervisor:
                 "session_id": session_id,
                 "identity_required": True,
                 "agent": agent,
+                **workspace_fields,
                 **(
                     {
                         "agent_session_id": initial_agent_session_id,
@@ -515,6 +547,7 @@ class AsyncSupervisor:
             model_override_skip_reason=str(
                 model_receipt.get("model_override_skip_reason") or ""
             ),
+            workspace_fields=dict(workspace_fields),
         )
         try:
             handle.pgid = os.getpgid(process.pid)
@@ -552,10 +585,25 @@ class AsyncSupervisor:
                         and not str(latest.get("origin_pane_id") or "").strip()
                     ):
                         latest["origin_pane_id"] = origin["origin_pane_id"]
+                    for field in (
+                        "resolved_worktree_path",
+                        "branch",
+                        "baseline_sha",
+                        "target_path",
+                        "artifact_path",
+                        "dependency_set",
+                        "scheduler_slot",
+                        "integrator_exclusivity",
+                        "cut_id",
+                    ):
+                        if origin.get(field):
+                            latest.setdefault(field, origin[field])
                     latest.setdefault("run_id", run_id)
                     latest.setdefault("root", str(cwd))
                     latest.setdefault("agent", agent)
                     latest.setdefault("skill", skill)
+                    for field, value in workspace_fields.items():
+                        latest.setdefault(field, value)
                     latest["worker_pid"] = handle.process.pid
                     latest["worker_pgid"] = handle.pgid
                     if handle.worker_identity is not None:
@@ -922,15 +970,25 @@ class AsyncSupervisor:
             text = report.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return
-        from .report_contract import parse_report_text, stamp_launcher_report_identity
+        from .report_contract import (
+            parse_report_text,
+            stamp_launcher_report_identity,
+            worker_authored_report,
+        )
 
-        fields, _, has_frontmatter = parse_report_text(text)
+        fields, body, has_frontmatter = parse_report_text(text)
+        # `launcher_template` is a PRESERVED machine key: the worker contract
+        # tells workers to keep seeded frontmatter, so its presence is not
+        # evidence that the worker stayed silent. Only substance decides —
+        # otherwise a fully authored report gets replaced by a transcript
+        # salvage (observed: a complete review report destroyed on resume).
         if (
             handle.exit_code == 0
             and (handle.agent == "grok" or salvage_report_from_stream)
             and has_frontmatter
             and fields.get("launcher_template", "").strip().lower()
             in {"1", "true", "yes", "on"}
+            and not worker_authored_report(fields, body)
         ):
             transcript_text = ""
             if handle.transcript_path is not None and handle.transcript_path.exists():
@@ -1120,6 +1178,9 @@ class AsyncSupervisor:
             "event_kind": EventKind.LIFECYCLE.value,
             "state": state.value,
         }
+        handle = self._runs.get(run_id)
+        if handle is not None:
+            event_payload.update(handle.workspace_fields)
         if payload:
             event_payload.update(payload)
         await asyncio.to_thread(

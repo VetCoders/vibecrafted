@@ -235,7 +235,7 @@ session start is already dense (vc-init, loctree context card, AICX
 living-tree pack), and every additional automatic prompt dilutes the previous
 ones. Instead it rides the channel every agent already opens: the
 **intentions sense of `vc-init`** points here before any fleet dispatch,
-resume, or recovery, and `aicx search -p Vetcoders/vibecrafted '<command>'`
+resume, or recovery, and `aicx search -p vetcoders/vibecrafted '<command>'`
 reaches the same doctrine as retrieval. Workers receive it whenever a brief
 cites a command listed here — cite the entry, not the whole file.
 

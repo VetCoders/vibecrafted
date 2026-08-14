@@ -2,10 +2,107 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from pathlib import Path
 
+import pytest
+from vibecrafted_core import product_contract as pc
 from vibecrafted_core import runtime_receipt as rr
+
+_RUNTIME_VERSION = "3.7.0"
+_RUNTIME_REVISION = "0123456789abcdef0123456789abcdef01234567"
+_SOURCE_PAYLOAD = {
+    "schema": pc.SOURCE_PAYLOAD_SCHEMA,
+    "algorithm": "sha256",
+    "tree_sha256": "b" * 64,
+    "entry_count": 42,
+}
+_RUNTIME_FILE_BYTES = {
+    "VERSION": f"{_RUNTIME_VERSION}\n".encode(),
+    "scripts/vibecrafted": b"#!/usr/bin/env bash\n",
+    "runtime/generated/vc-frame/config.kdl": b"layout {}\n",
+    pc.RUNTIME_GENERATION_ENTRYPOINT: b"#!/usr/bin/env bash\n",
+    "vibecrafted-core/vibecrafted_core/product_contract.py": b"contract = True\n",
+    "vibecrafted-core/vibecrafted_core/walkaround_runner.py": b"runner = True\n",
+    "vibecrafted-core/vibecrafted_core/schemas/unified_product.schema.v1.json": (
+        b"{}\n"
+    ),
+    "vibecrafted-core/vibecrafted_core/trust/release-policy.v1.json": b"{}\n",
+    "vibecrafted-core/vibecrafted_core/trust/vibecrafted-signing-v1.pub": (
+        b"fixture public key\n"
+    ),
+}
+
+
+def _runtime_generation_fixture(
+    tmp_path: Path, *, runtime_projection: str | None = None
+) -> tuple[Path, Path, dict[str, object]]:
+    assert set(_RUNTIME_FILE_BYTES) == pc.RUNTIME_GENERATION_REQUIRED_HASHES
+    assert runtime_projection in {None, "internal", "external"}
+    generation = tmp_path / "vibecrafted-generation-3.7.0+g01234567"
+    for relative, raw in _RUNTIME_FILE_BYTES.items():
+        if relative == "runtime/generated/vc-frame/config.kdl" and runtime_projection:
+            runtime_root = (
+                generation / "vibecrafted-core/vibecrafted_core/runtime"
+                if runtime_projection == "internal"
+                else tmp_path / "escaping-runtime"
+            )
+            target = runtime_root / "generated/vc-frame/config.kdl"
+        else:
+            target = generation / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+    if runtime_projection:
+        runtime_link = generation / "runtime"
+        runtime_link.symlink_to(
+            "vibecrafted-core/vibecrafted_core/runtime"
+            if runtime_projection == "internal"
+            else tmp_path / "escaping-runtime",
+            target_is_directory=True,
+        )
+    deck = generation / pc.RUNTIME_GENERATION_ENTRYPOINT
+    deck.chmod(0o755)
+    manifest: dict[str, object] = {
+        "schema": pc.RUNTIME_GENERATION_SCHEMA,
+        "version": _RUNTIME_VERSION,
+        "source_fingerprint": "a" * 64,
+        "owner_repo": "vetcoders/vibecrafted",
+        "source_revision": _RUNTIME_REVISION,
+        "source_payload": dict(_SOURCE_PAYLOAD),
+        "entrypoint": pc.RUNTIME_GENERATION_ENTRYPOINT,
+        "hashes": {
+            relative: hashlib.sha256(raw).hexdigest()
+            for relative, raw in _RUNTIME_FILE_BYTES.items()
+        },
+    }
+    _write_runtime_manifest(generation, manifest)
+    _write_source_provenance(generation)
+    return generation, deck, manifest
+
+
+def _write_runtime_manifest(generation: Path, manifest: dict[str, object]) -> None:
+    (generation / pc.RUNTIME_GENERATION_MANIFEST_NAME).write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+
+
+def _write_source_provenance(
+    generation: Path, *, mutation: dict[str, object] | None = None
+) -> None:
+    provenance: dict[str, object] = {
+        "schema": pc.SOURCE_PROVENANCE_SCHEMA,
+        "owner_repo": "vetcoders/vibecrafted",
+        "source_revision": _RUNTIME_REVISION,
+        "payload": dict(_SOURCE_PAYLOAD),
+    }
+    if mutation:
+        provenance.update(mutation)
+    (generation / pc.SOURCE_PROVENANCE_NAME).write_text(
+        json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def test_schema_version_stable() -> None:
@@ -181,22 +278,11 @@ def test_never_uses_cwd_for_source(tmp_path: Path, monkeypatch) -> None:
 def test_vibecrafted_receipt_uses_checkout_free_runtime_manifest(
     tmp_path: Path, monkeypatch
 ) -> None:
-    revision = "0123456789abcdef0123456789abcdef01234567"
-    generation = tmp_path / "vibecrafted-generation-3.7.0+g01234567"
-    deck = generation / "vibecrafted-core" / "vibecrafted_core" / "deck" / "vibecrafted"
-    deck.parent.mkdir(parents=True)
-    deck.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
-    deck.chmod(0o755)
-    (generation / "runtime-manifest.json").write_text(
-        json.dumps(
-            {
-                "schema": "vibecrafted.runtime-generation.v1",
-                "owner_repo": "Vetcoders/vibecrafted",
-                "source_revision": revision,
-                "entrypoint": "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
-            }
-        ),
-        encoding="utf-8",
+    generation, deck, manifest = _runtime_generation_fixture(tmp_path)
+    assert len(manifest["hashes"]) == 9
+    assert (
+        pc.verify_installed_runtime_generation(generation, expected_entrypoint=deck)
+        == manifest
     )
     monkeypatch.setattr(
         rr, "which_binary", lambda name: str(deck) if name == "vibecrafted" else None
@@ -217,10 +303,373 @@ def test_vibecrafted_receipt_uses_checkout_free_runtime_manifest(
     )["tools"]
 
     assert tool["source"]["resolution"] == "installed_runtime_manifest"
-    assert tool["source"]["owner_repo"] == "Vetcoders/vibecrafted"
-    assert tool["source"]["checkout_sha"] == revision
+    assert tool["source"]["owner_repo"] == "vetcoders/vibecrafted"
+    assert tool["source"]["checkout_sha"] == _RUNTIME_REVISION
+    assert tool["source"]["source_payload"] == _SOURCE_PAYLOAD
     assert tool["installed"]["dirty_build"] is False
     assert rr.DRIFT_DIRTY_BUILD not in tool["drift"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "wrong_schema",
+        "version_mismatch",
+        "invalid_owner",
+        "uppercase_source_fingerprint",
+        "uppercase_source_revision",
+        "missing_field",
+        "extra_field",
+        "wrong_entrypoint",
+        "uppercase_bound_sha",
+        "legacy_four_hashes",
+        "missing_source_payload",
+        "open_source_payload",
+        "invalid_source_payload_count",
+    ),
+)
+def test_installed_runtime_manifest_rejects_noncanonical_manifest(
+    tmp_path: Path, mutation: str
+) -> None:
+    generation, deck, manifest = _runtime_generation_fixture(tmp_path)
+    hashes = manifest["hashes"]
+    assert isinstance(hashes, dict)
+    if mutation == "wrong_schema":
+        manifest["schema"] = "vibecrafted.runtime-generation.v0"
+    elif mutation == "version_mismatch":
+        manifest["version"] = "3.7.1"
+    elif mutation == "invalid_owner":
+        manifest["owner_repo"] = "vetcoders"
+    elif mutation == "uppercase_source_fingerprint":
+        manifest["source_fingerprint"] = "A" * 64
+    elif mutation == "uppercase_source_revision":
+        manifest["source_revision"] = _RUNTIME_REVISION.upper()
+    elif mutation == "missing_field":
+        manifest.pop("source_fingerprint")
+    elif mutation == "extra_field":
+        manifest["unbound"] = "forbidden"
+    elif mutation == "wrong_entrypoint":
+        manifest["entrypoint"] = "scripts/vibecrafted"
+    elif mutation == "uppercase_bound_sha":
+        hashes["VERSION"] = "A" * 64
+    elif mutation == "legacy_four_hashes":
+        manifest["hashes"] = {
+            relative: hashes[relative]
+            for relative in (
+                "VERSION",
+                "scripts/vibecrafted",
+                "runtime/generated/vc-frame/config.kdl",
+                pc.RUNTIME_GENERATION_ENTRYPOINT,
+            )
+        }
+    elif mutation == "missing_source_payload":
+        manifest.pop("source_payload")
+    elif mutation == "open_source_payload":
+        source_payload = manifest["source_payload"]
+        assert isinstance(source_payload, dict)
+        source_payload["unbound"] = True
+    elif mutation == "invalid_source_payload_count":
+        source_payload = manifest["source_payload"]
+        assert isinstance(source_payload, dict)
+        source_payload["entry_count"] = 0
+    else:  # pragma: no cover - closed parametrization above.
+        raise AssertionError(f"unknown mutation: {mutation}")
+    _write_runtime_manifest(generation, manifest)
+
+    assert rr._installed_runtime_manifest(str(deck)) is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "missing",
+        "v1",
+        "open",
+        "owner_mismatch",
+        "revision_mismatch",
+        "payload_mismatch",
+    ),
+)
+def test_installed_runtime_manifest_rejects_noncanonical_source_provenance(
+    tmp_path: Path, mutation: str
+) -> None:
+    generation, deck, _manifest = _runtime_generation_fixture(tmp_path)
+    provenance_path = generation / pc.SOURCE_PROVENANCE_NAME
+    if mutation == "missing":
+        provenance_path.unlink()
+    else:
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        if mutation == "v1":
+            provenance["schema"] = "vibecrafted.source-provenance.v1"
+        elif mutation == "open":
+            provenance["unbound"] = True
+        elif mutation == "owner_mismatch":
+            provenance["owner_repo"] = "vetcoders/other"
+        elif mutation == "revision_mismatch":
+            provenance["source_revision"] = "f" * 40
+        elif mutation == "payload_mismatch":
+            provenance["payload"]["tree_sha256"] = "f" * 64
+        else:  # pragma: no cover
+            raise AssertionError(mutation)
+        provenance_path.write_text(json.dumps(provenance), encoding="utf-8")
+
+    probe = rr._probe_installed_runtime_manifest(str(deck))
+    assert probe.state == "rejection"
+    assert probe.reason is not None
+    assert probe.reason.startswith("VCPC")
+
+
+def test_runtime_receipt_rejects_source_provenance_path_swap_during_capture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generation, deck, _manifest = _runtime_generation_fixture(tmp_path)
+    provenance_path = generation / pc.SOURCE_PROVENANCE_NAME
+    replacement = generation / "source-provenance.next.json"
+    changed = json.loads(provenance_path.read_text(encoding="utf-8"))
+    changed["payload"]["tree_sha256"] = "f" * 64
+    replacement.write_text(
+        json.dumps(changed, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    real_open = pc.os.open
+    real_fstat = pc.os.fstat
+    real_replace = pc.os.replace
+    state: dict[str, object] = {"fd": None, "fstats": 0, "swapped": False}
+
+    def open_then_track(path, flags, *args, **kwargs):
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if Path(path) == provenance_path:
+            state["fd"] = descriptor
+        return descriptor
+
+    def replace_path_after_second_fstat(descriptor: int):
+        metadata = real_fstat(descriptor)
+        if descriptor == state["fd"]:
+            state["fstats"] = int(state["fstats"]) + 1
+            if state["fstats"] == 2:
+                real_replace(replacement, provenance_path)
+                state["swapped"] = True
+                state["fd"] = None
+        return metadata
+
+    monkeypatch.setattr(pc.os, "open", open_then_track)
+    monkeypatch.setattr(pc.os, "fstat", replace_path_after_second_fstat)
+
+    probe = rr._probe_installed_runtime_manifest(str(deck))
+
+    assert state["swapped"] is True
+    assert probe.state == "rejection"
+    assert probe.source is None
+    assert probe.reason is not None
+    assert probe.reason.startswith(f"VCPC{pc.E_PROOF:03d}: ")
+    assert (
+        json.loads(provenance_path.read_text(encoding="utf-8"))["payload"][
+            "tree_sha256"
+        ]
+        == "f" * 64
+    )
+
+
+def test_installed_runtime_manifest_rejects_bound_byte_drift(tmp_path: Path) -> None:
+    generation, deck, _manifest = _runtime_generation_fixture(tmp_path)
+    (generation / "scripts/vibecrafted").write_bytes(b"drifted\n")
+
+    assert rr._installed_runtime_manifest(str(deck)) is None
+
+
+def test_receipt_fails_closed_when_installed_runtime_manifest_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    generation, deck, _manifest = _runtime_generation_fixture(tmp_path)
+    (generation / "scripts/vibecrafted").write_bytes(b"drifted\n")
+    monkeypatch.setattr(
+        rr, "which_binary", lambda name: str(deck) if name == "vibecrafted" else None
+    )
+    monkeypatch.setattr(rr, "run_version", lambda _path: "vibecrafted 3.7.0+g01234567")
+    monkeypatch.setattr(rr, "_vibecrafted_tools_path_hints", list)
+
+    manifest_probe = rr._probe_installed_runtime_manifest(str(deck))
+    assert manifest_probe.state == "rejection"
+    assert manifest_probe.source is None
+    assert manifest_probe.reason is not None
+    assert manifest_probe.reason.startswith("VCPC024: ")
+
+    def reject_checkout_fallback(_spec: rr.ToolSpec) -> tuple[None, str]:
+        raise AssertionError(
+            "rejected installed runtime must not fall back to checkout"
+        )
+
+    monkeypatch.setattr(rr, "resolve_source_root", reject_checkout_fallback)
+    tool = rr.inspect_tool(
+        rr.ToolSpec(
+            name="vibecrafted",
+            binaries=("vibecrafted",),
+            env_roots=("VIBECRAFTED_SOURCE",),
+            markers=(("VERSION", r".+"),),
+            candidate_roots=(),
+        )
+    )
+
+    assert tool["source"]["resolution"] == "installed_runtime_manifest_rejected"
+    for field in ("path", "owner_repo", "branch", "checkout_sha", "dirty"):
+        assert tool["source"][field]["value"] == "unknown"
+        assert tool["source"][field]["reason"].startswith("VCPC024: ")
+    assert tool["installed"]["dirty_build"] is True
+    assert tool["installed"]["dirty_build_reason"].startswith("VCPC024: ")
+    assert tool["primary_drift"] == rr.DRIFT_DIRTY_BUILD
+    assert rr.DRIFT_DIRTY_BUILD in tool["drift"]
+    assert rr.DRIFT_CLEAN not in tool["drift"]
+
+
+def test_installed_runtime_manifest_accepts_internal_runtime_projection(
+    tmp_path: Path,
+) -> None:
+    generation, deck, manifest = _runtime_generation_fixture(
+        tmp_path, runtime_projection="internal"
+    )
+
+    assert os.readlink(generation / "runtime") == (
+        "vibecrafted-core/vibecrafted_core/runtime"
+    )
+    assert (
+        pc.verify_installed_runtime_generation(generation, expected_entrypoint=deck)
+        == manifest
+    )
+    assert rr._installed_runtime_manifest(str(deck)) is not None
+
+
+@pytest.mark.parametrize("alias_component", ("generated", "config"))
+def test_installed_runtime_manifest_rejects_nested_runtime_projection_alias(
+    tmp_path: Path, alias_component: str
+) -> None:
+    generation, deck, _manifest = _runtime_generation_fixture(tmp_path)
+    projected = generation / pc.RUNTIME_GENERATION_PROJECTED_CONFIG
+    canonical = generation / pc.RUNTIME_GENERATION_CANONICAL_CONFIG
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_bytes(projected.read_bytes())
+
+    if alias_component == "generated":
+        generated = generation / "runtime/generated"
+        generated.rename(generation / "runtime/generated.unbound")
+        generated.symlink_to(
+            "../vibecrafted-core/vibecrafted_core/runtime/generated",
+            target_is_directory=True,
+        )
+    else:
+        projected.unlink()
+        projected.symlink_to(
+            "../../../vibecrafted-core/vibecrafted_core/runtime/"
+            "generated/vc-frame/config.kdl"
+        )
+
+    with pytest.raises(pc.ProductContractError) as captured:
+        pc.verify_installed_runtime_generation(generation, expected_entrypoint=deck)
+    assert captured.value.code == pc.E_PATH
+
+
+def test_installed_runtime_manifest_rejects_escaping_runtime_projection(
+    tmp_path: Path,
+) -> None:
+    generation, deck, _manifest = _runtime_generation_fixture(
+        tmp_path, runtime_projection="external"
+    )
+
+    with pytest.raises(pc.ProductContractError) as captured:
+        pc.verify_installed_runtime_generation(generation, expected_entrypoint=deck)
+    assert captured.value.code == pc.E_PATH
+    assert rr._installed_runtime_manifest(str(deck)) is None
+
+
+def test_installed_runtime_manifest_rejects_arbitrary_internal_parent_alias(
+    tmp_path: Path,
+) -> None:
+    generation, deck, _manifest = _runtime_generation_fixture(tmp_path)
+    core = generation / "vibecrafted-core"
+    backing = generation / "internal-core"
+    core.rename(backing)
+    core.symlink_to(backing.name, target_is_directory=True)
+
+    with pytest.raises(pc.ProductContractError) as captured:
+        pc.verify_installed_runtime_generation(generation, expected_entrypoint=deck)
+    assert captured.value.code == pc.E_PATH
+    assert "is aliased" in str(captured.value)
+    assert rr._installed_runtime_manifest(str(deck)) is None
+
+
+def test_installed_runtime_manifest_rejects_non_entrypoint_binary(
+    tmp_path: Path,
+) -> None:
+    generation, _deck, _manifest = _runtime_generation_fixture(tmp_path)
+
+    assert (
+        rr._installed_runtime_manifest(str(generation / "scripts/vibecrafted")) is None
+    )
+
+
+def test_runtime_generation_cli_has_stable_success_contract(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    generation, deck, _manifest = _runtime_generation_fixture(tmp_path)
+
+    assert (
+        pc.main(
+            [
+                "runtime-generation",
+                str(generation),
+                "--expected-entrypoint",
+                str(deck),
+            ]
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    assert captured.out == f"verified runtime-generation: {generation}\n"
+    assert captured.err == ""
+
+
+def test_runtime_generation_cli_returns_contract_error_code(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    generation, _deck, _manifest = _runtime_generation_fixture(tmp_path)
+    (generation / "scripts/vibecrafted").write_bytes(b"drifted\n")
+
+    assert pc.main(["runtime-generation", str(generation)]) == pc.E_HASH
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith(f"VCPC{pc.E_HASH:03d}: ")
+
+
+@pytest.mark.parametrize("alias_kind", ("symlink", "hardlink"))
+def test_installed_runtime_manifest_rejects_aliased_bound_file(
+    tmp_path: Path, alias_kind: str
+) -> None:
+    generation, deck, _manifest = _runtime_generation_fixture(tmp_path)
+    target = generation / "vibecrafted-core/vibecrafted_core/product_contract.py"
+    backing = target.with_name("product_contract.fixture.py")
+    target.rename(backing)
+    if alias_kind == "symlink":
+        target.symlink_to(backing.name)
+    else:
+        os.link(backing, target)
+
+    assert rr._installed_runtime_manifest(str(deck)) is None
+
+
+@pytest.mark.parametrize("alias_kind", ("symlink", "hardlink"))
+def test_installed_runtime_manifest_rejects_aliased_manifest(
+    tmp_path: Path, alias_kind: str
+) -> None:
+    generation, deck, _manifest = _runtime_generation_fixture(tmp_path)
+    target = generation / pc.RUNTIME_GENERATION_MANIFEST_NAME
+    backing = generation / "runtime-manifest.fixture.json"
+    target.rename(backing)
+    if alias_kind == "symlink":
+        target.symlink_to(backing.name)
+    else:
+        os.link(backing, target)
+
+    assert rr._installed_runtime_manifest(str(deck)) is None
 
 
 def test_render_contains_drift_tokens() -> None:
@@ -233,7 +682,7 @@ def test_render_contains_drift_tokens() -> None:
                 "primary_drift": rr.DRIFT_SOURCE_AHEAD,
                 "drift": [rr.DRIFT_SOURCE_AHEAD, rr.DRIFT_UNPUSHED],
                 "chain": {
-                    "owner_repo": "Vetcoders/vc-frame",
+                    "owner_repo": "vetcoders/vc-frame",
                     "branch": "develop",
                     "checkout_sha": "7fa51c66",
                     "dirty": False,

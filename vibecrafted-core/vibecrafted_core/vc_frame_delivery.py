@@ -295,6 +295,7 @@ def plan_delivery(
     version: str | None = None,
     dry_run: bool = False,
     force: bool = False,
+    force_frontier: bool = False,
     prefer_repo: bool | None = None,
     path_env: str | None = None,
 ) -> DeliveryPlan:
@@ -388,11 +389,12 @@ def plan_delivery(
         view_root,
         frontier_root(home) / "vc-frame",
     )
+    managed_frontier = frontier_root(home) / "vc-frame"
     for projection in projection_roots:
         _wire_projection(
             projection,
             base,
-            force=force,
+            force=force or (force_frontier and projection == managed_frontier),
             dry_run=dry_run,
             actions=plan.actions,
             store_current=store_current,
@@ -478,6 +480,7 @@ def wire_vc_frame_config(
     version: str | None = None,
     dry_run: bool = False,
     force: bool = False,
+    force_frontier: bool = False,
     prefer_repo: bool | None = None,
     path_env: str | None = None,
 ) -> DeliveryPlan:
@@ -488,6 +491,7 @@ def wire_vc_frame_config(
         version=version,
         dry_run=dry_run,
         force=force,
+        force_frontier=force_frontier,
         prefer_repo=prefer_repo,
         path_env=path_env,
     )

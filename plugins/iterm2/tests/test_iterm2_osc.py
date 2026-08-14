@@ -134,11 +134,9 @@ def test_post_notification() -> None:
 
 
 def test_hyperlink_no_id() -> None:
-    out = osc.hyperlink("https://example.com", "click me")
-    assert "https://example.com" in out
-    assert "click me" in out
-    assert out.startswith("\x1b]8;;https://example.com\x07")
-    assert out.endswith("\x1b]8;;\x07")
+    assert osc.hyperlink("https://example.com", "click me") == (
+        "\x1b]8;;https://example.com\x07click me\x1b]8;;\x07"
+    )
 
 
 def test_hyperlink_with_id() -> None:

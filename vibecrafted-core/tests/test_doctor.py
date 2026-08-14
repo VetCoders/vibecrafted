@@ -85,6 +85,91 @@ def test_launcher_shim_finding_ok_for_immutable_runtime_deck(tmp_path: Path) -> 
     assert "immutable runtime command deck" in finding.message
 
 
+def _stamped_uv_shim(tmp_path: Path) -> Path:
+    """A healthy PATH winner: the uv-tool python entrypoint."""
+    shim = tmp_path / "bin" / "vibecrafted"
+    shim.parent.mkdir(parents=True, exist_ok=True)
+    shim.write_text(
+        "#!/path/uv/python3\nfrom vibecrafted_core.cli import main\n",
+        encoding="utf-8",
+    )
+    return shim
+
+
+def _living_checkout(tmp_path: Path, version: str = "3.7.1") -> Path:
+    """Monorepo checkout layout carrying `.git` and a bare (unstamped) VERSION."""
+    root = tmp_path / "checkout"
+    package_dir = root / "vibecrafted-core" / "vibecrafted_core"
+    package_dir.mkdir(parents=True)
+    (package_dir / "VERSION").write_text(f"{version}\n", encoding="utf-8")
+    (root / ".git").mkdir()
+    (root / "scripts").mkdir()
+    (root / "scripts" / "vetcoders_install.py").write_text("", encoding="utf-8")
+    return package_dir
+
+
+def _pin_loaded_package(
+    monkeypatch, package_dir: Path, staged: str, tools_home: Path
+) -> None:
+    """Point the doctor at a chosen loaded package tree and staged stamp."""
+    import vibecrafted_core
+    from vibecrafted_core import runtime_paths
+
+    monkeypatch.setattr(
+        vibecrafted_core, "__file__", str(package_dir / "__init__.py"), raising=False
+    )
+    monkeypatch.setattr(vibecrafted_core, "__version__", staged, raising=False)
+    monkeypatch.setattr(runtime_paths, "read_staged_tools_version", lambda: staged)
+    monkeypatch.setattr(runtime_paths, "vibecrafted_tools_home", lambda: tools_home)
+
+
+def test_launcher_shim_finding_warns_when_cwd_loads_the_living_checkout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """cwd inside the checkout must not accuse a healthy install of shadowing."""
+    package_dir = _living_checkout(tmp_path)
+    _pin_loaded_package(
+        monkeypatch,
+        package_dir,
+        staged="3.7.1+g1519cf19",
+        tools_home=tmp_path / "tools",
+    )
+    shim = _stamped_uv_shim(tmp_path)
+
+    findings = doctor._launcher_shim_findings(which=lambda _name: str(shim))
+
+    launcher = [f for f in findings if f.component == "launcher"]
+    assert [f.level for f in launcher] == ["ok", "warn"]
+    message = launcher[-1].message
+    assert str(package_dir.parent.parent) in message
+    assert "re-run doctor from outside the checkout" in message.lower()
+    assert "pip uninstall" not in message
+
+
+def test_launcher_shim_finding_fails_for_editable_outside_any_checkout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A real editable shadow (no checkout, outside tools) still fails hard."""
+    package_dir = tmp_path / "site-packages" / "vibecrafted_core"
+    package_dir.mkdir(parents=True)
+    (package_dir / "VERSION").write_text("3.7.1\n", encoding="utf-8")
+    _pin_loaded_package(
+        monkeypatch,
+        package_dir,
+        staged="3.7.1+g1519cf19",
+        tools_home=tmp_path / "tools",
+    )
+    shim = _stamped_uv_shim(tmp_path)
+
+    findings = doctor._launcher_shim_findings(which=lambda _name: str(shim))
+
+    launcher = [f for f in findings if f.component == "launcher"]
+    assert [f.level for f in launcher] == ["ok", "fail"]
+    message = launcher[-1].message
+    assert "loaded package tree is unstamped" in message
+    assert "python3 -m pip uninstall vibecrafted" in message
+
+
 def test_launcher_shim_finding_warns_when_absent() -> None:
     findings = doctor._launcher_shim_findings(which=lambda _name: None)
 
@@ -280,6 +365,43 @@ def test_doctor_run_includes_server_supervision_finding(monkeypatch) -> None:
     monkeypatch.setattr(doctor, "_vc_frame_truth_drift_findings", list)
 
     assert doctor.doctor_run() == [expected]
+
+
+def test_packaged_asset_findings_require_release_contract_resources(
+    tmp_path: Path, monkeypatch
+) -> None:
+    runtime = tmp_path / "runtime/scripts/await.sh"
+    skill = tmp_path / "skills/vc-justdo/SKILL.md"
+    deck = tmp_path / "deck/vibecrafted"
+    release_assets = (
+        tmp_path / "product_contract.py",
+        tmp_path / "walkaround_runner.py",
+        tmp_path / "schemas/unified_product.schema.v1.json",
+        tmp_path / "trust/release-policy.v1.json",
+        tmp_path / "trust/vibecrafted-signing-v1.pub",
+    )
+    for path in (runtime, skill, deck, *release_assets):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("fixture\n", encoding="utf-8")
+    monkeypatch.setattr(doctor, "runtime_path", lambda: tmp_path / "runtime")
+    monkeypatch.setattr(doctor, "skills_path", lambda: tmp_path / "skills")
+    monkeypatch.setattr(doctor, "deck_path", lambda: deck)
+    monkeypatch.setattr(doctor, "release_contract_paths", lambda: release_assets)
+
+    findings = doctor._packaged_asset_findings()
+
+    release_findings = [
+        finding for finding in findings if finding.component == "release-contract"
+    ]
+    assert len(release_findings) == 5
+    assert all(finding.level == "ok" for finding in release_findings)
+
+    (tmp_path / "trust/release-policy.v1.json").unlink()
+    findings = doctor._packaged_asset_findings()
+    assert any(
+        finding.level == "fail" and "release-policy.v1.json" in finding.message
+        for finding in findings
+    )
 
 
 def _seed_truth(root: Path, content: str = "layout ok\n") -> None:

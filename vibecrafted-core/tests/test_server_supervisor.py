@@ -1075,6 +1075,18 @@ def test_hermetic_service_upgrade_restarts_into_new_provenance(
         ),
     )
     config = _config(tmp_path, launcher)
+    # Keep this service test independent from both the operator's installed
+    # tools stamp and a concurrently advancing checkout HEAD.  The spawned
+    # supervisor resolves its version under the fixture's isolated runtime
+    # home, so seed that same explicit build identity before rendering the
+    # LaunchAgent contract in the parent process.
+    hermetic_version = "3.7.1+g00000000"
+    staged_version = (
+        config.paths.runtime_home / "tools" / "vibecrafted-current" / "VERSION"
+    )
+    staged_version.parent.mkdir(parents=True, exist_ok=True)
+    staged_version.write_text(f"{hermetic_version}\n", encoding="utf-8")
+    monkeypatch.setattr(supervisor, "PACKAGE_VERSION", hermetic_version)
     supervisor.install_service(config, supervisor_binary=supervisor_binary)
     monkeypatch.setattr(supervisor.sys, "platform", "darwin")
     loaded = False

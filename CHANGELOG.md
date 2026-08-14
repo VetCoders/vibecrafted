@@ -3,6 +3,40 @@
 All notable changes to 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## 3.7.1 — 2026-08-14
+
+> **One Vibecrafted.** The first release whose installable boundary is exactly
+> one signed and notarized `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`.
+
+### Added
+
+- `Vibecrafted.app` now carries the exact matching `vc-terminal`, `vc-frame`
+  and complete runtime, with signed source/module receipts.
+- Durable `workspace_id` and automatic bundled `vc-start` entry for every new
+  or restored workspace.
+- App-owned XDG/runtime environment: the product does not overwrite user
+  terminal, shell or vc-frame configuration.
+- Fail-closed macOS publication target that downloads draft assets back from
+  GitHub, byte-compares them, verifies signed release-output, mounts the DMG,
+  runs the walk-around probes and only then publishes.
+
+### Changed
+
+- `vibecrafted` is the sole owner of app/DMG/install/update.
+- `vc-terminal` is a deterministic binary donor; its standalone App/DMG/MSI,
+  signing, notarization and install surfaces were retired.
+- `vc-frame` is the session interior; its standalone installer, release assets,
+  packaging workflow and update channel were retired.
+- Tag CI is read-only source validation. Apple signing/notarization and release
+  publication remain on the explicit macOS operator boundary.
+
+### Security
+
+- Tailscale auth keys are injected only into the launch process and are never
+  stored by the onboarding wizard or generated `.env` files.
+- Mermaid SVG links use a positive URL-scheme allowlist.
+- All GitHub workflows declare least-privilege permissions.
+
 ## 3.7.0 — 2026-07-27
 
 > **Runtime truth recovery.** The release where a killed supervisor, a stale
@@ -72,7 +106,7 @@ operator, research, workflow) welds the session-manager rail into the default ta
 template so a reinstall cannot strip the sidebar the operator hand-welded last week.
 Layouts passed parser dump and live `new-tab` load probes before this line shipped.
 
-The **installer container lane** earned its scars on a real vetcoders container
+The **installer container lane** earned its scars on a real Vetcoders container
 mount: sshfs that dropped executable bits, broke symlinks, and corrupted bytecode
 on copy. The lane is resilient under those conditions — stage, verify, refuse to
 pretend a half-copied tree is an install. That is not marketing; it is wartime

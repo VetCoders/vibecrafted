@@ -62,8 +62,8 @@ reason = """
 We will install the backyard product spine (one path, no install loops):
 
   - product foundations: loctree / aicx (canonical product installers)
-  - vc-frame BINARY for real (sibling checkout make install, or release
-    tools/install.sh — never re-enter vibecrafted.io/install.sh here)
+  - vc-frame donor BINARY built from sibling source and installed only by
+    Vibecrafted (no companion installer or release channel)
   - framework-owned support tools when needed
   - frontier config + operator scripts (Composer / Super binds projection)
   - shared skills, launchers, and mirrored agent views
@@ -72,8 +72,9 @@ We will install the backyard product spine (one path, no install loops):
   - vendored foundation binaries from bin/vendor/<platform> when present
   - Rust app/server binaries (voc, vc-admin, vc-server) in ~/.local/bin
 
-Host app (Vibecrafted.app / vc-terminal) is still a separate release artifact
-when not on disk; the operator path that always works is: vc-frame + vc-start.
+The public macOS install is one Vibecrafted.app carrying vc-terminal, vc-frame,
+vc-start, and the Vibecrafted runtime. It does not rewrite user shell or terminal
+configuration; the app injects only its bundled environment at process start.
 """
 cmd = [
     "bash",

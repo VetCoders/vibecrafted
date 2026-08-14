@@ -64,13 +64,18 @@ def test_cli_doctor_accepts_valid_dispatch(tmp_path: Path, capsys) -> None:
     assert captured.out.strip() == "dispatch-doctor: ok"
 
 
-def test_cli_dry_run_renders_prompts_and_machine_result(tmp_path: Path, capsys) -> None:
-    dispatch_file, reports, _ = _dispatch_file(tmp_path)
+def test_cli_dry_run_renders_prompts_and_machine_result(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    dispatch_file, _reports, _ = _dispatch_file(tmp_path)
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
 
     assert dispatch_cli.main([str(dispatch_file), "--dry-run", "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
-    dry_run_dir = reports / "dry-run"
+    dry_run_dir = home / "artifacts" / "local" / "repo"
+    dry_run_dir = next(dry_run_dir.iterdir()) / "plans" / "dry-run"
     assert payload["dry_run"] is True
     assert payload["prompts"]["c1"] == str(dry_run_dir / "prompts" / "c1.md")
     assert (dry_run_dir / "validated-dispatch.toml").is_file()

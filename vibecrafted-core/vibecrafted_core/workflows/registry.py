@@ -33,6 +33,12 @@ WORKFLOW_DEFINITIONS: dict[str, WorkflowDefinition] = {
         lifecycle_order=70,
         tooling=("vc-init", "vc-loctree", "vc-aicx", "vc-research"),
     ),
+    "canary": _direct(
+        "canary",
+        cadence="write",
+        lifecycle_order=17,
+        tooling=("vc-init", "vc-loctree", "vc-canary", "vc-agents"),
+    ),
     "decorate": _direct(
         "decorate",
         cadence="write",

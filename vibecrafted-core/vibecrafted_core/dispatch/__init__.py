@@ -26,6 +26,7 @@ from .supervisor import (
     CellRun,
     DispatchResult,
     DispatchSupervisor,
+    cleanup_settled_run,
     run_dispatch,
     workflow_cell_launcher,
 )
@@ -36,6 +37,12 @@ from .verify import (
     MATCHER_TIMEOUT,
     run_verifies,
     sanitize_env,
+)
+from .worktrees import (
+    WorktreeContractError,
+    WorktreeGeometry,
+    WorktreeManager,
+    canonical_artifact_root,
 )
 
 __all__ = [
@@ -60,6 +67,11 @@ __all__ = [
     "Verdict",
     "VerifierEvidence",
     "Verify",
+    "WorktreeContractError",
+    "WorktreeGeometry",
+    "WorktreeManager",
+    "canonical_artifact_root",
+    "cleanup_settled_run",
     "doctor_dispatch",
     "load_dispatch",
     "parse_dispatch",

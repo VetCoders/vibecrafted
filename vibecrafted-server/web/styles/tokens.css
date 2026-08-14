@@ -1,42 +1,35 @@
-/* landing/styles/tokens.css
- * Loctree design tokens — Vibecrafted family-aligned, własna sub-tożsamość.
- * Source: HANDOFF.md (export-loct/) + research synthesis.
+/* Vibecrafted operator-console tokens.
+ * Visual authority: vc-slack-agent/console — graphite, compact, operational.
  */
 
 :root {
-  /* Backgrounds (warm dark print surfaces) */
-  --ink: #0e0e0e; /* page background — neutral ink, not pure black */
-  --ink2: #161616; /* alternating/editorial section tone */
-  --ink3: #1e1e1e; /* elevated editorial surface */
+  --ink: #0a0a0b;
+  --ink2: #121214;
+  --ink3: #1a1a1e;
 
   /* Foreground (cream-on-ink, editorial print feel).
    * Bone bumped 2026-05-03 from #ece7dc → #f5f1e7 — slightly brighter, less yellow.
    * Body/subtle alphas raised so the text reads as "warm white" not "cream". */
-  --bone: #f5f1e7;
-  --bone-dim: rgba(245, 241, 231, 0.86); /* body text */
-  --bone-mute: rgba(245, 241, 231, 0.64); /* subtle text */
-  --bone-faint: rgba(
-    245,
-    241,
-    231,
-    0.2
-  ); /* borders — decorative, exempted from WCAG contrast */
+  --bone: #f4f4f5;
+  --bone-dim: #a1a1aa;
+  --bone-mute: #71717a;
+  --bone-faint: #27272a;
 
   /* Nav-specific themable surfaces (sticky nav has slight transparency for blur).
    * Light theme override below flips ink → white. */
-  --nav-bg: rgba(14, 14, 14, 0.88); /* sticky topnav background */
-  --nav-bg-mobile: rgba(14, 14, 14, 0.94); /* mobile drawer expansion */
-  --nav-bg-strip: rgba(14, 14, 14, 0.96); /* install strip overlay */
-  --btn-border: rgba(255, 255, 255, 0.42); /* install pill outline */
-  --btn-bg-hover: rgba(255, 255, 255, 0.045); /* install pill hover wash */
-  --modal-backdrop: rgba(14, 14, 14, 0.78); /* pricing modal backdrop blur */
+  --nav-bg: rgba(10, 10, 11, 0.92);
+  --nav-bg-mobile: rgba(10, 10, 11, 0.96);
+  --nav-bg-strip: rgba(10, 10, 11, 0.98);
+  --btn-border: #3f3f46;
+  --btn-bg-hover: rgba(255, 255, 255, 0.05);
+  --modal-backdrop: rgba(10, 10, 11, 0.82);
 
   /* Accents — two-color editorial system (post-2026-05-05 consolidation).
    * --amber is the narrative accent (hero emphasis, CTA, active stats, warm
    *   markers, italic <em> in headings, tag-cycles, mistake markers).
    * --teal is the interaction accent (hover, focus, state). */
-  --amber: #c99a3b; /* narrative accent + warning/waiting */
-  --teal: #3d7a72; /* state, success, highlight, focus glow */
+  --amber: #d4d4d8;
+  --teal: #d4d4d8;
 
   /* ─── Semantic layer ────────────────────────────────────────────────────
    * UI components consume these role names, not the brand primitives above.
@@ -63,18 +56,19 @@
 
   /* Status tokens — semantic, not decorative.
    * Without these, agents will reach for amber for warning/active/featured/error/CTA all at once. */
-  --status-success: var(--teal);
-  --status-warning: var(--amber);
+  --status-success: #4ade80;
+  --status-warning: #fbbf24;
   --status-info: var(--bone-dim);
-  --status-danger: #b86a5c; /* status-only — NOT a brand accent. Keep dim and never reuse for branding. */
+  --status-danger: #f87171;
 
   /* Elevation scale — sections rest, cards lift on interaction, modals own the highest layer.
    * Do not invent ad-hoc box-shadows; pick from this scale. */
   --shadow-rest: none;
-  --shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.3);
-  --shadow-modal: 0 24px 80px rgba(0, 0, 0, 0.55);
-  --border-subtle: rgba(255, 255, 255, 0.06);
-  --border-active: rgba(61, 122, 114, 0.25);
+  --shadow-hover:
+    0 1px 0 rgba(255, 255, 255, 0.04), 0 12px 40px rgba(0, 0, 0, 0.45);
+  --shadow-modal: 0 24px 80px rgba(0, 0, 0, 0.62);
+  --border-subtle: #27272a;
+  --border-active: #3f3f46;
 
   /* Motion tokens — duration + easing dictionary.
    * Motion reveals structure; it is not decoration. */
@@ -86,7 +80,7 @@
 
   /* Typography roles */
   --font-display:
-    "Instrument Serif", "Instrument Serif Fallback", ui-serif, Georgia, serif;
+    "Inter", "Inter Fallback", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   --font-body:
     "Inter", "Inter Fallback", system-ui, -apple-system, BlinkMacSystemFont,
     "Segoe UI", sans-serif;
@@ -121,9 +115,9 @@
   /* Card system */
   --ink-card: var(--ink2);
   --ink-card-code: var(--ink3);
-  --card-radius: 14px;
-  --card-border-color: rgba(255, 255, 255, 0.06);
-  --card-border-hover: rgba(255, 255, 255, 0.16);
+  --card-radius: 16px;
+  --card-border-color: #27272a;
+  --card-border-hover: #3f3f46;
   --card-border: 1px solid var(--card-border-color);
   --card-transition:
     border-color 160ms ease, background 160ms ease, transform 160ms ease;
@@ -131,8 +125,8 @@
   --card-feature-icon-border: rgba(61, 122, 114, 0.2);
 
   /* Layout width scale */
-  --max-w-page: 1180px;
-  --max-w-content: 1080px;
+  --max-w-page: 1152px;
+  --max-w-content: 1088px;
   --max-w-docs: 820px;
   --max-w-terminal: 720px;
   --max-w-hero-terminal: 820px;
@@ -141,10 +135,10 @@
   --container-gutter-fluid: clamp(var(--space-4), 2.6vw, var(--space-12));
 
   /* Radii */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
 
   /* Type scale */
   --text-xs: 0.75rem;

@@ -38,6 +38,7 @@ targets:
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
         INFOPLIST_KEY_CFBundleExecutable: Vibecrafted
         INFOPLIST_KEY_CFBundleName: Vibecrafted
+        INFOPLIST_KEY_CFBundleIconFile: Vibecrafted
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         SWIFT_OBJC_BRIDGING_HEADER: "Vibecrafted/Bridge/vibecrafted_shell_ffiFFI.h"
         CODE_SIGN_IDENTITY: "-"

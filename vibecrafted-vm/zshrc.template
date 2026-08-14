@@ -80,7 +80,7 @@ if command -v bat >/dev/null 2>&1; then
     alias cathl='bat'
 fi
 
-# vc/vc-init/vc-impl come from the sourced vetcoders shell helpers as
+# vc/vc-init/vc-impl come from the sourced Vetcoders shell helpers as
 # functions — do NOT alias those names here (zsh refuses to define a function
 # over an active alias, which breaks helper loading).
 

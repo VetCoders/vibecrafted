@@ -75,7 +75,8 @@ runtime run with skill id `justdo`.
 
 Runs in the operator's current checkout and branch. Do not create or switch
 worktrees unless the operator explicitly asks in this prompt. Re-read before
-edit; report substrate failure if the tree is too poisoned to continue safely.
+edit; report substrate failure if the tree is too poisoned to continue safely. The one sanctioned second mode is a Fleet Worktree dispatch (written plan, pre-committed verifiers, disjoint domains, single-thread integrator — see Living Tree Rule, Mode B); outside that formation, stay in the shared tree.
+
 See [Living Tree Rule](../LIVING_TREE_RULE.md).
 
 ## Canonical Orientation Gate (no-question ≠ no-orientation)

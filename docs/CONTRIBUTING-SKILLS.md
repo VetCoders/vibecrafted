@@ -183,6 +183,10 @@ make test-skills              # frontmatter + helper sourcing + doctor gate
 make doctor | grep vc-my-new-skill   # operator-facing discovery surface
 ```
 
+Installer CI may pass `--doctor-preverified` to the smoke only after its
+immediately preceding installed-runtime doctor gate has passed. This avoids a
+second source-tree doctor changing ownership while preserving the same proof.
+
 If `make doctor` does not list your skill, the install path did not register it.
 Re-run the installer in dev mode (`make setup-dev`) and re-check.
 

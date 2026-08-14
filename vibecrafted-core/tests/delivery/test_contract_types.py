@@ -175,7 +175,7 @@ def contract_payloads() -> tuple[tuple[type[object], dict[str, object]], ...]:
                 "oracle_evidence_sha256": "sha256:oracle",
                 "assertion_evidence_sha256": "sha256:assertion",
                 "negative_control_evidence_sha256": ["sha256:negative"],
-                "repo": "Vetcoders/vibecrafted",
+                "repo": "vetcoders/vibecrafted",
                 "branch": "feature/proof",
                 "baseline_head": "a" * 40,
                 "final_head": "b" * 40,

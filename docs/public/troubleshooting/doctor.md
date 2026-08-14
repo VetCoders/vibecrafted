@@ -18,12 +18,14 @@ vibecrafted doctor --verbose      # list every check, including passing ones
 
 | Audit               | What it proves                                                                                                                                                      |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Generation manifest | `runtime-manifest.json` (schema `vibecrafted.runtime-generation.v1`) exists and is valid for the current generation                                                 |
-| Content hashes      | SHA-256 digests for `VERSION`, the command deck, and generated vc-frame config still match — any manifest-bound file that drifted fails                             |
+| Generation manifest | `runtime-manifest.json` (schema `vibecrafted.runtime-generation.v2`) exists, carries the v2 source-payload identity, and is valid for the current generation        |
+| Content hashes      | SHA-256 digests for `VERSION`, launcher/deck, generated vc-frame config, and verifier engine/runner/schema/policy/key still match — any drift fails                 |
 | Launcher binding    | The public launcher resolves to the exact current generation entrypoint inside `~/.local/share/vibecrafted` — a launcher resolving outside the installed root fails |
 | Checkout-link scan  | No active config, KDL, helper, or command-deck content references a source checkout                                                                                 |
 | Symlink census      | No installed symlink is broken or resolves outside its generation                                                                                                   |
 | Foundations         | Product-managed foundation binaries (loct, aicx, prview, screenscribe) are present and are never silently replaced with stale copies                                |
+
+Launcher audits are scoped by **ownership, not naming**: doctor judges only the launchers Vibecrafted publishes itself (the installer's wrappers and Python entrypoints, the legacy packs, and the provider-published `vc-slack`). Another product that shares `~/.local/bin` and the `vc-` prefix — and legitimately links into its own checkout — keeps its own installation contract and is left alone.
 
 This is the same audit that gates publication of a new generation: what fails a publish also fails doctor afterward.
 
@@ -32,6 +34,16 @@ This is the same audit that gates publication of a new generation: what fails a 
 - **Pass (green / ok)** — the install is bound, hashed, and checkout-free. A healthy install reports on the order of 100+ ok with 0 failures.
 - **Warn (yellow)** — something is weak but operable; the doctor names what to check next. Typical warns: an optional surface not installed, an environment nicety missing.
 - **Fail (red)** — the runtime contract is broken: stale launcher, drifted manifest-bound file, checkout-linked config, or a broken symlink. Treat any fail as "do not trust this install until fixed".
+
+### Running doctor from inside the source checkout
+
+Doctor audits the installed runtime, but the Python process that runs it imports whatever is first on `sys.path`. With the working directory inside a Vibecrafted checkout — or with an editable `.pth` pointing at one — the process loads the unstamped living tree instead of the installed package. Doctor names that case explicitly: a `warn` on `launcher` saying the loaded tree is the living checkout, with the stamped identity the `PATH` launcher itself resolves. It is a working-directory artefact, not a broken install, and nothing should be uninstalled because of it.
+
+```bash
+cd ~ && vibecrafted doctor      # verify the installed launcher, free of the checkout
+```
+
+An unstamped tree loaded from **outside** any checkout is a different verdict: that is a genuine editable/Homebrew shadow winning `PATH`, and it still fails.
 
 Doctor ships targeted repair flags for the most common launcher and shell-config failures:
 

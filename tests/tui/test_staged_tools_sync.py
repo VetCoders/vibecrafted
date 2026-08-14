@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import multiprocessing
@@ -17,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from vibecrafted_core import product_contract
 
 from scripts import vetcoders_install as installer
 
@@ -58,7 +60,11 @@ def _write_complete_source(
     launcher: str,
     service_lock_contract: bool = False,
 ) -> None:
-    installer.stage_distribution_payload(REPO_ROOT, root, mirror=True)
+    installer.stage_distribution_payload(
+        REPO_ROOT,
+        root,
+        mirror=True,
+    )
     (root / "runtime" / "shell" / "vetcoders.sh").write_text(helper, encoding="utf-8")
     if service_lock_contract:
         launcher = launcher.replace(
@@ -70,6 +76,235 @@ def _write_complete_source(
             1,
         )
     _write_executable(root / "scripts" / "vibecrafted", launcher)
+    _write_source_provenance_fixture(root)
+
+
+def _write_source_provenance_fixture(
+    root: Path,
+    *,
+    owner_repo: str = "vetcoders/vibecrafted",
+    source_revision: str = "b" * 40,
+) -> dict[str, object]:
+    """Mint a test-only v2 carrier for the fixture's final detached tree."""
+    provenance: dict[str, object] = {
+        "schema": installer._SOURCE_PROVENANCE_SCHEMA,
+        "owner_repo": owner_repo,
+        "source_revision": source_revision,
+        "payload": installer._distribution_manifest._distribution_tree_record(root),
+    }
+    (root / "source-provenance.json").write_text(
+        json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return provenance
+
+
+def _write_walkaround_generation(
+    tools_root: Path,
+    name: str,
+    runner_body: str,
+) -> Path:
+    generation = tools_root / name
+    captured: dict[str, bytes] = {}
+    for relative in installer._RUNTIME_GENERATION_REQUIRED_HASHES:
+        target = generation / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if relative == Path("VERSION"):
+            raw = b"9.9.9+gtest\n"
+        elif relative == installer._RUNTIME_VERIFIER_RUNNER:
+            raw = runner_body.encode("utf-8")
+        else:
+            raw = f"test fixture: {relative.as_posix()}\n".encode()
+        target.write_bytes(raw)
+        captured[relative.as_posix()] = raw
+    manifest = {
+        "schema": installer._RUNTIME_GENERATION_MANIFEST_SCHEMA,
+        "version": "9.9.9+gtest",
+        "source_fingerprint": "a" * 64,
+        "owner_repo": "vetcoders/vibecrafted",
+        "source_revision": "b" * 40,
+        "source_payload": {
+            "schema": installer._SOURCE_PAYLOAD_SCHEMA,
+            "algorithm": "sha256",
+            "tree_sha256": "c" * 64,
+            "entry_count": 42,
+        },
+        "entrypoint": installer._RUNTIME_GENERATION_ENTRYPOINT.as_posix(),
+        "hashes": {
+            relative: hashlib.sha256(raw).hexdigest()
+            for relative, raw in captured.items()
+        },
+    }
+    (generation / installer._RUNTIME_GENERATION_MANIFEST).write_text(
+        json.dumps(manifest, sort_keys=True), encoding="utf-8"
+    )
+    (generation / "source-provenance.json").write_text(
+        json.dumps(
+            {
+                "schema": installer._SOURCE_PROVENANCE_SCHEMA,
+                "owner_repo": manifest["owner_repo"],
+                "source_revision": manifest["source_revision"],
+                "payload": manifest["source_payload"],
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return generation
+
+
+def _rewrite_walkaround_manifest(generation: Path) -> None:
+    manifest_path = generation / installer._RUNTIME_GENERATION_MANIFEST
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["hashes"] = {
+        relative.as_posix(): hashlib.sha256(
+            (generation / relative).read_bytes()
+        ).hexdigest()
+        for relative in installer._RUNTIME_GENERATION_REQUIRED_HASHES
+    }
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+
+
+_SEMANTICALLY_FAKE_PRODUCT_CONTRACT = b"""from __future__ import annotations
+import argparse
+from pathlib import Path
+
+
+class ProductContractError(ValueError):
+    def __init__(self, code: int, message: str = "") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def verify_installed_runtime_generation(generation_root, *, expected_entrypoint=None):
+    return {}
+
+
+def _parser():
+    parser = argparse.ArgumentParser()
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("module").add_argument("path", type=Path)
+    commands.add_parser("app").add_argument("path", type=Path)
+    commands.add_parser("transaction").add_argument("path", type=Path)
+    commands.add_parser("schema").add_argument("path", type=Path)
+    commands.add_parser("walkaround").add_argument("path", type=Path)
+    commands.add_parser("release-output").add_argument("path", type=Path)
+    runtime = commands.add_parser("runtime-generation")
+    runtime.add_argument("path", type=Path)
+    return parser
+
+
+def main(argv=None):
+    args = _parser().parse_args(list(argv) if argv is not None else None)
+    if args.command == "runtime-generation":
+        print(f"verified runtime-generation: {args.path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+"""
+
+
+_SEMANTICALLY_FAKE_WALKAROUND_RUNNER = b"""from __future__ import annotations
+import argparse
+import sys
+from pathlib import Path
+
+
+def _parser():
+    parser = argparse.ArgumentParser()
+    commands = parser.add_subparsers(dest="command", required=True)
+    probe = commands.add_parser("trust-probe")
+    probe.add_argument("challenge", type=Path)
+    probe.add_argument("signature", type=Path)
+    verify = commands.add_parser("verify-release")
+    verify.add_argument("--release-output", type=Path, required=True)
+    verify.add_argument("--signature", type=Path, required=True)
+    walkaround = commands.add_parser("walkaround")
+    walkaround.add_argument("--release-output", type=Path, required=True)
+    walkaround.add_argument("--signature", type=Path, required=True)
+    walkaround.add_argument("--output", type=Path, required=True)
+    return parser
+
+
+def main(argv=None):
+    args = _parser().parse_args(list(argv) if argv is not None else None)
+    if args.command in {"trust-probe", "verify-release"}:
+        print("VCPC022: synthetic missing input", file=sys.stderr)
+        return 22
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+"""
+
+
+_FINITE_QUIZ_FAKE_WALKAROUND_RUNNER = b"""from __future__ import annotations
+import argparse
+import sys
+from pathlib import Path
+
+
+def _parser():
+    parser = argparse.ArgumentParser()
+    commands = parser.add_subparsers(dest="command", required=True)
+    probe = commands.add_parser("trust-probe")
+    probe.add_argument("challenge", type=Path)
+    probe.add_argument("signature", type=Path)
+    verify = commands.add_parser("verify-release")
+    verify.add_argument("--release-output", type=Path, required=True)
+    verify.add_argument("--signature", type=Path, required=True)
+    walkaround = commands.add_parser("walkaround")
+    walkaround.add_argument("--release-output", type=Path, required=True)
+    walkaround.add_argument("--signature", type=Path, required=True)
+    walkaround.add_argument("--output", type=Path, required=True)
+    return parser
+
+
+def main(argv=None):
+    args = _parser().parse_args(list(argv) if argv is not None else None)
+    inputs = (
+        (args.challenge, args.signature)
+        if args.command == "trust-probe"
+        else (args.release_output, args.signature)
+    )
+    if any(not path.is_file() for path in inputs):
+        print("VCPC022: synthetic missing input", file=sys.stderr)
+        return 22
+    print("VCPC033: synthetic invalid proof", file=sys.stderr)
+    return 33
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+"""
+
+
+def _install_test_walkaround_launcher(
+    tmp_path: Path,
+    current: Path,
+) -> tuple[Path, Path]:
+    tool_bin = tmp_path / "uv-tools" / "vibecrafted" / "bin"
+    python_bin = tool_bin / "python"
+    interpreter = Path(sys.executable).absolute()
+    _write_executable(
+        python_bin,
+        f'#!/bin/sh\nexec {installer.shlex_quote(str(interpreter))} "$@"\n',
+    )
+    managed = installer._install_secure_walkaround_launcher(
+        current,
+        python_bin,
+        launcher_path=tool_bin / installer.SECURE_WALKAROUND_LAUNCHER,
+    )
+    public = tmp_path / "public-bin" / installer.SECURE_WALKAROUND_LAUNCHER
+    public.parent.mkdir(parents=True)
+    public.symlink_to(managed)
+    return managed, public
 
 
 def _write_valid_runtime_generation(root: Path) -> None:
@@ -1351,21 +1586,26 @@ def test_runtime_cutover_failed_legacy_stop_recovers_previous_service(
     )
     events: list[str] = []
     mode = "active"
+    recovery_transition_observed = False
     plist = _write_runtime_launch_agent(home, shared_home, launcher)
     old_plist = plist.read_bytes()
 
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
     monkeypatch.setattr(installer.sys, "platform", "darwin")
-    monkeypatch.setattr(
-        installer,
-        "_runtime_service_snapshot",
-        lambda _shared_home: (
-            launcher,
-            healthy if mode == "active" else quiescent,
-            "running" if mode == "active" else "stopped",
-        ),
-    )
+
+    def snapshot(_shared_home: Path):
+        nonlocal recovery_transition_observed
+        if mode == "active":
+            return launcher, healthy, "running"
+        if not recovery_transition_observed:
+            recovery_transition_observed = True
+            raise installer._RuntimeServiceTransition(
+                "runtime service identity is uncertain while transition is in progress"
+            )
+        return launcher, quiescent, "stopped"
+
+    monkeypatch.setattr(installer, "_runtime_service_snapshot", snapshot)
     monkeypatch.setattr(
         installer,
         "_assert_runtime_launchd_job_owned",
@@ -1405,10 +1645,122 @@ def test_runtime_cutover_failed_legacy_stop_recovers_previous_service(
         operation="test-failed-drain-compensation",
     ) as descriptor:
         monkeypatch.setenv(installer._TOOLS_INSTALL_LEASE_ENV, str(descriptor))
-        with pytest.raises(OSError, match="previous service ownership was recovered"):
+        with pytest.raises(
+            OSError,
+            match=r"legacy runtime drain failed \(.*stop failed.*\); previous",
+        ):
             installer.prepare_runtime_service_for_install(shared_home)
 
     assert events == ["service stop", "restore exact LaunchAgent"]
+    assert recovery_transition_observed
+
+
+def test_runtime_drain_waits_for_launchd_transition_to_become_quiescent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An owned post-stop transition is convergence, not lost identity."""
+    home = tmp_path / "home"
+    shared_home = home / ".vibecrafted"
+    tools = tmp_path / "tools"
+    current = tools / "vibecrafted-current"
+    launcher = tmp_path / "old-vibecrafted"
+    current.parent.mkdir(parents=True)
+    _write_executable(launcher, "#!/usr/bin/env bash\nexit 0\n")
+    degraded = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=True,
+        supervisor_live=True,
+        supervisor_verified=True,
+        supervisor_service_managed=True,
+        build_current=True,
+        pair_healthy=False,
+        supervisor_pid=8181,
+    )
+    quiescent = installer._RuntimeServiceStatus(
+        installed=True,
+        loaded=False,
+        supervisor_live=False,
+        supervisor_verified=False,
+        supervisor_service_managed=False,
+        build_current=False,
+        pair_healthy=False,
+        supervisor_pid=None,
+    )
+    phase = "degraded"
+    transition_observed = False
+    plist = _write_runtime_launch_agent(home, shared_home, launcher)
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    monkeypatch.setattr(installer.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        installer,
+        "_assert_runtime_launchd_job_owned",
+        lambda _shared_home: True,
+    )
+
+    def snapshot(_shared_home: Path):
+        nonlocal transition_observed
+        if phase == "degraded":
+            return launcher, degraded, "orphaned"
+        if not transition_observed:
+            transition_observed = True
+            raise installer._RuntimeServiceTransition(
+                "runtime service identity is uncertain while transition is in progress"
+            )
+        return launcher, quiescent, "stopped"
+
+    monkeypatch.setattr(installer, "_runtime_service_snapshot", snapshot)
+
+    def command(
+        _launcher: Path,
+        _shared_home: Path,
+        *arguments: str,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal phase
+        assert arguments == ("service", "stop")
+        phase = "stopping"
+        return subprocess.CompletedProcess(list(arguments), 0, "", "")
+
+    monkeypatch.setattr(installer, "_run_runtime_service_command", command)
+    with installer._tools_install_lease(
+        current,
+        operation="test-transitioning-drain",
+    ) as descriptor:
+        monkeypatch.setenv(installer._TOOLS_INSTALL_LEASE_ENV, str(descriptor))
+        assert installer.prepare_runtime_service_for_install(
+            shared_home,
+            launch_agent_backup=installer._RuntimeLaunchAgentBackup(
+                plist,
+                plist.read_bytes(),
+                0o600,
+                (),
+            ),
+        )
+
+    assert transition_observed
+
+
+def test_runtime_service_settlement_timeout_reports_last_transition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        installer,
+        "_runtime_service_snapshot",
+        lambda _shared_home: (_ for _ in ()).throw(
+            installer._RuntimeServiceTransition("launchd is still converging")
+        ),
+    )
+
+    with pytest.raises(OSError, match="last observation: launchd is still converging"):
+        installer._wait_for_runtime_service_settlement(
+            tmp_path,
+            allow_healthy=False,
+            timeout_seconds=0,
+        )
 
 
 def test_failed_legacy_stop_replaces_raced_plist_with_exact_previous_service(
@@ -2509,6 +2861,66 @@ def test_reclaimable_degraded_service_status_is_known_not_transition() -> None:
     assert not mid_start.needs_drain
 
 
+def test_reclaimable_orphaned_guardian_is_drainable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Server down + orphan guardian is a stable degraded pair, not an unknown identity."""
+    launcher = tmp_path / "vibecrafted"
+    launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+    payload = {
+        "installed": True,
+        "loaded": True,
+        "supervisor_live": True,
+        "supervisor_verified": True,
+        "supervisor_service_managed": True,
+        "build_current": True,
+        "pair_healthy": False,
+        "supervisor_pid": 949,
+    }
+    calls = 0
+
+    monkeypatch.setattr(
+        installer,
+        "_runtime_service_launcher",
+        lambda _shared_home: launcher,
+    )
+
+    def service_command(
+        _launcher: Path,
+        _shared_home: Path,
+        *arguments: str,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        if arguments == ("service", "status", "--json"):
+            return subprocess.CompletedProcess(
+                list(arguments),
+                1,
+                json.dumps(payload) + "\n",
+                "",
+            )
+        if arguments == ("status",):
+            return subprocess.CompletedProcess(
+                list(arguments),
+                1,
+                "Supervision: LAUNCHD (installed=yes, loaded=yes, supervisor PID 949)\n"
+                "Server: STOPPED\n"
+                "Guardian: ORPHANED (PID 95934 is live without a healthy managed server)\n",
+                "",
+            )
+        raise AssertionError(arguments)
+
+    monkeypatch.setattr(installer, "_run_runtime_service_command", service_command)
+
+    snapshot = installer._runtime_service_snapshot(tmp_path)
+
+    assert snapshot is not None
+    assert snapshot[1].reclaimable
+    assert snapshot[2] == "orphaned"
+    assert calls == 2
+
+
 def test_install_drains_reclaimable_degraded_supervisor_before_publish(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2585,7 +2997,7 @@ def test_install_drains_reclaimable_degraded_supervisor_before_publish(
 
     def snapshot(_shared_home: Path):
         if mode == "degraded":
-            return launcher, degraded, "stopped"
+            return launcher, degraded, "orphaned"
         if mode == "stopped":
             return launcher, quiescent, "stopped"
         return launcher, healthy, "running"
@@ -2860,6 +3272,57 @@ def test_runtime_service_probe_honors_transaction_deadline(
             installer._RUNTIME_SERVICE_COMMAND_DEADLINE.reset(token)
 
     assert time.monotonic() - started < 1
+
+
+@pytest.mark.parametrize(
+    "pair_lines",
+    (
+        (
+            "Server: PID-MISMATCH (43426 is live but identity is unverified)\n"
+            "Guardian: STOPPED\n"
+        ),
+        (
+            "Server: RUNNING (PID 92141, listening on http://100.82.232.70:3025)\n"
+            "Guardian: STOPPED\n"
+        ),
+        (
+            "Server: RUNNING (PID 45721, listening on http://100.82.232.70:3025)\n"
+            "Guardian: PID-MISMATCH (46050 is live but identity is unverified)\n"
+        ),
+    ),
+)
+def test_partial_runtime_pair_retries_only_during_bounded_activation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pair_lines: str,
+) -> None:
+    output = (
+        "Supervision: LAUNCHD (installed=yes, loaded=yes, supervisor PID 43242)\n"
+        + pair_lines
+    )
+    monkeypatch.setattr(
+        installer,
+        "_run_runtime_service_command",
+        lambda _launcher, _shared_home, *arguments: subprocess.CompletedProcess(
+            list(arguments),
+            0,
+            output,
+            "",
+        ),
+    )
+
+    with pytest.raises(OSError, match="refusing install handoff"):
+        installer._runtime_service_pair_state(tmp_path / "launcher", tmp_path)
+
+    token = installer._RUNTIME_SERVICE_COMMAND_DEADLINE.set(time.monotonic() + 1)
+    try:
+        with pytest.raises(
+            installer._RuntimeServiceTransition,
+            match="still converging during bounded activation",
+        ):
+            installer._runtime_service_pair_state(tmp_path / "launcher", tmp_path)
+    finally:
+        installer._RUNTIME_SERVICE_COMMAND_DEADLINE.reset(token)
 
 
 def test_activation_rejects_healthy_service_with_stale_endpoint_arguments(
@@ -4962,22 +5425,514 @@ def test_tarball_install_version_uses_explicit_source_revision(
     source.mkdir()
     (source / "VERSION").write_text("3.7.0\n", encoding="utf-8")
     revision = "0123456789abcdef0123456789abcdef01234567"
+    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "vetcoders/vibecrafted")
     monkeypatch.setenv("VIBECRAFTED_SOURCE_REVISION", revision)
+    _write_source_provenance_fixture(source, source_revision=revision)
 
     assert installer.get_repo_commit(source) == "01234567"
     assert installer.get_repo_full_commit(source) == revision
+    assert installer.get_repo_owner(source) == "vetcoders/vibecrafted"
     assert installer.get_install_version(source) == "3.7.0+g01234567"
 
 
-def test_runtime_generation_pointer_swap_never_removes_current(
-    tmp_path: Path, monkeypatch
+def test_secure_walkaround_launcher_accepts_public_symlink_and_rejects_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv(
-        "VIBECRAFTED_SOURCE_REVISION",
-        "0123456789abcdef0123456789abcdef01234567",
+    tools = tmp_path / "tools"
+    current = tools / "vibecrafted-current"
+    generation = _write_walkaround_generation(
+        tools,
+        "vibecrafted-generation-a",
+        'print("generation-a")\n',
     )
-    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "Vetcoders/vibecrafted")
+    current.symlink_to(generation.name)
+    managed, public = _install_test_walkaround_launcher(tmp_path, current)
+    monkeypatch.setenv("UV_TOOL_DIR", str(tmp_path / "uv-tools"))
+
+    assert public.is_symlink()
+    assert installer._secure_walkaround_launcher_issues(current, public) == []
+
+    managed.write_bytes(managed.read_bytes() + b"# benign drift\n")
+    assert installer._secure_walkaround_launcher_issues(current, public) == [
+        f"{installer.SECURE_WALKAROUND_LAUNCHER}:corrupt:wrapper bytes drifted"
+    ]
+
+
+def test_secure_walkaround_launcher_rejects_noncanonical_carrier_bytes(
+    tmp_path: Path,
+) -> None:
+    tools = tmp_path / "tools"
+    current = tools / "vibecrafted-current"
+    generation = _write_walkaround_generation(
+        tools, "vibecrafted-generation-a", 'print("must-not-run")\n'
+    )
+    current.symlink_to(generation.name)
+    _managed, public = _install_test_walkaround_launcher(tmp_path, current)
+    carrier = generation / "source-provenance.json"
+    carrier.write_text(
+        json.dumps(json.loads(carrier.read_text(encoding="utf-8"))),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run([str(public)], check=False, capture_output=True, text=True)
+
+    assert result.returncode == 70
+    assert result.stdout == ""
+    assert "source provenance disagrees with runtime manifest" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("missing", "v1", "open", "owner", "revision", "payload"),
+)
+def test_secure_walkaround_launcher_rejects_carrier_manifest_lineage_drift(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    tools = tmp_path / "tools"
+    current = tools / "vibecrafted-current"
+    generation = _write_walkaround_generation(
+        tools, "vibecrafted-generation-a", 'print("must-not-run")\n'
+    )
+    current.symlink_to(generation.name)
+    _managed, public = _install_test_walkaround_launcher(tmp_path, current)
+    carrier_path = generation / "source-provenance.json"
+    if mutation == "missing":
+        carrier_path.unlink()
+    else:
+        carrier = json.loads(carrier_path.read_text(encoding="utf-8"))
+        if mutation == "v1":
+            carrier["schema"] = "vibecrafted.source-provenance.v1"
+        elif mutation == "open":
+            carrier["unbound"] = True
+        elif mutation == "owner":
+            carrier["owner_repo"] = "vetcoders/other"
+        elif mutation == "revision":
+            carrier["source_revision"] = "f" * 40
+        elif mutation == "payload":
+            carrier["payload"]["tree_sha256"] = "f" * 64
+        else:  # pragma: no cover
+            raise AssertionError(mutation)
+        carrier_path.write_text(
+            json.dumps(carrier, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    result = subprocess.run([str(public)], check=False, capture_output=True, text=True)
+
+    assert result.returncode == 70
+    assert result.stdout == ""
+    assert "must-not-run" not in result.stdout
+    assert "invalid Vibecrafted verifier runtime" in result.stderr
+
+
+def test_secure_walkaround_launcher_rejects_wrapper_hardlink(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tools = tmp_path / "tools"
+    current = tools / "vibecrafted-current"
+    generation = _write_walkaround_generation(
+        tools, "vibecrafted-generation-a", 'print("must-not-run")\n'
+    )
+    current.symlink_to(generation.name)
+    managed, public = _install_test_walkaround_launcher(tmp_path, current)
+    monkeypatch.setenv("UV_TOOL_DIR", str(tmp_path / "uv-tools"))
+    os.link(managed, managed.with_name("wrapper-hardlink"))
+
+    issues = installer._secure_walkaround_launcher_issues(current, public)
+    assert any(
+        "wrapper" in issue and "unique regular file" in issue for issue in issues
+    )
+    result = subprocess.run([str(public)], check=False, capture_output=True, text=True)
+    assert result.returncode == 70
+    assert "managed wrapper is not a unique regular file" in result.stderr
+
+
+def test_secure_walkaround_launcher_canonicalizes_parent_aliases_not_python(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real = tmp_path / "real"
+    alias = tmp_path / "alias"
+    real.mkdir()
+    alias.symlink_to(real, target_is_directory=True)
+    tools = real / "runtime-tools"
+    current_alias = alias / "runtime-tools/vibecrafted-current"
+    generation = _write_walkaround_generation(
+        tools, "vibecrafted-generation-a", 'print("alias-ok")\n'
+    )
+    current_alias.symlink_to(generation.name)
+    uv_alias = alias / "uv-tools"
+    uv_real = real / "uv-tools"
+    python_alias = uv_alias / "vibecrafted/bin/python"
+    python_alias.parent.mkdir(parents=True)
+    interpreter = Path(sys.executable).resolve(strict=True)
+    python_alias.symlink_to(interpreter)
+    wrapper_alias = python_alias.parent / installer.SECURE_WALKAROUND_LAUNCHER
+    installed = installer._install_secure_walkaround_launcher(
+        current_alias,
+        python_alias,
+        launcher_path=wrapper_alias,
+    )
+    public = tmp_path / "public" / installer.SECURE_WALKAROUND_LAUNCHER
+    public.parent.mkdir()
+    public.symlink_to(installed.resolve(strict=True))
+    monkeypatch.setenv("UV_TOOL_DIR", str(uv_real))
+
+    assert (
+        installer._secure_walkaround_launcher_issues(
+            real / "runtime-tools/vibecrafted-current", public
+        )
+        == []
+    )
+    rendered = installed.read_text(encoding="utf-8")
+    assert f"python={python_alias.parent.resolve(strict=True) / 'python'}" in rendered
+    assert str(interpreter) not in rendered.splitlines()[1]
+
+
+def test_secure_walkaround_launcher_follows_each_atomic_pointer_swap(
+    tmp_path: Path,
+) -> None:
+    tools = tmp_path / "tools"
+    current = tools / "vibecrafted-current"
+    generation_a = _write_walkaround_generation(
+        tools,
+        "vibecrafted-generation-a",
+        'print("generation-a")\n',
+    )
+    generation_b = _write_walkaround_generation(
+        tools,
+        "vibecrafted-generation-b",
+        'print("generation-b")\n',
+    )
+    installer._atomic_symlink(generation_a, current)
+    _managed, public = _install_test_walkaround_launcher(tmp_path, current)
+
+    observed: list[str] = []
+    for generation in (generation_a, generation_b, generation_a):
+        installer._atomic_symlink(generation, current)
+        result = subprocess.run(
+            [str(public)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stderr == ""
+        observed.append(result.stdout.strip())
+
+    assert observed == ["generation-a", "generation-b", "generation-a"]
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        Path("vibecrafted-core/vibecrafted_core/product_contract.py"),
+        installer._RUNTIME_VERIFIER_RUNNER,
+        installer._RUNTIME_VERIFIER_SCHEMA,
+        Path("vibecrafted-core/vibecrafted_core/trust/release-policy.v1.json"),
+        Path("vibecrafted-core/vibecrafted_core/trust/vibecrafted-signing-v1.pub"),
+    ],
+)
+def test_secure_walkaround_launcher_never_executes_post_manifest_mutation(
+    tmp_path: Path,
+    relative: Path,
+) -> None:
+    tools = tmp_path / "tools"
+    current = tools / "vibecrafted-current"
+    marker = tmp_path / "executed.txt"
+    generation = _write_walkaround_generation(
+        tools, "vibecrafted-generation-trusted", 'print("trusted")\n'
+    )
+    current.symlink_to(generation.name)
+    _managed, public = _install_test_walkaround_launcher(tmp_path, current)
+    target = generation / relative
+    if relative == installer._RUNTIME_VERIFIER_RUNNER:
+        target.write_text(
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\n",
+            encoding="utf-8",
+        )
+    else:
+        target.write_bytes(target.read_bytes() + b"\npost-manifest mutation\n")
+
+    result = subprocess.run([str(public)], check=False, capture_output=True, text=True)
+
+    assert result.returncode == 70
+    assert "manifest-bound file drifted" in result.stderr
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        installer._RUNTIME_VERIFIER_RUNNER,
+        installer._RUNTIME_VERIFIER_SCHEMA,
+    ],
+)
+def test_secure_walkaround_launcher_rejects_bound_file_hardlinks(
+    tmp_path: Path,
+    relative: Path,
+) -> None:
+    tools = tmp_path / "tools"
+    current = tools / "vibecrafted-current"
+    generation = _write_walkaround_generation(
+        tools, "vibecrafted-generation-trusted", 'print("must-not-run")\n'
+    )
+    current.symlink_to(generation.name)
+    _managed, public = _install_test_walkaround_launcher(tmp_path, current)
+    os.link(generation / relative, tmp_path / f"hardlink-{relative.name}")
+
+    result = subprocess.run([str(public)], check=False, capture_output=True, text=True)
+
+    assert result.returncode == 70
+    assert "not a unique regular file" in result.stderr
+
+
+def test_secure_walkaround_launcher_accepts_internal_runtime_projection(
+    tmp_path: Path,
+) -> None:
+    tools = tmp_path / "tools"
+    current = tools / "vibecrafted-current"
+    generation = _write_walkaround_generation(
+        tools, "vibecrafted-generation-projection", 'print("projection-ok")\n'
+    )
+    projected = generation / "runtime/generated/vc-frame/config.kdl"
+    canonical = (
+        generation
+        / "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame/config.kdl"
+    )
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    projected.rename(canonical)
+    shutil.rmtree(generation / "runtime")
+    (generation / "runtime").symlink_to(
+        "vibecrafted-core/vibecrafted_core/runtime", target_is_directory=True
+    )
+    _rewrite_walkaround_manifest(generation)
+    current.symlink_to(generation.name)
+    _managed, public = _install_test_walkaround_launcher(tmp_path, current)
+
+    result = subprocess.run([str(public)], check=False, capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "projection-ok\n"
+
+
+def test_secure_walkaround_launcher_rejects_nested_runtime_projection_alias(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tools = tmp_path / "tools"
+    current = tools / "vibecrafted-current"
+    generation = _write_walkaround_generation(
+        tools, "vibecrafted-generation-nested-alias", 'print("must-not-run")\n'
+    )
+    projected = generation / "runtime/generated/vc-frame/config.kdl"
+    canonical = (
+        generation
+        / "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame/config.kdl"
+    )
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    projected.rename(canonical)
+    shutil.rmtree(generation / "runtime/generated")
+    (generation / "runtime/generated").symlink_to(
+        "../vibecrafted-core/vibecrafted_core/runtime/generated",
+        target_is_directory=True,
+    )
+    _rewrite_walkaround_manifest(generation)
+    current.symlink_to(generation.name)
+    managed, public = _install_test_walkaround_launcher(tmp_path, current)
+    monkeypatch.setenv("UV_TOOL_DIR", str(tmp_path / "uv-tools"))
+
+    result = subprocess.run([str(public)], check=False, capture_output=True, text=True)
+    issues = installer._secure_walkaround_launcher_issues(current, managed)
+
+    assert result.returncode == 70
+    assert result.stdout == ""
+    assert "runtime projection topology is not canonical" in result.stderr
+    assert any(
+        "runtime projection topology is not canonical" in item for item in issues
+    )
+
+
+def test_secure_walkaround_launcher_rejects_escaping_runtime_projection(
+    tmp_path: Path,
+) -> None:
+    tools = tmp_path / "tools"
+    current = tools / "vibecrafted-current"
+    generation = _write_walkaround_generation(
+        tools, "vibecrafted-generation-escape", 'print("must-not-run")\n'
+    )
+    external = tmp_path / "external"
+    external_config = external / "generated/vc-frame/config.kdl"
+    external_config.parent.mkdir(parents=True)
+    projected = generation / "runtime/generated/vc-frame/config.kdl"
+    external_config.write_bytes(projected.read_bytes())
+    shutil.rmtree(generation / "runtime")
+    (generation / "runtime").symlink_to(external, target_is_directory=True)
+    current.symlink_to(generation.name)
+    _managed, public = _install_test_walkaround_launcher(tmp_path, current)
+
+    result = subprocess.run([str(public)], check=False, capture_output=True, text=True)
+
+    assert result.returncode == 70
+    assert "runtime projection topology is not canonical" in result.stderr
+
+
+def test_secure_walkaround_launcher_resists_hostile_python_and_path_environment(
+    tmp_path: Path,
+) -> None:
+    tools = tmp_path / "tools"
+    current = tools / "vibecrafted-current"
+    generation = _write_walkaround_generation(
+        tools,
+        "vibecrafted-generation-trusted",
+        (
+            "import os\n"
+            'print("trusted-generation")\n'
+            'print(os.environ.get("PYTHONPATH", "unset"))\n'
+            'print(os.environ.get("PYTHONHOME", "unset"))\n'
+        ),
+    )
+    installer._atomic_symlink(generation, current)
+    _managed, public = _install_test_walkaround_launcher(tmp_path, current)
+
+    hostile_bin = tmp_path / "hostile-bin"
+    for name in ("mktemp", "python", "python3", "readlink", "rm"):
+        _write_executable(
+            hostile_bin / name,
+            f"#!/bin/sh\nprintf 'diverted-by-{name}\\n'\nexit 97\n",
+        )
+    hostile_python = tmp_path / "hostile-python"
+    hostile_python.mkdir()
+    (hostile_python / "sitecustomize.py").write_text(
+        'print("diverted-by-pythonpath")\n',
+        encoding="utf-8",
+    )
+    hostile_home = tmp_path / "hostile-python-home"
+    hostile_home.mkdir()
+    cache_root = tmp_path / "wrapper-cache"
+    cache_root.mkdir()
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "PATH": str(hostile_bin),
+            "PYTHONHOME": str(hostile_home),
+            "PYTHONPATH": str(hostile_python),
+            "PYTHONPYCACHEPREFIX": str(tmp_path / "hostile-bytecode"),
+            "TMPDIR": str(cache_root),
+        }
+    )
+
+    result = subprocess.run(
+        [str(public)],
+        check=False,
+        capture_output=True,
+        env=environment,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["trusted-generation", "unset", "unset"]
+    assert result.stderr == ""
+    assert not list(cache_root.iterdir())
+    assert not (tmp_path / "hostile-bytecode").exists()
+
+
+@pytest.mark.parametrize("alias_kind", ["generation", "runner", "internal-parent"])
+def test_secure_walkaround_launcher_rejects_aliased_runtime_surface(
+    tmp_path: Path,
+    alias_kind: str,
+) -> None:
+    tools = tmp_path / "tools"
+    current = tools / "vibecrafted-current"
+    generation = _write_walkaround_generation(
+        tools,
+        "vibecrafted-generation-trusted",
+        'print("trusted-generation")\n',
+    )
+    if alias_kind == "generation":
+        aliased_generation = tools / "vibecrafted-generation-alias"
+        aliased_generation.symlink_to(generation.name, target_is_directory=True)
+        current.symlink_to(aliased_generation.name)
+    elif alias_kind == "runner":
+        runner = (
+            generation
+            / "vibecrafted-core"
+            / "vibecrafted_core"
+            / "walkaround_runner.py"
+        )
+        real_runner = runner.with_name("real_walkaround_runner.py")
+        runner.rename(real_runner)
+        runner.symlink_to(real_runner.name)
+        current.symlink_to(generation.name)
+    else:
+        core = generation / "vibecrafted-core"
+        real_core = generation / "internal-core"
+        core.rename(real_core)
+        core.symlink_to(real_core.name, target_is_directory=True)
+        current.symlink_to(generation.name)
+    _managed, public = _install_test_walkaround_launcher(tmp_path, current)
+
+    result = subprocess.run(
+        [str(public)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 70
+    assert result.stdout == ""
+    assert "invalid Vibecrafted" in result.stderr
+
+
+def test_secure_walkaround_launcher_runs_real_generation_contract(
+    tmp_path: Path,
+) -> None:
+    source, _old_target, current = _runtime_pointer_fixture(tmp_path)
+    generation = installer.sync_control_plane_tree(
+        source,
+        current,
+        mirror=True,
+        install_version="9.9.9+gwalkaround",
+    )
+    assert current.resolve() == generation.resolve()
+    _managed, public = _install_test_walkaround_launcher(tmp_path, current)
+
+    help_result = subprocess.run(
+        [str(public), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert help_result.returncode == 0, help_result.stderr
+    assert "trust-probe" in help_result.stdout
+    assert "verify-release" in help_result.stdout
+
+    missing_result = subprocess.run(
+        [
+            str(public),
+            "trust-probe",
+            str(tmp_path / "missing-challenge.json"),
+            str(tmp_path / "missing-signature.sig"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert missing_result.returncode == product_contract.E_MISSING
+    assert "VCPC022:" in missing_result.stderr
+
+
+def test_runtime_generation_pointer_swap_never_removes_current(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source, old_target, current = _runtime_pointer_fixture(tmp_path)
+    source_provenance = installer.load_source_provenance(source)
+    assert source_provenance is not None
+    assert not (source / ".git").exists()
     original_replace = installer.os.replace
     observations: list[tuple[bool, bool, bool]] = []
 
@@ -5029,14 +5984,89 @@ def test_runtime_generation_pointer_swap_never_removes_current(
     assert manifest["entrypoint"] == (
         "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
     )
-    assert manifest["owner_repo"] == "Vetcoders/vibecrafted"
-    assert manifest["source_revision"] == ("0123456789abcdef0123456789abcdef01234567")
-    assert set(manifest["hashes"]) == {
-        "VERSION",
-        "runtime/generated/vc-frame/config.kdl",
-        "scripts/vibecrafted",
-        "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
+    assert (manifest["owner_repo"], manifest["source_revision"]) == (
+        source_provenance["owner_repo"],
+        source_provenance["source_revision"],
+    )
+    expected_hashes = {
+        relative.as_posix()
+        for relative in installer._RUNTIME_GENERATION_REQUIRED_HASHES
     }
+    assert expected_hashes == product_contract.RUNTIME_GENERATION_REQUIRED_HASHES
+    assert set(manifest["hashes"]) == expected_hashes
+    for relative, digest in manifest["hashes"].items():
+        assert (
+            digest == hashlib.sha256((generation / relative).read_bytes()).hexdigest()
+        )
+
+
+def test_runtime_generation_rejects_final_bound_path_swap_before_pointer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source, old_target, current = _runtime_pointer_fixture(tmp_path)
+    replacement = tmp_path / "replacement-vibecrafted"
+    replacement.write_bytes(b"#!/bin/sh\nprintf replaced\n")
+    replacement.chmod(0o755)
+    real_open = installer.os.open
+    real_fstat = installer.os.fstat
+    real_replace = installer.os.replace
+    state: dict[str, object] = {
+        "opens": 0,
+        "fd": None,
+        "path": None,
+        "fstats": 0,
+        "swapped": False,
+    }
+
+    def open_then_track(path, flags, *args, **kwargs):
+        descriptor = real_open(path, flags, *args, **kwargs)
+        try:
+            candidate = Path(path)
+        except TypeError:
+            return descriptor
+        if (
+            candidate.name == "vibecrafted"
+            and candidate.parent.name == "scripts"
+            and any(
+                part.startswith(".vibecrafted-current.staging-")
+                for part in candidate.parts
+            )
+        ):
+            state["opens"] = int(state["opens"]) + 1
+            # The third capture is the final payload validation immediately
+            # before the generation and its stable pointer can be published.
+            if state["opens"] == 3:
+                state["fd"] = descriptor
+                state["path"] = candidate
+        return descriptor
+
+    def replace_path_after_second_fstat(descriptor: int):
+        metadata = real_fstat(descriptor)
+        if descriptor == state["fd"]:
+            state["fstats"] = int(state["fstats"]) + 1
+            if state["fstats"] == 2:
+                target = state["path"]
+                assert isinstance(target, Path)
+                real_replace(replacement, target)
+                state["swapped"] = True
+                state["fd"] = None
+        return metadata
+
+    monkeypatch.setattr(installer.os, "open", open_then_track)
+    monkeypatch.setattr(installer.os, "fstat", replace_path_after_second_fstat)
+
+    with pytest.raises(OSError, match="file changed while it was captured"):
+        installer.sync_control_plane_tree(
+            source,
+            current,
+            mirror=True,
+            install_version="9.9.9+gpath-swap",
+        )
+
+    assert state["swapped"] is True
+    assert current.resolve() == old_target.resolve()
+    assert not list(current.parent.glob("vibecrafted-generation-9.9.9+gpath-swap-*"))
 
 
 def test_runtime_generation_rejects_active_source_checkout_reference(
@@ -5049,6 +6079,7 @@ def test_runtime_generation_rejects_active_source_checkout_reference(
         + f"\nreadonly LEAKED_CHECKOUT={source!s}\n",
         encoding="utf-8",
     )
+    _write_source_provenance_fixture(source)
 
     with pytest.raises(OSError, match="references source checkout"):
         installer.sync_control_plane_tree(
@@ -5060,6 +6091,250 @@ def test_runtime_generation_rejects_active_source_checkout_reference(
 
     assert current.resolve() == old_target.resolve()
     assert not list(current.parent.glob("vibecrafted-generation-9.9.9+gleak-*"))
+
+
+@pytest.mark.parametrize(
+    ("relative", "replacement", "message"),
+    [
+        (
+            Path("vibecrafted-core/vibecrafted_core/product_contract.py"),
+            b"{}\n",
+            "missing entrypoints",
+        ),
+        (
+            installer._RUNTIME_VERIFIER_RUNNER,
+            b"def main():\n    return 0\n",
+            "command grammar drifted",
+        ),
+        (
+            installer._RUNTIME_VERIFIER_SCHEMA,
+            b"{}\n",
+            "top level is not closed",
+        ),
+    ],
+)
+def test_runtime_generation_rejects_semantically_inert_verifier_before_pointer(
+    tmp_path: Path,
+    relative: Path,
+    replacement: bytes,
+    message: str,
+) -> None:
+    source, old_target, current = _runtime_pointer_fixture(tmp_path)
+    (source / relative).write_bytes(replacement)
+    _write_source_provenance_fixture(source)
+
+    with pytest.raises(OSError, match=message):
+        installer.sync_control_plane_tree(
+            source,
+            current,
+            mirror=True,
+            install_version="9.9.9+gmalformed",
+        )
+
+    assert current.resolve() == old_target.resolve()
+    assert not list(current.parent.glob("vibecrafted-generation-9.9.9+gmalformed-*"))
+
+
+@pytest.mark.parametrize(
+    ("relative", "replacement"),
+    [
+        (installer._RUNTIME_VERIFIER_PRODUCT, _SEMANTICALLY_FAKE_PRODUCT_CONTRACT),
+        (installer._RUNTIME_VERIFIER_RUNNER, _SEMANTICALLY_FAKE_WALKAROUND_RUNNER),
+    ],
+)
+def test_runtime_generation_rejects_semantic_verifier_stub_before_pointer(
+    tmp_path: Path,
+    relative: Path,
+    replacement: bytes,
+) -> None:
+    source, old_target, current = _runtime_pointer_fixture(tmp_path)
+    (source / relative).write_bytes(replacement)
+    _write_source_provenance_fixture(source)
+
+    with pytest.raises(OSError, match="semantic negative control"):
+        installer.sync_control_plane_tree(
+            source,
+            current,
+            mirror=True,
+            install_version="9.9.9+gsemantic-fake",
+        )
+
+    assert current.resolve() == old_target.resolve()
+    assert not list(
+        current.parent.glob("vibecrafted-generation-9.9.9+gsemantic-fake-*")
+    )
+
+
+def test_runtime_generation_rejects_finite_quiz_runner_by_retained_source_payload(
+    tmp_path: Path,
+) -> None:
+    """A quiz-shaped runner cannot replace bytes bound by the unchanged v2 carrier."""
+    source, old_target, current = _runtime_pointer_fixture(tmp_path)
+    runner = source / installer._RUNTIME_VERIFIER_RUNNER
+    runner.write_bytes(_FINITE_QUIZ_FAKE_WALKAROUND_RUNNER)
+    missing = tmp_path / "missing"
+    invalid = tmp_path / "invalid"
+    invalid.mkdir()
+    challenge = invalid / "challenge.json"
+    challenge.write_text("not a challenge\n", encoding="utf-8")
+    challenge_signature = invalid / "challenge.sig"
+    challenge_signature.write_bytes(b"\0" * 256)
+    release = invalid / "release-output.json"
+    release.write_text("not a release\n", encoding="utf-8")
+    release_signature = invalid / "release-output.json.sig"
+    release_signature.write_bytes(b"\0" * 256)
+    output = invalid / "walkaround.json"
+    quiz = (
+        (
+            "trust-probe",
+            [str(missing / "challenge.json"), str(missing / "challenge.sig")],
+            [str(challenge), str(challenge_signature)],
+            None,
+        ),
+        (
+            "verify-release",
+            [
+                "--release-output",
+                str(missing / "release-output.json"),
+                "--signature",
+                str(missing / "release-output.json.sig"),
+            ],
+            [
+                "--release-output",
+                str(release),
+                "--signature",
+                str(release_signature),
+            ],
+            None,
+        ),
+        (
+            "walkaround",
+            [
+                "--release-output",
+                str(missing / "release-output.json"),
+                "--signature",
+                str(missing / "release-output.json.sig"),
+                "--output",
+                str(missing / "walkaround.json"),
+            ],
+            [
+                "--release-output",
+                str(release),
+                "--signature",
+                str(release_signature),
+                "--output",
+                str(output),
+            ],
+            output,
+        ),
+    )
+    for command, missing_arguments, invalid_arguments, forbidden_output in quiz:
+        for arguments, expected_code in (
+            (missing_arguments, product_contract.E_MISSING),
+            (invalid_arguments, product_contract.E_PROOF),
+        ):
+            result = subprocess.run(
+                [sys.executable, "-I", "-S", "-B", str(runner), command, *arguments],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode == expected_code
+            assert result.stdout == ""
+            assert result.stderr.startswith(f"VCPC{expected_code:03d}:")
+        if forbidden_output is not None:
+            assert not forbidden_output.exists()
+
+    with pytest.raises(
+        installer.DistributionManifestError,
+        match="payload digest does not match the source tree",
+    ):
+        installer.sync_control_plane_tree(
+            source,
+            current,
+            mirror=True,
+            install_version="9.9.9+gfinite-quiz",
+        )
+
+    assert current.resolve() == old_target.resolve()
+    assert not list(current.parent.glob("vibecrafted-generation-9.9.9+gfinite-quiz-*"))
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [installer._RUNTIME_VERIFIER_PRODUCT, installer._RUNTIME_VERIFIER_RUNNER],
+)
+def test_runtime_generation_rejects_syntax_invalid_verifier_before_pointer(
+    tmp_path: Path,
+    relative: Path,
+) -> None:
+    source, old_target, current = _runtime_pointer_fixture(tmp_path)
+    (source / relative).write_text("def broken(:\n", encoding="utf-8")
+    _write_source_provenance_fixture(source)
+
+    with pytest.raises(OSError, match="not compilable"):
+        installer.sync_control_plane_tree(
+            source,
+            current,
+            mirror=True,
+            install_version="9.9.9+gsyntax",
+        )
+
+    assert current.resolve() == old_target.resolve()
+
+
+def test_runtime_generation_rejects_nested_open_schema_before_pointer(
+    tmp_path: Path,
+) -> None:
+    source, old_target, current = _runtime_pointer_fixture(tmp_path)
+    schema_path = source / installer._RUNTIME_VERIFIER_SCHEMA
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema["$defs"]["fileEntry"]["additionalProperties"] = True
+    schema_path.write_text(json.dumps(schema), encoding="utf-8")
+    _write_source_provenance_fixture(source)
+
+    with pytest.raises(OSError, match="leaves an object open"):
+        installer.sync_control_plane_tree(
+            source,
+            current,
+            mirror=True,
+            install_version="9.9.9+gopen-schema",
+        )
+
+    assert current.resolve() == old_target.resolve()
+    assert not list(current.parent.glob("vibecrafted-generation-9.9.9+gopen-schema-*"))
+
+
+@pytest.mark.parametrize(
+    ("removed_field", "message"),
+    [
+        ("type", "object path inventory drifted"),
+        ("additionalProperties", "leaves an object open"),
+    ],
+)
+def test_runtime_generation_rejects_weakened_nested_object_schema_before_pointer(
+    tmp_path: Path,
+    removed_field: str,
+    message: str,
+) -> None:
+    source, old_target, current = _runtime_pointer_fixture(tmp_path)
+    schema_path = source / installer._RUNTIME_VERIFIER_SCHEMA
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    nested_object = schema["$defs"]["releaseOutput"]["properties"]["dmg"]
+    assert nested_object.pop(removed_field) is not None
+    schema_path.write_text(json.dumps(schema), encoding="utf-8")
+    _write_source_provenance_fixture(source)
+
+    with pytest.raises(OSError, match=message):
+        installer.sync_control_plane_tree(
+            source,
+            current,
+            mirror=True,
+            install_version=f"9.9.9+gweakened-{removed_field.lower()}",
+        )
+
+    assert current.resolve() == old_target.resolve()
+    assert not list(current.parent.glob("vibecrafted-generation-9.9.9+gweakened-*"))
 
 
 def test_runtime_generation_doctor_verifies_manifest_and_launcher(
@@ -5079,11 +6354,6 @@ def test_runtime_generation_doctor_verifies_manifest_and_launcher(
     _write_valid_runtime_generation(old_target)
     current.symlink_to(old_target.name)
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv(
-        "VIBECRAFTED_SOURCE_REVISION",
-        "0123456789abcdef0123456789abcdef01234567",
-    )
-    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "Vetcoders/vibecrafted")
 
     generation = installer.sync_control_plane_tree(
         source,
@@ -5106,13 +6376,29 @@ def test_runtime_generation_doctor_verifies_manifest_and_launcher(
         )
     ]
 
-    (generation / "scripts" / "vibecrafted").write_text(
+    runtime_launcher = generation / "scripts" / "vibecrafted"
+    runtime_launcher_original = runtime_launcher.read_bytes()
+    runtime_launcher.write_text(
         "#!/usr/bin/env bash\nexit 42\n",
         encoding="utf-8",
     )
     [drift] = installer._runtime_generation_contract_findings()
     assert drift.level == "fail"
     assert "manifest-bound file drifted: scripts/vibecrafted" in drift.message
+
+    runtime_launcher.write_bytes(runtime_launcher_original)
+    verifier = generation / "vibecrafted-core/vibecrafted_core/product_contract.py"
+    verifier.write_text(
+        "def verify_release_output(*_args):\n    return {}\n",
+        encoding="utf-8",
+    )
+    [verifier_drift] = installer._runtime_generation_contract_findings()
+    assert verifier_drift.level == "fail"
+    assert (
+        "manifest-bound file drifted: "
+        "vibecrafted-core/vibecrafted_core/product_contract.py"
+        in verifier_drift.message
+    )
 
 
 def test_runtime_generation_doctor_rejects_deck_drift_and_incomplete_hashes(
@@ -5129,11 +6415,6 @@ def test_runtime_generation_doctor_rejects_deck_drift_and_incomplete_hashes(
         launcher='#!/usr/bin/env bash\nprintf "launcher\\n"\n',
     )
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv(
-        "VIBECRAFTED_SOURCE_REVISION",
-        "0123456789abcdef0123456789abcdef01234567",
-    )
-    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "Vetcoders/vibecrafted")
     generation = installer.sync_control_plane_tree(
         source,
         current,
@@ -5158,7 +6439,7 @@ def test_runtime_generation_doctor_rejects_deck_drift_and_incomplete_hashes(
     deck.write_bytes(original)
     manifest_path = generation / installer._RUNTIME_GENERATION_MANIFEST
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["hashes"].pop(installer._RUNTIME_GENERATION_ENTRYPOINT.as_posix())
+    manifest["hashes"].pop("vibecrafted-core/vibecrafted_core/product_contract.py")
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     [invalid] = installer._runtime_generation_contract_findings()
     assert invalid.level == "fail"
@@ -5179,11 +6460,6 @@ def test_runtime_generation_doctor_rejects_launcher_from_old_generation(
         launcher='#!/usr/bin/env bash\nprintf "launcher\\n"\n',
     )
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv(
-        "VIBECRAFTED_SOURCE_REVISION",
-        "0123456789abcdef0123456789abcdef01234567",
-    )
-    monkeypatch.setenv("VIBECRAFTED_SOURCE_OWNER_REPO", "Vetcoders/vibecrafted")
     generation = installer.sync_control_plane_tree(
         source,
         current,
@@ -5636,9 +6912,15 @@ def test_install_tools_child_failure_rolls_runtime_pointer_back(
     home = tmp_path / "home"
     data_home = tmp_path / "xdg-data"
     tools = data_home / "vibecrafted" / "tools"
+    source = tmp_path / "source"
     old_target = tools / "vibecrafted-generation-old"
     current = tools / "vibecrafted-current"
     _write_valid_runtime_generation(old_target)
+    _write_complete_source(
+        source,
+        helper='printf "runtime helper\\n"\n',
+        launcher='#!/usr/bin/env bash\nprintf "runtime launcher\\n"\n',
+    )
     (old_target / "proof.txt").write_text("old runtime\n", encoding="utf-8")
     current.symlink_to(old_target.name)
 
@@ -5646,7 +6928,7 @@ def test_install_tools_child_failure_rolls_runtime_pointer_back(
     monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
     monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
     installer.sync_control_plane_tree(
-        REPO_ROOT,
+        source,
         current,
         mirror=True,
         install_version="9.9.9+gtest",
@@ -5762,16 +7044,6 @@ def test_compact_install_refreshes_current_tools_from_local_checkout(
         lambda _store, _state, _findings: crafted_home / "START_HERE.md",
     )
 
-    def fail_runtime_venv(*_args, **_kwargs):
-        raise AssertionError("compact install must not prepare runtime venv")
-
-    def fail_runtime_entrypoints(*_args, **_kwargs):
-        raise AssertionError("compact install must not publish runtime venv launchers")
-
-    monkeypatch.setattr(installer, "_ensure_runtime_venv", fail_runtime_venv)
-    monkeypatch.setattr(
-        installer, "_install_python_entrypoint_launchers", fail_runtime_entrypoints
-    )
     exit_code = installer._cmd_install_compact(
         Namespace(dry_run=False, mirror=True, with_shell=False),
         source,

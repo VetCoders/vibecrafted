@@ -9,7 +9,10 @@
 #      backward-search is deliberately traded away; `/` still searches
 #   4. On non-empty :wq/ZZ: push body to Paste Stack, hide floating panes,
 #      write-chars into the underlying pane (unexecuted — Enter is human)
-#   5. Clean up the temp draft
+#   5. Any yank (y/yy/Y) is a REAL copy: OSC 52 fires in-editor through the
+#      vc-frame clipboard chain, and pbcopy/wl-copy/xclip picks up the last
+#      yank on exit for hosts whose outer terminal rejects OSC 52
+#   6. Clean up the temp draft
 #
 # IMPORTANT: all settings go through ONE -u vimrc file. Classic vim hard-caps
 # the number of -c / +cmd arguments (~10) and dies with:
@@ -39,9 +42,23 @@ resolve_tool() {
 
 PASTE_STACK="$(resolve_tool paste-stack.sh || true)"
 
+# Host-side clipboard fallback for the last yank (OSC 52 already fired
+# in-editor; this covers hosts whose outer terminal rejects OSC 52, e.g.
+# stock Terminal.app). Pipes only — never a `>` redirect: a file literally
+# named `pbcopy` once landed in a repo from that exact typo class.
+push_clipboard() {
+  local file="$1"
+  if command -v pbcopy >/dev/null 2>&1; then pbcopy <"$file" && return 0; fi
+  if command -v wl-copy >/dev/null 2>&1; then wl-copy <"$file" && return 0; fi
+  if command -v xclip >/dev/null 2>&1; then xclip -selection clipboard <"$file" && return 0; fi
+  if command -v xsel >/dev/null 2>&1; then xsel --clipboard --input <"$file" && return 0; fi
+  return 1
+}
+
 f="$(mktemp "${TMPDIR:-/tmp}/vc-composer.XXXXXX")" || exit 1
 vimrc="$(mktemp "${TMPDIR:-/tmp}/vc-composer-vimrc.XXXXXX")" || exit 1
-cleanup() { rm -f -- "$f" "$vimrc"; }
+yank_file="$(mktemp "${TMPDIR:-/tmp}/vc-composer-yank.XXXXXX")" || exit 1
+cleanup() { rm -f -- "$f" "$vimrc" "$yank_file"; }
 trap cleanup EXIT
 
 # Seed from Paste Stack top unless VC_COMPOSER_SEED=0.
@@ -100,7 +117,8 @@ function! VcComposerHelp() abort
         \ '  PASTE       Ctrl+p         insert from the Paste Stack',
         \ '  WRAP        F2             toggle line wrap',
         \ '  UNDO/REDO   u  /  Ctrl+r',
-        \ '  LINES       dd delete · yy copy · p paste below',
+        \ '  COPY        yy line · v…y selection → system clipboard',
+        \ '  LINES       dd delete · p paste below',
         \ '  MOVE        arrows work everywhere · gg top · G bottom',
         \ '',
         \ '  Empty draft on :wq = cancel. Nothing runs without your Enter.',
@@ -121,6 +139,47 @@ endfunction
 autocmd VimEnter * echo 'Composer: i = type · :wq = send · ? = help'
 VIMRC_HEAD
   printf '%s\n' "$wrap_line"
+  printf "let g:vc_yank_file='%s'\n" "${yank_file//\'/\'\'}"
+  cat <<'VIMRC_YANK'
+" Yank bridge — every yank is a REAL copy. Two roads, one truth:
+"  1. OSC 52 through the pane: vc-frame's grid forwards it to the host
+"     clipboard chain (copy_command or outer terminal). Needs no +clipboard
+"     and no provider, so it cannot throw the Linux "provider" yank ERROR.
+"  2. g:vc_yank_file: the shell pushes the last yank to pbcopy/wl-copy/xclip
+"     on exit, for hosts whose outer terminal rejects OSC 52.
+if exists('##TextYankPost')
+  function! VcYankBridge() abort
+    if get(v:event, 'operator', '') !=# 'y'
+      return
+    endif
+    let l:text = join(get(v:event, 'regcontents', []), "\n")
+    if get(v:event, 'regtype', 'v') ==# 'V'
+      let l:text .= "\n"
+    endif
+    if empty(l:text)
+      return
+    endif
+    if exists('g:vc_yank_file')
+      call writefile(split(l:text, "\n", 1), g:vc_yank_file, 'b')
+    endif
+    " OSC 52 payload cap — oversized yanks still reach the exit fallback.
+    if strlen(l:text) > 100000
+      return
+    endif
+    let l:b64 = substitute(system('base64', l:text), '[\r\n]', '', 'g')
+    if v:shell_error
+      return
+    endif
+    let l:seq = "\x1b]52;c;" . l:b64 . "\x07"
+    if has('nvim')
+      call chansend(v:stderr, l:seq)
+    elseif exists('*echoraw')
+      call echoraw(l:seq)
+    endif
+  endfunction
+  autocmd TextYankPost * call VcYankBridge()
+endif
+VIMRC_YANK
   if [[ -n "$PASTE_STACK" ]]; then
     # Escape single quotes for a vim string literal.
     local_ps="${PASTE_STACK//\'/\'\'}"
@@ -191,6 +250,10 @@ else
   else
     "$editor" -N -u "$vimrc" "$f"
   fi
+fi
+
+if [[ -s "$yank_file" ]]; then
+  push_clipboard "$yank_file" || true
 fi
 
 if [[ -s "$f" ]]; then

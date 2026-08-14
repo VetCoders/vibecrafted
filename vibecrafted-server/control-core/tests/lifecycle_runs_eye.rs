@@ -178,6 +178,30 @@ fn compute_view_surfaces_lifecycle_projection() {
 }
 
 #[test]
+fn snapshot_view_surfaces_durable_lifecycle_projection() {
+    let home = temp_home("lifecycle-snapshot-view");
+    let run_id = "life-ship-smoke-snapshot-view";
+    write_lifecycle_run(&home, run_id, Some(0));
+
+    let plane = ControlPlane::new(&home);
+    let view = plane.read_state_view();
+
+    assert!(
+        view.active_runs
+            .iter()
+            .chain(view.stalled_runs.iter())
+            .all(|run| run.run_id != run_id),
+        "lifecycle containers do not claim worker liveness"
+    );
+    assert!(
+        view.recent_runs.iter().any(|run| run.run_id == run_id
+            && run.source == "lifecycle_runs"
+            && run.health == "unknown"),
+        "snapshot view keeps durable lifecycle containers discoverable"
+    );
+}
+
+#[test]
 fn lifecycle_summaries_surface_baton_and_report_dou_fallback() {
     let home = temp_home("lifecycle-summary");
     let run_id = "life-ship-smoke-summary";

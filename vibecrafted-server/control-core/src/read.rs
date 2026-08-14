@@ -57,6 +57,24 @@ pub fn vibecrafted_home() -> PathBuf {
         .join(".vibecrafted")
 }
 
+/// Whether `run_id` is one canonical, non-traversing path component.
+///
+/// Control-plane readers interpolate run ids into snapshot and runtime paths,
+/// so the accepted grammar is deliberately smaller than a generic filename:
+/// ASCII alphanumerics plus `.`, `_`, and `-`, with an alphanumeric first
+/// byte and a bounded length. HTTP/UI callers share this predicate instead of
+/// growing weaker per-surface sanitizers.
+#[must_use]
+pub fn is_safe_run_id(run_id: &str) -> bool {
+    let bytes = run_id.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 255
+        && bytes[0].is_ascii_alphanumeric()
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
 /// A read-only handle on a control-plane root directory.
 #[derive(Debug, Clone)]
 pub struct ControlPlane {
@@ -187,7 +205,7 @@ impl ControlPlane {
                 continue;
             }
             if let Some(run) = read_run_status(&path, false) {
-                if !run.run_id.is_empty() {
+                if is_safe_run_id(&run.run_id) {
                     let run = self.attach_runtime_recovery_if_present(run, false);
                     runs.push(self.attach_seal_if_present(run));
                 }
@@ -202,7 +220,7 @@ impl ControlPlane {
     #[must_use]
     pub fn lookup_run(&self, run_id: &str) -> Option<RunStatus> {
         let target = run_id.trim();
-        if target.is_empty() {
+        if !is_safe_run_id(target) {
             return None;
         }
         let direct = self.run_snapshot_dir().join(format!("{target}.json"));
@@ -249,6 +267,9 @@ impl ControlPlane {
         mut run: RunStatus,
         probe_worker_alive: bool,
     ) -> RunStatus {
+        if !is_safe_run_id(&run.run_id) {
+            return run;
+        }
         let path = self.runtime_run_dir(&run.run_id).join("meta.json");
         let Some(payload) = read_json::<serde_json::Value>(&path) else {
             if probe_worker_alive {
@@ -331,7 +352,7 @@ impl ControlPlane {
     #[must_use]
     pub fn read_seal_ref(&self, run_id: &str) -> Option<DeliverySealRef> {
         let target = run_id.trim();
-        if target.is_empty() {
+        if !is_safe_run_id(target) {
             return None;
         }
         let path = self.runtime_run_dir(target).join("delivery-seal.json");
@@ -348,7 +369,7 @@ impl ControlPlane {
     #[must_use]
     pub fn resolve_runtime_run(&self, run_id: &str) -> Option<RunStatus> {
         let target = run_id.trim();
-        if target.is_empty() {
+        if !is_safe_run_id(target) {
             return None;
         }
         let dir = self.runtime_run_dir(target);
@@ -513,7 +534,7 @@ impl ControlPlane {
     #[must_use]
     pub fn resolve_lifecycle_run(&self, run_id: &str) -> Option<LifecycleRun> {
         let target = run_id.trim();
-        if target.is_empty() {
+        if !is_safe_run_id(target) {
             return None;
         }
         let state_path = self.lifecycle_run_dir(target).join("state.json");
@@ -543,7 +564,7 @@ impl ControlPlane {
             let Some(mut run) = read_json::<LifecycleRun>(&state_path) else {
                 continue;
             };
-            if run.run_id.is_empty() {
+            if !is_safe_run_id(&run.run_id) {
                 continue;
             }
             run.project_delivery_axes();
@@ -671,9 +692,27 @@ impl ControlPlane {
     /// Python writer. Read-only.
     #[must_use]
     pub fn read_state_view(&self) -> StateView {
-        let runs = self.load_snapshots();
+        let mut runs = self.load_snapshots();
         let settlement_counts = SettlementBoard::from_snapshots(&runs);
+        self.append_discoverable_lifecycle_runs(&mut runs);
+        sort_recent_first(&mut runs);
         self.project_view(runs, settlement_counts)
+    }
+
+    fn append_discoverable_lifecycle_runs(&self, merged: &mut Vec<RunStatus>) {
+        for mut run in self.iter_lifecycle_run_status() {
+            if !merged.iter().any(|existing| existing.run_id == run.run_id)
+                && (run.is_terminal() || run.health == "active")
+            {
+                // Lifecycle containers remain discoverable in `recent`, but
+                // they are neither workers nor heartbeat sources. Only their
+                // dispatched worker runs may enter active/stalled projections.
+                if !run.is_terminal() {
+                    run.health = "unknown".to_string();
+                }
+                merged.push(run);
+            }
+        }
     }
 
     /// Build a [`StateView`] by merging the three raw sources in Rust
@@ -806,19 +845,7 @@ impl ControlPlane {
                 merged.push(run);
             }
         }
-        for mut run in self.iter_lifecycle_run_status() {
-            if !merged.iter().any(|r| r.run_id == run.run_id)
-                && (run.is_terminal() || run.health == "active")
-            {
-                // Lifecycle containers remain discoverable in `recent`, but
-                // they are neither workers nor heartbeat sources. Only their
-                // dispatched worker runs may enter active/stalled projections.
-                if !run.is_terminal() {
-                    run.health = "unknown".to_string();
-                }
-                merged.push(run);
-            }
-        }
+        self.append_discoverable_lifecycle_runs(&mut merged);
 
         sort_recent_first(&mut merged);
         if events.len() > crate::model::EVENT_TAIL_LIMIT {
@@ -1725,10 +1752,9 @@ impl MarblesState {
 
 #[cfg(test)]
 mod tests {
-    use chrono::DateTime;
-    use super::ControlPlane;
+    use super::{ControlPlane, is_safe_run_id};
     use crate::events::STREAM_SEGMENT_SCHEMA;
-    use chrono::{Duration, Utc};
+    use chrono::{DateTime, Duration, Utc};
     use serde_json::json;
     use std::fs;
     use std::io::ErrorKind;
@@ -1755,6 +1781,56 @@ mod tests {
             }
         }
         panic!("could not allocate an isolated fixture home")
+    }
+
+    #[test]
+    fn run_id_validation_rejects_traversal_and_unsafe_tokens() {
+        for valid in ["impl-260811-123456-00001", "life_demo.2", "a"] {
+            assert!(is_safe_run_id(valid), "expected valid run id: {valid}");
+        }
+        for invalid in [
+            "",
+            ".",
+            "../secret",
+            r"..\secret",
+            "/absolute",
+            "javascript:alert(1)",
+            "two words",
+        ] {
+            assert!(
+                !is_safe_run_id(invalid),
+                "expected unsafe run id: {invalid}"
+            );
+        }
+        assert!(!is_safe_run_id(&"a".repeat(256)));
+    }
+
+    #[test]
+    fn lookup_run_rejects_a_snapshot_path_escape() {
+        let home = temp_home("unsafe-run-id");
+        let control_plane = home.join("control_plane");
+        fs::create_dir_all(control_plane.join("runs")).expect("snapshot directory");
+        fs::write(
+            control_plane.join("secret.json"),
+            serde_json::to_vec(&json!({
+                "run_id": "../secret",
+                "state": "completed",
+                "agent": "codex",
+                "skill": "workflow",
+                "mode": "workflow",
+                "root": "/tmp/repo",
+                "updated_at": Utc::now().to_rfc3339(),
+                "health": "final",
+                "source": "fixture",
+                "lock_present": false
+            }))
+            .expect("snapshot json"),
+        )
+        .expect("escaped snapshot fixture");
+
+        assert!(ControlPlane::new(&home).lookup_run("../secret").is_none());
+
+        fs::remove_dir_all(home).ok();
     }
 
     #[test]
@@ -2137,7 +2213,9 @@ mod tests {
             view.settlement_counts
         );
         // first-class stalled list always present (empty when nothing stalled)
-        assert!(view.stalled_runs.is_empty() || view.stalled_runs.iter().all(|r| r.health == "stalled"));
+        assert!(
+            view.stalled_runs.is_empty() || view.stalled_runs.iter().all(|r| r.health == "stalled")
+        );
         assert!(view.recent_runs.iter().any(|r| r.run_id == "snap-f"));
 
         fs::remove_dir_all(home).ok();

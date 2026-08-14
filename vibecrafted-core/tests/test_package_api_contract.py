@@ -114,6 +114,10 @@ def test_version_bump_updates_every_declared_projection(tmp_path: Path) -> None:
         tmp_path / "vibecrafted-core" / "vibecrafted_core" / "VERSION",
         tmp_path / "vibecrafted-mcp" / "vibecrafted_mcp" / "VERSION",
     )
+    cargo_manifests = (
+        tmp_path / "vibecrafted-server" / "web" / "Cargo.toml",
+        tmp_path / "vibecrafted-server" / "control-core" / "Cargo.toml",
+    )
     version_file.write_text("1.4.1\n", encoding="utf-8")
     for pyproject in pyprojects:
         pyproject.parent.mkdir(parents=True)
@@ -123,6 +127,14 @@ def test_version_bump_updates_every_declared_projection(tmp_path: Path) -> None:
     for packaged in packaged_versions:
         packaged.parent.mkdir(parents=True)
         packaged.write_text("1.4.1\n", encoding="utf-8")
+    for cargo in cargo_manifests:
+        cargo.parent.mkdir(parents=True)
+        # A dependency `version =` below [package] must never be rewritten.
+        cargo.write_text(
+            '[package]\nname = "fixture"\nversion = "1.4.1"\n\n'
+            '[dependencies.leptos]\nversion = "0.8"\n',
+            encoding="utf-8",
+        )
 
     result = subprocess.run(
         [
@@ -146,6 +158,10 @@ def test_version_bump_updates_every_declared_projection(tmp_path: Path) -> None:
         )
     for packaged in packaged_versions:
         assert packaged.read_text(encoding="utf-8") == "1.5.0\n"
+    for cargo in cargo_manifests:
+        manifest = tomllib.loads(cargo.read_text(encoding="utf-8"))
+        assert manifest["package"]["version"] == "1.5.0"
+        assert manifest["dependencies"]["leptos"]["version"] == "0.8"
 
 
 def test_version_bump_rejects_drift_without_partial_writes(tmp_path: Path) -> None:
@@ -158,6 +174,10 @@ def test_version_bump_rejects_drift_without_partial_writes(tmp_path: Path) -> No
         tmp_path / "vibecrafted-core" / "vibecrafted_core" / "VERSION",
         tmp_path / "vibecrafted-mcp" / "vibecrafted_mcp" / "VERSION",
     )
+    cargo_manifests = (
+        tmp_path / "vibecrafted-server" / "web" / "Cargo.toml",
+        tmp_path / "vibecrafted-server" / "control-core" / "Cargo.toml",
+    )
     version_file.write_text("1.4.1\n", encoding="utf-8")
     for index, pyproject in enumerate(pyprojects):
         pyproject.parent.mkdir(parents=True)
@@ -168,10 +188,15 @@ def test_version_bump_rejects_drift_without_partial_writes(tmp_path: Path) -> No
     for packaged in packaged_versions:
         packaged.parent.mkdir(parents=True)
         packaged.write_text("1.4.1\n", encoding="utf-8")
+    for cargo in cargo_manifests:
+        cargo.parent.mkdir(parents=True)
+        cargo.write_text(
+            '[package]\nname = "fixture"\nversion = "1.4.1"\n', encoding="utf-8"
+        )
 
     before = {
         path: path.read_text(encoding="utf-8")
-        for path in (version_file, *pyprojects, *packaged_versions)
+        for path in (version_file, *pyprojects, *packaged_versions, *cargo_manifests)
     }
     result = subprocess.run(
         [

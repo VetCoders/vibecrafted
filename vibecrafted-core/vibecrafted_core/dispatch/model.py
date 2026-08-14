@@ -20,6 +20,17 @@ STATE_WORKER_DONE = "[~]"
 STATE_UNKNOWN = "[?]"
 STATE_FAILED = "[!]"
 STATE_VERIFIED = "[x]"
+SCHEDULER_STATES = {
+    "queued",
+    "launching",
+    "active",
+    "reported",
+    "verified",
+    "integrating",
+    "settled",
+    "failed",
+    "stopped",
+}
 
 
 @dataclass(frozen=True)
@@ -144,6 +155,17 @@ class Cut:
     observational: bool = False
     verify: tuple[Verify, ...] = ()
     recovery: Recovery | None = None
+    depends_on: tuple[str, ...] = ()
+    integrator: bool = False
+    # Runtime-resolved fields are never accepted from dispatch TOML. The
+    # supervisor stamps them after it has created and validated the linked
+    # checkout for this specific run.
+    runtime_root: str = ""
+    runtime_branch: str = ""
+    baseline_sha: str = ""
+    target_path: str = ""
+    artifact_path: str = ""
+    scheduler_slot: int = 0
 
 
 @dataclass(frozen=True)

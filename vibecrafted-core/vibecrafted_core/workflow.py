@@ -44,9 +44,10 @@ from .events import append_event
 from .model_overrides import _model_override_receipt, _with_model_override
 from .package_resources import deck_path as package_deck_path
 from .process_control import process_identity_receipt, validate_process_identity
-from .report_contract import CLAIM_DIGEST_ENV
+from .report_contract import CLAIM_DIGEST_ENV, reserve_launcher_report_template
 from .research_config import ResearchAgentSelection, resolve_research_runtime_config
 from .run_mutation import mutate_run_meta, run_mutation_locks
+from .run_triage import BUCKET_LIVE
 from .spawn import _stdin_command
 from .workflow_runtime import WORKER_SIGNAL_DISCIPLINE, native_resume_argv
 from .workflows import registry as workflow_registry
@@ -270,35 +271,20 @@ def _slug_words(text: str) -> list[str]:
     ]
 
 
-def _artifact_report_suffix(
-    canonical_report_dir: Path | None,
-    artifact_ts: str,
-    artifact_slug: str,
-) -> str:
-    """Find the first unused numeric suffix for a canonical report filename."""
-    if canonical_report_dir is None:
-        return ""
-    for index in range(1, 100):
-        suffix = "" if index == 1 else f"-{index}"
-        pattern = f"{artifact_ts}_*_{artifact_slug}_report{suffix}.*"
-        if not any(canonical_report_dir.glob(pattern)):
-            return suffix
-    return "-99"
-
-
 def _canonical_report_path(
     *,
     canonical_report_dir: Path,
     artifact_ts: str,
     agent: str,
     artifact_slug: str,
-    artifact_suffix: str,
+    run_id: str,
 ) -> Path:
-    """Assemble the canonical report filename from its slug/agent/suffix parts."""
+    """Assemble a run-id-addressed report path; no shared suffix allocator."""
     safe_agent = "-".join(_slug_words(agent)) or "agent"
+    safe_run_id = re.sub(r"[^A-Za-z0-9._-]+", "-", run_id).strip(".-") or "run"
     return (
         canonical_report_dir
-        / f"{artifact_ts}_{safe_agent}_{artifact_slug}_report{artifact_suffix}.md"
+        / f"{artifact_ts}_{safe_agent}_{artifact_slug}_{safe_run_id}_report.md"
     )
 
 
@@ -965,27 +951,228 @@ def _effective_operator_session(*, root: str, run_id: str, env: dict[str, str]) 
     Rules (exact order):
 
     1. ``VIBECRAFTED_WORKER_SESSION`` if set — explicit override wins.
-    2. ``basename(root)`` — per-project host session for workers.
-    3. If that equals the dispatcher seat (``VC_FRAME_SESSION_NAME`` /
-       ``ZELLIJ_SESSION_NAME``), use ``"<repo> workers"`` so the operator
-       session never receives a worker tab — even when repo name == seat name.
+    2. Else workspace-bound host from the control-plane catalog
+       (``{label}-{workspace_short} workers``). Two workspaces that share the
+       same root basename never share a worker host.
+    3. Emergency fallback only: ``"<basename(root)> workers"`` when the
+       catalog cannot be opened.
+
+    2026-08-09: the suffix used to be conditional on ``basename(root)``
+    colliding with the dispatcher seat (``VC_FRAME_SESSION_NAME`` /
+    ``ZELLIJ_SESSION_NAME``). That guarded only the seat==repo case, so a
+    dispatch fired from any other seat routed worker tabs straight into the
+    operator's interactive card (20 runs stamped ``operator_session:
+    "vibecrafted"``). The declared invariant is unconditional, so the rule is
+    too — the dispatcher seat no longer participates in host resolution.
+
+    2026-08-10 Cut A: basename-only hosts collide across checkouts with the
+    same name. Worker ownership is now bound to ``workspace_id``.
 
     Missing hosts are resurrected by G3 (``attach --create-background``). The
     ``run_id`` argument is retained for call-site compatibility only.
     """
     _ = run_id  # call-site compatibility; not part of G7 host rules
-    override = str(env.get("VIBECRAFTED_WORKER_SESSION") or "").strip()
-    if override:
-        return override
+    from .workspace_catalog import resolve_worker_host_session
 
-    host = Path(root or ".").name or "vibecrafted"
-    dispatcher = (
-        str(env.get("VC_FRAME_SESSION_NAME") or "").strip()
-        or str(env.get("ZELLIJ_SESSION_NAME") or "").strip()
+    return resolve_worker_host_session(root=root or ".", env=env)
+
+
+# --------------------------------------------------------------------------
+# LIVE bucket viewer (Cut C, 2026-08-09)
+#
+# A dispatched worker stays a detached headless process — that is the canon
+# (TRIAGE_AND_SESSIONS §1). Visibility used to be bought by giving the worker
+# a terminal tab, which is what put worker PTYs in the operator's rail. Here
+# it is bought by a *viewer* instead: a read-only tab in the ``Live runs``
+# bucket that tails the run's transcript and owns nothing.
+#
+# Three properties, all deliberate:
+#
+# **The viewer has no authority.** Closing it loses the view, never the run.
+# It holds no pipe the worker writes to and no pid the worker depends on.
+#
+# **Fail-open, exactly like triage.** No binary, a dead session, a refused
+# action — each becomes a receipt in meta and the run continues headless.
+# Nothing in this section may raise into an already-accepted launch.
+#
+# **The stamp is the whole point.** ``origin_session`` / ``origin_tab`` are
+# written the moment the viewer lands, because they are precisely the fields
+# ``plan_triage`` demands. That is what lets the existing finish hook move
+# this viewer out of ``Live runs`` and into Finalized/Failed/Needs attention
+# with no new code in triage at all.
+# --------------------------------------------------------------------------
+
+LIVE_VIEWER_SCHEMA = "vibecrafted.live-viewer.v1"
+
+#: Opt-out switch. Default on; the values mirror ``VIBECRAFTED_TRIAGE_RUN``.
+LIVE_VIEWER_ENV = "VIBECRAFTED_LIVE_VIEWER"
+_LIVE_VIEWER_OFF = {"0", "false", "no", "off"}
+
+
+def _live_viewer_enabled(env: dict[str, str]) -> bool:
+    """Whether the LIVE viewer is switched on for this launch."""
+    if str(env.get("VIBECRAFTED_TEST_MODE", "") or "").strip() == "1":
+        return False
+    raw = str(env.get(LIVE_VIEWER_ENV, "") or "").strip().lower()
+    return raw not in _LIVE_VIEWER_OFF
+
+
+def _live_viewer_receipt(
+    status: str,
+    *,
+    reason: str = "",
+    run_id: str = "",
+    command: list[str] | None = None,
+) -> dict[str, Any]:
+    """One durable receipt describing what the viewer attempt actually did."""
+    return {
+        "schema": LIVE_VIEWER_SCHEMA,
+        "status": status,
+        "reason": reason,
+        "session": BUCKET_LIVE,
+        "tab": run_id,
+        "command": list(command or []),
+    }
+
+
+def _write_live_viewer_script(
+    path: Path, *, run_id: str, agent: str, transcript_path: Path
+) -> Path:
+    """Write the read-only viewer command for one run's LIVE tab.
+
+    ``vibecrafted <agent> observe`` is a one-shot status print, so it renders
+    the header and the follow is ``tail -F`` over the supervisor's humanized
+    transcript. The raw transcript remains a byte-exact machine contract and
+    must never be projected directly into a terminal. ``set -e`` is deliberately
+    absent: a failing status print must not kill the tail.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    quoted_run = shlex.quote(run_id)
+    quoted_agent = shlex.quote(agent)
+    human_transcript_path = transcript_path.with_name(
+        transcript_path.stem + ".human" + transcript_path.suffix
     )
-    if dispatcher and host == dispatcher:
-        return f"{host} workers"
-    return host
+    quoted_human_transcript = shlex.quote(str(human_transcript_path))
+    path.write_text(
+        "#!/usr/bin/env bash\n"
+        f"# LIVE viewer for {run_id} — read-only.\n"
+        "# This tab observes a detached headless worker. Closing it loses the\n"
+        "# view, never the run.\n"
+        "set -uo pipefail\n"
+        f"human_transcript={quoted_human_transcript}\n"
+        "if command -v vibecrafted >/dev/null 2>&1; then\n"
+        f"  vibecrafted {quoted_agent} observe --run-id {quoted_run} || true\n"
+        "fi\n"
+        'mkdir -p "$(dirname "$human_transcript")" 2>/dev/null || true\n'
+        'touch "$human_transcript" 2>/dev/null || true\n'
+        'exec tail -n +1 -F "$human_transcript"\n',
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+    return path
+
+
+def _stamp_live_viewer_origin(
+    meta_path: Path, *, run_id: str, receipt: dict[str, Any]
+) -> None:
+    """Merge the viewer receipt — and, when it landed, its origin — into meta.
+
+    The origin pair is written only for an opened viewer, and only when meta
+    does not already name an origin: the launch path must not overwrite a
+    truthful terminal origin stamped by a `--runtime terminal` worker. Both
+    later writers (``supervisor_async``) use the same "only if unset" rule, so
+    a stamp made here survives to triage time.
+    """
+    opened = receipt.get("status") == "opened"
+
+    def _merge(latest: dict[str, Any]) -> dict[str, Any]:
+        """Attach the receipt, then the origin pair when this viewer owns it."""
+        latest["run_id"] = run_id
+        latest["live_viewer"] = receipt
+        if opened and not str(latest.get("origin_session") or "").strip():
+            latest["origin_session"] = BUCKET_LIVE
+            latest["origin_tab"] = run_id
+        return latest
+
+    mutate_run_meta(
+        control_plane_home(),
+        meta_path=meta_path,
+        mutation_root=meta_path.parent,
+        run_id=run_id,
+        mutator=_merge,
+        create=True,
+    )
+
+
+def open_live_viewer(
+    *,
+    run_id: str,
+    agent: str,
+    root: str,
+    launch_dir: Path,
+    transcript_path: Path,
+    meta_path: Path,
+    env: dict[str, str],
+) -> dict[str, Any]:
+    """Open the run's read-only viewer tab in the ``Live runs`` bucket.
+
+    Returns the receipt in every case and raises in none of them — a viewer is
+    a convenience layered on a launch that already succeeded. A missing
+    ``Live runs`` session is resurrected by G3 inside
+    :func:`_vc_frame_run_host_action`, exactly like a worker host.
+    """
+    if not _live_viewer_enabled(env):
+        return _live_viewer_receipt("skipped", reason="disabled", run_id=run_id)
+
+    receipt: dict[str, Any]
+    try:
+        explicit = str(env.get("VIBECRAFTED_VC_FRAME_BIN", "") or "").strip()
+        if explicit:
+            vc_frame = explicit if Path(explicit).exists() else ""
+        else:
+            vc_frame = shutil.which("vc-frame", path=env.get("PATH")) or ""
+        if not vc_frame:
+            receipt = _live_viewer_receipt("skipped", reason="no_binary", run_id=run_id)
+        else:
+            script = _write_live_viewer_script(
+                launch_dir / f"{run_id}-live-viewer.sh",
+                run_id=run_id,
+                agent=agent,
+                transcript_path=transcript_path,
+            )
+            command = [
+                vc_frame,
+                "--session",
+                BUCKET_LIVE,
+                "action",
+                "new-tab",
+                "--name",
+                run_id,
+                "--cwd",
+                root,
+                "--",
+                str(script),
+            ]
+            host = _vc_frame_run_host_action(command, operator_session=BUCKET_LIVE)
+            receipt = _live_viewer_receipt(
+                "opened" if host.ok else "error",
+                reason="" if host.ok else (host.error or "vc-frame action failed"),
+                run_id=run_id,
+                command=command,
+            )
+            if host.resurrected:
+                receipt["resurrected"] = True
+    except Exception as exc:  # noqa: BLE001 — a viewer never fails a live run.
+        receipt = _live_viewer_receipt(
+            "error", reason=f"{type(exc).__name__}: {exc}", run_id=run_id
+        )
+
+    try:
+        _stamp_live_viewer_origin(meta_path, run_id=run_id, receipt=receipt)
+    except Exception as exc:  # noqa: BLE001 — same rule for the receipt write.
+        receipt = dict(receipt)
+        receipt["stamp_error"] = f"{type(exc).__name__}: {exc}"
+    return receipt
 
 
 def _run_is_terminal(run: dict[str, Any]) -> bool:
@@ -1761,17 +1948,19 @@ def launch_workflow(
     canonical_report_dir = _canonical_report_dir(spec.root, spec.skill)
     artifact_ts = time.strftime("%Y-%m-%d")
     artifact_slug = _artifact_slug(source_prompt, run_id)
-    artifact_suffix = _artifact_report_suffix(
-        canonical_report_dir,
-        artifact_ts,
-        artifact_slug,
-    )
     report_path = _canonical_report_path(
         canonical_report_dir=canonical_report_dir,
         artifact_ts=artifact_ts,
         agent=spec.agent,
         artifact_slug=artifact_slug,
-        artifact_suffix=artifact_suffix,
+        run_id=run_id,
+    )
+    reserve_launcher_report_template(
+        report_path,
+        run_id=run_id,
+        agent=spec.agent,
+        skill=spec.skill,
+        claim_digest=str(spec.claim_digest or "").strip(),
     )
     prompt_path = _write_prompt_file(artifacts["prompt"], prompt_body)
     claim_digest = str(spec.claim_digest or "").strip()
@@ -1860,8 +2049,6 @@ def launch_workflow(
     merged_env["VIBECRAFTED_CANONICAL_REPORT_DIR"] = str(canonical_report_dir)
     merged_env["VIBECRAFTED_ARTIFACT_SLUG"] = artifact_slug
     merged_env["VIBECRAFTED_ARTIFACT_TS"] = artifact_ts
-    if artifact_suffix:
-        merged_env["VIBECRAFTED_ARTIFACT_SUFFIX"] = artifact_suffix
     if spec.runtime == "headless":
         # A detached run has no terminal origin. Ambient Zellij/vc-frame
         # variables belong to the operator shell and must not manufacture a
@@ -1888,7 +2075,7 @@ def launch_workflow(
         canonical_report_dir=canonical_report_dir,
         artifact_slug=artifact_slug,
         artifact_ts=artifact_ts,
-        artifact_suffix=artifact_suffix,
+        artifact_suffix="",
         research_selection=research_selection,
     )
     if operator_session:
@@ -2148,8 +2335,29 @@ def launch_workflow(
         handle.write(
             json.dumps({"ts": stamp, "event": "spawned", "pid": launcher_pid}) + "\n"
         )
+        # Cut C: the worker stays headless; visibility is a viewer in the LIVE
+        # bucket, not a worker tab. A vc-frame transport already owns a tab of
+        # its own, so only the detached path gets one.
+        if transport == "headless":
+            live_viewer = open_live_viewer(
+                run_id=run_id,
+                agent=spec.agent,
+                root=spec.root,
+                launch_dir=launch_dir,
+                transcript_path=artifacts["transcript"],
+                meta_path=artifacts["meta"],
+                env=merged_env,
+            )
+            handle.write(
+                json.dumps({"ts": stamp, "event": "live_viewer", **live_viewer}) + "\n"
+            )
+        else:
+            live_viewer = _live_viewer_receipt(
+                "skipped", reason=f"transport_{transport}", run_id=run_id
+            )
 
     return {
+        "live_viewer": live_viewer,
         "accepted": True,
         "message": f"Launched {spec.skill} via Vibecrafted core runtime.",
         "command": command,

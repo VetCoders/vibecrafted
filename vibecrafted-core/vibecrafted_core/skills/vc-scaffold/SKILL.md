@@ -56,7 +56,8 @@ The lighthouse orients before the fleet sails; the armor is the verification eac
 This workflow runs in the operator's current checkout and current branch. Do not create, switch
 to, or move execution into a git worktree unless the operator explicitly asks. Generic words like
 "isolate", "parallel", or "clean branch" are not enough. Re-read files before editing, adapt to
-concurrent changes, report a substrate failure if the tree is too poisoned to continue safely.
+concurrent changes, report a substrate failure if the tree is too poisoned to continue safely. The one sanctioned second mode is a Fleet Worktree dispatch (written plan, pre-committed verifiers, disjoint domains, single-thread integrator — see Living Tree Rule, Mode B); outside that formation, stay in the shared tree.
+
 See [Living Tree Rule](../LIVING_TREE_RULE.md).
 
 ### Dispatch

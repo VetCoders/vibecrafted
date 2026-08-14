@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import stat
 import subprocess
 import sys
@@ -36,6 +35,7 @@ AGENTS = {"claude", "codex", "agy", "junie", "grok", "swarm"}
 RESEARCH_ARITY = {"uno": 1, "duo": 2, "trio": 3}
 LAUNCHERS = (
     "audit",
+    "canary",
     "decorate",
     "delegate",
     "dou",
@@ -294,6 +294,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="count would-rewrite only; do not write snapshots",
     )
     settle.add_argument("--json", action="store_true")
+    workspace = sub.add_parser(
+        "workspace",
+        help=(
+            "canonical Vibecrafted Workspace catalog "
+            "(create|list|select|show|bury|recover|migrate|materialize|"
+            "settlement-counts)"
+        ),
+    )
+    workspace.add_argument(
+        "workspace_argv",
+        nargs=argparse.REMAINDER,
+        help="workspace subcommand args (see vibecrafted workspace --help)",
+    )
     settlements = sub.add_parser(
         "settlements",
         help=(
@@ -307,6 +320,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="durable f/x/n lower-bound plus revalidation inventory",
     )
     settlements_summary.add_argument("--json", action="store_true")
+    settlements_summary.add_argument(
+        "--workspace-id",
+        default="",
+        help="scope f/x/n projection to one workspace_id (Cut A)",
+    )
     settlements_list = settlements_sub.add_parser(
         "list",
         help="list or group latest-by-run settlements",
@@ -372,59 +390,27 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _live_operator_session_exists(root: str) -> bool:
-    """True when a live repo-bound vc-frame session exists to host a visible tab.
-
-    Mirrors the bash runtime's repo-bound discovery (``spawn_effective_operator_session``
-    / ``spawn_session_is_live`` in ``runtime/scripts/lib/vc_frame.sh``): the operator
-    session is named after ``basename "$root"`` and counts only when vc-frame lists it
-    as live (not ``EXITED``). Keeping the python runtime-default decision in lockstep
-    with the shell spawn path is what lets a CLI/headless/nested dispatch land as a
-    visible tab instead of degrading to an invisible headless orphan.
-    """
-    bin_path = shutil.which("vc-frame")
-    if not bin_path:
-        return False
-    name = os.path.basename(os.path.abspath(root.strip() or os.getcwd()))
-    if not name:
-        return False
-    try:
-        proc = subprocess.run(
-            [bin_path, "list-sessions"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    for line in proc.stdout.splitlines():
-        clean = ANSI_PATTERN.sub("", line)
-        parts = clean.split()
-        if parts and parts[0] == name and "EXITED" not in clean:
-            return True
-    return False
-
-
 def _default_runtime(explicit_runtime: str, root: str = "") -> str:
-    """Resolve launch surface: explicit > inherited session env > TTY > live session > headless."""
+    """Resolve launch surface: explicit > real operator TTY > headless.
+
+    DELIBERATE REVERSAL of 141a19d / 3d794af (July 2026): those commits made
+    dispatched workers prefer a visible ``terminal`` tab — either by
+    inheriting an in-frame session env (``VC_FRAME_SESSION_NAME`` /
+    ``ZELLIJ_SESSION_NAME``) or by discovering a live repo-bound vc-frame
+    session — because headless dispatch left the operator blind. That
+    visibility gap is now closed by the LIVE bucket viewer opened alongside
+    every headless launch (see the ``Live runs`` bucket wiring / commit
+    7be422aa, cut c1-live-bucket-viewer): the operator watches a
+    ``tail -F``/``observe`` viewer tab instead of the worker itself owning a
+    pane. Do NOT restore the env/live-session branches as a "fix" — that
+    would resurrect worker tabs landing in the operator's own session
+    (the exact bug Cut A / c1 closed). ``root`` is kept in the signature for
+    call-site compatibility even though this function no longer consults it.
+    """
     runtime = str(explicit_runtime or "").strip()
     if runtime:
         return runtime
-    # In-frame surface only. VIBECRAFTED_OPERATOR_SESSION alone must NOT force
-    # terminal — fleet workers stay headless unless they inherit a real frame
-    # session name or discover a live repo-bound host (see default_runtime tests).
-    for key in (
-        "VC_FRAME_SESSION_NAME",
-        "ZELLIJ_SESSION_NAME",
-    ):
-        if str(os.environ.get(key) or "").strip():
-            return "terminal"
     if sys.stdin.isatty() and sys.stdout.isatty():
-        return "terminal"
-    # Non-TTY dispatch with a LIVE repo-bound vc-frame session prefers a visible
-    # tab; headless is the fallback when no such session exists.
-    if _live_operator_session_exists(root):
         return "terminal"
     return "headless"
 
@@ -1182,6 +1168,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
         return _cmd_resettle(args)
+    if args.command == "workspace":
+        from .workspace_catalog import workspace_cli_main
+
+        argv = list(getattr(args, "workspace_argv", []) or [])
+        # argparse REMAINDER may keep a leading "--".
+        if argv and argv[0] == "--":
+            argv = argv[1:]
+        return workspace_cli_main(argv)
     if args.command == "settlements":
         from .settlements_query import (
             SettlementsQueryError,
@@ -1196,7 +1190,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         action = getattr(args, "settlements_action", None)
         if action is None:
             print(
-                "usage: vibecrafted settlements summary [--json]\n"
+                "usage: vibecrafted settlements summary [--json] [--workspace-id UUID]\n"
                 "       vibecrafted settlements list "
                 "[--bucket f|x|n] [--revalidatable] "
                 "[--group agent,skill,reason,root] [--limit N] [--json]\n"
@@ -1206,6 +1200,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         try:
             if action == "summary":
+                workspace_id = str(getattr(args, "workspace_id", "") or "").strip()
+                if workspace_id:
+                    from .workspace_catalog import settlement_counts_for_workspace
+
+                    payload = settlement_counts_for_workspace(workspace_id)
+                    print(json.dumps(payload, ensure_ascii=False, indent=2))
+                    return 0
                 payload = settlements_summary()
                 if getattr(args, "json", False):
                     print(json.dumps(payload, ensure_ascii=False, indent=2))

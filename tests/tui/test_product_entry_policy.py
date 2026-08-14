@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -18,6 +19,7 @@ WRAPPER = REPO / "scripts" / "vc-frame-product-entry.sh"
 HELPER = REPO / "runtime" / "shell" / "vetcoders.sh"
 DASHBOARD = REPO / "runtime" / "shell" / "lib" / "dashboard.sh"
 DISPATCH = REPO / "runtime" / "shell" / "lib" / "dispatch.sh"
+FOUNDATIONS = REPO / "scripts" / "install-foundations.sh"
 
 
 def _write_fake_bin(bin_dir: Path, name: str, body: str) -> Path:
@@ -33,6 +35,57 @@ def test_wrapper_exists_executable() -> None:
     text = WRAPPER.read_text(encoding="utf-8")
     assert "pin_product_config" in text
     assert "is_product_session_name" in text
+    assert "vc-frame.real" not in text
+
+
+def test_installer_only_mentions_retired_sibling_for_one_way_cleanup() -> None:
+    text = FOUNDATIONS.read_text(encoding="utf-8")
+    assert text.count("vc-frame.real") == 1
+    assert 'legacy_bin="$LAUNCHER_PREFIX/vc-frame.real"' in text
+    assert 'rm -f "$legacy_bin"' in text
+
+
+def test_wrapper_never_executes_retired_sibling_shadow(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    xdg = tmp_path / "xdg"
+    bin_dir = tmp_path / "bin"
+    cargo_bin = home / ".cargo" / "bin"
+    xdg.mkdir(parents=True)
+    bin_dir.mkdir(parents=True)
+    cargo_bin.mkdir(parents=True)
+
+    _write_fake_bin(
+        bin_dir,
+        "vc-frame.real",
+        "#!/usr/bin/env bash\necho RETIRED_SHADOW_RAN\nexit 91\n",
+    )
+    _write_fake_bin(
+        cargo_bin,
+        "vc-frame",
+        "#!/usr/bin/env bash\necho CANONICAL_RAN args=$*\nexit 0\n",
+    )
+    wrapper = bin_dir / "vc-frame"
+    wrapper.write_text(WRAPPER.read_text(encoding="utf-8"), encoding="utf-8")
+    wrapper.chmod(0o755)
+
+    env = {
+        **{k: v for k, v in os.environ.items() if not k.startswith("VC_FRAME")},
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(xdg),
+        "USER": "test",
+    }
+    proc = subprocess.run(
+        [str(wrapper), "list-sessions"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        timeout=20,
+    )
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    assert "CANONICAL_RAN args=list-sessions" in proc.stdout
+    assert "RETIRED_SHADOW_RAN" not in proc.stdout
 
 
 def test_product_entry_prepare_exists_in_shipped_dashboard() -> None:
@@ -42,6 +95,36 @@ def test_product_entry_prepare_exists_in_shipped_dashboard() -> None:
     dispatch = DISPATCH.read_text(encoding="utf-8")
     assert "_vetcoders_product_entry_prepare" in dispatch
     assert "VIBECRAFTED_PRODUCT_ENTRY_PROBE" in dispatch
+
+
+def test_shipped_deck_routes_workspace_resolution_to_core(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    root = tmp_path / "workspace"
+    home.mkdir()
+    root.mkdir()
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "VIBECRAFTED_HOME": str(home / ".vibecrafted"),
+        "VIBECRAFTED_PYTHON": sys.executable,
+    }
+    proc = subprocess.run(
+        [
+            str(REPO / "scripts/vibecrafted"),
+            "workspace",
+            "resolve",
+            "--root",
+            str(root),
+            "--env",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    assert "VIBECRAFTED_WORKSPACE_ID=" in proc.stdout
+    assert "VIBECRAFTED_OPERATOR_SESSION=workspace-" in proc.stdout
 
 
 def test_wrapper_refuses_product_attach_without_config(tmp_path: Path) -> None:
@@ -55,7 +138,7 @@ def test_wrapper_refuses_product_attach_without_config(tmp_path: Path) -> None:
 
     real = _write_fake_bin(
         bin_dir,
-        "vc-frame.real",
+        "vc-frame-bin",
         "#!/usr/bin/env bash\necho REAL_RAN args=$*\nexit 0\n",
     )
     wrapper = bin_dir / "vc-frame"
@@ -101,7 +184,7 @@ def test_wrapper_refuses_dash_s_product_session_without_config(tmp_path: Path) -
     bin_dir.mkdir()
     real = _write_fake_bin(
         bin_dir,
-        "vc-frame.real",
+        "vc-frame-bin",
         "#!/usr/bin/env bash\necho REAL_RAN\nexit 0\n",
     )
     wrapper = bin_dir / "vc-frame"
@@ -142,7 +225,7 @@ def test_wrapper_pins_and_execs_when_frontier_config_present(tmp_path: Path) -> 
 
     real = _write_fake_bin(
         bin_dir,
-        "vc-frame.real",
+        "vc-frame-bin",
         textwrap.dedent(
             """\
             #!/usr/bin/env bash
@@ -186,7 +269,7 @@ def test_wrapper_allows_non_product_session_without_config(tmp_path: Path) -> No
     bin_dir.mkdir()
     real = _write_fake_bin(
         bin_dir,
-        "vc-frame.real",
+        "vc-frame-bin",
         "#!/usr/bin/env bash\necho REAL_RAN args=$*\nexit 0\n",
     )
     wrapper = bin_dir / "vc-frame"
@@ -242,7 +325,18 @@ def test_vc_start_probe_pins_product_config(tmp_path: Path) -> None:
     _write_fake_bin(
         bin_dir,
         "vibecrafted",
-        "#!/usr/bin/env bash\nexit 1\n",
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env bash
+            if [[ "$*" == "workspace resolve --env" ]]; then
+              echo VIBECRAFTED_WORKSPACE_ID=019ff97a-3328-7660-b6cd-f957b1b163f8
+              echo VIBECRAFTED_WORKSPACE_INSTANCE_ID=019ff97a-3328-7660-b6cd-f957b1b163f9
+              echo VIBECRAFTED_OPERATOR_SESSION=workspace-b1b163f8
+              exit 0
+            fi
+            exit 1
+            """
+        ),
     )
 
     env = {
@@ -275,6 +369,14 @@ def test_vc_start_probe_pins_product_config(tmp_path: Path) -> None:
     assert f"VC_FRAME_CONFIG_DIR={frontier}" in proc.stdout
     assert "VC_FRAME_CONFIG_KDL=present" in proc.stdout
     assert "OPERATOR_LAYOUT_PRESENT=1" in proc.stdout
+    assert (
+        "VIBECRAFTED_WORKSPACE_ID=019ff97a-3328-7660-b6cd-f957b1b163f8" in proc.stdout
+    )
+    assert (
+        "VIBECRAFTED_WORKSPACE_INSTANCE_ID=019ff97a-3328-7660-b6cd-f957b1b163f9"
+        in proc.stdout
+    )
+    assert "VIBECRAFTED_OPERATOR_SESSION=workspace-b1b163f8" in proc.stdout
     assert "should-not-run-in-probe" not in out
 
 
@@ -296,7 +398,22 @@ def test_vc_start_probe_twice_is_stable(tmp_path: Path) -> None:
     )
     _write_fake_bin(bin_dir, "vc-frame", "#!/usr/bin/env bash\nexit 0\n")
     _write_fake_bin(bin_dir, "python3", "#!/usr/bin/env bash\nexit 1\n")
-    _write_fake_bin(bin_dir, "vibecrafted", "#!/usr/bin/env bash\nexit 1\n")
+    _write_fake_bin(
+        bin_dir,
+        "vibecrafted",
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env bash
+            if [[ "$*" == "workspace resolve --env" ]]; then
+              echo VIBECRAFTED_WORKSPACE_ID=019ff97a-3328-7660-b6cd-f957b1b163f8
+              echo VIBECRAFTED_WORKSPACE_INSTANCE_ID=019ff97a-3328-7660-b6cd-f957b1b163f9
+              echo VIBECRAFTED_OPERATOR_SESSION=workspace-b1b163f8
+              exit 0
+            fi
+            exit 1
+            """
+        ),
+    )
 
     env = {
         **{k: v for k, v in os.environ.items() if not k.startswith("VC_FRAME")},

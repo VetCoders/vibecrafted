@@ -17,6 +17,7 @@ final class EventObserver: @unchecked Sendable, EventCallback {
 class AppDelegate: NSObject, NSApplicationDelegate {
   var mainWindow: MainWindowController?
   private var statusItem: NSStatusItem?
+  private var terminalProcess: Process?
   let eventObserver = EventObserver()
 
   func showMainWindowIfNeeded() {
@@ -46,6 +47,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       print("Failed to init runtime: \(error)")
     }
 
+    launchWorkspaceTerminal()
     showMainWindowIfNeeded()
   }
 
@@ -55,6 +57,70 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
     true
+  }
+
+  private func launchWorkspaceTerminal() {
+    if terminalProcess?.isRunning == true {
+      return
+    }
+
+    let appRoot = Bundle.main.bundleURL
+    let terminal = appRoot.appendingPathComponent("Contents/Helpers/vc-terminal")
+    let frame = appRoot.appendingPathComponent("Contents/Helpers/vc-frame")
+    let config = appRoot.appendingPathComponent(
+      "Contents/Resources/terminal/vibecrafted.toml")
+    let start = appRoot.appendingPathComponent("Contents/Resources/runtime/bin/vc-start")
+    for required in [terminal, frame, start] where !FileManager.default.isExecutableFile(
+      atPath: required.path)
+    {
+      print("Bundled product entry is missing or not executable: \(required.path)")
+      return
+    }
+    guard FileManager.default.fileExists(atPath: config.path) else {
+      print("Bundled terminal config is missing: \(config.path)")
+      return
+    }
+
+    let host = ProcessInfo.processInfo.environment
+    let home = host["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path
+    let runtimeHome =
+      host["VIBECRAFTED_RUNTIME_HOME"]
+      ?? host["XDG_DATA_HOME"].map { "\($0)/vibecrafted" }
+      ?? "\(home)/.local/share/vibecrafted"
+    do {
+      try FileManager.default.createDirectory(
+        atPath: runtimeHome, withIntermediateDirectories: true)
+    } catch {
+      print("Cannot create Vibecrafted runtime home \(runtimeHome): \(error)")
+      return
+    }
+
+    let inherited = [
+      "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "COLORTERM", "TMPDIR",
+      "SHELL",
+    ]
+    var environment = Dictionary(
+      uniqueKeysWithValues: inherited.compactMap { key in host[key].map { (key, $0) } })
+    environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+    environment["PYTHONNOUSERSITE"] = "1"
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["VIBECRAFTED_RUNTIME_HOME"] = runtimeHome
+    environment["VIBECRAFTED_APP_ROOT"] = appRoot.path
+    environment["VIBECRAFTED_VC_FRAME_BIN"] = frame.path
+
+    let process = Process()
+    process.executableURL = terminal
+    process.arguments = [
+      "--config-file", config.path,
+      "-e", start.path, "operator",
+    ]
+    process.environment = environment
+    do {
+      try process.run()
+      terminalProcess = process
+    } catch {
+      print("Failed to launch bundled vc-terminal: \(error)")
+    }
   }
 
   // MARK: - Main Menu

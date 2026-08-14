@@ -957,6 +957,81 @@ def test_dispatcher_cli_salvages_verified_native_resume_stream(
     assert "Runtime fallback" in report_text
 
 
+def test_dispatcher_cli_keeps_authored_report_on_native_resume(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """An authored report survives salvage even when it preserves the marker.
+
+    Regression: the salvage guard keyed solely on ``launcher_template`` being
+    truthy. Because the worker contract tells workers to PRESERVE seeded
+    machine frontmatter, a compliant worker kept that key — and a complete
+    authored report was overwritten by a transcript fallback.
+    """
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    report = tmp_path / "authored-report.md"
+    transcript = tmp_path / "authored.log"
+
+    authored = tmp_path / "authored-payload.md"
+    authored.write_text(
+        "---\n"
+        "run_id: disp-authored\n"
+        "agent: claude\n"
+        "skill: workflow\n"
+        "status: completed\n"
+        "finalized: true\n"
+        "launcher_template: true\n"
+        "session_id: pending-unset\n"
+        "claim: authored findings must survive salvage\n"
+        "---\n"
+        "\n"
+        "# Authored findings\n"
+        "\n"
+        "AUTHORED BODY MARKER\n",
+        encoding="utf-8",
+    )
+
+    script = tmp_path / "authoring_worker.py"
+    script.write_text(
+        "import os, shutil\n"
+        'print(\'{"type":"item.completed","item":{"type":"agent_message",'
+        '"text":"TRANSCRIPT CHATTER"}}\')\n'
+        f"shutil.copyfile({str(authored)!r}, os.environ['VIBECRAFTED_REPORT_PATH'])\n",
+        encoding="utf-8",
+    )
+
+    rc = dispatcher.main(
+        [
+            "run",
+            "--run-id",
+            "disp-authored",
+            "--root",
+            str(tmp_path),
+            "--report",
+            str(report),
+            "--transcript",
+            str(transcript),
+            "--salvage-report-from-stream",
+            "--json",
+            "--",
+            sys.executable,
+            str(script),
+        ]
+    )
+
+    assert rc == 0
+    capsys.readouterr()
+    report_text = report.read_text(encoding="utf-8")
+    # The worker's evidence wins.
+    assert "AUTHORED BODY MARKER" in report_text
+    assert "authored findings must survive salvage" in report_text
+    # The salvage path must not have fired.
+    assert "fallback_report: true" not in report_text
+    assert "TRANSCRIPT CHATTER" not in report_text
+    assert "Runtime fallback" not in report_text
+    # A touched template drops the scaffolding marker.
+    assert "launcher_template:" not in report_text
+
+
 def test_dispatcher_cli_records_lifecycle_worker_death(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

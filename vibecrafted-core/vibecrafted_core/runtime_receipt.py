@@ -29,7 +29,9 @@ import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+
+from . import product_contract
 
 SCHEMA_VERSION = "vibecrafted.delivery_receipt.v1"
 
@@ -972,46 +974,66 @@ def _link_or_unknown(value: Any, reason_if_none: str) -> Any:
     return value
 
 
-def _installed_runtime_manifest(installed_path: str | None) -> dict[str, Any] | None:
-    """Read a checkout-free ``runtime-manifest.json`` sitting beside the binary.
+@dataclass(frozen=True)
+class _InstalledRuntimeManifestProbe:
+    """Tri-state result: no manifest, verified source, or fail-closed rejection."""
 
-    Lets a uv-tool/staged install report its source provenance without a git
-    checkout on disk; validates schema, owner/repo shape, a 40-char revision,
-    and that the manifest's declared entrypoint resolves to ``installed_path``.
-    """
+    state: Literal["absent", "success", "rejection"]
+    source: dict[str, Any] | None = None
+    reason: str | None = None
+
+
+def _probe_installed_runtime_manifest(
+    installed_path: str | None,
+) -> _InstalledRuntimeManifestProbe:
+    """Probe checkout-free provenance without conflating absence and rejection."""
     if not installed_path:
-        return None
+        return _InstalledRuntimeManifestProbe("absent")
     try:
         resolved = Path(installed_path).resolve(strict=True)
-    except OSError:
-        return None
+    except (OSError, RuntimeError, ValueError):
+        return _InstalledRuntimeManifestProbe("absent")
     for directory in (resolved.parent, *resolved.parents):
-        manifest_path = directory / "runtime-manifest.json"
+        manifest_path = directory / product_contract.RUNTIME_GENERATION_MANIFEST_NAME
         try:
-            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            manifest_path.lstat()
+        except FileNotFoundError:
             continue
-        owner_repo = payload.get("owner_repo")
-        revision = payload.get("source_revision")
-        entrypoint = payload.get("entrypoint")
-        if (
-            payload.get("schema") == "vibecrafted.runtime-generation.v1"
-            and isinstance(owner_repo, str)
-            and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", owner_repo)
-            and isinstance(revision, str)
-            and re.fullmatch(r"[0-9a-fA-F]{40}", revision)
-            and isinstance(entrypoint, str)
-            and (directory / entrypoint).resolve(strict=False) == resolved
-        ):
-            return {
+        except OSError as exc:
+            return _InstalledRuntimeManifestProbe(
+                "rejection",
+                reason=(
+                    f"VCPC{product_contract.E_MISSING:03d}: "
+                    f"installed runtime manifest is unreadable: {exc}"
+                ),
+            )
+        try:
+            payload = product_contract.verify_installed_runtime_generation(
+                directory, expected_entrypoint=resolved
+            )
+        except product_contract.ProductContractError as exc:
+            return _InstalledRuntimeManifestProbe(
+                "rejection", reason=f"VCPC{exc.code:03d}: {exc}"
+            )
+        return _InstalledRuntimeManifestProbe(
+            "success",
+            source={
                 "path": str(directory),
-                "owner_repo": owner_repo,
+                "owner_repo": payload["owner_repo"],
                 "branch": _unknown("checkout-free installed generation has no branch"),
-                "checkout_sha": revision.lower(),
+                "checkout_sha": payload["source_revision"],
+                "source_payload": payload["source_payload"],
                 "resolution": "installed_runtime_manifest",
                 "dirty": False,
-            }
-    return None
+            },
+        )
+    return _InstalledRuntimeManifestProbe("absent")
+
+
+def _installed_runtime_manifest(installed_path: str | None) -> dict[str, Any] | None:
+    """Compatibility projection returning only a successfully verified source."""
+    probe = _probe_installed_runtime_manifest(installed_path)
+    return probe.source if probe.state == "success" else None
 
 
 def inspect_tool(spec: ToolSpec) -> dict[str, Any]:
@@ -1056,16 +1078,18 @@ def inspect_tool(spec: ToolSpec) -> dict[str, Any]:
                 break
 
     # Source
-    installed_manifest = (
-        _installed_runtime_manifest(installed_path)
+    installed_manifest_probe = (
+        _probe_installed_runtime_manifest(installed_path)
         if spec.name == "vibecrafted"
-        else None
+        else _InstalledRuntimeManifestProbe("absent")
     )
-    source_root, source_method = (
-        (None, "installed_runtime_manifest")
-        if installed_manifest is not None
-        else resolve_source_root(spec)
-    )
+    installed_manifest = installed_manifest_probe.source
+    if installed_manifest_probe.state == "success":
+        source_root, source_method = None, "installed_runtime_manifest"
+    elif installed_manifest_probe.state == "rejection":
+        source_root, source_method = None, "installed_runtime_manifest_rejected"
+    else:
+        source_root, source_method = resolve_source_root(spec)
     source_block: dict[str, Any]
     if installed_manifest is not None:
         source_block = installed_manifest
@@ -1078,6 +1102,37 @@ def inspect_tool(spec: ToolSpec) -> dict[str, Any]:
             "dirty": False,
             "source_dirty_count": 0,
             "generated_dirty_count": 0,
+            "source_paths": [],
+            "generated_paths": [],
+        }
+        checkout_sha = source_block["checkout_sha"]
+    elif installed_manifest_probe.state == "rejection":
+        rejection_reason = installed_manifest_probe.reason or (
+            f"VCPC{product_contract.E_PROOF:03d}: "
+            "installed runtime manifest rejection carried no reason"
+        )
+        provenance = {
+            **provenance,
+            "installed_dirty": True,
+            "installed_dirty_reason": rejection_reason,
+        }
+        source_block = {
+            "path": _unknown(rejection_reason),
+            "owner_repo": _unknown(rejection_reason),
+            "branch": _unknown(rejection_reason),
+            "checkout_sha": _unknown(rejection_reason),
+            "resolution": source_method,
+            "dirty": _unknown(rejection_reason),
+        }
+        ab = {
+            "upstream": _unknown(rejection_reason),
+            "ahead": _unknown(rejection_reason),
+            "behind": _unknown(rejection_reason),
+        }
+        dirty = {
+            "dirty": _unknown(rejection_reason),
+            "source_dirty_count": _unknown(rejection_reason),
+            "generated_dirty_count": _unknown(rejection_reason),
             "source_paths": [],
             "generated_paths": [],
         }

@@ -40,6 +40,19 @@ WORKFLOW_HELP: dict[str, WorkflowHelp] = {
             "vc-audit claude --file /path/to/completed-plan.md",
         ),
     ),
+    "canary": WorkflowHelp(
+        "Ownership catalog: map repo organs, cut bounded scopes, and add missing docstrings.",
+        (
+            "sense repository organs with Loctree",
+            "derive bounded ownership scopes",
+            "dispatch one worker per scope",
+            "commit once and report findings",
+        ),
+        (
+            'vibecrafted canary codex --prompt "Catalog ownership and missing docstrings"',
+            "vc-canary claude --file /path/to/canary-brief.md",
+        ),
+    ),
     "decorate": WorkflowHelp(
         "Late-stage visual finishing and experience-coherence pass.",
         (
@@ -439,6 +452,7 @@ def _usage_lines(topic: str) -> list[str]:
         return [
             "  vibecrafted research [agents...] [flags]",
             "  vibecrafted research <uno|duo|trio> <agents...> [flags]",
+            "  vibecrafted swarm [agents...] [flags]  # alias for research",
             "  vc-research [agents...] [flags]",
         ]
     if topic == "paste":

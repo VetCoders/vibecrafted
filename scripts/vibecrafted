@@ -55,7 +55,7 @@ _reset='\033[0m'
 
 _agents=(claude codex agy junie grok)
 _modes=(implement research review plan prompt observe await stop)
-_skills=(audit decorate delegate dou followup hydrate implement intents justdo marbles ownership partner polarize prune release research review scaffold workflow)
+_skills=(audit canary decorate delegate dou followup guard hydrate implement intents justdo marbles ownership partner polarize prune release research review scaffold trust workflow)
 
 _script_repo_root() {
   local script_dir
@@ -505,10 +505,12 @@ _is_help_flag() {
 _skill_summary() {
   case "$1" in
     audit) printf 'READ-ONLY falsification of a completed plan or multi-task implementation.\n' ;;
+    canary) printf 'Ownership catalog: Loctree scopes, docstring cuts, one supervisor commit.\n' ;;
     decorate) printf 'Visual finishing and UX coherence pass.\n' ;;
     delegate) printf 'Native in-session subagent delegation.\n' ;;
     dou) printf 'Definition of Undone audit across the product surface.\n' ;;
     followup) printf 'Post-implementation direction audit for gaps, drift, regressions, and next leverage.\n' ;;
+    guard) printf 'In-flight enforcer: inventory gates and refuse continuation on trust block.\n' ;;
     hydrate) printf 'Packaging and go-to-market hydration.\n' ;;
     implement) printf 'Ship WRITE stage: autonomous end-to-end implementation with followup and marbles built in.\n' ;;
     intents) printf 'Plan-to-runtime truth audit across prior intent and present repo state.\n' ;;
@@ -522,6 +524,7 @@ _skill_summary() {
     research) printf 'Triple-agent research pass for ground truth before implementation.\n' ;;
     review) printf 'Bounded PR, branch, commit-range, or artifact-pack review with findings-first output.\n' ;;
     scaffold) printf 'Founder-first architecture planning from a vague idea.\n' ;;
+    trust) printf 'READ-only post-hoc falsification of commit claims on the Living Tree.\n' ;;
     workflow) printf 'Examine -> Research -> Implement pipeline.\n' ;;
     *) printf 'Framework skill.\n' ;;
   esac
@@ -560,6 +563,7 @@ _print_skill_specific_flags() {
       printf '  --session <id>                 Session ID to resume (optional)\n'
       printf '  -p, --prompt <text>            Continue with extra prompt text\n'
       printf '  -f, --file <path.md>           Continue with prompt context from file\n'
+      printf '  --fork-session                 Branch into a NEW session id, base untouched (claude only)\n'
       printf '  (no --session)                 AICX 48h multi-agent continuity fallback\n'
       ;;
   esac
@@ -4111,7 +4115,7 @@ cmd_help() {
       cmd_skill_help "implement"
       return
       ;;
-    audit|decorate|delegate|dou|followup|hydrate|intents|justdo|marbles|ownership|partner|polarize|prune|release|research|review|scaffold|workflow)
+    audit|decorate|delegate|dou|followup|guard|hydrate|intents|justdo|marbles|ownership|partner|polarize|prune|release|research|review|scaffold|trust|workflow)
       cmd_skill_help "$topic"
       return
       ;;
@@ -4238,6 +4242,8 @@ cmd_help_full() {
   printf '  %bresearch%b   Triple-agent research (claude + codex + junie)\n' "$_copper" "$_reset"
   printf '  %breview%b     (vc-review v2.0.0) Bounded PR, branch, commit-range, or artifact-pack review\n' "$_copper" "$_reset"
   printf '  %bprune%b      Runtime/publish cone extraction\n' "$_copper" "$_reset"
+  printf '  %btrust%b      Post-hoc commit-claim falsification with f/x/n settlement projection\n' "$_copper" "$_reset"
+  printf '  %bguard%b      In-flight gate enforcer: refuses continuation on trust block\n' "$_copper" "$_reset"
   printf '\n'
   printf '%b=== MANAGEMENT ===%b\n' "$_bold" "$_reset"
   printf '\n'
@@ -4678,6 +4684,19 @@ cmd_receipt() {
   "${VIBECRAFTED_PYTHON:-python3}" -c \
     'from vibecrafted_core.runtime_receipt import receipt_main; import sys; raise SystemExit(receipt_main(sys.argv[1:]))' \
     "$@"
+}
+
+cmd_workspace() {
+  local core_dir
+  core_dir="$(_core_module_dir 2>/dev/null || true)"
+  [[ -n "$core_dir" ]] || {
+    printf '%b✗%b Vibecrafted Core module not found.\n' "$_red" "$_reset" >&2
+    return 1
+  }
+  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" \
+    "$(_vibecrafted_python)" -c \
+      'from vibecrafted_core.workspace_catalog import workspace_cli_main; import sys; raise SystemExit(workspace_cli_main(sys.argv[1:]))' \
+      "$@"
 }
 
 _vc_frame_or_vc_frame_bin() {
@@ -5357,6 +5376,22 @@ cmd_unknown() {
   printf '  Try %bvibecrafted help%b for the current surface.\n\n' "$_cyan" "$_reset"
 }
 
+cmd_swarm() {
+  local mode="${1:-}"
+  case "$mode" in
+    observe|await|stop)
+      shift || true
+      run_mode "swarm" "$mode" "$@"
+      ;;
+    help|-h|--help|"")
+      cmd_skill_help "research"
+      ;;
+    *)
+      run_skill "research" "$@"
+      ;;
+  esac
+}
+
 main() {
   local invoked cmd
   invoked="$(basename "$0")"
@@ -5390,6 +5425,7 @@ main() {
     tui) cmd_tui "$@" ;;
     doctor|check) cmd_doctor "$@" ;;
     receipt) cmd_receipt "$@" ;;
+    workspace) cmd_workspace "$@" ;;
     scaffold-doctor) cmd_scaffold_doctor "$@" ;;
     dashboard|mc|mission-control|sessions) cmd_dashboard "$@" ;;
     loop) cmd_loop "$@" ;;
@@ -5402,6 +5438,7 @@ main() {
     uninstall|remove) cmd_uninstall ;;
     version|--version|-v) printf 'vibecrafted %s\n' "$(_version)" ;;
     agents) cmd_agents "$@" ;;
+    swarm) cmd_swarm "$@" ;;
     claude|codex|gemini|agy|junie|grok)
       local mode="${1:-}"
       if _is_help_flag "$mode"; then
@@ -5420,7 +5457,7 @@ main() {
       run_mode "$cmd" "$mode" "$@"
       ;;
     implement) run_skill "implement" "$@" ;;
-    audit|decorate|delegate|dou|followup|hydrate|intents|justdo|marbles|ownership|partner|polarize|prune|release|research|review|scaffold|workflow)
+    audit|canary|decorate|delegate|dou|followup|guard|hydrate|intents|justdo|marbles|ownership|partner|polarize|prune|release|research|review|scaffold|trust|workflow)
       run_skill "$cmd" "$@"
       ;;
     *)

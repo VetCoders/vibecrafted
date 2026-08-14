@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-PYTHON   ?= python3
+PYTHON   ?= $(CURDIR)/scripts/project-python
 INSTALLER := scripts/vetcoders_install.py
 GUI_INSTALLER := scripts/installer_gui.py
 MANIFEST := install.toml
@@ -15,12 +15,13 @@ INSTALL_TOOLS_SERVICE_POLICY ?= preserve
 INSTALLER_CACHE_HOME ?= $(if $(XDG_CACHE_HOME),$(XDG_CACHE_HOME),$(HOME)/.cache)
 INSTALLER_HOST_TAG := $(shell uname -s | tr '[:upper:]' '[:lower:]')-$(shell uname -m)
 UV_PROJECT_ENVIRONMENT ?= $(INSTALLER_CACHE_HOME)/vibecrafted/venvs/installer-$(INSTALLER_HOST_TAG)
+CARGO_BUILD_ROOT ?= $(INSTALLER_CACHE_HOME)/vibecrafted/build/$(INSTALLER_HOST_TAG)
 # Shared source mounts (sshfs skews mtimes) can serve another host's stale
 # __pycache__ as valid bytecode; route bytecode to a per-host cache so the
 # in-tree cache is never read or written by install lanes.
 export PYTHONPYCACHEPREFIX ?= $(INSTALLER_CACHE_HOME)/vibecrafted/pycache-$(INSTALLER_HOST_TAG)
 
-.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-core test-skills test-install test-parity test-vc-frame test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-python-tools install-bundle-tools install-tools install-tools-held install-vendored-binaries install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build build-server-release server-check server-test install-server install-server-payload install-server-service server-smoke
+.PHONY: help help-dev vibecrafted app dmg dmg-signed release-local notarize release publish-release gui-install wizard wizard-dev check test test-core test-skills test-install test-parity test-vc-frame test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test unified-product-contract-gate install install-auto install-all install-python-tools install-bundle-tools install-tools install-tools-held install-vendored-binaries install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build build-server-release server-check server-test install-server install-server-payload install-server-service server-smoke
 
 help:
 	@printf "\n"
@@ -32,6 +33,8 @@ help:
 	@printf "  make uninstall    \033[2mReverse the install\033[0m\n"
 	@printf "  make test         \033[2mRun the gates\033[0m\n"
 	@printf "  make check        \033[2mLint shell scripts\033[0m\n"
+	@printf "  make release      \033[2mBuild, sign, notarize the canonical versioned DMG\033[0m\n"
+	@printf "  make publish-release \033[2mCold-verify and publish that DMG\033[0m\n"
 	@printf "\n"
 	@printf "  \033[2mdev targets: make help-dev\033[0m\n"
 	@printf "\n"
@@ -47,6 +50,7 @@ help-dev:
 	@printf "            test-memex · test-aicx-sync · test-hammerspoon · dispatch-test · test-race-protection · check · semgrep\n"
 	@printf "  \033[1miterm2\033[0m    iterm-plugin · iterm-plugin-refresh · iterm-plugin-show · iterm-plugin-uninstall · iterm-plugin-migrate\n"
 	@printf "  \033[1mserver\033[0m    server · server-build · server-check · server-test · server-smoke\n"
+	@printf "  \033[1mrelease\033[0m   app · dmg · dmg-signed · release-local · notarize · release · publish-release\n"
 	@printf "  \033[1mversion\033[0m   version · version-show · version-bump · bump-patch · bump-minor · bump-major\n"
 	@printf "  \033[1mhooks\033[0m     init-hooks · seed-commit-msg-hooks · commit-safe\n"
 	@printf "  \033[1mmisc\033[0m      doctor · list · update · uninstall · demo · demo-full · skill-new\n"
@@ -56,6 +60,57 @@ help-dev:
 	@printf "\n"
 
 vibecrafted: install
+
+RELEASE_SCRIPT := scripts/build-vibecrafted-release.sh
+KEYS ?= $(HOME)/.keys
+
+app:
+	@zsh -ic 'cd "$(CURDIR)" && KEYS="$(KEYS)" exec bash "$(RELEASE_SCRIPT)" --app-only'
+
+dmg dmg-signed release-local:
+	@zsh -ic 'cd "$(CURDIR)" && KEYS="$(KEYS)" exec bash "$(RELEASE_SCRIPT)" --no-notarize'
+
+notarize:
+	@zsh -ic 'cd "$(CURDIR)" && KEYS="$(KEYS)" exec bash "$(RELEASE_SCRIPT)" --notarize-only'
+
+release:
+	@zsh -ic 'cd "$(CURDIR)" && KEYS="$(KEYS)" exec bash "$(RELEASE_SCRIPT)"'
+
+publish-release:
+	@zsh -ic 'cd "$(CURDIR)" && exec bash scripts/publish-vibecrafted-release.sh'
+
+unified-product-contract-gate:
+	@set -eu; \
+	uv run --project vibecrafted-core --with pytest python -m pytest \
+		tests/tui/test_unified_app_contract.py \
+		tests/tui/test_makefile_installer_contract.py \
+		tests/tui/test_distribution_manifest.py \
+		tests/tui/test_install_bootstrap.py \
+		tests/tui/test_installer_doctor.py \
+		tests/tui/test_installer_uninstall.py \
+		tests/tui/test_staged_tools_sync.py \
+		tests/tui/test_uv_bootstrap.py -q; \
+	uv run --project vibecrafted-core --with pytest python -m pytest \
+		vibecrafted-core/tests/test_walkaround_distribution.py \
+		vibecrafted-core/tests/test_package_layout.py \
+		vibecrafted-core/tests/test_doctor.py \
+		vibecrafted-core/tests/test_runtime_receipt.py -q; \
+	bash scripts/verify-vibecrafted-product.sh --self-test; \
+	$(PYTHON) -m json.tool vibecrafted-core/vibecrafted_core/schemas/unified_product.schema.v1.json >/dev/null; \
+	$(PYTHON) -m json.tool vibecrafted-core/vibecrafted_core/trust/release-policy.v1.json >/dev/null; \
+	bash -n scripts/verify-vibecrafted-product.sh; \
+	tmp="$$(mktemp -d "$${TMPDIR:-/tmp}/vibecrafted-contract-wheel.XXXXXX")"; \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	uv build --wheel --project vibecrafted-core --out-dir "$$tmp/dist" >/dev/null; \
+	uv venv "$$tmp/venv" >/dev/null; \
+	uv pip install --python "$$tmp/venv/bin/python" "$$tmp"/dist/vibecrafted-*.whl >/dev/null; \
+	(cd / && \
+		runner="$$tmp/venv/bin/verify-vibecrafted-walkaround"; \
+		env -u PYTHONPATH PYTHONNOUSERSITE=1 "$$runner" --help >/dev/null; \
+		rc=0; env -u PYTHONPATH PYTHONNOUSERSITE=1 "$$runner" trust-probe "$$tmp/missing-challenge" "$$tmp/missing.sig" >/dev/null 2>&1 || rc=$$?; test "$$rc" -eq 22; \
+		rc=0; env -u PYTHONPATH PYTHONNOUSERSITE=1 "$$runner" verify-release --release-output "$$tmp/release-output.json" --signature "$$tmp/release-output.json.sig" >/dev/null 2>&1 || rc=$$?; test "$$rc" -eq 22; \
+		rc=0; env -u PYTHONPATH PYTHONNOUSERSITE=1 "$$runner" walkaround --release-output "$$tmp/release-output.json" --signature "$$tmp/release-output.json.sig" --output "$$tmp/walkaround.json" >/dev/null 2>&1 || rc=$$?; test "$$rc" -eq 22; \
+		test ! -e "$$tmp/walkaround.json")
 
 tui-installer: init-hooks
 	@if ! command -v uv >/dev/null 2>&1; then \
@@ -146,7 +201,7 @@ install:
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "app binaries" -- bash -e -c 'make --no-print-directory install-vendored-binaries; make --no-print-directory install-app-binaries'
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "skills and launchers" -- $(MAKE) --no-print-directory install-bundle-tools
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "frontier config" -- bash -c 'stable_root="$${XDG_DATA_HOME:-$$HOME/.local/share}/vibecrafted/tools/vibecrafted-current"; bash "$$stable_root/vibecrafted-core/vibecrafted_core/runtime/scripts/install-frontier-config.sh" --source "$$stable_root" || printf "[warn] Frontier config skipped (non-fatal)\n"'
-	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "vc-frame config" -- bash -e -c 'export PATH="$$HOME/.local/bin:$$PATH"; stable_root="$$($(PYTHON) -c '\''import sys; sys.path.insert(0, "$(SOURCE)/scripts"); from runtime_paths import vibecrafted_tools_home; print(vibecrafted_tools_home() / "vibecrafted-current")'\'')"; tool_python="$$(uv tool dir --color never)/vibecrafted/bin/python"; test -x "$$tool_python"; PYTHONPATH="$$stable_root/vibecrafted-core" "$$tool_python" -c "from vibecrafted_core.vc_frame_delivery import wire_vc_frame_config; print(wire_vc_frame_config().render(), end=\"\")"'
+	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "vc-frame config" -- bash -e -c 'export PATH="$$HOME/.local/bin:$$PATH"; stable_root="$$($(PYTHON) -c '\''import sys; sys.path.insert(0, "$(SOURCE)/scripts"); from runtime_paths import vibecrafted_tools_home; print(vibecrafted_tools_home() / "vibecrafted-current")'\'')"; tool_python="$$(uv tool dir --color never)/vibecrafted/bin/python"; test -x "$$tool_python"; PYTHONPATH="$$stable_root/vibecrafted-core" "$$tool_python" -c "from vibecrafted_core.vc_frame_delivery import wire_vc_frame_config; print(wire_vc_frame_config(force_frontier=True).render(), end=\"\")"'
 	@printf "\nVibecrafted is ready.\n\nStart here:\n  vc-start\n\nHealth:\n  vibecrafted doctor\n\nLog:\n  ~/.vibecrafted/install.log\n"
 
 # `make install` calls `install-python-tools`; it was an empty .PHONY name
@@ -236,6 +291,7 @@ install-tools-held:
 		echo "[install-tools] FATAL: expected uv tool interpreter missing at $$tool_python" >&2; \
 		exit 1; \
 	fi; \
+	$(PYTHON) -c 'import sys; from pathlib import Path; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; v._install_secure_walkaround_launcher(Path(sys.argv[1]), Path(sys.argv[2]), launcher_path=Path(sys.argv[3]))' "$$stable_root" "$$tool_python" "$$tool_root/bin/verify-vibecrafted-walkaround"; \
 	python_entrypoints="$$($(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; print(" ".join(v.PYTHON_ENTRYPOINT_LAUNCHERS))')"; \
 	for entrypoint in $$python_entrypoints; do \
 		entrypoint_tool_root="$$tool_root"; \
@@ -258,7 +314,7 @@ install-tools-held:
 			*) echo "[install-tools] FATAL: uv tool entrypoint $$entrypoint is not owned by the uv interpreter: $$entrypoint_shebang" >&2; exit 1 ;; \
 		esac; \
 	done; \
-	for entrypoint in vibecrafted vc-workflow vc-guardian vc-server-supervisor; do \
+	for entrypoint in vibecrafted vc-workflow vc-guardian vc-server-supervisor verify-vibecrafted-walkaround; do \
 		resolved="$$(command -v "$$entrypoint" 2>/dev/null || true)"; \
 		if [ -z "$$resolved" ] || [ ! -x "$$resolved" ]; then \
 			echo "[install-tools] FATAL: expected executable entrypoint $$entrypoint was not installed" >&2; \
@@ -300,6 +356,7 @@ install-tools-held:
 # symlink drift, the exact pattern the runtime contract bans in BIN.
 APP_DIR := vibecrafted-app
 APP_BINARIES := voc vc-admin
+APP_BUILD_TARGET := $(CARGO_BUILD_ROOT)/vibecrafted-app
 BIN_DIR := $(HOME)/.local/bin
 VENDORED_FOUNDATION_BINARIES := vc-frame loctree-mcp loct aicx aicx-mcp
 HOST_UNAME_S := $(shell uname -s)
@@ -335,12 +392,12 @@ install-app-binaries:
 		exit 0; \
 	fi; \
 	set -e; \
-	mkdir -p "$(HOME)/.vibecrafted" "$(BIN_DIR)"; \
+	mkdir -p "$(HOME)/.vibecrafted" "$(BIN_DIR)" "$(APP_BUILD_TARGET)"; \
 	echo "[app] building release binaries ($(APP_BINARIES)) from $(APP_DIR)"; \
-	( cd $(APP_DIR) && cargo build --release --locked -p voc $(INSTALL_QUIET) ); \
+	( cd $(APP_DIR) && CARGO_TARGET_DIR="$(APP_BUILD_TARGET)" cargo build --release --locked -p voc $(INSTALL_QUIET) ); \
 	for bin in $(APP_BINARIES); do \
 		rm -f "$(BIN_DIR)/$$bin"; \
-		install -m 0755 "$(APP_DIR)/target/release/$$bin" "$(BIN_DIR)/$$bin"; \
+		install -m 0755 "$(APP_BUILD_TARGET)/release/$$bin" "$(BIN_DIR)/$$bin"; \
 	done; \
 	echo "[app] installed: $(APP_BINARIES) -> $(BIN_DIR)"
 
@@ -374,9 +431,15 @@ list:
 	@$(PYTHON) $(INSTALLER) list --source "$(SOURCE)"
 
 bundle:
-	@$(PYTHON) scripts/build_marketplace_bundle.py --output "$(SOURCE)/vibecrafted-framework.plugin"
-	@mkdir -p "$(dir $(BUNDLE_ARCHIVE))"
-	@$(PYTHON) scripts/distribution_manifest.py archive --source "$(SOURCE)" --output "$(BUNDLE_ARCHIVE)" --root-name "vibecrafted-$(BUNDLE_VERSION)"
+	@$(PYTHON) scripts/build_marketplace_bundle.py --output "$(SOURCE)/dist/vibecrafted-framework.plugin"
+	@set -e; \
+	source_root="$$(cd "$(SOURCE)" && pwd -P)"; \
+	source_parent="$$(dirname "$$source_root")"; \
+	tmp_archive="$$(mktemp "$$source_parent/.vibecrafted-bundle-archive.XXXXXX")"; \
+	trap 'rm -f "$$tmp_archive"' EXIT; \
+	mkdir -p "$(dir $(BUNDLE_ARCHIVE))"; \
+	$(PYTHON) scripts/distribution_manifest.py archive --source "$$source_root" --output "$$tmp_archive" --publish-output "$(BUNDLE_ARCHIVE)" --root-name "vibecrafted-$(BUNDLE_VERSION)"; \
+	trap - EXIT
 
 bundle-check:
 	@set -e; \
@@ -390,7 +453,7 @@ bundle-check:
 	$(PYTHON) scripts/distribution_manifest.py archive --source "$(SOURCE)" --output "$$tmp_archive" --root-name "vibecrafted-$(BUNDLE_VERSION)"; \
 	mkdir -p "$$tmp_runtime/extracted"; \
 	tar -xzf "$$tmp_archive" -C "$$tmp_runtime/extracted"; \
-	$(PYTHON) scripts/distribution_manifest.py check --root "$$tmp_runtime/extracted/vibecrafted-$(BUNDLE_VERSION)"; \
+	$(PYTHON) scripts/distribution_manifest.py check --root "$$tmp_runtime/extracted/vibecrafted-$(BUNDLE_VERSION)" --require-source-provenance; \
 	echo "Marketplace bundle and runtime payload are valid."
 
 version version-show:
@@ -457,11 +520,22 @@ test-skills:
 test-install:
 	@bash tests/install_smoke.sh
 
+# update NEVER rewrites the working tree with another branch's content.
+# The old `git checkout "$(BRANCH)" -- .` plastered a stale $(BRANCH) tree
+# over index+worktree of whatever branch the Living Tree was on (2026-08-12:
+# 174 files silently reverted to an Aug-8 main). Now: fast-forward only when
+# already on $(BRANCH); on any other branch the tree is left untouched and
+# the install runs from the current checkout as-is.
 update:
 	@if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
-		printf "Git repo detected — pulling origin/$(BRANCH)...\n"; \
-		git fetch origin; \
-		git checkout "$(BRANCH)" -- . 2>/dev/null || git merge --ff-only "origin/$(BRANCH)"; \
+		current="$$(git rev-parse --abbrev-ref HEAD)"; \
+		if [ "$$current" = "$(BRANCH)" ]; then \
+			printf "Git repo on $(BRANCH) — fast-forwarding from origin/$(BRANCH)...\n"; \
+			git fetch origin; \
+			git merge --ff-only "origin/$(BRANCH)" || printf "No fast-forward possible — tree left as-is.\n"; \
+		else \
+			printf "Repo is on '%s', not '$(BRANCH)' — tree untouched; installing from the current checkout.\n" "$$current"; \
+		fi; \
 		printf "Re-installing...\n"; \
 		$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --with-shell --mirror --non-interactive; \
 	else \
@@ -760,11 +834,13 @@ SERVER_BIN  := vc-server
 SERVER_COMPAT_BIN := vibecrafted-server-web
 SERVER_ADDR ?= 127.0.0.1:3024
 VIBECRAFTED_RUNTIME_HOME ?= $(HOME)/.local/share/vibecrafted
-SERVER_BUILD_SITE_ROOT := $(SERVER_DIR)/target/site
+SERVER_BUILD_TARGET := $(CARGO_BUILD_ROOT)/vibecrafted-server
+SERVER_BUILD_SITE_ROOT := $(SERVER_BUILD_TARGET)/site
 SERVER_INSTALL_SITE_ROOT := $(VIBECRAFTED_RUNTIME_HOME)/server/site
 
 server-build:
-	@cd $(SERVER_DIR) && cargo build -p $(SERVER_PACKAGE) --no-default-features --features ssr
+	@mkdir -p "$(SERVER_BUILD_TARGET)"
+	@cd $(SERVER_DIR) && CARGO_TARGET_DIR="$(SERVER_BUILD_TARGET)" cargo build -p $(SERVER_PACKAGE) --no-default-features --features ssr
 
 server: server-build
 	@echo "[server] control plane: $${VIBECRAFTED_HOME:-$$HOME/.vibecrafted}/control_plane"
@@ -772,14 +848,14 @@ server: server-build
 	@echo "[server] reads: /api/control/state  /api/control/runs  /api/control/runs/{run_id}"
 	@echo "[server] reads: /api/control/lifecycle  /api/control/lifecycle/{run_id}"
 	@echo "[server] stream: /api/control/events  (SSE, ?since= / Last-Event-ID)"
-	@cd $(SERVER_DIR) && ./target/debug/$(SERVER_PACKAGE) --addr "$(SERVER_ADDR)"
+	@cd $(SERVER_DIR) && "$(SERVER_BUILD_TARGET)/debug/$(SERVER_PACKAGE)" --addr "$(SERVER_ADDR)"
 
 server-check:
-	@cd $(SERVER_DIR) && cargo clippy -p control-core -- -D warnings
-	@cd $(SERVER_DIR) && cargo clippy -p $(SERVER_PACKAGE) --no-default-features --features ssr -- -D warnings
+	@cd $(SERVER_DIR) && CARGO_TARGET_DIR="$(SERVER_BUILD_TARGET)" cargo clippy -p control-core -- -D warnings
+	@cd $(SERVER_DIR) && CARGO_TARGET_DIR="$(SERVER_BUILD_TARGET)" cargo clippy -p $(SERVER_PACKAGE) --no-default-features --features ssr -- -D warnings
 
 server-test:
-	@cd $(SERVER_DIR) && cargo test -p control-core
+	@cd $(SERVER_DIR) && CARGO_TARGET_DIR="$(SERVER_BUILD_TARGET)" cargo test -p control-core
 
 build-server-release:
 	@if ! command -v cargo >/dev/null 2>&1; then \
@@ -792,7 +868,11 @@ build-server-release:
 		exit 1; \
 	fi; \
 	if command -v wasm-bindgen >/dev/null 2>&1; then \
-		lock_version="$$(cd "$(SERVER_DIR)" && $(PYTHON) -c 'import pathlib, tomllib; packages = tomllib.loads(pathlib.Path("Cargo.lock").read_text())["package"]; print(next(item["version"] for item in packages if item["name"] == "wasm-bindgen"))')"; \
+		lock_version="$$(cd "$(SERVER_DIR)" && cargo tree --locked -p wasm-bindgen --depth 0 --prefix none | awk 'NR == 1 { sub(/^v/, "", $$2); print $$2 }')"; \
+		if [ -z "$$lock_version" ]; then \
+			echo "[server] FATAL: could not resolve wasm-bindgen version from Cargo.lock" >&2; \
+			exit 1; \
+		fi; \
 		cli_version="$$(wasm-bindgen --version | awk '{print $$2}')"; \
 		if [ "$$cli_version" != "$$lock_version" ]; then \
 			echo "[server] FATAL: wasm-bindgen CLI $$cli_version does not match Cargo.lock $$lock_version" >&2; \
@@ -801,8 +881,9 @@ build-server-release:
 		fi; \
 	fi; \
 	echo "[server] building release package + hydration assets ($(SERVER_PACKAGE))"; \
-	ulimit -f unlimited; ( cd $(SERVER_DIR) && cargo leptos build --release --bin-cargo-args="--locked" --lib-cargo-args="--locked" ); \
-	if [ ! -x "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" ] || [ ! -d "$(SERVER_BUILD_SITE_ROOT)/pkg" ]; then \
+	mkdir -p "$(SERVER_BUILD_TARGET)"; \
+	ulimit -f unlimited; ( cd $(SERVER_DIR) && CARGO_TARGET_DIR="$(SERVER_BUILD_TARGET)" LEPTOS_SITE_ROOT="$(SERVER_BUILD_SITE_ROOT)" cargo leptos build --release --bin-cargo-args="--locked" --lib-cargo-args="--locked" ); \
+	if [ ! -x "$(SERVER_BUILD_TARGET)/release/$(SERVER_PACKAGE)" ] || [ ! -d "$(SERVER_BUILD_SITE_ROOT)/pkg" ]; then \
 		echo "[server] FATAL: cargo-leptos did not produce the server + site package" >&2; \
 		exit 1; \
 	fi; \
@@ -822,14 +903,14 @@ install-server-payload:
 		echo "[server] cargo not found — preserving the installed server payload" >&2; \
 		exit 0; \
 	fi; \
-	if [ ! -x "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" ]; then \
+	if [ ! -x "$(SERVER_BUILD_TARGET)/release/$(SERVER_PACKAGE)" ]; then \
 		echo "[server] FATAL: release payload is missing; run make build-server-release" >&2; \
 		exit 1; \
 	fi; \
 	mkdir -p "$(HOME)/.vibecrafted" "$(BIN_DIR)" "$(SERVER_INSTALL_SITE_ROOT)"; \
 	rm -f "$(BIN_DIR)/$(SERVER_BIN)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"; \
-	install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_BIN)"; \
-	install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"; \
+	install -m 0755 "$(SERVER_BUILD_TARGET)/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_BIN)"; \
+	install -m 0755 "$(SERVER_BUILD_TARGET)/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"; \
 	echo "[server] copying interactive site assets to $(SERVER_INSTALL_SITE_ROOT)"; \
 	rm -rf "$(SERVER_INSTALL_SITE_ROOT)"/*; \
 	cp -R "$(SERVER_BUILD_SITE_ROOT)/." "$(SERVER_INSTALL_SITE_ROOT)/"; \

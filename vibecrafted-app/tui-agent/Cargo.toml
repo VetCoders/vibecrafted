@@ -8,7 +8,7 @@ authors.workspace = true
 description = "Voc Agent — the Rust terminal cockpit for Vibecrafted"
 readme = "README.md"
 homepage = "https://vibecrafted.io"
-repository = "https://github.com/Vetcoders/vibecrafted"
+repository = "https://github.com/vetcoders/vibecrafted"
 documentation = "https://docs.rs/voc"
 
 [[bin]]
@@ -22,6 +22,10 @@ path = "src/bin/vc_admin.rs"
 [[bin]]
 name = "vc-procs"
 path = "src/bin/vc_procs.rs"
+
+[[bin]]
+name = "vc-start"
+path = "src/bin/vc_start.rs"
 
 [dependencies]
 control-core = { path = "../../vibecrafted-server/control-core" }

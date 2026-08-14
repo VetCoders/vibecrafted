@@ -475,8 +475,8 @@ def test_frontier_install_dry_run_stages_host_sidecars_without_global_takeover(
     )
 
     sidecar_root = xdg_config_home / "vetcoders" / "frontier"
-    assert "config/vc-frame/config.kdl" in result.stdout
-    assert str(sidecar_root / "vc-frame" / "config.kdl") in result.stdout
+    assert "config/vc-frame/config.kdl" not in result.stdout
+    assert str(sidecar_root / "vc-frame" / "config.kdl") not in result.stdout
     assert str(sidecar_root / "starship.toml") in result.stdout
     # Optional host sidecars (present in current repo generations).
     if (REPO_ROOT / "config" / "alacritty" / "vc-frame.toml").is_file():
@@ -491,7 +491,7 @@ def test_frontier_install_dry_run_stages_host_sidecars_without_global_takeover(
     assert "Done." in result.stdout
 
 
-def test_frontier_install_uses_sidecar_root_without_touching_global_layout(
+def test_frontier_install_uses_sidecar_root_without_claiming_vc_frame_config(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -511,12 +511,7 @@ def test_frontier_install_uses_sidecar_root_without_touching_global_layout(
     )
 
     sidecar_root = xdg_config_home / "vetcoders" / "frontier"
-    installed_layout = sidecar_root / "vc-frame" / "layouts" / "dashboard.kdl"
-    assert installed_layout.is_symlink()
-    assert (
-        installed_layout.resolve()
-        == REPO_ROOT / "config" / "vc-frame" / "layouts" / "dashboard.kdl"
-    )
+    assert not (sidecar_root / "vc-frame").exists()
     assert (sidecar_root / "starship.toml").is_symlink()
     assert not (xdg_config_home / "vc-frame" / "config.kdl").exists()
     assert not (xdg_config_home / "starship.toml").exists()

@@ -15,7 +15,7 @@
 		A60320E009ED2630B2CD138A /* SidebarViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 018846F7BFF32DDA55BEB6B3 /* SidebarViewController.swift */; };
 		AD8EDDBFCA0E035A3127FE9D /* vibecrafted_shell_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = 670FB28076F3623946392EE2 /* vibecrafted_shell_ffi.swift */; };
 		AED4BA44792B0934E269B0C9 /* InspectorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DC7FC1EB764722753755233 /* InspectorViewController.swift */; };
-		BB181341D18DE41C4E187A2A /* icon1.icns in Resources */ = {isa = PBXBuildFile; fileRef = F84596CE1BE813FDE741DAE8 /* icon1.icns */; };
+		C8D308CC3EA6BC966B597FFF /* Vibecrafted.icns in Resources */ = {isa = PBXBuildFile; fileRef = 915E8799B77EBAA0B9A10DFF /* Vibecrafted.icns */; };
 		D3552D0D169AC41B576D5826 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD135782CD6D34B7A4639DF0 /* AppDelegate.swift */; };
 		F1F6DE9CF09A4B0E5BBAF04C /* CanvasViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB08FBAC6D3A32EA7AA68548 /* CanvasViewController.swift */; };
 		FA200B41B03563783AE94B11 /* libvibecrafted_shell_ffi.dylib in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 66F000337318E7E1E774D5AD /* libvibecrafted_shell_ffi.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -42,13 +42,13 @@
 		66F000337318E7E1E774D5AD /* libvibecrafted_shell_ffi.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libvibecrafted_shell_ffi.dylib; path = ../../target/release/libvibecrafted_shell_ffi.dylib; sourceTree = "<group>"; };
 		670FB28076F3623946392EE2 /* vibecrafted_shell_ffi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = vibecrafted_shell_ffi.swift; sourceTree = "<group>"; };
 		677ED311C0A0AC32FEDF5C9E /* MainSplitViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainSplitViewController.swift; sourceTree = "<group>"; };
+		915E8799B77EBAA0B9A10DFF /* Vibecrafted.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = Vibecrafted.icns; sourceTree = "<group>"; };
 		9DC22CD11479B2C9FC62F7A0 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		9DC7FC1EB764722753755233 /* InspectorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorViewController.swift; sourceTree = "<group>"; };
 		AD135782CD6D34B7A4639DF0 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AD9D34C38918A44FDA163417 /* MainWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowController.swift; sourceTree = "<group>"; };
 		B6F03047FF22E0433924BDD7 /* MissionControlViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MissionControlViewController.swift; sourceTree = "<group>"; };
 		CB08FBAC6D3A32EA7AA68548 /* CanvasViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasViewController.swift; sourceTree = "<group>"; };
-		F84596CE1BE813FDE741DAE8 /* icon1.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = icon1.icns; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -68,8 +68,8 @@
 			children = (
 				0AE9F2A66C4AB43ADF27641A /* .gitkeep */,
 				AD135782CD6D34B7A4639DF0 /* AppDelegate.swift */,
-				F84596CE1BE813FDE741DAE8 /* icon1.icns */,
 				9DC22CD11479B2C9FC62F7A0 /* main.swift */,
+				915E8799B77EBAA0B9A10DFF /* Vibecrafted.icns */,
 				A2D426BFC3DA1DF414A5E096 /* Bridge */,
 				9FFF832B23463AAAFCA9150D /* Views */,
 			);
@@ -185,7 +185,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				BB181341D18DE41C4E187A2A /* icon1.icns in Resources */,
+				C8D308CC3EA6BC966B597FFF /* Vibecrafted.icns in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -269,6 +269,7 @@
 				);
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
 				INFOPLIST_KEY_CFBundleExecutable = Vibecrafted;
+				INFOPLIST_KEY_CFBundleIconFile = Vibecrafted;
 				INFOPLIST_KEY_CFBundleName = Vibecrafted;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
@@ -378,6 +379,7 @@
 				);
 				INFOPLIST_GENERATION_MODE = GeneratedFile;
 				INFOPLIST_KEY_CFBundleExecutable = Vibecrafted;
+				INFOPLIST_KEY_CFBundleIconFile = Vibecrafted;
 				INFOPLIST_KEY_CFBundleName = Vibecrafted;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;

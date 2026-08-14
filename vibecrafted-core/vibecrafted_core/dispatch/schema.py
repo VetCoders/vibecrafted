@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 from dataclasses import dataclass, replace
@@ -144,6 +145,7 @@ def parse_dispatch(text: str, *, base_dir: str | Path | None = None) -> Dispatch
         )
 
     _validate_recovery_targets(cuts, phases, errors)
+    _validate_cut_dag(cuts, errors)
 
     if errors:
         raise DispatchSchemaError(errors)
@@ -167,12 +169,12 @@ def render_cell_prompt(
     """Assemble one cut's worker prompt: common text + brief/prompt + extra + baton JSON."""
     active_baton = baton if baton is not None else dispatch.empty_baton()
     variables = {
-        "repo": dispatch.meta.repo,
+        "repo": cut.runtime_root or dispatch.meta.repo,
         "id": cut.id,
         "agent": cut.agent,
         "workflow": cut.workflow,
         "resolved_workflow": cut.resolved_workflow,
-        "reports_dir": dispatch.meta.reports_dir,
+        "reports_dir": cut.artifact_path or dispatch.meta.reports_dir,
         "tracker": dispatch.meta.tracker,
         "baton": active_baton.to_json(),
     }
@@ -208,12 +210,12 @@ def render_cut_verifies(dispatch: Dispatch, cut: Cut) -> Cut:
     if not cut.verify:
         return cut
     variables = {
-        "repo": dispatch.meta.repo,
+        "repo": cut.runtime_root or dispatch.meta.repo,
         "id": cut.id,
         "agent": cut.agent,
         "workflow": cut.workflow,
         "resolved_workflow": cut.resolved_workflow,
-        "reports_dir": dispatch.meta.reports_dir,
+        "reports_dir": cut.artifact_path or dispatch.meta.reports_dir,
         "tracker": dispatch.meta.tracker,
     }
     rendered = tuple(
@@ -450,6 +452,10 @@ def _parse_cuts(
                 observational=observational,
                 verify=tuple(verify),
                 recovery=_parse_recovery(item.get("recovery"), index, errors),
+                depends_on=_string_tuple(
+                    item.get("depends_on"), f"cuts[{index}].depends_on", errors
+                ),
+                integrator=bool(item.get("integrator")),
             )
         )
     return cuts
@@ -461,6 +467,25 @@ def _doctor_policy_errors(dispatch: Dispatch) -> list[str]:
     for index, cut in enumerate(dispatch.cuts):
         if cut.mode == "read" and not cut.mutation:
             errors.append(f"cuts[{index}].mutation: required for READ cuts")
+        if cut.integrator and cut.mode == "read":
+            errors.append(f"cuts[{index}].integrator: integrators must be WRITE cuts")
+    for field, value in (
+        ("meta.reports_dir", dispatch.meta.reports_dir),
+        ("meta.tracker", dispatch.meta.tracker),
+    ):
+        normalized = value.replace("\\", "/")
+        if value and any(
+            marker in normalized
+            for marker in ("/.claude/", "/.codex/", "/.gemini/", "/.vibecrafted/")
+        ):
+            errors.append(
+                f"{field}: provider-specific or repo-local runtime roots are recovery-only; new writes use ~/.vibecrafted/artifacts"
+            )
+    cargo_target = str(os.environ.get("CARGO_TARGET_DIR") or "").strip()
+    if dispatch.policy.concurrency > 1 and cargo_target:
+        errors.append(
+            "policy.concurrency: shared CARGO_TARGET_DIR is forbidden for concurrent plans; unset CARGO_TARGET_DIR — Vibecrafted assigns $PWD/target per worker"
+        )
     return errors
 
 
@@ -551,6 +576,53 @@ def _validate_recovery_targets(
         target = cut.recovery.goto
         if target not in cut_ids and target not in phase_titles:
             errors.append(f"cuts[{index}].recovery.goto: unknown target {target!r}")
+
+
+def _validate_cut_dag(cuts: list[Cut], errors: list[str]) -> None:
+    """Validate dependency references and reject cycles before any launch."""
+    positions = {cut.id: index for index, cut in enumerate(cuts)}
+    for index, cut in enumerate(cuts):
+        for dependency in cut.depends_on:
+            if dependency == cut.id:
+                errors.append(f"cuts[{index}].depends_on: cut cannot depend on itself")
+            elif dependency not in positions:
+                errors.append(f"cuts[{index}].depends_on: unknown cut {dependency!r}")
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+    by_id = {cut.id: cut for cut in cuts}
+
+    def visit(cut_id: str) -> None:
+        if cut_id in visited or cut_id not in by_id:
+            return
+        if cut_id in visiting:
+            errors.append(f"cuts: dependency cycle includes {cut_id!r}")
+            return
+        visiting.add(cut_id)
+        for dependency in by_id[cut_id].depends_on:
+            visit(dependency)
+        visiting.remove(cut_id)
+        visited.add(cut_id)
+
+    for cut in cuts:
+        visit(cut.id)
+
+
+def _string_tuple(value: Any, path: str, errors: list[str]) -> tuple[str, ...]:
+    """Parse a TOML string array, preserving declaration order and uniqueness."""
+    if value is None:
+        return ()
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        errors.append(f"{path}: array of non-empty strings required")
+        return ()
+    result: list[str] = []
+    for item in value:
+        cleaned = item.strip()
+        if not cleaned:
+            errors.append(f"{path}: array of non-empty strings required")
+        elif cleaned not in result:
+            result.append(cleaned)
+    return tuple(result)
 
 
 def _validate_brief_path(

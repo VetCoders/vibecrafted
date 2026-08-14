@@ -23,12 +23,6 @@ spawn_current_vc_frame_session_name() {
   printf '%s\n' "${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
 }
 
-# Session the dispatcher is attached to (pane env). Empty when outside vc-frame.
-# G7: this seat must NEVER receive worker tabs.
-spawn_dispatcher_session_name() {
-  printf '%s\n' "${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
-}
-
 # A vc-frame session is a usable spawn target only when it is actually live.
 # Guards against the dispatcher's per-run tracking id (operator_session_name() =
 # "<repo>-<run_id>", see control_plane.py) being treated as a real session.
@@ -64,9 +58,14 @@ spawn_session_is_live() {
 #
 # Rules (exact order):
 #   1. VIBECRAFTED_WORKER_SESSION if set — explicit override wins.
-#   2. basename of SPAWN_ROOT / VIBECRAFTED_ROOT / cwd = per-project host.
-#   3. If host == dispatcher seat (VC_FRAME_SESSION_NAME / ZELLIJ_SESSION_NAME),
-#      use "<repo> workers" so the operator session never gets a worker tab.
+#   2. Else workspace-bound host from the control-plane catalog
+#      ("{label}-{workspace_short} workers") via Python twin — two workspaces
+#      with the same root basename never share a host (Cut A, 2026-08-10).
+#   3. Emergency fallback: "<basename(root)> workers" only if Python catalog
+#      resolution is unavailable.
+# 2026-08-09: the suffix used to be conditional on host == dispatcher seat.
+# That guarded only seat==repo, so dispatch from any other seat landed worker
+# tabs in the operator's card. Unconditional invariant → unconditional rule.
 # Missing host sessions are resurrected by G3 (attach --create-background).
 spawn_effective_operator_session() {
   spawn_normalize_ambient_context
@@ -77,21 +76,42 @@ spawn_effective_operator_session() {
   fi
 
   local repo_root="${SPAWN_ROOT:-${VIBECRAFTED_ROOT:-}}"
+  if [[ -z "$repo_root" ]]; then
+    repo_root="$(pwd)"
+  fi
+
+  # Prefer the Python catalog resolver so shell and Python stay identical.
+  # Resolve the checkout/installed package explicitly: relying on ambient
+  # PYTHONPATH made source checkouts silently fall back to basename hosts.
+  local core_path="" py="" python_path="${PYTHONPATH:-}" resolved=""
+  core_path="$(spawn_python_core_path 2>/dev/null || true)"
+  py="$(spawn_python_bin)"
+  if [[ -n "$core_path" ]]; then
+    python_path="${core_path}${python_path:+:$python_path}"
+  fi
+  if command -v "$py" >/dev/null 2>&1; then
+    resolved="$(
+      PYTHONPATH="$python_path" SPAWN_ROOT="$repo_root" VIBECRAFTED_ROOT="$repo_root" "$py" - <<'PY' 2>/dev/null
+import os
+from pathlib import Path
+root = os.environ.get("SPAWN_ROOT") or os.environ.get("VIBECRAFTED_ROOT") or os.getcwd()
+try:
+    from vibecrafted_core.workspace_catalog import resolve_worker_host_session
+    print(resolve_worker_host_session(root=root, env=os.environ), end="")
+except Exception:
+    print(f"{Path(root).name or 'vibecrafted'} workers", end="")
+PY
+    )" || resolved=""
+  fi
+  if [[ -n "$resolved" ]]; then
+    printf '%s\n' "$resolved"
+    return 0
+  fi
+
   local host=""
-  if [[ -n "$repo_root" ]]; then
-    host="$(basename "$repo_root")"
-  else
-    host="$(basename "$(pwd)")"
-  fi
+  host="$(basename "$repo_root")"
   [[ -n "$host" ]] || return 1
-
-  local dispatcher=""
-  dispatcher="$(spawn_dispatcher_session_name)"
-  if [[ -n "$dispatcher" && "$host" == "$dispatcher" ]]; then
-    host="${host} workers"
-  fi
-
-  printf '%s\n' "$host"
+  printf '%s workers\n' "$host"
 }
 
 spawn_in_target_vc_frame_session() {

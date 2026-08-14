@@ -17,6 +17,11 @@ def test_pyproject_publishes_vibecrafted_distribution_with_package_data() -> Non
     assert "vibecrafted_core/runtime/**" in artifacts
     assert "vibecrafted_core/skills/**" in artifacts
     assert "vibecrafted_core/deck/vibecrafted" in artifacts
+    assert "vibecrafted_core/schemas/**" in artifacts
+    assert "vibecrafted_core/trust/**" in artifacts
+    assert data["project"]["scripts"]["verify-vibecrafted-walkaround"] == (
+        "vibecrafted_core.walkaround_runner:main"
+    )
 
 
 def test_package_carries_runtime_skills_and_command_deck() -> None:
@@ -28,3 +33,8 @@ def test_package_carries_runtime_skills_and_command_deck() -> None:
     ).is_file()
     assert (package_root / "skills" / "vc-justdo" / "SKILL.md").is_file()
     assert (package_root / "deck" / "vibecrafted").is_file()
+    assert (package_root / "product_contract.py").is_file()
+    assert (package_root / "walkaround_runner.py").is_file()
+    assert (package_root / "schemas" / "unified_product.schema.v1.json").is_file()
+    assert (package_root / "trust" / "release-policy.v1.json").is_file()
+    assert (package_root / "trust" / "vibecrafted-signing-v1.pub").is_file()

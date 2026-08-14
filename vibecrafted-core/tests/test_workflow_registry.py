@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import re
 from pathlib import Path
 
 from vibecrafted_core import workflow
@@ -23,6 +24,35 @@ def test_registry_keeps_supported_workflows_explicit() -> None:
     assert "justdo" not in {stage.id for stage in ship.stages}
     assert "implement" in {stage.id for stage in ship.stages}
     assert registry.SUPPORTED_WORKFLOWS == workflow.SUPPORTED_WORKFLOWS
+
+
+def test_deck_command_canon_matches_registry() -> None:
+    """The bash deck's front gate must accept every registry workflow.
+
+    trust/guard entered the registry while the deck kept its old `_skills`
+    array and dispatch case, so `vibecrafted trust` died at `cmd_unknown`
+    before python ever saw the command. Pin both deck gate surfaces to
+    SUPPORTED_WORKFLOWS so the canons cannot drift apart silently again.
+    """
+    from vibecrafted_core.package_resources import deck_path
+
+    deck_text = deck_path().read_text(encoding="utf-8")
+
+    skills_array = re.search(r"^_skills=\(([^)]*)\)", deck_text, re.MULTILINE)
+    assert skills_array, "deck must declare the _skills canon array"
+    assert set(skills_array.group(1).split()) == set(registry.SUPPORTED_WORKFLOWS)
+
+    for workflow_id in sorted(registry.SUPPORTED_WORKFLOWS):
+        in_alternation = re.search(
+            rf'(?m)^\s*(?:[a-z]+\|)*{workflow_id}(?:\|[a-z]+)*\)\s*\n\s*run_skill "\$cmd"',
+            deck_text,
+        )
+        dedicated = re.search(
+            rf'(?m)^\s*{workflow_id}\)\s*run_skill "{workflow_id}"', deck_text
+        )
+        assert in_alternation or dedicated, (
+            f"deck main dispatch must route '{workflow_id}' to run_skill"
+        )
 
 
 def test_registry_classifies_workflow_runtime_kinds() -> None:

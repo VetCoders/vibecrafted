@@ -14,7 +14,7 @@
 # (the shipped vc-frame.toml launches `vc-frame attach` directly instead).
 #
 # Source of truth: vc-frame/tools/alacritty/launch-primary-shell.zsh
-# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 
 tty_path="/dev/tty"
 

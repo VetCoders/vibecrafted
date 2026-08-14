@@ -3,7 +3,7 @@
 
 export MACOSX_DEPLOYMENT_TARGET ?= 14.0
 
-.PHONY: help bindings xcode app app-debug dmg dmg-signed
+.PHONY: help bindings xcode app app-debug dmg dmg-signed notarize release
 
 HELP_C_CYAN   := \033[36m
 HELP_C_GREEN  := \033[32m
@@ -34,18 +34,24 @@ app: bindings xcode
 			exit 1; \
 		fi; \
 		cp -R "$$BUILT_APP" build/Vibecrafted.app
-	@/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile icon1" build/Vibecrafted.app/Contents/Info.plist 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string icon1" build/Vibecrafted.app/Contents/Info.plist
+	@/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile Vibecrafted" build/Vibecrafted.app/Contents/Info.plist 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string Vibecrafted" build/Vibecrafted.app/Contents/Info.plist
 	@mkdir -p build/Vibecrafted.app/Contents/Resources
-	@cp ../icon1.icns build/Vibecrafted.app/Contents/Resources/icon1.icns
+	@cp app/Vibecrafted/Vibecrafted.icns build/Vibecrafted.app/Contents/Resources/Vibecrafted.icns
 	@./scripts/fix-dylib-install-names.sh build/Vibecrafted.app
 	@codesign --force --deep --sign - build/Vibecrafted.app
 	@echo "App built: build/Vibecrafted.app"
 
 dmg:
-	@./scripts/build-dmg.sh
+	@$(MAKE) -C ../.. dmg
 
 dmg-signed:
-	@SIGNING_IDENTITY="Developer ID Application: Maciej Gad (MW223P3NPX)" ./scripts/build-dmg.sh
+	@$(MAKE) -C ../.. dmg-signed
+
+notarize:
+	@$(MAKE) -C ../.. notarize
+
+release:
+	@$(MAKE) -C ../.. release
 
 app-debug: bindings xcode
 	@cargo build --workspace --release
@@ -70,3 +76,5 @@ help:
 	@printf "\n  $(HELP_C_YELLOW)PACKAGE$(HELP_C_RESET)\n"
 	@printf "    $(HELP_C_GREEN)%-14s$(HELP_C_RESET) %s\n" "dmg" "Build unsigned/ad-hoc DMG"
 	@printf "    $(HELP_C_GREEN)%-14s$(HELP_C_RESET) %s\n" "dmg-signed" "Build signed DMG"
+	@printf "    $(HELP_C_GREEN)%-14s$(HELP_C_RESET) %s\n" "notarize" "Delegate notarization to the product owner"
+	@printf "    $(HELP_C_GREEN)%-14s$(HELP_C_RESET) %s\n" "release" "Delegate the single public release to the product owner"

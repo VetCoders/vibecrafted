@@ -56,10 +56,10 @@ version and a unique token:
 
 and atomically repoints the `vibecrafted-current` symlink at it. The
 generation's `runtime-manifest.json` (schema
-`vibecrafted.runtime-generation.v1`) records the installed version and the
-SHA-256 digests that bind it — so version truth is auditable, not
-declarative. See [Runtime capsule](/docs/runtime-capsule/) for the full
-mechanism.
+`vibecrafted.runtime-generation.v2`) records the installed version, the verified
+source-payload tree identity, and the SHA-256 digests that bind its critical
+runtime files — so version truth is auditable, not declarative. See
+[Runtime capsule](/docs/runtime-capsule/) for the full mechanism.
 
 ## The delivery receipt
 
@@ -100,7 +100,8 @@ newest first. House rules visible in recent entries:
 ## Verifying a fresh install
 
 ```bash
-curl -fsSL https://vibecrafted.io/install.sh | bash
+open https://github.com/vetcoders/vibecrafted/releases/latest
+# Download and verify Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg, then open it.
 vibecrafted doctor      # audits the installed generation
 vibecrafted --version   # version + build provenance
 ```

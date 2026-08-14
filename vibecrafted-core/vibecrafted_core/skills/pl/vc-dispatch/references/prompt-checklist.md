@@ -23,8 +23,11 @@ z vc-init są materiałem źródłowym; checklista poniżej jest bramką.
 
 Musi pokryć (złożone Z kontekstu, nie skopiowane z szablonu):
 
-- [ ] ścieżka repo + gałąź; reguły Living Tree (zero worktree, zero
-      przełączania gałęzi, re-read przed edycją, nigdy stash/discard cudzej pracy)
+- [ ] ścieżka repo + gałąź; tryb drzewa wprost: Living Tree (zero worktree,
+      zero przełączania gałęzi, re-read przed edycją, nigdy stash/discard
+      cudzej pracy) ALBO formacja Fleet Worktrees (Tryb B kanonu: verifiery
+      przed dispatchem, rozłączne domeny, `.claude/worktrees/<cut-id>` na
+      `cut/<cut-id>`, workerzy bez push/merge, integruje koordynator)
 - [ ] kolejność narzędzi prawdy strukturalnej (loctree-first; ścieżka raportu
       fallbacku dla miss)
 - [ ] inwarianty architektury (np. prezentacja w app/ nigdy core/) oraz

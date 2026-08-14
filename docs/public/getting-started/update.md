@@ -35,14 +35,37 @@ The public launcher (`~/.local/bin/vibecrafted` and its `vc-*` aliases) enters o
 
 `vibecrafted-current` is an atomic symlink to one immutable `vibecrafted-generation-*` directory. The installer refuses to point the public launcher at a uv tool shim or a repository checkout.
 
-Every published generation carries `runtime-manifest.json` (schema `vibecrafted.runtime-generation.v1`) which binds:
+Every published generation carries `runtime-manifest.json` (schema
+`vibecrafted.runtime-generation.v2`) which binds:
 
 - the installed version;
 - the canonical command-deck entrypoint;
 - a one-way fingerprint of the source root — never the checkout path itself;
-- SHA-256 digests for `VERSION`, the command deck, and generated vc-frame configuration.
+- the canonical source-payload tree identity transported by the v2 source
+  carrier;
+- SHA-256 digests for `VERSION`, the launcher and command deck, generated vc-frame
+  configuration, and the release verifier engine, runner, schema, policy, and key.
+
+Older four-hash generation manifests fail closed and require reinstall; they are
+not silently treated as current.
 
 The manifest and runtime files are created and audited **before** the single pointer swap. A failed audit leaves the previous generation live and rollbackable — a broken update cannot take down a working install.
+
+The public release-verifier launcher validates this manifest and every bound
+file before loading its runner or verifier engine. Post-install drift cannot
+execute first and report failure afterward.
+
+Downloaded and local bootstrap archives must also carry the closed v2
+`source-provenance.json` carrier. The canonical archive writer proves the
+included tree against one owner repository and full commit SHA before it writes
+that carrier; archives built from dirty included source are rejected. Bootstrap
+then recomputes the carrier's tree digest before extraction, after extraction,
+and after candidate staging without trusting archive-supplied Python.
+
+The carrier detects unchanged-carrier payload substitution, but it is not a
+signature: coordinated payload-and-carrier rewriting remains W4 release
+authentication work. Create a local archive through
+`scripts/distribution_manifest.py archive`, not with a raw `tar` command.
 
 Inspect what you are running:
 

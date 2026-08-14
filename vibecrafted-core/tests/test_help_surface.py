@@ -29,6 +29,12 @@ def test_worker_help_declares_headless_as_the_default_surface() -> None:
     assert "Worker surface (default: headless)" in output
 
 
+def test_research_help_exposes_swarm_alias() -> None:
+    output = render_workflow_help("research")
+
+    assert "vibecrafted swarm [agents...] [flags]" in output
+
+
 def test_root_help_uses_the_registered_ship_cycle() -> None:
     output = render_root_help("test-version")
 

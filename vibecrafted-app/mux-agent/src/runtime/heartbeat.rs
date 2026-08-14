@@ -4,7 +4,7 @@
 //! It periodically sends lightweight ping probes and tracks response times,
 //! triggering server restarts when the backend becomes unresponsive.
 //!
-//! Created by vetcoders (c)2025
+//! Created by Vetcoders (c)2025
 //! Co-Authored-By: vetcoders
 
 use std::sync::Arc;

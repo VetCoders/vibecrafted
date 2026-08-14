@@ -429,7 +429,7 @@ def snapshot_processes(
 
 
 def _looks_vc_family(command: str) -> bool:
-    """Whether ``command`` looks like part of the Vetcoders/vibecrafted process
+    """Whether ``command`` looks like part of the vetcoders/vibecrafted process
     family, for display-only inclusion in a snapshot even without reaper proof.
     """
     low = command.lower()

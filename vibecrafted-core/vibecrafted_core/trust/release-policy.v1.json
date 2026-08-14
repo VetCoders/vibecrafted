@@ -1,0 +1,11 @@
+{
+  "schema": "io.vetcoders.vibecrafted.release-policy.v1",
+  "algorithm": "rsa-pkcs1v15-sha256",
+  "public_key": "vibecrafted-signing-v1.pub",
+  "public_key_spki_sha256": "521ed59d3c446c540afe1557c2dbc39c9c190775f99896b2b65206c32814b25b",
+  "bundle_id": "io.vetcoders.vibecrafted",
+  "team_id": "MW223P3NPX",
+  "designated_requirement": "identifier \"io.vetcoders.vibecrafted\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"MW223P3NPX\"",
+  "hardened_runtime": true,
+  "entitlements": {}
+}

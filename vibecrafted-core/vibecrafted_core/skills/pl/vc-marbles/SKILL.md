@@ -71,7 +71,7 @@ dogfooding: "required for repo-impacting work"
 ### Reguła Living Tree / Worktree
 
 Działa w bieżącym checkoucie i na bieżącej gałęzi operatora. Nie przenoś się
-do worktree, chyba że wprost o to poproszono. Czytaj pliki ponownie przed
+do worktree, chyba że wprost o to poproszono. Jedyny usankcjonowany drugi tryb to dispatch Fleet Worktrees (pisany plan, zacommitowane wcześniej verifiery, rozłączne domeny plików, jednowątkowy integrator — patrz Reguła Living Tree, Tryb B); poza tą formacją zostań we wspólnym drzewie. Czytaj pliki ponownie przed
 edycją, dostosowuj się do równoległych zmian (inni workerzy mogli zapisać
 między twoimi dispatchami). Zobacz [Reguła Living Tree](../LIVING_TREE_RULE.md).
 

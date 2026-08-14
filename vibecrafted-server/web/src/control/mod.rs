@@ -22,6 +22,8 @@
 //!   `completed`).
 //! * `GET /api/control/runs/{run_id}` — a single run, or `404` JSON. Same axis
 //!   / seal projection as the list route.
+//! * `GET /api/control/runs/{run_id}/transcript` — bounded, no-store tail of
+//!   the canonical `transcript.human.log` used by the live run detail view.
 //! * `GET /api/control/lifecycle` — lifecycle run summaries, newest-first.
 //! * `GET /api/control/lifecycle/{run_id}` — full nested lifecycle state with
 //!   projected per-run and per-stage axes (shape of `write_lifecycle_report`).
@@ -42,11 +44,11 @@ pub mod api {
     use axum::Json;
     use axum::Router;
     use axum::extract::Path;
-    use axum::http::StatusCode;
+    use axum::http::{StatusCode, header};
     use axum::response::IntoResponse;
     use axum::routing::get;
     use chrono::{DateTime, Utc};
-    use control_core::{ControlPlane, Event, RunStatus, SettlementBoard};
+    use control_core::{ControlPlane, Event, RunStatus, SettlementBoard, is_safe_run_id};
     use serde::Serialize;
     use serde_json::json;
 
@@ -71,6 +73,7 @@ pub mod api {
             .route("/api/health", get(health))
             .route("/api/control/state", get(state))
             .route("/api/control/runs", get(runs))
+            .route("/api/control/runs/{run_id}/transcript", get(transcript))
             .route("/api/control/runs/{run_id}", get(run))
             .route("/api/control/lifecycle", get(lifecycle))
             .route("/api/control/lifecycle/{run_id}", get(lifecycle_run))
@@ -86,6 +89,7 @@ pub mod api {
         Json(json!({
             "schema": "vibecrafted.health.v1",
             "status": "ok",
+            "version": env!("VC_SERVER_VERSION"),
         }))
     }
 
@@ -189,6 +193,32 @@ pub mod api {
             "count": snapshots.len(),
             "runs": snapshots,
         }))
+    }
+
+    /// Bounded canonical human transcript tail for a run detail page.
+    ///
+    /// The filesystem confinement, symlink refusal, byte cap, line cap, and
+    /// terminal escape stripping are shared with the initial SSR render.
+    async fn transcript(Path(run_id): Path<String>) -> impl IntoResponse {
+        if !is_safe_run_id(&run_id) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "invalid run id" })),
+            )
+                .into_response();
+        }
+
+        let preview = crate::run_detail::load_human_transcript(&ControlPlane::from_env(), &run_id);
+        (
+            [(header::CACHE_CONTROL, "no-store")],
+            Json(json!({
+                "run_id": run_id,
+                "body": preview.body,
+                "available": preview.available,
+                "truncated": preview.truncated,
+            })),
+        )
+            .into_response()
     }
 
     /// Lifecycle run summaries, newest-first by `state.json` mtime.

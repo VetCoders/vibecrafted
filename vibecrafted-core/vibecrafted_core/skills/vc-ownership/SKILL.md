@@ -74,7 +74,7 @@ See [TAXONOMY.md](TAXONOMY.md) for the posture/runtime split.
 This workflow runs in the operator's current checkout and current branch. Do not create, switch to, or move execution
 into a git worktree unless the operator explicitly asks for a worktree in this prompt. Generic words like "isolate", "
 parallel", or "clean branch" are not enough. Re-read files before editing, adapt to concurrent changes, and report a
-substrate failure if the current tree is too poisoned to continue safely.
+substrate failure if the current tree is too poisoned to continue safely. The one sanctioned second mode is a Fleet Worktree dispatch (written plan, pre-committed verifiers, disjoint domains, single-thread integrator — see Living Tree Rule, Mode B); outside that formation, stay in the shared tree.
 
 See [Living Tree Rule](../LIVING_TREE_RULE.md).
 

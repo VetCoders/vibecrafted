@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from argparse import Namespace
 from pathlib import Path
 
+import pytest
 from vibecrafted_core.doctor import _vc_frame_delivery_findings
 from vibecrafted_core.frontier_assets import vc_frame_config_source
 from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config
@@ -17,6 +19,26 @@ from vibecrafted_core.vc_frame_staging import (
 from scripts import vetcoders_install as installer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _write_test_source_provenance(
+    root: Path,
+    *,
+    owner_repo: str = "vetcoders/vibecrafted",
+    source_revision: str = "b" * 40,
+) -> dict[str, object]:
+    """Mint a test-only carrier for a detached fixture's current input tree."""
+    provenance: dict[str, object] = {
+        "schema": installer._SOURCE_PROVENANCE_SCHEMA,
+        "owner_repo": owner_repo,
+        "source_revision": source_revision,
+        "payload": installer._distribution_manifest._distribution_tree_record(root),
+    }
+    (root / "source-provenance.json").write_text(
+        json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return provenance
 
 
 def _write_executable(path: Path, body: str) -> None:
@@ -264,7 +286,7 @@ def test_print_doctor_failure_hint_uses_vibecrafted_not_old_brand(
     output = capsys.readouterr().out
     assert "store: missing" in output
     assert "vibecrafted doctor --fix-rc --fix-launchers" in output
-    assert "vetcoders install" not in output
+    assert "Vetcoders install" not in output
 
 
 def test_run_doctor_includes_dashboard_smoke(tmp_path: Path, monkeypatch) -> None:
@@ -496,10 +518,19 @@ def test_cmd_doctor_fix_launchers_repairs_missing_wrappers(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
     monkeypatch.setattr(installer, "FOUNDATIONS", [])
     monkeypatch.setattr(installer, "_slack_provider_contract_findings", list)
+    detached_source = tmp_path / "detached-source"
+    installer.stage_distribution_payload(REPO_ROOT, detached_source, mirror=True)
+    (detached_source / "VERSION").write_text("1.4.1-test\n", encoding="utf-8")
+    _write_test_source_provenance(detached_source)
+    monkeypatch.setattr(
+        installer, "_doctor_launcher_source_root", lambda _store: detached_source
+    )
 
     exit_code = installer.cmd_doctor(Namespace(fix_rc=False, fix_launchers=True))
 
-    assert exit_code == 0
+    # Launcher repair succeeds, but the fresh-state doctor remains fail-closed
+    # until the mandatory packaged release verifier is actually installed.
+    assert exit_code == 1
     assert (launcher_bin / "vc-init").is_symlink()
     assert (launcher_bin / "vc-start").is_symlink()
     assert not (crafted_home / "bin" / "vc-init").exists()
@@ -774,38 +805,428 @@ def test_install_launcher_does_not_overwrite_unmanaged_dev_wrapper(
     assert (launcher_bin / "vc-help").is_symlink()
 
 
-def test_install_python_entrypoint_launchers_replace_managed_shell_wrappers(
-    tmp_path: Path, monkeypatch
+def test_secure_walkaround_launcher_has_one_uv_tool_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     home = tmp_path / "home"
     crafted_home = home / ".vibecrafted"
-    current_tools = (
-        home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
-    )
-    console_bin = current_tools / ".venv" / "bin"
-    launcher_bin = home / ".local" / "bin"
-    console_bin.mkdir(parents=True)
-    launcher_bin.mkdir(parents=True)
-
+    current_tools = home / ".local/share/vibecrafted/tools/vibecrafted-current"
+    uv_bin = home / ".local/share/uv/tools/vibecrafted/bin"
+    python_bin = uv_bin / "python"
+    wrapper = uv_bin / installer.SECURE_WALKAROUND_LAUNCHER
     _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+    monkeypatch.setenv("UV_TOOL_DIR", str(uv_bin.parent.parent))
+    uv_bin.mkdir(parents=True)
+    _write_executable(python_bin, "#!/bin/sh\nexit 0\n")
 
-    for name in installer.PYTHON_ENTRYPOINT_LAUNCHERS:
-        _write_executable(
-            console_bin / name,
-            f"#!{console_bin / 'python3'}\nprint('runtime {name}')\n",
-        )
-    (launcher_bin / "vibecrafted").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
-    (launcher_bin / "vc-agents").symlink_to("vibecrafted")
-
-    installed = installer._install_python_entrypoint_launchers(current_tools)
-
-    assert len(installed) == len(installer.PYTHON_ENTRYPOINT_LAUNCHERS)
-    vc_agents = launcher_bin / "vc-agents"
-    assert vc_agents.is_symlink()
-    assert vc_agents.resolve(strict=False) == console_bin / "vc-agents"
-    assert (launcher_bin / "vibecrafted-resume").resolve(strict=False) == (
-        console_bin / "vibecrafted-resume"
+    installed = installer._install_secure_walkaround_launcher(
+        current_tools,
+        python_bin,
+        launcher_path=wrapper,
     )
+
+    assert installed == wrapper
+    assert "/.venv/" not in installed.read_text(encoding="utf-8")
+
+
+def test_installer_doctor_fails_when_walkaround_runner_launcher_is_missing() -> None:
+    state = installer.InstallState(
+        launcher_entries=["/managed/bin/verify-vibecrafted-walkaround"]
+    )
+
+    assert (
+        installer._python_entrypoint_issue_level(
+            ["verify-vibecrafted-walkaround:missing"], state=state
+        )
+        == "fail"
+    )
+    assert (
+        installer._python_entrypoint_issue_level(
+            ["verify-vibecrafted-walkaround:missing"], state=installer.InstallState()
+        )
+        == "fail"
+    )
+
+
+_LEGACY_RUNTIME_GENERATION_HASH_PATHS = frozenset(
+    {
+        "VERSION",
+        "scripts/vibecrafted",
+        "runtime/generated/vc-frame/config.kdl",
+        installer._RUNTIME_GENERATION_ENTRYPOINT.as_posix(),
+    }
+)
+
+_RUNTIME_GENERATION_FIXTURE_SOURCES = {
+    Path("VERSION"): Path("VERSION"),
+    Path("scripts/vibecrafted"): Path("scripts/vibecrafted"),
+    Path("runtime/generated/vc-frame/config.kdl"): Path("config/vc-frame/config.kdl"),
+    installer._RUNTIME_GENERATION_ENTRYPOINT: installer._RUNTIME_GENERATION_ENTRYPOINT,
+    Path("vibecrafted-core/vibecrafted_core/product_contract.py"): Path(
+        "vibecrafted-core/vibecrafted_core/product_contract.py"
+    ),
+    Path("vibecrafted-core/vibecrafted_core/walkaround_runner.py"): Path(
+        "vibecrafted-core/vibecrafted_core/walkaround_runner.py"
+    ),
+    Path(
+        "vibecrafted-core/vibecrafted_core/schemas/unified_product.schema.v1.json"
+    ): Path("vibecrafted-core/vibecrafted_core/schemas/unified_product.schema.v1.json"),
+    Path("vibecrafted-core/vibecrafted_core/trust/release-policy.v1.json"): Path(
+        "vibecrafted-core/vibecrafted_core/trust/release-policy.v1.json"
+    ),
+    Path("vibecrafted-core/vibecrafted_core/trust/vibecrafted-signing-v1.pub"): Path(
+        "vibecrafted-core/vibecrafted_core/trust/vibecrafted-signing-v1.pub"
+    ),
+}
+
+
+def _write_release_contract_runtime_manifest(
+    current_tools: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert len(_RUNTIME_GENERATION_FIXTURE_SOURCES) == 9
+    assert (
+        frozenset(_RUNTIME_GENERATION_FIXTURE_SOURCES)
+        == installer._RUNTIME_GENERATION_REQUIRED_HASHES
+    )
+    for target_relative, source_relative in _RUNTIME_GENERATION_FIXTURE_SOURCES.items():
+        target = current_tools / target_relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO_ROOT / source_relative, target)
+
+    provenance = _write_test_source_provenance(current_tools)
+
+    monkeypatch.delenv("VIBECRAFTED_SOURCE_OWNER_REPO", raising=False)
+    monkeypatch.delenv("VIBECRAFTED_SOURCE_REVISION", raising=False)
+    installer._write_runtime_generation_manifest(
+        current_tools,
+        source_root=current_tools,
+        source_provenance=provenance,
+        install_version=None,
+    )
+
+
+def test_installer_release_contract_assets_fail_closed_for_missing_or_exact_byte_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_tools = tmp_path / "vibecrafted-current"
+    _write_release_contract_runtime_manifest(current_tools, monkeypatch)
+    package = current_tools / "vibecrafted-core" / "vibecrafted_core"
+
+    assert installer._release_contract_asset_issues(current_tools) == []
+
+    mutations = {
+        "product_contract.py": b"def verify_release_output(*_args):\n    return {}\n",
+        "walkaround_runner.py": b"def main():\n    return 0\n",
+        "schemas/unified_product.schema.v1.json": b'{"$defs": {}}\n',
+        "trust/release-policy.v1.json": None,
+        "trust/vibecrafted-signing-v1.pub": None,
+    }
+    for relative, replacement in mutations.items():
+        target = package / relative
+        original = target.read_bytes()
+        target.write_bytes(replacement if replacement is not None else original + b"\n")
+        issues = installer._release_contract_asset_issues(current_tools)
+        assert any(item.startswith(f"{relative}:corrupt:") for item in issues), relative
+        target.write_bytes(original)
+
+        target.unlink()
+        issues = installer._release_contract_asset_issues(current_tools)
+        assert f"{relative}:missing" in issues
+
+        sibling = target.with_name(f"{target.name}.real")
+        sibling.write_bytes(original)
+        target.symlink_to(sibling.name)
+        issues = installer._release_contract_asset_issues(current_tools)
+        assert f"{relative}:missing" in issues
+        target.unlink()
+        sibling.unlink()
+        target.write_bytes(original)
+
+
+def test_installer_release_contract_assets_reject_missing_or_incomplete_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_tools = tmp_path / "vibecrafted-current"
+    _write_release_contract_runtime_manifest(current_tools, monkeypatch)
+    manifest_path = current_tools / installer._RUNTIME_GENERATION_MANIFEST
+    original = manifest_path.read_bytes()
+
+    manifest_path.unlink()
+    assert (
+        f"{installer._RUNTIME_GENERATION_MANIFEST}:missing"
+        in installer._release_contract_asset_issues(current_tools)
+    )
+
+    manifest_path.write_text("{}\n", encoding="utf-8")
+    assert any(
+        item.startswith(f"{installer._RUNTIME_GENERATION_MANIFEST}:corrupt:")
+        for item in installer._release_contract_asset_issues(current_tools)
+    )
+
+    manifest_path.unlink()
+    manifest_sibling = current_tools / "runtime-manifest.real.json"
+    manifest_sibling.write_bytes(original)
+    manifest_path.symlink_to(manifest_sibling.name)
+    assert (
+        f"{installer._RUNTIME_GENERATION_MANIFEST}:missing"
+        in installer._release_contract_asset_issues(current_tools)
+    )
+    manifest_path.unlink()
+    manifest_sibling.unlink()
+
+    manifest_path.write_bytes(original)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["hashes"].pop("vibecrafted-core/vibecrafted_core/product_contract.py")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert any(
+        item.startswith(f"{installer._RUNTIME_GENERATION_MANIFEST}:corrupt:")
+        for item in installer._release_contract_asset_issues(current_tools)
+    )
+
+
+def test_runtime_manifest_retains_clean_exact_git_source_carrier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_tools = tmp_path / "vibecrafted-current"
+    _write_release_contract_runtime_manifest(current_tools, monkeypatch)
+    (current_tools / installer._RUNTIME_GENERATION_MANIFEST).unlink()
+    (current_tools / "source-provenance.json").unlink()
+    source = tmp_path / "clean-source"
+    source.mkdir()
+    (source / "README.md").write_text("clean exact Git source\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/vetcoders/vibecrafted.git",
+        ],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(source), "add", "README.md"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "-c",
+            "user.name=Vibecrafted Tests",
+            "-c",
+            "user.email=tests@vetcoders.io",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "-m",
+            "fixture",
+        ],
+        check=True,
+    )
+
+    provenance = installer.resolve_source_provenance(
+        source,
+        owner_repo=None,
+        source_revision=None,
+    )
+    (current_tools / "source-provenance.json").write_text(
+        json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    installer._write_runtime_generation_manifest(
+        current_tools,
+        source_root=source,
+        source_provenance=provenance,
+        install_version=None,
+    )
+
+    assert not (source / "source-provenance.json").exists()
+    assert (current_tools / "source-provenance.json").is_file()
+    manifest, error = installer._load_runtime_generation_manifest(current_tools)
+    assert error is None
+    assert manifest is not None
+    assert manifest["owner_repo"] == "vetcoders/vibecrafted"
+
+
+def test_release_contract_inventory_names_runner_schema_policy_and_key() -> None:
+    assert "verify-vibecrafted-walkaround" in installer.PYTHON_ENTRYPOINT_LAUNCHERS
+    assert installer.RELEASE_CONTRACT_PACKAGE_ASSETS == (
+        "product_contract.py",
+        "walkaround_runner.py",
+        "schemas/unified_product.schema.v1.json",
+        "trust/release-policy.v1.json",
+        "trust/vibecrafted-signing-v1.pub",
+    )
+
+
+def _loaded_release_contract_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state_shape: str,
+) -> tuple[Path, installer.InstallState, Path | None]:
+    """Materialize and load the four installer-state shapes used by doctor."""
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    tools = home / ".local/share/vibecrafted/tools"
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+    monkeypatch.setattr(installer, "FOUNDATIONS", [])
+
+    if state_shape == "fresh":
+        store = crafted_home / "skills"
+        return store, installer._load_install_state(store), None
+
+    generation = tools / "vibecrafted-generation-test"
+    store = generation / "skills"
+    store.mkdir(parents=True)
+    tools.mkdir(parents=True, exist_ok=True)
+    (tools / "vibecrafted-current").symlink_to(generation)
+
+    if state_shape == "migrated":
+        legacy_store = crafted_home / "skills"
+        installer.InstallState(framework_version="legacy").save(legacy_store)
+    elif state_shape == "corrupt":
+        (store / installer.STATE_FILE).write_text("{", encoding="utf-8")
+    elif state_shape != "lost":
+        raise AssertionError(f"unknown fixture state: {state_shape}")
+
+    return store, installer._load_install_state(store), generation
+
+
+def _seed_release_contract_assets(
+    generation: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    _write_release_contract_runtime_manifest(generation, monkeypatch)
+    return generation / "vibecrafted-core" / "vibecrafted_core"
+
+
+@pytest.mark.parametrize("state_shape", ["fresh", "migrated", "lost", "corrupt"])
+def test_installer_doctor_checks_release_assets_before_store_state_shortcuts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state_shape: str,
+) -> None:
+    store, state, generation = _loaded_release_contract_state(
+        tmp_path, monkeypatch, state_shape
+    )
+    if state_shape == "migrated":
+        assert state.framework_version == "legacy"
+    elif state_shape in {"fresh", "lost", "corrupt"}:
+        assert state.framework_version == ""
+    assert (generation is None) == (state_shape == "fresh")
+    findings = installer.run_doctor(store, state)
+    indexed = {finding.component: finding for finding in findings}
+
+    release_finding = indexed["release-contract-assets"]
+    assert release_finding.level == "fail"
+    if state_shape == "fresh":
+        assert "runtime-pointer:corrupt:" in release_finding.message
+        for relative in installer.RELEASE_CONTRACT_PACKAGE_ASSETS:
+            assert f"{relative}:missing" not in release_finding.message
+    else:
+        for relative in installer.RELEASE_CONTRACT_PACKAGE_ASSETS:
+            assert f"{relative}:missing" in release_finding.message
+
+
+@pytest.mark.parametrize("state_shape", ["fresh", "migrated", "lost", "corrupt"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "product_contract.py",
+        "walkaround_runner.py",
+        "schemas/unified_product.schema.v1.json",
+        "trust/release-policy.v1.json",
+        "trust/vibecrafted-signing-v1.pub",
+        "legacy-runtime-four-hash",
+    ],
+)
+def test_installer_doctor_release_assets_fail_closed_in_each_loaded_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state_shape: str,
+    mutation: str,
+) -> None:
+    store, state, generation = _loaded_release_contract_state(
+        tmp_path, monkeypatch, state_shape
+    )
+    if generation is None:
+        tools = installer.vibecrafted_tools_home()
+        generation = tools / "vibecrafted-generation-test"
+        tools.mkdir(parents=True, exist_ok=True)
+        (tools / "vibecrafted-current").symlink_to(generation.name)
+    package = _seed_release_contract_assets(generation, monkeypatch)
+    replacements = {
+        "product_contract.py": b"def verify_release_output(*_args):\n    return {}\n",
+        "walkaround_runner.py": b"def main():\n    return 0\n",
+        "schemas/unified_product.schema.v1.json": b'{"$defs": {}}\n',
+    }
+    if mutation == "legacy-runtime-four-hash":
+        manifest_path = generation / installer._RUNTIME_GENERATION_MANIFEST
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["hashes"] = {
+            relative: digest
+            for relative, digest in manifest["hashes"].items()
+            if relative in _LEGACY_RUNTIME_GENERATION_HASH_PATHS
+        }
+        assert set(manifest["hashes"]) == _LEGACY_RUNTIME_GENERATION_HASH_PATHS
+        manifest_path.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        expected_issues = [f"{installer._RUNTIME_GENERATION_MANIFEST}:corrupt:"]
+    else:
+        path = package / mutation
+        path.write_bytes(replacements.get(mutation, path.read_bytes() + b"\n"))
+        expected_issues = [f"{mutation}:corrupt"]
+
+    findings = installer.run_doctor(store, state)
+    indexed = {finding.component: finding for finding in findings}
+    release_finding = indexed["release-contract-assets"]
+    assert release_finding.level == "fail"
+    for expected_issue in expected_issues:
+        assert expected_issue in release_finding.message
+
+
+@pytest.mark.parametrize("pointer_shape", ["self-loop", "two-link-loop", "dangling"])
+def test_installer_doctor_rejects_invalid_runtime_pointer_without_crashing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pointer_shape: str,
+) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    tools = home / ".local/share/vibecrafted/tools"
+    current = tools / "vibecrafted-current"
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+    monkeypatch.setattr(installer, "FOUNDATIONS", [])
+    tools.mkdir(parents=True)
+
+    if pointer_shape == "self-loop":
+        current.symlink_to(current.name)
+    elif pointer_shape == "two-link-loop":
+        second = tools / "vibecrafted-pointer-loop"
+        current.symlink_to(second.name)
+        second.symlink_to(current.name)
+    elif pointer_shape == "dangling":
+        current.symlink_to("vibecrafted-generation-missing")
+    else:
+        raise AssertionError(f"unknown pointer fixture: {pointer_shape}")
+
+    store = crafted_home / "skills"
+    findings = installer.run_doctor(store, installer._load_install_state(store))
+    indexed = {finding.component: finding for finding in findings}
+
+    release_finding = indexed["release-contract-assets"]
+    assert release_finding.level == "fail"
+    assert "runtime-pointer:corrupt:" in release_finding.message
+    assert indexed["store"].level == "fail"
 
 
 def test_doctor_executes_vibecrafted_launcher_without_bash() -> None:
@@ -868,27 +1289,6 @@ def test_cleanse_state_home_agency_moves_only_executable_payloads(
     assert (tmp_dir / "note.txt").is_file()
     assert (crafted_home / "artifacts").is_dir()
     assert (current_tools / ".legacy-state-agency" / "tmp" / "marbles.sh").is_file()
-
-
-def test_ensure_runtime_pip_bootstraps_when_missing(
-    tmp_path: Path, monkeypatch
-) -> None:
-    calls: list[list[str]] = []
-
-    def fake_run(cmd, **_kwargs):
-        calls.append([str(part) for part in cmd])
-        if cmd[2] == "pip" and cmd[3] == "--version":
-            return subprocess.CompletedProcess(cmd, 1)
-        return subprocess.CompletedProcess(cmd, 0)
-
-    monkeypatch.setattr(installer.subprocess, "run", fake_run)
-
-    installer._ensure_runtime_pip(tmp_path / "python3")
-
-    assert calls == [
-        [str(tmp_path / "python3"), "-m", "pip", "--version"],
-        [str(tmp_path / "python3"), "-m", "ensurepip", "--upgrade"],
-    ]
 
 
 def test_run_doctor_ignores_ds_store_in_stale_file_check(
@@ -1226,6 +1626,63 @@ def test_public_launcher_contract_accepts_packaged_provider(
 
     assert finding.level == "ok"
     assert finding.component == "public-launchers"
+
+
+def test_public_launcher_contract_ignores_foreign_checkout_launcher(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # `vc-tools` belongs to vetcoders-hooks, whose own installer publishes a
+    # symlink straight into its checkout. Sharing the `vc-*` prefix and the
+    # launcher bin does not make it ours to police.
+    home = tmp_path / "home"
+    launcher_bin = home / ".local" / "bin"
+    checkout_bin = tmp_path / "vetcoders-hooks" / "tui"
+    launcher_bin.mkdir(parents=True)
+    checkout_bin.mkdir(parents=True)
+    (checkout_bin.parent / ".git").mkdir()
+    _write_executable(checkout_bin / "vc-tools", "#!/bin/sh\nexit 0\n")
+    (launcher_bin / "vc-tools").symlink_to(checkout_bin / "vc-tools")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LAUNCHER_BIN", str(launcher_bin))
+
+    assert "vc-tools" not in installer._vibecrafted_owned_launcher_names()
+
+    [finding] = installer._public_launcher_contract_findings()
+
+    assert finding.level == "ok"
+    assert finding.component == "public-launchers"
+    assert "vc-tools" not in finding.message
+
+
+def test_public_launcher_contract_rejects_owned_launcher_beside_foreign_one(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # Narrowing the scope must not soften the contract: an owned launcher in a
+    # checkout still fails even when a foreign checkout launcher sits next to it.
+    home = tmp_path / "home"
+    launcher_bin = home / ".local" / "bin"
+    foreign_bin = tmp_path / "vetcoders-hooks" / "tui"
+    owned_bin = tmp_path / "checkout" / "bin"
+    launcher_bin.mkdir(parents=True)
+    foreign_bin.mkdir(parents=True)
+    owned_bin.mkdir(parents=True)
+    (foreign_bin.parent / ".git").mkdir()
+    (owned_bin.parent / ".git").mkdir()
+    _write_executable(foreign_bin / "vc-tools", "#!/bin/sh\nexit 0\n")
+    _write_executable(owned_bin / "vc-ship", "#!/bin/sh\nexit 0\n")
+    (launcher_bin / "vc-tools").symlink_to(foreign_bin / "vc-tools")
+    (launcher_bin / "vc-ship").symlink_to(owned_bin / "vc-ship")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LAUNCHER_BIN", str(launcher_bin))
+
+    assert "vc-ship" in installer._vibecrafted_owned_launcher_names()
+
+    [finding] = installer._public_launcher_contract_findings()
+
+    assert finding.level == "fail"
+    assert finding.component == "public-launchers"
+    assert "vc-ship" in finding.message
+    assert "vc-tools" not in finding.message
 
 
 def test_slack_provider_contract_defers_when_provider_was_never_published(

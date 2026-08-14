@@ -49,7 +49,7 @@ def _wait_for_active_projection(
     run_id: str,
     label: str,
     *,
-    timeout: float = 1.5,
+    timeout: float = 5.0,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     last: dict[str, Any] | None = None
@@ -381,6 +381,13 @@ PARITY_CONTRACT_KEYS = frozenset(
         "artifact_gate",
         "lifecycle",
         "health",
+        "workspace_id",
+        "vibecrafted_session_id",
+        "workspace_instance_id",
+        "build_id",
+        "workspace_display_label",
+        "worker_host_session",
+        "worker_host_display",
     }
 )
 LIVE_LIVENESS_PLACEHOLDERS = {"", "pid_gone", "terminal", "lock_present"}

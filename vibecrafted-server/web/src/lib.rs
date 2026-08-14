@@ -1,7 +1,9 @@
 #![recursion_limit = "512"]
 
 pub mod app;
+pub mod chrome;
 pub mod control;
+pub mod run_detail;
 pub mod scaffold;
 pub mod theme;
 

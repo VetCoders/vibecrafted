@@ -6,7 +6,7 @@ set -euo pipefail
 # Handles:
 #   loctree / loctree-mcp  — required Loctree product binaries via Loctree installer
 #   aicx / aicx-mcp       — required AICX product binaries via Loctree installer
-#   vc-frame               — required frame BINARY (sibling make install | tools/install.sh | GH)
+#   vc-frame               — required donor BINARY installed by this owner from sibling source
 #   prview                 — cargo install OR binary from GH releases
 #
 # Usage:
@@ -33,12 +33,6 @@ PRVIEW_CRATE="prview"
 PRVIEW_REPO="vetcoders/prview"
 
 LOCTREE_INSTALL_URL="${LOCTREE_INSTALL_URL:-https://loct.io/install.sh}"
-# Frame binary installer — NOT vibecrafted.io/install.sh (that is the framework
-# orchestrator; pointing foundations there created a validate-only loop).
-VCFRAME_INSTALL_URL="${VCFRAME_INSTALL_URL:-https://github.com/vetcoders/vc-frame/releases/latest/download/install.sh}"
-# When empty fingerprint, tools/install.sh is typically run with REQUIRE_GPG=0
-# on backyard / pre-release trees. Override for strict release validation.
-VCFRAME_REQUIRE_GPG="${VCFRAME_REQUIRE_GPG:-0}"
 
 # Agent CLIs — npm packages when the vendor publishes an official package.
 AGENT_PACKAGES=(
@@ -612,12 +606,11 @@ install_aicx() {
 # ---------------------------------------------------------------------------
 # vc-frame — product frame binary (hard install on product path)
 #
-# Order (backyard first, then public):
+# Order:
 #   1. already on PATH and runs
-#   2. sibling Living Tree: $SOURCE_DIR/../vc-frame → make install
-#   3. local tools/install.sh from sibling checkout (GPG policy via env)
-#   4. remote VCFRAME_INSTALL_URL (GH release install.sh)
-# Never re-enter vibecrafted.io/install.sh here (orchestrator loop).
+#   2. sibling Living Tree: build donor with `make release`, then install the
+#      exact binary through this Vibecrafted-owned installer.
+# There is deliberately no vc-frame release/installer fallback.
 # ---------------------------------------------------------------------------
 
 _vcframe_sibling_root() {
@@ -636,32 +629,8 @@ _vcframe_sibling_root() {
   return 1
 }
 
-_vcframe_run_remote_or_local_installer() {
-  local install_sh="$1"
-  local mode="$2" # file | url
-  local -a env_prefix
-
-  env_prefix=(
-    "INSTALL_DIR=$LAUNCHER_PREFIX"
-    "VCFRAME_REQUIRE_GPG=$VCFRAME_REQUIRE_GPG"
-  )
-  if (( CHECK_ONLY )); then
-    info "Would install vc-frame via $mode: $install_sh"
-    info "  INSTALL_DIR=$LAUNCHER_PREFIX VCFRAME_REQUIRE_GPG=$VCFRAME_REQUIRE_GPG"
-    return 0
-  fi
-
-  info "Installing vc-frame ($mode) → $LAUNCHER_PREFIX"
-  # shellcheck disable=SC2086 # env_prefix is intentional KEY=val list
-  if [[ "$mode" == "file" ]]; then
-    env "${env_prefix[@]}" sh "$install_sh"
-  else
-    env "${env_prefix[@]}" sh -c "$(curl -fsSL "$install_sh")"
-  fi
-}
-
 install_vcframe() {
-  local sibling local_install_sh
+  local sibling vcframe_target_root donor_binary
   local need_binary=0
 
   if binary_runs vc-frame; then
@@ -674,44 +643,30 @@ install_vcframe() {
     sibling="$(_vcframe_sibling_root 2>/dev/null || true)"
     if [[ -n "$sibling" ]]; then
       if (( CHECK_ONLY )); then
-        info "Would install vc-frame from sibling checkout:"
-        info "  make -C $sibling install"
+        info "Would build the vc-frame donor from sibling source and install it through Vibecrafted:"
+        info "  make -C $sibling release"
+        info "  install -m 0755 <donor-binary> $LAUNCHER_PREFIX/vc-frame"
       else
-        info "Installing vc-frame from sibling Living Tree: $sibling"
-        if make -C "$sibling" --no-print-directory install; then
+        info "Building vc-frame donor from sibling Living Tree: $sibling"
+        vcframe_target_root="${XDG_CACHE_HOME:-$HOME/.cache}/vibecrafted/build/vc-frame"
+        mkdir -p "$vcframe_target_root"
+        if CARGO_TARGET_DIR="$vcframe_target_root" \
+          make -C "$sibling" --no-print-directory release; then
+          donor_binary="$vcframe_target_root/release/vc-frame"
+          [[ -x "$donor_binary" ]] || {
+            warn "vc-frame donor build completed without $donor_binary"
+            return 1
+          }
+          mkdir -p "$LAUNCHER_PREFIX"
+          install -m 0755 "$donor_binary" "$LAUNCHER_PREFIX/vc-frame"
           if binary_runs vc-frame; then
-            ok "vc-frame installed from checkout: $(command -v vc-frame)"
+            ok "vc-frame donor installed by Vibecrafted: $(command -v vc-frame)"
             need_binary=0
           else
-            warn "make install finished but vc-frame still not runnable on PATH"
+            warn "donor install finished but vc-frame is still not runnable on PATH"
           fi
         else
-          warn "sibling make install failed; trying tools/install.sh / release"
-        fi
-
-        if (( need_binary )); then
-          local_install_sh="$sibling/tools/install.sh"
-          if [[ -f "$local_install_sh" ]]; then
-            if _vcframe_run_remote_or_local_installer "$local_install_sh" "file" \
-              && binary_runs vc-frame; then
-              ok "vc-frame installed via tools/install.sh: $(command -v vc-frame)"
-              need_binary=0
-            fi
-          fi
-        fi
-      fi
-    fi
-
-    if (( need_binary )); then
-      if (( CHECK_ONLY )); then
-        info "Would install vc-frame from release installer:"
-        info "  curl -fsSL $VCFRAME_INSTALL_URL | INSTALL_DIR=$LAUNCHER_PREFIX VCFRAME_REQUIRE_GPG=$VCFRAME_REQUIRE_GPG sh"
-      else
-        info "Fetching vc-frame via $VCFRAME_INSTALL_URL"
-        if _vcframe_run_remote_or_local_installer "$VCFRAME_INSTALL_URL" "url" \
-          && binary_runs vc-frame; then
-          ok "vc-frame installed from release: $(command -v vc-frame)"
-          need_binary=0
+          warn "vc-frame donor build failed"
         fi
       fi
     fi
@@ -722,10 +677,10 @@ install_vcframe() {
     warn "Manual paths:"
     sibling="$(_vcframe_sibling_root 2>/dev/null || true)"
     if [[ -n "$sibling" ]]; then
-      warn "  make -C $sibling install"
+      warn "  make -C $sibling release"
     fi
-    warn "  curl -fsSL $VCFRAME_INSTALL_URL | INSTALL_DIR=$LAUNCHER_PREFIX VCFRAME_REQUIRE_GPG=$VCFRAME_REQUIRE_GPG sh"
-    warn "  (or set VIBECRAFTED_VC_FRAME_SOURCE to a checkout and rerun)"
+    warn "  set VIBECRAFTED_VC_FRAME_SOURCE to a checkout and rerun"
+    warn "  end users should install the canonical versioned Vibecrafted DMG"
     return 1
   fi
 
@@ -754,10 +709,12 @@ install_vcframe() {
 
 # Product entry wrapper: ~/.local/bin/vc-frame → product choke + real binary.
 install_vc_frame_product_wrapper() {
-  local real dest wrapper_src cargo_bin
+  local real dest wrapper_src cargo_bin product_bin legacy_bin
   dest="$LAUNCHER_PREFIX/vc-frame"
   wrapper_src="$SOURCE_DIR/scripts/vc-frame-product-entry.sh"
   cargo_bin="${HOME}/.cargo/bin/vc-frame"
+  product_bin="${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/bin/vc-frame"
+  legacy_bin="$LAUNCHER_PREFIX/vc-frame.real"
 
   if [[ ! -f "$wrapper_src" ]]; then
     warn "product entry wrapper source missing: $wrapper_src"
@@ -770,15 +727,13 @@ install_vc_frame_product_wrapper() {
     real="$VIBECRAFTED_VC_FRAME_BIN"
   elif [[ -x "$cargo_bin" ]] && ! head -c 2 "$cargo_bin" 2>/dev/null | grep -q '#!'; then
     real="$cargo_bin"
+  elif [[ -x "$product_bin" ]] && ! head -c 2 "$product_bin" 2>/dev/null | grep -q '#!'; then
+    real="$product_bin"
   elif [[ -x "$dest" ]] && ! head -c 2 "$dest" 2>/dev/null | grep -q '#!'; then
-    # Move real binary aside once.
-    mkdir -p "$LAUNCHER_PREFIX"
-    if [[ ! -e "$LAUNCHER_PREFIX/vc-frame.real" ]]; then
-      mv "$dest" "$LAUNCHER_PREFIX/vc-frame.real"
-    fi
-    real="$LAUNCHER_PREFIX/vc-frame.real"
-  elif [[ -x "$LAUNCHER_PREFIX/vc-frame.real" ]]; then
-    real="$LAUNCHER_PREFIX/vc-frame.real"
+    real="$dest"
+  elif [[ -x "$legacy_bin" ]] && ! head -c 2 "$legacy_bin" 2>/dev/null | grep -q '#!'; then
+    # One-way migration from the retired sibling shadow into the product data root.
+    real="$legacy_bin"
   fi
 
   if [[ -z "$real" ]]; then
@@ -787,22 +742,17 @@ install_vc_frame_product_wrapper() {
   fi
 
   if (( CHECK_ONLY )); then
-    info "Would install product vc-frame entry wrapper -> $dest (real=$real)"
+    info "Would install product vc-frame entry wrapper -> $dest (real=$real; remove legacy=$legacy_bin)"
     return 0
   fi
 
-  mkdir -p "$LAUNCHER_PREFIX"
-  if [[ -x "$dest" ]] && ! head -c 2 "$dest" 2>/dev/null | grep -q '#!'; then
-    if [[ ! -e "$LAUNCHER_PREFIX/vc-frame.real" ]]; then
-      cp -p "$dest" "$LAUNCHER_PREFIX/vc-frame.real" 2>/dev/null || mv "$dest" "$LAUNCHER_PREFIX/vc-frame.real"
-      real="$LAUNCHER_PREFIX/vc-frame.real"
-    fi
+  mkdir -p "$LAUNCHER_PREFIX" "$(dirname "$product_bin")"
+  if [[ "$real" == "$dest" || "$real" == "$legacy_bin" ]]; then
+    install -m 0755 "$real" "$product_bin"
+    real="$product_bin"
   fi
   install -m 0755 "$wrapper_src" "$dest"
-  # Ensure wrapper can find real bin via env default path.
-  if [[ -n "$real" && "$real" != "$LAUNCHER_PREFIX/vc-frame.real" && ! -e "$LAUNCHER_PREFIX/vc-frame.real" ]]; then
-    ln -sfn "$real" "$LAUNCHER_PREFIX/vc-frame.real" 2>/dev/null || true
-  fi
+  rm -f "$legacy_bin"
   ok "product vc-frame entry installed: $dest (real=$real)"
 }
 
@@ -1171,13 +1121,8 @@ for target in "${TARGETS[@]}"; do
   case "$target" in
     loctree)  install_loctree  || foundation_optional_fail loctree ;;
     aicx)     install_aicx     || foundation_optional_fail aicx ;;
-    # vc-frame is the operator cockpit substrate. The hard product gate is
-    # armed via REQUIRE_FOUNDATIONS=1 — unconditionally hard-failing here
-    # breaks the whole root bootstrap on hosts that cannot fetch vc-frame,
-    # and today github.com/vetcoders/vc-frame has NO release at all, so
-    # `releases/latest/download/install.sh` 404s for every fresh install.
-    # Loud defer (same contract as loctree/aicx above) until that release
-    # exists; re-harden once the asset is real.
+    # vc-frame is a donor installed only by the Vibecrafted owner. There is no
+    # separate vc-frame release or installer fallback.
     vc-frame)
       install_vcframe  || foundation_optional_fail vc-frame
       install_vc_frame_product_wrapper || true

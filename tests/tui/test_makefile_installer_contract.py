@@ -2,13 +2,130 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
+import tarfile
 from pathlib import Path
 
 import pytest
 
+from scripts import distribution_manifest as distribution
 from scripts import vetcoders_install as installer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _minimal_distribution_source(root: Path) -> None:
+    for relative in distribution.REQUIRED_FILES:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"fixture for {relative}\n", encoding="utf-8")
+    for relative in distribution.REQUIRED_DIRECTORIES:
+        (root / relative).mkdir(parents=True, exist_ok=True)
+    for relative in distribution.REQUIRED_SURFACE_FILES.values():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"runtime sentinel for {relative}\n", encoding="utf-8")
+    for relative in distribution.REQUIRED_DIRECTORIES:
+        parts = Path(relative).parts
+        if parts and parts[0] in distribution.CANONICAL_PROJECTIONS:
+            canonical = distribution.CANONICAL_PROJECTIONS[parts[0]]
+            (root / canonical.joinpath(*parts[1:])).mkdir(parents=True, exist_ok=True)
+    for relative in distribution.REQUIRED_SURFACE_FILES.values():
+        parts = Path(relative).parts
+        if parts and parts[0] in distribution.CANONICAL_PROJECTIONS:
+            canonical = distribution.CANONICAL_PROJECTIONS[parts[0]]
+            path = root / canonical.joinpath(*parts[1:])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"canonical sentinel for {relative}\n", encoding="utf-8")
+
+
+def test_makefile_python_runner_rejects_xcode_python_39() -> None:
+    """The Make front door must not trust macOS's ambient `python3`."""
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    runner = REPO_ROOT / "scripts" / "project-python"
+
+    assert "PYTHON   ?= $(CURDIR)/scripts/project-python" in makefile
+    assert runner.stat().st_mode & 0o111
+
+    result = subprocess.run(
+        [str(runner), "-c", "import sys, tomllib; print(sys.version_info[:2])"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().startswith("(3, 1")
+
+
+def test_installer_smokes_the_packaged_walkaround_entrypoint() -> None:
+    assert "verify-vibecrafted-walkaround" in installer.PYTHON_ENTRYPOINT_LAUNCHERS
+    assert (
+        "verify-vibecrafted-walkaround" in installer._installer_managed_launcher_names()
+    )
+    pyproject = (REPO_ROOT / "vibecrafted-core/pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        'verify-vibecrafted-walkaround = "vibecrafted_core.walkaround_runner:main"'
+        in pyproject
+    )
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    install_tools = makefile.split("install-tools-held:", 1)[1].split(
+        "\n# install-all", 1
+    )[0]
+    assert (
+        "for entrypoint in vibecrafted vc-workflow vc-guardian vc-server-supervisor "
+        "verify-vibecrafted-walkaround"
+    ) in install_tools
+    assert 'if ! "$$resolved" --help' in install_tools
+
+
+def test_unified_product_contract_gate_executes_installed_runner() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    gate = makefile.split("unified-product-contract-gate:", 1)[1].split("\n\n", 1)[0]
+
+    assert "verify-vibecrafted-product.sh --self-test" in gate
+    assert "uv build --wheel --project vibecrafted-core" in gate
+    assert 'runner="$$tmp/venv/bin/verify-vibecrafted-walkaround"' in gate
+    assert '"$$runner" --help' in gate
+    assert '"$$runner" trust-probe' in gate
+    assert '"$$runner" verify-release --release-output' in gate
+    assert '"$$runner" walkaround --release-output' in gate
+    assert "PYTHONNOUSERSITE=1" in gate
+    for required_test in (
+        "tests/tui/test_install_bootstrap.py",
+        "tests/tui/test_installer_doctor.py",
+        "tests/tui/test_installer_uninstall.py",
+        "tests/tui/test_staged_tools_sync.py",
+        "tests/tui/test_uv_bootstrap.py",
+        "vibecrafted-core/tests/test_runtime_receipt.py",
+    ):
+        assert required_test in gate
+
+
+def test_release_workflow_is_read_only_and_validates_the_exact_tag_source() -> None:
+    workflow = (REPO_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+    assert "run: make unified-product-contract-gate" in workflow
+    assert "run: make test-core" in workflow
+    assert "run: make semgrep" in workflow
+    assert 'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"' in workflow
+    assert 'test "$(git cat-file -t "$GITHUB_REF_NAME")" = "tag"' in workflow
+    assert "permissions:\n  contents: read" in workflow
+    assert "contents: write" not in workflow
+    assert "gh release create" not in workflow
+    assert "gh release upload" not in workflow
+    assert "gh release edit" not in workflow
+
+
+def test_bootstrap_help_requires_canonical_provenance_archives() -> None:
+    installer = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
+    usage = installer.split("usage() {", 1)[1].split("EOF_USAGE", 2)[1]
+
+    assert "source-provenance.json" in usage
+    assert "scripts/distribution_manifest.py archive" in usage
 
 
 def test_makefile_keeps_install_as_terminal_first_front_door() -> None:
@@ -166,11 +283,143 @@ def test_bundle_targets_use_distribution_manifest_for_runtime_archive() -> None:
         "BUNDLE_ARCHIVE ?= $(SOURCE)/dist/vibecrafted-$(BUNDLE_VERSION).tar.gz" in text
     )
     assert '--root-name "vibecrafted-$(BUNDLE_VERSION)"' in bundle_block
+    assert 'source_root="$$(cd "$(SOURCE)" && pwd -P)"' in bundle_block
+    assert 'source_parent="$$(dirname "$$source_root")"' in bundle_block
+    assert 'mktemp "$$source_parent/.vibecrafted-bundle-archive.XXXXXX"' in bundle_block
+    assert '--output "$$tmp_archive"' in bundle_block
+    assert '--publish-output "$(BUNDLE_ARCHIVE)"' in bundle_block
+    assert '--source "$$source_root"' in bundle_block
+    assert "os.replace(sys.argv[1], sys.argv[2])" not in bundle_block
+    assert "mv -f" not in bundle_block
+    assert '--output "$(BUNDLE_ARCHIVE)"' not in bundle_block
     assert "build_marketplace_bundle.py" in bundle_block
+    assert (
+        'build_marketplace_bundle.py --output "$(SOURCE)/dist/'
+        'vibecrafted-framework.plugin"'
+    ) in bundle_block
+    assert '--output "$(SOURCE)/vibecrafted-framework.plugin"' not in bundle_block
     assert "build_marketplace_bundle.py" in check_block
     assert "cmp -s" not in check_block
     assert 'test -s "$$tmp_bundle"' in check_block
     assert check_block.lstrip().startswith("@set -e;")
+
+
+def test_bundle_target_cannot_self_poison_a_clean_git_source(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    archive = source / "dist" / "vibecrafted-9.8.7.tar.gz"
+    plugin = source / "dist" / "vibecrafted-framework.plugin"
+    python_dispatch = tmp_path / "python-dispatch.py"
+    _minimal_distribution_source(source)
+    subprocess.run(["git", "init", "--quiet", str(source)], check=True)
+    for key, value in (
+        ("user.name", "Bundle Contract Test"),
+        ("user.email", "bundle-contract@example.invalid"),
+    ):
+        subprocess.run(
+            ["git", "-C", str(source), "config", key, value],
+            check=True,
+        )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/vetcoders/vibecrafted.git",
+        ],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(source), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(source), "commit", "--quiet", "-m", "fixture"],
+        check=True,
+    )
+    revision = subprocess.check_output(
+        ["git", "-C", str(source), "rev-parse", "HEAD"],
+        text=True,
+    ).strip()
+    stale_root_plugin = source / "vibecrafted-framework.plugin"
+    stale_root_plugin.write_bytes(b"stale ignored marketplace plugin\n")
+    python_dispatch.write_text(
+        "from pathlib import Path\n"
+        "import os\n"
+        "import sys\n"
+        "script = Path(sys.argv[1]).name\n"
+        "if script == 'build_marketplace_bundle.py':\n"
+        "    output = Path(sys.argv[sys.argv.index('--output') + 1])\n"
+        "    output.parent.mkdir(parents=True, exist_ok=True)\n"
+        "    output.write_bytes(b'isolated marketplace plugin\\n')\n"
+        "    raise SystemExit(0)\n"
+        "os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n",
+        encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment.pop("VIBECRAFTED_SOURCE_OWNER_REPO", None)
+    environment.pop("VIBECRAFTED_SOURCE_REVISION", None)
+
+    result = subprocess.run(
+        [
+            "make",
+            "--no-print-directory",
+            "-f",
+            str(REPO_ROOT / "Makefile"),
+            "bundle",
+            f"SOURCE={source}",
+            "BUNDLE_VERSION=9.8.7",
+            f"BUNDLE_ARCHIVE={archive}",
+            f"PYTHON={sys.executable} {python_dispatch}",
+        ],
+        cwd=REPO_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert plugin.read_bytes() == b"isolated marketplace plugin\n"
+    assert stale_root_plugin.read_bytes() == b"stale ignored marketplace plugin\n"
+    assert archive.is_file()
+    with tarfile.open(archive, "r:gz") as bundle:
+        names = bundle.getnames()
+        assert not any(name.endswith("vibecrafted-framework.plugin") for name in names)
+        carrier = bundle.extractfile(
+            f"vibecrafted-9.8.7/{distribution.SOURCE_PROVENANCE_FILE}"
+        )
+        assert carrier is not None
+        assert revision.encode("ascii") in carrier.read()
+
+    tracked_readme = source / "README.md"
+    tracked_readme_before = tracked_readme.read_bytes()
+    rejected = subprocess.run(
+        [
+            "make",
+            "--no-print-directory",
+            "-f",
+            str(REPO_ROOT / "Makefile"),
+            "bundle",
+            f"SOURCE={source}",
+            "BUNDLE_VERSION=9.8.7",
+            f"BUNDLE_ARCHIVE={tracked_readme}",
+            f"PYTHON={sys.executable} {python_dispatch}",
+        ],
+        cwd=REPO_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rejected.returncode != 0
+    assert "inside source must be below its physical dist directory" in rejected.stderr
+    assert tracked_readme.read_bytes() == tracked_readme_before
+    assert (
+        subprocess.run(
+            ["git", "-C", str(source), "diff", "--quiet"], check=False
+        ).returncode
+        == 0
+    )
 
 
 def test_control_plane_staging_delegates_to_distribution_manifest(
@@ -181,10 +430,34 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
     source.mkdir()
     seen: dict[str, object] = {}
 
-    def fake_stage(src: Path, dst: Path, *, mirror: bool) -> None:
-        seen.update(source=src, destination=dst, mirror=mirror)
+    source_provenance = {
+        "schema": "vibecrafted.source-provenance.v2",
+        "owner_repo": "vetcoders/vibecrafted",
+        "source_revision": "1" * 40,
+        "payload": {
+            "schema": "vibecrafted.distribution-tree.v1",
+            "algorithm": "sha256",
+            "tree_sha256": "2" * 64,
+            "entry_count": 1,
+        },
+    }
+
+    def fake_stage(
+        src: Path,
+        dst: Path,
+        *,
+        mirror: bool,
+        require_source_provenance: bool,
+    ) -> dict[str, object]:
+        seen.update(
+            source=src,
+            destination=dst,
+            mirror=mirror,
+            require_source_provenance=require_source_provenance,
+        )
         dst.mkdir(parents=True)
         (dst / "payload.txt").write_text("validated\n", encoding="utf-8")
+        return source_provenance
 
     monkeypatch.setattr(installer, "stage_distribution_payload", fake_stage)
     monkeypatch.setattr(
@@ -195,7 +468,15 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
     monkeypatch.setattr(
         installer,
         "_write_runtime_generation_manifest",
-        lambda runtime_root, **_kwargs: seen.update(manifested=runtime_root),
+        lambda runtime_root, **kwargs: seen.update(
+            manifested=runtime_root,
+            manifest_source_provenance=kwargs["source_provenance"],
+        ),
+    )
+    monkeypatch.setattr(
+        installer,
+        "_runtime_generation_payload_errors",
+        lambda runtime_root: seen.update(validated=runtime_root) or [],
     )
 
     installer.sync_control_plane_tree(source, destination, mirror=True)
@@ -204,8 +485,11 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
     assert seen["destination"] != destination
     assert Path(seen["destination"]).parent == destination.parent
     assert seen["mirror"] is True
+    assert seen["require_source_provenance"] is True
+    assert seen["manifest_source_provenance"] == source_provenance
     assert seen["materialized"] == seen["destination"]
     assert seen["manifested"] == seen["destination"]
+    assert seen["validated"] == seen["destination"]
     assert (destination / "payload.txt").read_text(encoding="utf-8") == "validated\n"
     source_text = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
         encoding="utf-8"
@@ -260,6 +544,7 @@ def test_make_install_stages_vc_frame_from_published_runtime() -> None:
     assert (
         "from vibecrafted_core.vc_frame_delivery import wire_vc_frame_config"
     ) in install_block
+    assert "wire_vc_frame_config(force_frontier=True)" in install_block
     assert "ensure_zshrc" not in install_block
     assert "stage_vc_frame_config" not in install_block
     assert "vc-frame config delivery skipped" not in install_block
@@ -487,9 +772,17 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
     app_block = makefile.split("\ninstall-app-binaries:", 1)[1].split("\nskills:", 1)[0]
     assert "cargo build --release --locked -p voc" in app_block
     assert "cargo install" not in app_block
-    assert 'install -m 0755 "$(APP_DIR)/target/release/$$bin" "$(BIN_DIR)/$$bin"' in (
-        app_block
+    assert (
+        "CARGO_BUILD_ROOT ?= $(INSTALLER_CACHE_HOME)/vibecrafted/build/$(INSTALLER_HOST_TAG)"
+        in makefile
     )
+    assert "APP_BUILD_TARGET := $(CARGO_BUILD_ROOT)/vibecrafted-app" in makefile
+    assert 'CARGO_TARGET_DIR="$(APP_BUILD_TARGET)" cargo build' in app_block
+    assert (
+        'install -m 0755 "$(APP_BUILD_TARGET)/release/$$bin" "$(BIN_DIR)/$$bin"'
+        in app_block
+    )
+    assert "$(APP_DIR)/target" not in app_block
 
     assert "make --no-print-directory install-vendored-binaries" in manifest
     assert "make --no-print-directory install-app-binaries" in manifest
@@ -500,8 +793,20 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
         "\ninstall-server-payload:", 1
     )[0]
     assert "cargo leptos build --release" in server_build_block
+    assert "SERVER_BUILD_TARGET := $(CARGO_BUILD_ROOT)/vibecrafted-server" in makefile
+    assert "SERVER_BUILD_SITE_ROOT := $(SERVER_BUILD_TARGET)/site" in makefile
+    assert 'CARGO_TARGET_DIR="$(SERVER_BUILD_TARGET)"' in server_build_block
+    assert 'LEPTOS_SITE_ROOT="$(SERVER_BUILD_SITE_ROOT)"' in server_build_block
     assert '--bin-cargo-args="--locked"' in server_build_block
     assert '--lib-cargo-args="--locked"' in server_build_block
+    assert "cargo tree --locked -p wasm-bindgen --depth 0 --prefix none" in (
+        server_build_block
+    )
+    assert "tomllib" not in server_build_block
+    assert "$(PYTHON)" not in server_build_block
+    assert "could not resolve wasm-bindgen version from Cargo.lock" in (
+        server_build_block
+    )
     assert "wasm-bindgen CLI $$cli_version does not match Cargo.lock" in (
         server_build_block
     )
@@ -510,6 +815,14 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
         in (server_build_block)
     )
     assert "hydration wasm is missing" in server_build_block
+    assert "$(SERVER_DIR)/target" not in server_build_block
+    server_payload_block = makefile.split("\ninstall-server-payload:", 1)[1].split(
+        "\nifneq", 1
+    )[0]
+    assert '"$(SERVER_BUILD_TARGET)/release/$(SERVER_PACKAGE)"' in (
+        server_payload_block
+    )
+    assert "$(SERVER_DIR)/target" not in server_payload_block
     assert "install-server-payload" in makefile
 
 
@@ -560,6 +873,27 @@ def test_install_manifest_uses_four_human_checkpoints_with_artifact_reason() -> 
     assert "Set your artifacts storage location." in text
     assert "keeps the persistent artifacts on developer's hard disks" in text
     assert 'installer_cmd = "make install"' in text
+
+
+def test_update_target_never_rewrites_the_tree_from_another_branch() -> None:
+    """`make update` must not plaster $(BRANCH)'s tree over the current
+    branch. 2026-08-12: `git checkout "$(BRANCH)" -- .` silently reverted
+    174 files of a release branch to a stale Aug-8 main (index + worktree,
+    HEAD untouched) and then reinstalled from the poisoned source. The
+    contract: fast-forward only when already on $(BRANCH); no recipe line
+    may run `git checkout` at all."""
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+
+    recipe_lines = [
+        line
+        for line in makefile.splitlines()
+        if line.startswith("\t") and not line.lstrip("\t ").startswith("#")
+    ]
+    offenders = [line for line in recipe_lines if "git checkout" in line]
+    assert offenders == []
+
+    assert '[ "$$current" = "$(BRANCH)" ]' in makefile
+    assert 'git merge --ff-only "origin/$(BRANCH)"' in makefile
 
 
 def test_makefile_exposes_version_bump_contract() -> None:
@@ -637,6 +971,24 @@ def test_foundations_product_binaries_are_validation_only() -> None:
         "will not guess crates, npm packages, or local checkout paths" in loctree_block
     )
     assert "will not guess crates, npm packages, or local checkout paths" in aicx_block
+
+
+def test_foundations_builds_vc_frame_outside_the_living_tree() -> None:
+    text = (REPO_ROOT / "scripts" / "install-foundations.sh").read_text(
+        encoding="utf-8"
+    )
+    block = text.split("install_vcframe() {", 1)[1].split(
+        "# ---------------------------------------------------------------------------\n# Claude Code",
+        1,
+    )[0]
+
+    assert "${XDG_CACHE_HOME:-$HOME/.cache}/vibecrafted/build/vc-frame" in block
+    assert 'CARGO_TARGET_DIR="$vcframe_target_root"' in block
+    assert 'make -C "$sibling" --no-print-directory release' in block
+    assert 'install -m 0755 "$donor_binary" "$LAUNCHER_PREFIX/vc-frame"' in block
+    assert "tools/install.sh" not in block
+    assert "VCFRAME_INSTALL_URL" not in block
+    assert "releases/latest/download/install.sh" not in block
 
 
 def test_foundations_never_overwrite_uv_owned_python_entrypoints() -> None:

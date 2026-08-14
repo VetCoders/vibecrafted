@@ -373,7 +373,7 @@ def test_vc_marbles_preserves_prompt_as_single_argument_inside_vc_frame(
         crafted_home
         / "artifacts"
         / _org_repo()
-        / datetime.now(timezone.utc).strftime("%Y_%m%d")
+        / datetime.now().astimezone().strftime("%Y_%m%d")
         / "tmp"
     )
 
@@ -385,7 +385,14 @@ def test_vc_marbles_preserves_prompt_as_single_argument_inside_vc_frame(
     assert "weź i vc-justdo wszystko co marbles znajdzie" in payload
     assert "new-pane" in vc_frame_payload
     assert any("vibecrafted-marbles." in line for line in vc_frame_payload)
-    assert any(str(expected_tmp_root) in line for line in vc_frame_payload)
+    expected_tmp_spellings = {
+        str(expected_tmp_root),
+        str(expected_tmp_root).removeprefix("/private"),
+    }
+    assert any(
+        any(spelling in line for spelling in expected_tmp_spellings)
+        for line in vc_frame_payload
+    )
     assert not any("//vibecrafted-marbles." in line for line in vc_frame_payload)
     assert not any(
         "weź i vc-justdo wszystko co marbles znajdzie" in line
@@ -512,7 +519,7 @@ def test_vc_marbles_preserves_prompt_as_single_argument_in_operator_session(
         crafted_home
         / "artifacts"
         / _org_repo()
-        / datetime.now(timezone.utc).strftime("%Y_%m%d")
+        / datetime.now().astimezone().strftime("%Y_%m%d")
         / "tmp"
     )
 
@@ -524,7 +531,14 @@ def test_vc_marbles_preserves_prompt_as_single_argument_in_operator_session(
     assert "weź i vc-justdo wszystko co marbles znajdzie" in payload
     assert "new-tab" in vc_frame_payload
     assert any("vc-spawn-cmd." in line for line in vc_frame_payload)
-    assert any(str(expected_tmp_root) in line for line in vc_frame_payload)
+    expected_tmp_spellings = {
+        str(expected_tmp_root),
+        str(expected_tmp_root).removeprefix("/private"),
+    }
+    assert any(
+        any(spelling in line for spelling in expected_tmp_spellings)
+        for line in vc_frame_payload
+    )
     assert not any("//vc-spawn-cmd." in line for line in vc_frame_payload)
     assert not any(
         "weź i vc-justdo wszystko co marbles znajdzie" in line
@@ -601,6 +615,142 @@ def test_parse_contract_treats_everything_after_prompt_as_prompt_block() -> None
     assert lines["RUNTIME"] == ""
     assert lines["DEPTH"] == ""
     assert lines["PROMPT"] == "Portable musi działać. --runtime headless --depth 99"
+
+
+def test_parse_contract_fails_closed_on_unknown_flag() -> None:
+    # A leaked `--fork-session` once became the literal operator prompt of a
+    # fresh dispatched worker; unknown flags must abort, never become job text.
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                "_vetcoders_parse_contract --bogus-flag some prompt"
+            ),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert "Unknown flag: --bogus-flag" in result.stderr
+
+
+def test_parse_contract_double_dash_still_passes_literal_dash_text() -> None:
+    payload = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                "_vetcoders_parse_contract -- --literal-text; "
+                'printf "TAIL=%s\\n" "$_vetcoders_contract_tail"'
+            ),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "TAIL=--literal-text" in payload
+
+
+def test_parse_contract_accepts_fork_session_flag() -> None:
+    payload = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                "_vetcoders_parse_contract --fork-session; "
+                'printf "FORK=%s\\n" "$_vetcoders_contract_fork_session"; '
+                'printf "PROMPT=%s\\n" "$_vetcoders_contract_prompt"'
+            ),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    ).stdout
+    lines = dict(line.split("=", 1) for line in payload.strip().splitlines())
+    assert lines["FORK"] == "1"
+    assert lines["PROMPT"] == ""
+
+
+def test_resume_command_composes_claude_fork_session() -> None:
+    payload = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                '_vetcoders_resume_command claude abc-123 "" headless 1; '
+                '_vetcoders_resume_command claude abc-123 "go on" headless 1; '
+                '_vetcoders_resume_command claude abc-123 "" interactive ""'
+            ),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert payload[0] == (
+        "claude --print --dangerously-skip-permissions --resume abc-123 --fork-session"
+    )
+    assert payload[1] == (
+        "claude --print --dangerously-skip-permissions --resume abc-123 "
+        "--fork-session 'go on'"
+    )
+    assert payload[2] == "claude --resume abc-123"
+
+
+def test_resume_agent_rejects_fork_session_for_non_claude() -> None:
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                "_vetcoders_resume_agent codex --fork-session --session abc-123 "
+                '--prompt "go"'
+            ),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert "--fork-session is only supported for claude resume" in result.stderr
+
+
+def test_resume_agent_fork_session_fails_closed_on_tracked_core_path() -> None:
+    # Tracked core resume (no vc-frame worker host) has no fork contract yet;
+    # dropping the flag would silently write into the session being preserved.
+    env = os.environ.copy()
+    env["VIBECRAFTED_RUNTIME"] = "headless"
+    env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
+    env.pop("VIBECRAFTED_WORKER_SESSION", None)
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                "_vetcoders_resume_agent claude --fork-session --session abc-123 "
+                '--prompt "go"'
+            ),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1
+    assert "not supported on the tracked core resume path" in result.stderr
 
 
 def test_write_command_script_falls_back_to_bash_when_zsh_missing(

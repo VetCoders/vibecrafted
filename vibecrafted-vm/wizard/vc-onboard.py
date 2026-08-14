@@ -76,7 +76,7 @@ class WizardState:
     custom_key: str = ""
     profile: str = ""  # "minimal" | "standard" | "sota"
     mounts: dict[str, bool] = field(default_factory=dict)
-    tailscale_authkey: str = ""
+    tailscale_enabled: bool = False
     tailscale_hostname: str = ""
     tailscale_tags: str = "tag:devbox"
 
@@ -262,7 +262,7 @@ def step_mounts(state: WizardState) -> None:
 
 
 def step_tailscale(state: WizardState) -> None:
-    """Step 6 — tailscale auth key (optional)."""
+    """Step 6 — opt into Tailscale without persisting its auth key."""
     console.print(Panel.fit(str(t("tailscale.title", state.lang)), border_style="cyan"))
     console.print(str(t("tailscale.intro", state.lang)))
     console.print()
@@ -279,19 +279,7 @@ def step_tailscale(state: WizardState) -> None:
     if choice is None or options.index(choice) == 0:
         return
 
-    state.tailscale_authkey = (
-        questionary.password(
-            str(t("tailscale.auth_key_prompt", state.lang)),
-        ).ask()
-        or ""
-    )
-
-    if state.tailscale_authkey and not state.tailscale_authkey.startswith(
-        "tskey-auth-"
-    ):
-        console.print(
-            f"[yellow]⚠[/yellow] {t('errors.tailscale_authkey_invalid', state.lang)}"
-        )
+    state.tailscale_enabled = True
 
     state.tailscale_hostname = (
         questionary.text(
@@ -334,9 +322,9 @@ def step_review(state: WizardState) -> str:
     )
     table.add_row(
         "Tailscale",
-        "configured" if state.tailscale_authkey else "skipped",
+        "enabled (key injected at launch)" if state.tailscale_enabled else "skipped",
     )
-    if state.tailscale_authkey:
+    if state.tailscale_enabled:
         table.add_row("Tailnet hostname", state.tailscale_hostname)
 
     console.print(table)
@@ -392,7 +380,7 @@ def render_env_file(state: WizardState, target: Path) -> None:
         f"# Host: {state.host_mode}",
         f"# Generated: {os.popen('date -u +%Y-%m-%dT%H:%M:%SZ').read().strip()}",
         "",
-        f"TAILSCALE_AUTHKEY={state.tailscale_authkey}",
+        "# TAILSCALE_AUTHKEY is secret: inject it in the process environment at launch.",
         f"TAILSCALE_HOSTNAME={state.tailscale_hostname or 'vc-workspace'}",
         f"TAILSCALE_TAGS={state.tailscale_tags}",
         "",
@@ -459,8 +447,8 @@ def render_compose_file(state: WizardState, target: Path) -> None:
     ]
 
     # Tailscale userspace mode needs NET_ADMIN + /dev/net/tun (lightweight,
-    # NOT --privileged). Only enable if operator provided auth key.
-    if state.tailscale_authkey:
+    # NOT --privileged). The key itself is supplied only in the launch process.
+    if state.tailscale_enabled:
         lines += [
             "    cap_add:",
             "      - NET_ADMIN",
@@ -475,7 +463,7 @@ def render_compose_file(state: WizardState, target: Path) -> None:
         host, container, mode = MOUNT_SPEC[key]
         lines.append(f"      - {host}:{container}:{mode}")
 
-    if state.tailscale_authkey:
+    if state.tailscale_enabled:
         lines.append("      - tailscale-state:/var/lib/tailscale")
 
     lines += [
@@ -491,7 +479,7 @@ def render_compose_file(state: WizardState, target: Path) -> None:
         "    restart: unless-stopped",
     ]
 
-    if state.tailscale_authkey:
+    if state.tailscale_enabled:
         lines += [
             "",
             "volumes:",
@@ -505,6 +493,14 @@ def render_compose_file(state: WizardState, target: Path) -> None:
 def build_and_run(state: WizardState) -> int:
     """Build container + run via docker compose."""
     repo_root = SCRIPT_DIR.parent  # vc-workspace/
+    if state.tailscale_enabled and not os.environ.get(
+        "TAILSCALE_AUTHKEY", ""
+    ).startswith("tskey-auth-"):
+        console.print(
+            "[bold red]✗[/bold red] Tailscale is enabled, but a valid "
+            "TAILSCALE_AUTHKEY was not injected into this launch process."
+        )
+        return 2
     console.print(f"[bold cyan]{t('actions.building', state.lang)}[/bold cyan]")
 
     build_cmd = [

@@ -13,6 +13,7 @@ import os
 import re
 import subprocess
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -30,13 +31,62 @@ def _env(tmp_path: Path, *, crafted_home: Path | None = None) -> dict[str, str]:
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
     env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    env["VIBECRAFTED_LIVE_VIEWER"] = "0"
     # Prefer headless / no terminal transport in CI.
     env.pop("VIBECRAFTED_FORCE_TERMINAL", None)
     # VIBECRAFTED_TEST_MODE=1 (conftest autouse) forbids PATH deck discovery;
     # tests that want the deck must name it explicitly — use the repo deck,
     # never the operator's installed launcher.
     env["VIBECRAFTED_DECK_BIN"] = str(REPO_ROOT / "scripts" / "vibecrafted")
+    fake_bin = tmp_path / "fake-agent-bin"
+    fake_bin.mkdir(parents=True, exist_ok=True)
+    for agent in ("claude", "codex", "agy", "junie", "grok"):
+        executable = fake_bin / agent
+        executable.write_text(
+            "#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n",
+            encoding="utf-8",
+        )
+        executable.chmod(0o755)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     return env
+
+
+def _wait_for_test_run_exit(
+    crafted_home: Path, run_id: str, *, timeout: float = 20.0
+) -> None:
+    """Keep an accepted async fixture inside the test that launched it."""
+    deadline = time.monotonic() + timeout
+    meta_path = crafted_home / "control_plane" / "runtime_runs" / run_id / "meta.json"
+    while time.monotonic() < deadline:
+        try:
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError):
+            payload = {}
+        if payload.get("exit_code") is not None or payload.get("status") in {
+            "completed",
+            "failed",
+            "partial_success",
+        }:
+            return
+        time.sleep(0.05)
+    env = os.environ.copy()
+    env["VIBECRAFTED_HOME"] = str(crafted_home)
+    subprocess.run(
+        [
+            str(REPO_ROOT / "scripts" / "vibecrafted"),
+            "swarm",
+            "stop",
+            "--run-id",
+            run_id,
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+    pytest.fail(f"test research run {run_id} did not settle within {timeout}s")
 
 
 def _run_vc_research(
@@ -44,10 +94,10 @@ def _run_vc_research(
 ) -> subprocess.CompletedProcess[str]:
     """Invoke public shell entry after loading repo helpers (zsh/bash function)."""
     quoted = " ".join(f'"{a}"' if " " in a else a for a in args)
-    return subprocess.run(
+    result = subprocess.run(
         [
             "bash",
-            "-lc",
+            "-c",
             f'source "{HELPER_SCRIPT}"; vc-research {quoted}',
         ],
         cwd=root,
@@ -56,6 +106,8 @@ def _run_vc_research(
         text=True,
         check=False,
     )
+    _wait_for_completed_launch(result, env)
+    return result
 
 
 def _run_deck_research(
@@ -63,7 +115,7 @@ def _run_deck_research(
 ) -> subprocess.CompletedProcess[str]:
     # Exec the repo deck directly — argv[0] "command" is a shell builtin, not
     # a binary, and PATH discovery would silently hit the operator's deck.
-    return subprocess.run(
+    result = subprocess.run(
         [str(REPO_ROOT / "scripts" / "vibecrafted"), "research", *args],
         cwd=root,
         env=env,
@@ -71,6 +123,8 @@ def _run_deck_research(
         text=True,
         check=False,
     )
+    _wait_for_completed_launch(result, env)
+    return result
 
 
 def _parse_receipt(stdout: str) -> dict[str, str]:
@@ -108,6 +162,19 @@ def _parse_receipt(stdout: str) -> dict[str, str]:
     m2 = re.search(r"\b((?:rese|rsch)-[0-9a-zA-Z-]+)\b", out)
     assert m2 is not None, out
     return {"run_id": m2.group(1), "status": "launching", "raw": out}
+
+
+def _wait_for_completed_launch(
+    result: subprocess.CompletedProcess[str], env: dict[str, str]
+) -> None:
+    """Drain an accepted async launch before its pytest temp tree disappears."""
+    if result.returncode != 0:
+        return
+    combined = result.stdout + result.stderr
+    if "rese-" not in combined and '"accepted": true' not in combined:
+        return
+    receipt = _parse_receipt(combined)
+    _wait_for_test_run_exit(Path(env["VIBECRAFTED_HOME"]), receipt["run_id"])
 
 
 @pytest.mark.parametrize(

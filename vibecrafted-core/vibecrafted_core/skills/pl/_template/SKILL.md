@@ -34,7 +34,7 @@ dogfooding: "required for repo-impacting work"
 
 Ten workflow działa w bieżącym checkoucie i na bieżącej gałęzi operatora. Nie twórz
 worktree gita, nie przełączaj się na niego ani nie przenoś do niego wykonania, chyba że
-operator wprost poprosi o worktree w tym prompcie. Czytaj pliki ponownie przed edycją,
+operator wprost poprosi o worktree w tym prompcie. Jedyny usankcjonowany drugi tryb to dispatch Fleet Worktrees (pisany plan, zacommitowane wcześniej verifiery, rozłączne domeny plików, jednowątkowy integrator — patrz Reguła Living Tree, Tryb B); poza tą formacją zostań we wspólnym drzewie. Czytaj pliki ponownie przed edycją,
 dostosowuj się do równoległych zmian i zgłoś awarię podłoża (substrate failure), jeśli
 bieżące drzewo jest zbyt zatrute, by bezpiecznie kontynuować.
 

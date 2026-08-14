@@ -10,6 +10,7 @@
 # Usage:
 #   tests/skill_loader_smoke.sh                       # full smoke
 #   tests/skill_loader_smoke.sh --negative-fixture-only  # negative path only
+#   tests/skill_loader_smoke.sh --doctor-preverified  # owning workflow already ran doctor
 #
 # The negative-fixture mode verifies the smoke catches a deliberately corrupt
 # SKILL.md (missing closing frontmatter delimiter) — the falsifier per
@@ -33,9 +34,17 @@ HELPER_SHIM="${HOME}/.config/vetcoders/vc-skills.sh"
 EXPECTED_HELPER_FUNCTIONS=(vc-init vc-help vc-research vc-agents)
 
 NEGATIVE_ONLY=0
-if [[ "${1:-}" == "--negative-fixture-only" ]]; then
-  NEGATIVE_ONLY=1
-fi
+DOCTOR_PREVERIFIED=0
+for arg in "$@"; do
+  case "$arg" in
+    --negative-fixture-only) NEGATIVE_ONLY=1 ;;
+    --doctor-preverified) DOCTOR_PREVERIFIED=1 ;;
+    *)
+      printf 'unknown option: %s\n' "$arg" >&2
+      exit 2
+      ;;
+  esac
+done
 
 FAILURES=()
 WARNINGS=()
@@ -253,15 +262,19 @@ fi
 
 printf '\n%s\n' "$(dim '─── phase 5: make doctor health ───')"
 
-doctor_log="$(mktemp -t vc-doctor.XXXXXX)"
-trap 'rm -f "$doctor_log"' EXIT
-
-doctor_exit=0
-if (cd "$REPO_ROOT" && make doctor) >"$doctor_log" 2>&1; then
-  doctor_exit=0
+doctor_log=""
+if (( DOCTOR_PREVERIFIED )); then
+  log_pass "doctor: preverified by the owning install workflow"
 else
-  doctor_exit=$?
-fi
+  doctor_log="$(mktemp -t vc-doctor.XXXXXX)"
+  trap 'rm -f "$doctor_log"' EXIT
+
+  doctor_exit=0
+  if (cd "$REPO_ROOT" && make doctor) >"$doctor_log" 2>&1; then
+    doctor_exit=0
+  else
+    doctor_exit=$?
+  fi
 
 # Doctor is summary-first (CLI_PRODUCT_SPEC §6.4): parse the verdict-line
 # counts ("N ok   M warnings   K failures") instead of counting bracket tags.
@@ -269,28 +282,30 @@ fi
 # install surfaces as warnings, while an installed workstation reports them as
 # passing checks. The stable health contract is a parseable verdict with at
 # least one passing check, zero failures, and a zero command exit.
-summary_line="$(grep -m1 -E '[0-9]+ ok.*[0-9]+ warnings.*[0-9]+ failures' "$doctor_log" || true)"
-ok_count="$(grep -oE '[0-9]+ ok' "$doctor_log" | head -n1 | grep -oE '[0-9]+' || true)"
-warn_count="$(grep -oE '[0-9]+ warnings' "$doctor_log" | head -n1 | grep -oE '[0-9]+' || true)"
-fail_count="$(grep -oE '[0-9]+ failures' "$doctor_log" | head -n1 | grep -oE '[0-9]+' || true)"
-ok_count="${ok_count:-0}"
-warn_count="${warn_count:-0}"
-fail_count="${fail_count:-0}"
+  summary_line="$(grep -m1 -E '[0-9]+ ok.*[0-9]+ warnings.*[0-9]+ failures' "$doctor_log" || true)"
+  ok_count="$(grep -oE '[0-9]+ ok' "$doctor_log" | head -n1 | grep -oE '[0-9]+' || true)"
+  warn_count="$(grep -oE '[0-9]+ warnings' "$doctor_log" | head -n1 | grep -oE '[0-9]+' || true)"
+  fail_count="$(grep -oE '[0-9]+ failures' "$doctor_log" | head -n1 | grep -oE '[0-9]+' || true)"
+  ok_count="${ok_count:-0}"
+  warn_count="${warn_count:-0}"
+  fail_count="${fail_count:-0}"
 
-if [[ -z "$summary_line" ]]; then
-  log_fail "doctor: summary line missing or unparseable"
-elif (( fail_count > 0 )); then
-  log_fail "doctor: $fail_count failures reported"
-elif (( doctor_exit != 0 )); then
-  log_fail "doctor: exited $doctor_exit despite a zero-failure summary"
-elif (( ok_count == 0 )); then
-  log_fail "doctor: summary reports no passing checks"
-else
-  log_pass "doctor: $ok_count ok / $warn_count warnings / $fail_count failures"
-fi
+  if [[ -z "$summary_line" ]]; then
+    log_fail "doctor: summary line missing or unparseable"
+  elif (( fail_count > 0 )); then
+    log_fail "doctor: $fail_count failures reported"
+    tail -n 80 "$doctor_log" >&2
+  elif (( doctor_exit != 0 )); then
+    log_fail "doctor: exited $doctor_exit despite a zero-failure summary"
+  elif (( ok_count == 0 )); then
+    log_fail "doctor: summary reports no passing checks"
+  else
+    log_pass "doctor: $ok_count ok / $warn_count warnings / $fail_count failures"
+  fi
 
-if (( warn_count > 0 )); then
-  log_warn "doctor reports $warn_count warning(s) — review $doctor_log"
+  if (( warn_count > 0 )); then
+    log_warn "doctor reports $warn_count warning(s) — review $doctor_log"
+  fi
 fi
 
 # -----------------------------------------------------------------------------
@@ -345,7 +360,7 @@ else
   }
   # Chain the cleanup onto the existing trap target (doctor log) so neither
   # handler clobbers the other.
-  trap 'rm -f "$doctor_log"; cleanup_scaffold_tmp' EXIT
+  trap '[[ -z "$doctor_log" ]] || rm -f "$doctor_log"; cleanup_scaffold_tmp' EXIT
 
   # (a) Positive path: scaffold + verify frontmatter parses.
   if scaffold_output="$("$SCAFFOLDER" "$SCAFFOLD_TMP_NAME" 2>&1)"; then

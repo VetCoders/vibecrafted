@@ -42,4 +42,4 @@ Shell binding is separate — see `config/shell/atuin-up.zsh` and
 `vibecrafted-vm/zshrc.template`. Keyboard Up may open Atuin; wheel on primary
 does not, because Alacritty no longer turns primary-buffer scroll into arrows.
 
-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
