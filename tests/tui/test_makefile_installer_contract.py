@@ -142,8 +142,12 @@ def test_release_workflow_is_read_only_and_validates_the_exact_tag_source() -> N
     assert "run: make unified-product-contract-gate" in workflow
     assert "run: make test-core" in workflow
     assert "run: make semgrep" in workflow
-    assert 'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"' in workflow
     assert 'test "$(git cat-file -t "$GITHUB_REF_NAME")" = "tag"' in workflow
+    assert 'test "$(git rev-parse "$GITHUB_REF_NAME")" = "$GITHUB_SHA"' in workflow
+    assert (
+        'test "$(git rev-list -n 1 "$GITHUB_REF_NAME")" = "$(git rev-parse HEAD)"'
+        in workflow
+    )
     assert "permissions:\n  contents: read" in workflow
     assert "contents: write" not in workflow
     assert "gh release create" not in workflow

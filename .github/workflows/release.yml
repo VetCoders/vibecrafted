@@ -22,9 +22,9 @@ jobs:
           set -euo pipefail
           version="$(tr -d '[:space:]' < VERSION)"
           test "$GITHUB_REF_NAME" = "v$version"
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(git cat-file -t "$GITHUB_REF_NAME")" = "tag"
-          test "$(git rev-list -n 1 "$GITHUB_REF_NAME")" = "$GITHUB_SHA"
+          test "$(git rev-parse "$GITHUB_REF_NAME")" = "$GITHUB_SHA"
+          test "$(git rev-list -n 1 "$GITHUB_REF_NAME")" = "$(git rev-parse HEAD)"
 
       - name: Install shellcheck
         run: |
