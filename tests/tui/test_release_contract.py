@@ -25,6 +25,11 @@ def test_tag_workflow_is_a_read_only_source_gate() -> None:
     assert "permissions:\n  contents: read" in workflow
     assert "persist-credentials: false" in workflow
     assert 'test "$(git cat-file -t "$GITHUB_REF_NAME")" = "tag"' in workflow
+    assert 'test "$(git rev-parse "$GITHUB_REF_NAME")" = "$GITHUB_SHA"' in workflow
+    assert (
+        'test "$(git rev-list -n 1 "$GITHUB_REF_NAME")" = "$(git rev-parse HEAD)"'
+        in workflow
+    )
     assert "run: make unified-product-contract-gate" in workflow
     assert "run: make test-core" in workflow
     assert "run: make semgrep" in workflow
