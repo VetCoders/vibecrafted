@@ -4,12 +4,15 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TERMINAL_REPO="${VIBECRAFTED_TERMINAL_REPO:-$REPO_ROOT/../vc-terminal}"
 FRAME_REPO="${VIBECRAFTED_FRAME_REPO:-$REPO_ROOT/../vc-frame}"
+ICON_SOURCE="${VIBECRAFTED_ICON_SOURCE:-$TERMINAL_REPO/assets/icon/vc-terminal-icon.png}"
+ICON_REFERENCE="${VIBECRAFTED_ICON_REFERENCE:-$TERMINAL_REPO/assets/icon/terminal.png}"
 DIST_DIR="${VIBECRAFTED_RELEASE_DIR:-$REPO_ROOT/dist}"
 BUILD_DIR="$REPO_ROOT/build/unified-release"
 APP="$DIST_DIR/Vibecrafted.app"
 VERSION="$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")"
 RELEASE_DATE="${VIBECRAFTED_RELEASE_DATE:-$(date -u +%Y%m%d)}"
 ROOT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+RUNTIME_VERSION="${VERSION}+g${ROOT_SHA:0:8}"
 [[ "$RELEASE_DATE" =~ ^[0-9]{8}$ ]] || {
   printf 'FATAL: VIBECRAFTED_RELEASE_DATE must be YYYYMMDD\n' >&2
   exit 1
@@ -106,6 +109,13 @@ require_clean_repo() {
     || die "$label is dirty; release receipts refuse moving source"
 }
 
+run_bundled_verifier() {
+  local verifier="$APP/Contents/Resources/runtime/bin/python3"
+  [[ -x "$verifier" ]] || die "bundled product verifier is missing: $verifier"
+  PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 \
+    "$verifier" -m vibecrafted_core.product_contract "$@"
+}
+
 notary_submit() {
   local artifact="$1"
   if [[ -n "${NOTARY_PROFILE:-}" ]]; then
@@ -166,8 +176,8 @@ build_product() {
   [[ -x "$terminal_source" ]] || die "vc-terminal release binary is missing"
   chmod 0755 "$terminal_source"
 
-  log "Building vc-frame through its canonical release target"
-  make -C "$FRAME_REPO" release
+  log "Building vc-frame through its provenance-stable donor target"
+  make -C "$FRAME_REPO" release-binary
   local frame_source="$FRAME_REPO/target/release/vc-frame"
   [[ -x "$frame_source" ]] || die "vc-frame release binary is missing"
   chmod 0755 "$frame_source"
@@ -177,6 +187,14 @@ build_product() {
   local start_source="$REPO_ROOT/vibecrafted-app/target/release/vc-start"
   [[ -x "$start_source" ]] || die "vc-start release binary is missing"
   chmod 0755 "$start_source"
+
+  log "Building the bundled Vibecrafted Server and hydrated site"
+  local server_build_root="$BUILD_DIR/cargo"
+  make -C "$REPO_ROOT" CARGO_BUILD_ROOT="$server_build_root" build-server-release
+  local server_source="$server_build_root/vibecrafted-server/release/vibecrafted-server-web"
+  local server_site="$server_build_root/vibecrafted-server/site"
+  [[ -x "$server_source" ]] || die "Vibecrafted Server release binary is missing"
+  [[ -d "$server_site/pkg" ]] || die "Vibecrafted Server hydrated site is missing"
 
   log "Building the single Swift host app"
   make -C "$REPO_ROOT/vibecrafted-app/shell-agent" bindings xcode
@@ -191,31 +209,47 @@ build_product() {
   built_app="$(find "$BUILD_DIR/DerivedData" -type d -name Vibecrafted.app -print -quit)"
   [[ -n "$built_app" ]] || die "xcodebuild did not produce Vibecrafted.app"
   /usr/bin/ditto "$built_app" "$APP"
+  local resources="$APP/Contents/Resources"
+  mkdir -p "$resources"
+  log "Binding the canonical vc-terminal icon to Vibecrafted.app"
+  "$REPO_ROOT/scripts/build-vibecrafted-icon.sh" \
+    "$ICON_SOURCE" "$resources/Vibecrafted.icns" "$ICON_REFERENCE"
+  if find "$resources" -maxdepth 1 -type f -name '*.icns' \
+      ! -name 'Vibecrafted.icns' -print -quit | grep -q .; then
+    die "assembled app contains a non-canonical application icon"
+  fi
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile Vibecrafted.icns" \
+    "$APP/Contents/Info.plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string Vibecrafted.icns" \
+      "$APP/Contents/Info.plist"
   remove_ambient_swift_rpath
 
   log "Embedding product modules and the checkout-free runtime"
-  local resources="$APP/Contents/Resources"
   local runtime="$resources/runtime"
   mkdir -p "$APP/Contents/Helpers" "$resources/terminal" "$runtime/bin"
   install -m 0755 "$terminal_source" "$APP/Contents/Helpers/vc-terminal"
   install -m 0755 "$frame_source" "$APP/Contents/Helpers/vc-frame"
   install -m 0755 "$start_source" "$runtime/bin/vc-start"
+  install -m 0755 "$server_source" "$runtime/bin/vc-server"
+  install -m 0755 "$server_source" "$runtime/bin/vibecrafted-server-web"
   install -m 0644 "$REPO_ROOT/config/vc-terminal/vibecrafted.toml" \
     "$resources/terminal/vibecrafted.toml"
-  install -m 0644 "$REPO_ROOT/VERSION" "$runtime/VERSION"
+  printf '%s\n' "$RUNTIME_VERSION" > "$runtime/VERSION"
   mkdir -p "$runtime/scripts" "$runtime/vibecrafted-core" "$runtime/config"
-  install -m 0755 "$REPO_ROOT/scripts/vibecrafted" "$runtime/scripts/vibecrafted"
-  install -m 0755 "$REPO_ROOT/scripts/vibecrafted" "$runtime/bin/vibecrafted"
-  /bin/cp -RL "$REPO_ROOT/vibecrafted-core/vibecrafted_core" \
+  local canonical_deck="$REPO_ROOT/vibecrafted-core/vibecrafted_core/deck/vibecrafted"
+  install -m 0755 "$canonical_deck" "$runtime/scripts/vibecrafted"
+  install -m 0755 "$canonical_deck" "$runtime/bin/vibecrafted"
+  /bin/cp -R "$REPO_ROOT/bin/." "$runtime/bin/"
+  /bin/cp -R "$REPO_ROOT/vibecrafted-core/vibecrafted_core" \
     "$runtime/vibecrafted-core/"
-  /bin/cp -RL "$REPO_ROOT/vibecrafted-core/vibecrafted_core/runtime" \
-    "$runtime/runtime"
-  /bin/cp -RL "$REPO_ROOT/config/." "$runtime/config/"
+  /bin/cp -R "$REPO_ROOT/config/." "$runtime/config/"
+  mkdir -p "$runtime/server/site"
+  /bin/cp -R "$server_site/." "$runtime/server/site/"
   # The Living Tree may contain ignored interpreter caches. They are never
   # product inputs: adjacent verifier bytecode could shadow the signed source.
-  find "$runtime/vibecrafted-core" "$runtime/runtime" \
+  find "$runtime/vibecrafted-core" \
     -type d -name __pycache__ -prune -exec rm -rf {} +
-  find "$runtime/vibecrafted-core" "$runtime/runtime" \
+  find "$runtime/vibecrafted-core" \
     -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 
   log "Embedding a private Python runtime; no shell profile or host Python is used"
@@ -233,6 +267,7 @@ build_product() {
     "$runtime/python/lib/libpython3.12.dylib"
   find "$runtime" -type f -name '*.pyc' -delete
   find "$runtime" -depth -type d -name __pycache__ -empty -delete
+  find "$runtime" -type f -name '.DS_Store' -delete
   # These literals are the relocatable wrapper payload and expand only when
   # the installed wrapper runs inside Vibecrafted.app.
   # shellcheck disable=SC2016
@@ -246,6 +281,22 @@ build_product() {
     'exec "$runtime_root/python/bin/python3.12" "$@"' \
     > "$runtime/bin/python3"
   chmod 0755 "$runtime/bin/python3"
+  for entrypoint_module in \
+    'vc-guardian:vibecrafted_core.guardian' \
+    'vc-server-supervisor:vibecrafted_core.server_supervisor' \
+    'verify-vibecrafted-walkaround:vibecrafted_core.walkaround_runner'; do
+    entrypoint="${entrypoint_module%%:*}"
+    module="${entrypoint_module#*:}"
+    # The wrapper must resolve BASH_SOURCE when it runs, not while this bundle is assembled.
+    # shellcheck disable=SC2016
+    printf '%s\n' \
+      '#!/bin/bash' \
+      'set -euo pipefail' \
+      'bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
+      "exec \"\$bin_dir/python3\" -m $module \"\$@\"" \
+      > "$runtime/bin/$entrypoint"
+    chmod 0755 "$runtime/bin/$entrypoint"
+  done
 
   if find "$APP" -type l -print -quit | grep -q .; then
     die "assembled app contains symlinks"
@@ -272,7 +323,7 @@ build_product() {
     die "bundled Python mutated the signed application payload"
   fi
   codesign --verify --deep --strict --verbose=2 "$APP"
-  "$REPO_ROOT/scripts/verify-vibecrafted-product.sh" app "$APP" --require-clean
+  run_bundled_verifier app "$APP" --require-clean
 }
 
 create_dmg() {
@@ -308,7 +359,7 @@ emit_release_tuple() {
     --app "$APP" --dmg "$DMG" --output "$DIST_DIR/release-output.json"
   /usr/bin/openssl dgst -sha256 -sign "$SIGNING_KEY" \
     -out "$DIST_DIR/release-output.json.sig" "$DIST_DIR/release-output.json"
-  "$REPO_ROOT/scripts/verify-vibecrafted-product.sh" release-output \
+  run_bundled_verifier release-output \
     "$DIST_DIR/release-output.json" "$DIST_DIR/release-output.json.sig"
   (
     cd "$DIST_DIR"

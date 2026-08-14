@@ -48,7 +48,7 @@ RUN apt-get update \
 
 COPY . /opt/vibecrafted
 
-RUN chmod +x \
+RUN chmod 0755 \
     /opt/vibecrafted/install.sh \
     /opt/vibecrafted/scripts/vibecraft \
     /opt/vibecrafted/scripts/vibecrafted \

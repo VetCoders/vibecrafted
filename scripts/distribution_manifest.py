@@ -3,7 +3,7 @@
 
 The repository is a development surface. A distribution is an allowlisted
 projection of it: required runtime paths must exist, development artifacts are
-never copied, and symlinks must stay inside the payload.
+never copied, and runtime/skills have one physical package owner.
 """
 
 from __future__ import annotations
@@ -78,10 +78,7 @@ REQUIRED_DIRECTORIES = (
     "config",
     "docs",
     "plugins",
-    "runtime/scripts",
-    "runtime/shell/lib",
     "scripts/installer",
-    "skills",
     "templates",
     "tools",
     "vibecrafted-app",
@@ -101,10 +98,7 @@ REQUIRED_SURFACE_FILES = {
     "config": "config/README.md",
     "docs": "docs/INSTALL.md",
     "plugins": "plugins/iterm2/README.md",
-    "runtime/scripts": "runtime/scripts/README.md",
-    "runtime/shell/lib": "runtime/shell/lib/core.sh",
     "scripts/installer": "scripts/installer/pyproject.toml",
-    "skills": "skills/vc-init/SKILL.md",
     "templates": "templates/hooks/install.sh",
     "tools": "tools/README.md",
     "vibecrafted-app": "vibecrafted-app/Cargo.toml",
@@ -141,7 +135,6 @@ ALLOWED_TOP_LEVEL = frozenset(
         "plugins",
         "runtime",
         "scripts",
-        "skills",
         "templates",
         "tools",
         "vibecrafted-app",
@@ -207,16 +200,6 @@ REQUIRED_LOCKFILES = frozenset(
         "vibecrafted-server/Cargo.lock",
     }
 )
-CANONICAL_RUNTIME = Path("vibecrafted-core/vibecrafted_core/runtime")
-CANONICAL_SKILLS = Path("vibecrafted-core/vibecrafted_core/skills")
-# Repo-root aliases that are symlinks into the canonical package tree. Some
-# mounts (colima's sshfs view of a macOS checkout) drop symlinks entirely, so
-# source validation and staging must be able to project these from the
-# canonical paths instead of requiring the symlink itself.
-CANONICAL_PROJECTIONS = {
-    "runtime": CANONICAL_RUNTIME,
-    "skills": CANONICAL_SKILLS,
-}
 
 
 class ManifestError(ValueError):
@@ -1111,50 +1094,24 @@ def _symlink_error(root: Path, path: Path) -> str | None:
     return None
 
 
-def _required_candidate(
-    root: Path, relative: str, *, allow_runtime_projection: bool
-) -> Path:
-    """Resolve a required-path candidate, projecting onto a canonical alias if needed.
-
-    When ``allow_runtime_projection`` is set and the direct candidate is absent,
-    falls back to the canonical `runtime`/`skills` package path (see
-    ``CANONICAL_PROJECTIONS``) so source-tree validation survives mounts that
-    drop symlinks (e.g. colima's sshfs view of a macOS checkout).
-    """
-    candidate = root / relative
-    relative_path = Path(relative)
-    if (
-        allow_runtime_projection
-        and relative_path.parts
-        and relative_path.parts[0] in CANONICAL_PROJECTIONS
-        and not candidate.exists()
-    ):
-        canonical = CANONICAL_PROJECTIONS[relative_path.parts[0]]
-        return root / canonical.joinpath(*relative_path.parts[1:])
-    return candidate
+def _required_candidate(root: Path, relative: str) -> Path:
+    """Resolve a required physical path from its sole canonical owner."""
+    return root / relative
 
 
-def _required_errors(
-    root: Path, *, allow_runtime_projection: bool = False
-) -> list[str]:
+def _required_errors(root: Path) -> list[str]:
     """Collect human-readable errors for every missing required file/dir/surface."""
     errors = []
     for relative in REQUIRED_FILES:
-        candidate = _required_candidate(
-            root, relative, allow_runtime_projection=allow_runtime_projection
-        )
+        candidate = _required_candidate(root, relative)
         if not candidate.is_file():
             errors.append(f"missing required path: {relative}")
     for relative in REQUIRED_DIRECTORIES:
-        candidate = _required_candidate(
-            root, relative, allow_runtime_projection=allow_runtime_projection
-        )
+        candidate = _required_candidate(root, relative)
         if not candidate.is_dir():
             errors.append(f"missing required path: {relative}")
     for surface, relative in REQUIRED_SURFACE_FILES.items():
-        candidate = _required_candidate(
-            root, relative, allow_runtime_projection=allow_runtime_projection
-        )
+        candidate = _required_candidate(root, relative)
         if not candidate.is_file():
             errors.append(f"missing required runtime content: {surface} -> {relative}")
     return errors
@@ -1240,10 +1197,10 @@ def _validate_source(root: Path) -> None:
     """Raise ManifestError for missing required paths or unsafe symlinks in a source tree.
 
     Unlike ``validate_payload`` this only checks included paths and required
-    surfaces (with runtime-projection fallback) — it does not flag paths as
-    forbidden, since the source tree legitimately contains excluded content.
+    surfaces at their physical canonical package paths — it does not flag
+    paths as forbidden, since the source tree legitimately contains excluded content.
     """
-    errors = _required_errors(root, allow_runtime_projection=True)
+    errors = _required_errors(root)
     try:
         load_source_provenance(root)
     except ManifestError as exc:
@@ -1490,13 +1447,6 @@ def _stage_payload_into(
                 destination_root / item.name,
                 preserve_empty_directories=inherited_carrier_bytes is not None,
             )
-    for alias, canonical in CANONICAL_PROJECTIONS.items():
-        projection = destination_root / alias
-        canonical_dir = destination_root / canonical
-        if not projection.is_dir() and canonical_dir.is_dir():
-            if projection.exists() or projection.is_symlink():
-                _remove_path(projection)
-            projection.symlink_to(canonical, target_is_directory=True)
     if provenance is not None:
         assert_source_payload_matches_provenance(
             source_root,
@@ -1537,9 +1487,8 @@ def stage_payload(
 ) -> dict[str, object] | None:
     """Copy the allowlisted subset of source into destination and validate the result.
 
-    When ``mirror`` is set the destination is wiped first. After copying, the
-    `runtime`/`skills` alias symlinks are (re)created if only the canonical
-    package paths were staged, then the whole payload is re-validated.
+    When ``mirror`` is set the destination is wiped first. The whole physical
+    canonical package payload is then re-validated without repo-root aliases.
     """
     source_root = Path(source).resolve(strict=False)
     destination_root = Path(os.path.abspath(destination))

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import shutil
+import struct
 import subprocess
 from argparse import Namespace
 from pathlib import Path
@@ -34,10 +36,12 @@ def _write_test_source_provenance(
         "source_revision": source_revision,
         "payload": installer._distribution_manifest._distribution_tree_record(root),
     }
-    (root / "source-provenance.json").write_text(
+    carrier = root / "source-provenance.json"
+    carrier.write_text(
         json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
+    carrier.chmod(0o644)
     return provenance
 
 
@@ -218,7 +222,6 @@ def test_run_doctor_flags_dark_standard_decks(tmp_path: Path, monkeypatch) -> No
 
     _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
     monkeypatch.setattr(installer, "FOUNDATIONS", [])
-
     findings = installer.run_doctor(store_path, state)
     indexed = {finding.component: finding for finding in findings}
 
@@ -536,7 +539,7 @@ def test_cmd_doctor_fix_launchers_repairs_missing_wrappers(
     assert not (crafted_home / "bin" / "vc-init").exists()
     assert not (crafted_home / "bin" / "vc-start").exists()
 
-    refreshed_state = installer.InstallState.load(current_link / "skills")
+    refreshed_state = installer.InstallState.load(crafted_home)
     assert any(entry.endswith("/vc-init") for entry in refreshed_state.launcher_entries)
     findings = installer.run_doctor(store_path, refreshed_state)
     indexed = {finding.component: finding for finding in findings}
@@ -852,7 +855,7 @@ _LEGACY_RUNTIME_GENERATION_HASH_PATHS = frozenset(
     {
         "VERSION",
         "scripts/vibecrafted",
-        "runtime/generated/vc-frame/config.kdl",
+        "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame/config.kdl",
         installer._RUNTIME_GENERATION_ENTRYPOINT.as_posix(),
     }
 )
@@ -860,7 +863,9 @@ _LEGACY_RUNTIME_GENERATION_HASH_PATHS = frozenset(
 _RUNTIME_GENERATION_FIXTURE_SOURCES = {
     Path("VERSION"): Path("VERSION"),
     Path("scripts/vibecrafted"): Path("scripts/vibecrafted"),
-    Path("runtime/generated/vc-frame/config.kdl"): Path("config/vc-frame/config.kdl"),
+    Path(
+        "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame/config.kdl"
+    ): Path("vibecrafted-core/vibecrafted_core/config/vc-frame/config.kdl"),
     installer._RUNTIME_GENERATION_ENTRYPOINT: installer._RUNTIME_GENERATION_ENTRYPOINT,
     Path("vibecrafted-core/vibecrafted_core/product_contract.py"): Path(
         "vibecrafted-core/vibecrafted_core/product_contract.py"
@@ -1036,10 +1041,12 @@ def test_runtime_manifest_retains_clean_exact_git_source_carrier(
         owner_repo=None,
         source_revision=None,
     )
-    (current_tools / "source-provenance.json").write_text(
+    carrier = current_tools / "source-provenance.json"
+    carrier.write_text(
         json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
+    carrier.chmod(0o644)
     installer._write_runtime_generation_manifest(
         current_tools,
         source_root=source,
@@ -1083,7 +1090,7 @@ def _loaded_release_contract_state(
         return store, installer._load_install_state(store), None
 
     generation = tools / "vibecrafted-generation-test"
-    store = generation / "skills"
+    store = generation / "vibecrafted-core" / "vibecrafted_core" / "skills"
     store.mkdir(parents=True)
     tools.mkdir(parents=True, exist_ok=True)
     (tools / "vibecrafted-current").symlink_to(generation)
@@ -1105,6 +1112,42 @@ def _seed_release_contract_assets(
 ) -> Path:
     _write_release_contract_runtime_manifest(generation, monkeypatch)
     return generation / "vibecrafted-core" / "vibecrafted_core"
+
+
+@pytest.mark.parametrize(
+    ("flags", "source_present", "expected_issue"),
+    [
+        (0, True, False),
+        (3, True, False),
+        (1, True, True),
+        (0, False, True),
+    ],
+)
+def test_verifier_bytecode_cache_only_fails_when_it_can_escape_bound_source(
+    tmp_path: Path, flags: int, source_present: bool, expected_issue: bool
+) -> None:
+    package = tmp_path / "vibecrafted-core/vibecrafted_core"
+    cache = package / "__pycache__"
+    cache.mkdir(parents=True)
+    if source_present:
+        (package / "product_contract.py").write_text("VALUE = 1\n", encoding="utf-8")
+    pyc = cache / "product_contract.cpython-312.pyc"
+    pyc.write_bytes(importlib.util.MAGIC_NUMBER + struct.pack("<I", flags) + b"payload")
+
+    issues = installer._verifier_bytecode_shadow_issues(tmp_path)
+
+    assert bool(issues) is expected_issue
+
+
+def test_verifier_adjacent_bytecode_always_fails(tmp_path: Path) -> None:
+    package = tmp_path / "vibecrafted-core/vibecrafted_core"
+    package.mkdir(parents=True)
+    (package / "product_contract.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (package / "product_contract.pyc").write_bytes(b"shadow")
+
+    issues = installer._verifier_bytecode_shadow_issues(tmp_path)
+
+    assert issues == ["product_contract.pyc:corrupt:verifier bytecode shadow"]
 
 
 @pytest.mark.parametrize("state_shape", ["fresh", "migrated", "lost", "corrupt"])
@@ -1299,7 +1342,9 @@ def test_run_doctor_ignores_ds_store_in_stale_file_check(
     store_path = crafted_home / "skills"
     skill_name = "vc-intents"
     installed_skill = store_path / skill_name
-    source_skill = REPO_ROOT / "skills" / skill_name
+    source_skill = (
+        REPO_ROOT / "vibecrafted-core" / "vibecrafted_core" / "skills" / skill_name
+    )
 
     installed_skill.mkdir(parents=True)
     (installed_skill / "SKILL.md").write_text(
@@ -1316,6 +1361,11 @@ def test_run_doctor_ignores_ds_store_in_stale_file_check(
 
     _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
     monkeypatch.setattr(installer, "FOUNDATIONS", [])
+    monkeypatch.setattr(
+        installer,
+        "_doctor_launcher_source_root",
+        lambda _store_path: REPO_ROOT,
+    )
 
     findings = installer.run_doctor(store_path, state)
     indexed = {finding.component: finding for finding in findings}
@@ -1850,12 +1900,12 @@ def test_describe_dumb_terminal_noise_flags_starship_and_stdout() -> None:
 
 def _seed_complete_vibecrafted_runtime(tools: Path) -> Path:
     runtime = tools / "vibecrafted-local"
-    (runtime / "vibecrafted-core").mkdir(parents=True)
-    (runtime / "runtime" / "scripts").mkdir(parents=True)
+    runtime_payload = runtime / "vibecrafted-core" / "vibecrafted_core" / "runtime"
+    (runtime_payload / "scripts").mkdir(parents=True)
     (runtime / "Makefile").write_text("install:\n", encoding="utf-8")
     materialize_vc_frame_config(
         vc_frame_config_source(),
-        runtime / "runtime" / "generated" / "vc-frame",
+        runtime_payload / "generated" / "vc-frame",
         pane_shell=resolve_pane_shell(),
         clipboard_command=resolve_clipboard_command(),
     )

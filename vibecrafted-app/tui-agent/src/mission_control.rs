@@ -342,6 +342,7 @@ pub struct FailureEntry {
     pub agent: String,
     pub skill: String,
     pub reason: String,
+    pub occurred_at: Option<String>,
     pub age_label: String,
     pub source_path: Option<PathBuf>,
 }
@@ -1123,6 +1124,7 @@ fn failure_board_from_meta(
                         Some(code) => format!("exit_code {code}"),
                         None => "failed".to_string(),
                     }),
+                occurred_at: Some(record.completed_at.to_rfc3339()),
                 age_label: relative_age(record.completed_at, now),
                 source_path: Some(record.path.clone()),
             },
@@ -1177,6 +1179,7 @@ fn failure_board_from_meta(
                     .or_else(|| snapshot.status.clone())
                     .or_else(|| snapshot.state.clone())
                     .unwrap_or_else(|| "failed".to_string()),
+                occurred_at: timestamp.map(|ts| ts.to_rfc3339()),
                 age_label: timestamp
                     .map(|ts| relative_age(ts, now))
                     .unwrap_or_else(|| "age unknown".to_string()),

@@ -195,6 +195,7 @@ pub struct FfiFailureEntry {
     pub agent: String,
     pub skill: String,
     pub reason: String,
+    pub occurred_at: Option<String>,
     pub age_label: String,
     /// Absolute filesystem path to the source artifact (meta.json or
     /// report.md) when known. Shell-side surfaces should treat absence
@@ -379,6 +380,7 @@ fn convert_snapshot(state: MissionControlState) -> FfiMissionControlSnapshot {
                 agent: entry.agent,
                 skill: entry.skill,
                 reason: entry.reason,
+                occurred_at: entry.occurred_at,
                 age_label: entry.age_label,
                 source_path: entry
                     .source_path

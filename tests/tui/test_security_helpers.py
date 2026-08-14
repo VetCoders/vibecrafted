@@ -3,7 +3,15 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHAT_CLI_PATH = REPO_ROOT / "tools" / "scripts" / "chat" / "chat-cli.py"
-BRAVE_SEARCH_PATH = REPO_ROOT / "skills" / "vc-research" / "engines" / "brave_search.py"
+BRAVE_SEARCH_PATH = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "skills"
+    / "vc-research"
+    / "engines"
+    / "brave_search.py"
+)
 
 
 def load_module(name: str, path: Path):

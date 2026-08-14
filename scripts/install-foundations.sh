@@ -792,7 +792,7 @@ install_product_entry_into_current() {
 
   shell_src=""
   for candidate in \
-    "$SOURCE_DIR/runtime/shell/lib" \
+    "$SOURCE_DIR/vibecrafted-core/vibecrafted_core/runtime/shell/lib" \
     "$SOURCE_DIR/vibecrafted-core/vibecrafted_core/runtime/shell/lib"
   do
     if [[ -f "$candidate/dashboard.sh" ]] && grep -q '_vetcoders_product_entry_prepare' "$candidate/dashboard.sh" 2>/dev/null; then

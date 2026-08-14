@@ -14,6 +14,49 @@ from scripts import vetcoders_install as installer
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_granular_installer_resolves_the_distribution_root(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    capture = tmp_path / "python-argv.txt"
+    python = fake_bin / "python3"
+    python.write_text(
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$CAPTURE"\n',
+        encoding="utf-8",
+    )
+    python.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(
+                REPO_ROOT
+                / "vibecrafted-core/vibecrafted_core/runtime/scripts/install.sh"
+            ),
+            "--source",
+            str(REPO_ROOT),
+            "--dry-run",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "CAPTURE": str(capture),
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert capture.read_text(encoding="utf-8").splitlines() == [
+        str(REPO_ROOT / "scripts/vetcoders_install.py"),
+        "install",
+        "--source",
+        str(REPO_ROOT),
+        "--dry-run",
+    ]
+
+
 def _minimal_distribution_source(root: Path) -> None:
     for relative in distribution.REQUIRED_FILES:
         path = root / relative
@@ -25,18 +68,6 @@ def _minimal_distribution_source(root: Path) -> None:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"runtime sentinel for {relative}\n", encoding="utf-8")
-    for relative in distribution.REQUIRED_DIRECTORIES:
-        parts = Path(relative).parts
-        if parts and parts[0] in distribution.CANONICAL_PROJECTIONS:
-            canonical = distribution.CANONICAL_PROJECTIONS[parts[0]]
-            (root / canonical.joinpath(*parts[1:])).mkdir(parents=True, exist_ok=True)
-    for relative in distribution.REQUIRED_SURFACE_FILES.values():
-        parts = Path(relative).parts
-        if parts and parts[0] in distribution.CANONICAL_PROJECTIONS:
-            canonical = distribution.CANONICAL_PROJECTIONS[parts[0]]
-            path = root / canonical.joinpath(*parts[1:])
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(f"canonical sentinel for {relative}\n", encoding="utf-8")
 
 
 def test_makefile_python_runner_rejects_xcode_python_39() -> None:
@@ -1004,9 +1035,14 @@ def test_setup_installer_uses_canonical_foundation_action_only() -> None:
     installer = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
         encoding="utf-8"
     )
-    skills_sync = (REPO_ROOT / "runtime" / "scripts" / "skills_sync.sh").read_text(
-        encoding="utf-8"
-    )
+    skills_sync = (
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "scripts"
+        / "skills_sync.sh"
+    ).read_text(encoding="utf-8")
 
     for name in ("aicx-mcp", "loct", "loctree", "loctree-mcp"):
         block = installer.split(f'name="{name}"', 1)[1].split("verify_cmd=", 1)[0]
@@ -1052,9 +1088,14 @@ def test_installer_publishes_async_dispatch_wrapper() -> None:
 
 
 def test_installer_paths_do_not_write_shell_rc_without_consent_flag() -> None:
-    install_shell = (REPO_ROOT / "runtime" / "scripts" / "install-shell.sh").read_text(
-        encoding="utf-8"
-    )
+    install_shell = (
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "scripts"
+        / "install-shell.sh"
+    ).read_text(encoding="utf-8")
     installer = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
         encoding="utf-8"
     )

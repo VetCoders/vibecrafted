@@ -5,7 +5,14 @@ import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RUNTIME_CORE = REPO_ROOT / "runtime" / "helpers" / "vetcoders-runtime-core.sh"
+RUNTIME_CORE = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "helpers"
+    / "vetcoders-runtime-core.sh"
+)
 
 
 def test_marbles_emit_probe_detaches_and_keeps_foreground_quiet(tmp_path: Path) -> None:

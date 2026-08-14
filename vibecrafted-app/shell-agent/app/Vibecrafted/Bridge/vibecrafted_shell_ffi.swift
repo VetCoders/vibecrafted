@@ -895,6 +895,7 @@ public struct FfiFailureEntry: Equatable, Hashable {
     public var agent: String
     public var skill: String
     public var reason: String
+    public var occurredAt: String?
     public var ageLabel: String
     /**
      * Absolute filesystem path to the source artifact (meta.json or
@@ -905,7 +906,7 @@ public struct FfiFailureEntry: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(runId: String, agent: String, skill: String, reason: String, ageLabel: String,
+    public init(runId: String, agent: String, skill: String, reason: String, occurredAt: String?, ageLabel: String,
         /**
          * Absolute filesystem path to the source artifact (meta.json or
          * report.md) when known. Shell-side surfaces should treat absence
@@ -915,6 +916,7 @@ public struct FfiFailureEntry: Equatable, Hashable {
         self.agent = agent
         self.skill = skill
         self.reason = reason
+        self.occurredAt = occurredAt
         self.ageLabel = ageLabel
         self.sourcePath = sourcePath
     }
@@ -937,6 +939,7 @@ public struct FfiConverterTypeFfiFailureEntry: FfiConverterRustBuffer {
                 agent: FfiConverterString.read(from: &buf),
                 skill: FfiConverterString.read(from: &buf),
                 reason: FfiConverterString.read(from: &buf),
+                occurredAt: FfiConverterOptionString.read(from: &buf),
                 ageLabel: FfiConverterString.read(from: &buf),
                 sourcePath: FfiConverterOptionString.read(from: &buf)
         )
@@ -947,6 +950,7 @@ public struct FfiConverterTypeFfiFailureEntry: FfiConverterRustBuffer {
         FfiConverterString.write(value.agent, into: &buf)
         FfiConverterString.write(value.skill, into: &buf)
         FfiConverterString.write(value.reason, into: &buf)
+        FfiConverterOptionString.write(value.occurredAt, into: &buf)
         FfiConverterString.write(value.ageLabel, into: &buf)
         FfiConverterOptionString.write(value.sourcePath, into: &buf)
     }

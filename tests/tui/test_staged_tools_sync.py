@@ -65,7 +65,14 @@ def _write_complete_source(
         root,
         mirror=True,
     )
-    (root / "runtime" / "shell" / "vetcoders.sh").write_text(helper, encoding="utf-8")
+    (
+        root
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "shell"
+        / "vetcoders.sh"
+    ).write_text(helper, encoding="utf-8")
     if service_lock_contract:
         launcher = launcher.replace(
             "#!/usr/bin/env bash\n",
@@ -92,10 +99,12 @@ def _write_source_provenance_fixture(
         "source_revision": source_revision,
         "payload": installer._distribution_manifest._distribution_tree_record(root),
     }
-    (root / "source-provenance.json").write_text(
+    carrier = root / "source-provenance.json"
+    carrier.write_text(
         json.dumps(provenance, ensure_ascii=True, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
+    carrier.chmod(0o644)
     return provenance
 
 
@@ -138,7 +147,8 @@ def _write_walkaround_generation(
     (generation / installer._RUNTIME_GENERATION_MANIFEST).write_text(
         json.dumps(manifest, sort_keys=True), encoding="utf-8"
     )
-    (generation / "source-provenance.json").write_text(
+    carrier = generation / "source-provenance.json"
+    carrier.write_text(
         json.dumps(
             {
                 "schema": installer._SOURCE_PROVENANCE_SCHEMA,
@@ -153,6 +163,7 @@ def _write_walkaround_generation(
         + "\n",
         encoding="utf-8",
     )
+    carrier.chmod(0o644)
     return generation
 
 
@@ -308,8 +319,9 @@ def _install_test_walkaround_launcher(
 
 
 def _write_valid_runtime_generation(root: Path) -> None:
-    (root / "skills").mkdir(parents=True)
-    (root / "runtime").mkdir()
+    package = root / "vibecrafted-core" / "vibecrafted_core"
+    (package / "skills").mkdir(parents=True)
+    (package / "runtime").mkdir()
     (root / "VERSION").write_text("9.9.8+gold\n", encoding="utf-8")
     deck = root / "scripts" / "vibecrafted"
     deck.parent.mkdir(parents=True)
@@ -505,9 +517,9 @@ def test_refresh_current_tools_mirrors_shadowing_files(
     assert current_link.is_symlink()
     new_target = current_link.resolve()
     assert new_target != old_target
-    assert (new_target / "runtime" / "shell" / "vetcoders.sh").read_text(
-        encoding="utf-8"
-    ) == 'printf "fresh helper\\n"\n'
+    assert (
+        new_target / "vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
+    ).read_text(encoding="utf-8") == 'printf "fresh helper\\n"\n'
     assert (new_target / "scripts" / "vibecrafted").read_text(
         encoding="utf-8"
     ) == '#!/usr/bin/env bash\nprintf "fresh launcher\\n"\n'
@@ -1260,9 +1272,9 @@ def test_isolated_policy_publishes_without_runtime_service_observation(
 
     assert result == 0
     assert current.is_symlink()
-    assert (current / "runtime" / "shell" / "vetcoders.sh").read_text(
-        encoding="utf-8"
-    ) == 'printf "isolated helper\\n"\n'
+    assert (
+        current / "vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
+    ).read_text(encoding="utf-8") == 'printf "isolated helper\\n"\n'
 
 
 def test_isolated_policy_rolls_back_without_runtime_service_observation(
@@ -5690,7 +5702,7 @@ def test_secure_walkaround_launcher_rejects_bound_file_hardlinks(
     assert "not a unique regular file" in result.stderr
 
 
-def test_secure_walkaround_launcher_accepts_internal_runtime_projection(
+def test_secure_walkaround_launcher_uses_canonical_runtime_config_without_alias(
     tmp_path: Path,
 ) -> None:
     tools = tmp_path / "tools"
@@ -5698,18 +5710,11 @@ def test_secure_walkaround_launcher_accepts_internal_runtime_projection(
     generation = _write_walkaround_generation(
         tools, "vibecrafted-generation-projection", 'print("projection-ok")\n'
     )
-    projected = generation / "runtime/generated/vc-frame/config.kdl"
-    canonical = (
+    assert not (generation / "runtime").exists()
+    assert (
         generation
         / "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame/config.kdl"
-    )
-    canonical.parent.mkdir(parents=True, exist_ok=True)
-    projected.rename(canonical)
-    shutil.rmtree(generation / "runtime")
-    (generation / "runtime").symlink_to(
-        "vibecrafted-core/vibecrafted_core/runtime", target_is_directory=True
-    )
-    _rewrite_walkaround_manifest(generation)
+    ).is_file()
     current.symlink_to(generation.name)
     _managed, public = _install_test_walkaround_launcher(tmp_path, current)
 
@@ -5719,7 +5724,7 @@ def test_secure_walkaround_launcher_accepts_internal_runtime_projection(
     assert result.stdout == "projection-ok\n"
 
 
-def test_secure_walkaround_launcher_rejects_nested_runtime_projection_alias(
+def test_secure_walkaround_launcher_rejects_canonical_config_parent_alias(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5728,18 +5733,13 @@ def test_secure_walkaround_launcher_rejects_nested_runtime_projection_alias(
     generation = _write_walkaround_generation(
         tools, "vibecrafted-generation-nested-alias", 'print("must-not-run")\n'
     )
-    projected = generation / "runtime/generated/vc-frame/config.kdl"
     canonical = (
         generation
         / "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame/config.kdl"
     )
-    canonical.parent.mkdir(parents=True, exist_ok=True)
-    projected.rename(canonical)
-    shutil.rmtree(generation / "runtime/generated")
-    (generation / "runtime/generated").symlink_to(
-        "../vibecrafted-core/vibecrafted_core/runtime/generated",
-        target_is_directory=True,
-    )
+    generated = canonical.parents[1]
+    generated.rename(generated.with_name("generated.unbound"))
+    generated.symlink_to("generated.unbound", target_is_directory=True)
     _rewrite_walkaround_manifest(generation)
     current.symlink_to(generation.name)
     managed, public = _install_test_walkaround_launcher(tmp_path, current)
@@ -5750,13 +5750,12 @@ def test_secure_walkaround_launcher_rejects_nested_runtime_projection_alias(
 
     assert result.returncode == 70
     assert result.stdout == ""
-    assert "runtime projection topology is not canonical" in result.stderr
-    assert any(
-        "runtime projection topology is not canonical" in item for item in issues
-    )
+    assert "manifest-bound file" in result.stderr
+    assert "is aliased" in result.stderr
+    assert any("manifest-bound file is aliased" in item for item in issues)
 
 
-def test_secure_walkaround_launcher_rejects_escaping_runtime_projection(
+def test_secure_walkaround_launcher_rejects_escaping_canonical_config(
     tmp_path: Path,
 ) -> None:
     tools = tmp_path / "tools"
@@ -5764,20 +5763,21 @@ def test_secure_walkaround_launcher_rejects_escaping_runtime_projection(
     generation = _write_walkaround_generation(
         tools, "vibecrafted-generation-escape", 'print("must-not-run")\n'
     )
-    external = tmp_path / "external"
-    external_config = external / "generated/vc-frame/config.kdl"
-    external_config.parent.mkdir(parents=True)
-    projected = generation / "runtime/generated/vc-frame/config.kdl"
-    external_config.write_bytes(projected.read_bytes())
-    shutil.rmtree(generation / "runtime")
-    (generation / "runtime").symlink_to(external, target_is_directory=True)
+    canonical = (
+        generation
+        / "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame/config.kdl"
+    )
+    external_config = tmp_path / "escaping-config.kdl"
+    canonical.rename(external_config)
+    canonical.symlink_to(external_config)
     current.symlink_to(generation.name)
     _managed, public = _install_test_walkaround_launcher(tmp_path, current)
 
     result = subprocess.run([str(public)], check=False, capture_output=True, text=True)
 
     assert result.returncode == 70
-    assert "runtime projection topology is not canonical" in result.stderr
+    assert "manifest-bound file" in result.stderr
+    assert "is aliased" in result.stderr
 
 
 def test_secure_walkaround_launcher_resists_hostile_python_and_path_environment(
@@ -5945,6 +5945,8 @@ def test_runtime_generation_pointer_swap_never_removes_current(
                 raw_target = Path(source_path).parent / raw_target
             materialized_before_publish = (
                 raw_target.resolve()
+                / "vibecrafted-core"
+                / "vibecrafted_core"
                 / "runtime"
                 / "generated"
                 / "vc-frame"
@@ -7050,12 +7052,17 @@ def test_compact_install_refreshes_current_tools_from_local_checkout(
     )
 
     assert exit_code == 0
-    assert (current_link / "runtime" / "shell" / "vetcoders.sh").read_text(
-        encoding="utf-8"
-    ) == 'printf "fresh installed helper\\n"\n'
+    assert (
+        current_link / "vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
+    ).read_text(encoding="utf-8") == 'printf "fresh installed helper\\n"\n'
     assert (current_link / "scripts" / "vibecrafted").read_text(
         encoding="utf-8"
     ) == '#!/usr/bin/env bash\nprintf "fresh installed launcher\\n"\n'
+    package_skills = current_link / "vibecrafted-core" / "vibecrafted_core" / "skills"
+    assert (package_skills / "vc-init" / "SKILL.md").is_file()
+    assert not (current_link / "skills").exists()
+    assert (crafted_home / installer.STATE_FILE).is_file()
+    assert not (package_skills / installer.STATE_FILE).exists()
 
 
 def _build_symlinked_skill_store(tmp_path: Path) -> tuple[Path, Path]:

@@ -173,7 +173,11 @@ platform_banner() {
 extract_tarball() {
   local archive="$1"
   local destination="$2"
-  local tar_args=(-xzf "$archive" -C "$destination")
+  # The archive preflight admits only canonical 0755 directories, 0644/0755
+  # files, and 0777 symlinks. Preserve those verified modes explicitly: a
+  # hardened operator umask (for example 077) must not make our own extracted
+  # tree fail the post-extraction identity check.
+  local tar_args=(-xzf "$archive" -C "$destination" -p)
 
   # Release archives can carry macOS LIBARCHIVE/PAX xattrs. GNU tar prints a
   # wall of harmless "unknown keyword" warnings on Linux unless we quiet them.
@@ -253,10 +257,7 @@ REQUIRED_DIRECTORIES = frozenset(
         "config",
         "docs",
         "plugins",
-        "runtime/scripts",
-        "runtime/shell/lib",
         "scripts/installer",
-        "skills",
         "templates",
         "tools",
         "vibecrafted-app",
@@ -274,10 +275,7 @@ REQUIRED_SURFACE_FILES = frozenset(
         "config/README.md",
         "docs/INSTALL.md",
         "plugins/iterm2/README.md",
-        "runtime/scripts/README.md",
-        "runtime/shell/lib/core.sh",
         "scripts/installer/pyproject.toml",
-        "skills/vc-init/SKILL.md",
         "templates/hooks/install.sh",
         "tools/README.md",
         "vibecrafted-app/Cargo.toml",
@@ -289,11 +287,6 @@ REQUIRED_SURFACE_FILES = frozenset(
         "workflows/MARBLES.md",
     }
 )
-CANONICAL_PROJECTIONS = {
-    "runtime": "vibecrafted-core/vibecrafted_core/runtime",
-    "skills": "vibecrafted-core/vibecrafted_core/skills",
-}
-
 ALLOWED_TOP_LEVEL = frozenset(
     {
         "VERSION",
@@ -315,7 +308,6 @@ ALLOWED_TOP_LEVEL = frozenset(
         "plugins",
         "runtime",
         "scripts",
-        "skills",
         "templates",
         "tools",
         "vibecrafted-app",
@@ -438,24 +430,16 @@ def validate_symlink_target(relative: str, target: str) -> bytes:
 
 
 def validate_required_structure(kinds: dict[str, str]) -> None:
-    def physical(relative: str) -> str:
-        head, separator, tail = relative.partition("/")
-        canonical = CANONICAL_PROJECTIONS.get(head)
-        return f"{canonical}/{tail}" if canonical is not None and separator else relative
-
     missing_files = sorted(
         relative
         for relative in REQUIRED_FILES | REQUIRED_SURFACE_FILES
-        if kinds.get(physical(relative)) != "file"
+        if kinds.get(relative) != "file"
     )
     missing_directories = sorted(
         relative
         for relative in REQUIRED_DIRECTORIES
-        if kinds.get(physical(relative))
-        != ("symlink" if relative in CANONICAL_PROJECTIONS else "directory")
+        if kinds.get(relative) != "directory"
     )
-    if kinds.get("runtime") != "symlink" or kinds.get("skills") != "symlink":
-        fail("runtime and skills must be the exact top-level projection symlinks")
     errors = [
         *(f"missing required file: {relative}" for relative in missing_files),
         *(
@@ -639,11 +623,6 @@ def archive_entries(archive_path: Path) -> tuple[str, bytes, dict[str, object], 
                     if member.mode != 0o777 or member.size != 0:
                         fail(f"noncanonical symlink member: {relative}")
                     target = validate_symlink_target(relative, member.linkname)
-                    expected_target = CANONICAL_PROJECTIONS.get(relative)
-                    if expected_target is not None and member.linkname != expected_target:
-                        fail(
-                            f"noncanonical projection symlink: {relative} -> {member.linkname}"
-                        )
                     records[relative] = (raw_path, b"l", 0o777, target)
                     member_types[relative] = "symlink"
                 else:
@@ -778,9 +757,6 @@ def filesystem_entries(root: Path) -> tuple[bytes, dict[str, object], list[tuple
             ):
                 fail(f"symlink changed during integrity preflight: {relative}")
             payload = validate_symlink_target(relative, target)
-            expected_target = CANONICAL_PROJECTIONS.get(relative)
-            if expected_target is not None and target != expected_target:
-                fail(f"noncanonical projection symlink: {relative} -> {target}")
             records.append((raw_path, b"l", 0o777, payload))
             kinds[relative] = "symlink"
         elif stat.S_ISDIR(metadata.st_mode):
@@ -1176,11 +1152,12 @@ platform_banner
 
 if [[ "$PLATFORM_OS" == "unsupported" ]]; then
   info ""
-  info "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. v1.x ships native Linux + macOS + WSL paths."
-  info "On native Windows the installer must run inside WSL2:"
+  info "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. ships macOS, Linux and WSL2 paths."
+  info "There is no native Windows build; on Windows the installer runs"
+  info "inside WSL2. Install WSL2 once, then bootstrap inside it:"
+  info "    wsl --install"
   info "    wsl bash -c 'curl -fsSL https://vibecrafted.io/install.sh | bash'"
-  info "Or open: https://github.com/vetcoders/vibecrafted/issues to track v2.x"
-  info "native Windows support."
+  info "Full per-platform matrix: docs/INSTALL.md"
   die "Unsupported platform: $(uname -s). Re-run inside WSL2."
 fi
 

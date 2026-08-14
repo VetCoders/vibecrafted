@@ -105,7 +105,7 @@ RUNTIME_GENERATION_REQUIRED_HASHES = frozenset(
     {
         "VERSION",
         "scripts/vibecrafted",
-        RUNTIME_GENERATION_PROJECTED_CONFIG,
+        RUNTIME_GENERATION_CANONICAL_CONFIG,
         RUNTIME_GENERATION_ENTRYPOINT,
         "vibecrafted-core/vibecrafted_core/product_contract.py",
         "vibecrafted-core/vibecrafted_core/walkaround_runner.py",
@@ -2000,6 +2000,17 @@ def verify_app(app_path: str | Path, *, require_clean: bool = False) -> dict[str
         _fail(E_BUNDLE, f"application icon is missing: {PRODUCT_ICON_FILE}")
     if f"Contents/Resources/{PRODUCT_ICON_FILE}" not in validated.entries:
         _fail(E_INVENTORY, "application icon is absent from the signed inventory")
+    unexpected_icons = sorted(
+        path.name
+        for path in (app / "Contents/Resources").glob("*.icns")
+        if path.name != PRODUCT_ICON_FILE
+    )
+    if unexpected_icons:
+        _fail(
+            E_BUNDLE,
+            "application contains non-canonical icon resources: "
+            + ", ".join(unexpected_icons),
+        )
     if plist.get("CFBundleShortVersionString") != version:
         _fail(E_BUNDLE, "Info.plist marketing version does not match product manifest")
     if plist.get("CFBundleVersion") != build:

@@ -3,9 +3,30 @@ from __future__ import annotations
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-VC_FRAME_CONFIG = REPO_ROOT / "config" / "vc-frame" / "config.kdl"
-LAYOUTS_DIR = REPO_ROOT / "config" / "vc-frame" / "layouts"
-THEMES_DIR = REPO_ROOT / "config" / "vc-frame" / "themes"
+VC_FRAME_CONFIG = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "config"
+    / "vc-frame"
+    / "config.kdl"
+)
+LAYOUTS_DIR = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "config"
+    / "vc-frame"
+    / "layouts"
+)
+THEMES_DIR = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "config"
+    / "vc-frame"
+    / "themes"
+)
 
 
 def test_vc_frame_config_uses_plain_ctrl_without_option_layer() -> None:

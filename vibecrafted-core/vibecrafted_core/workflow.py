@@ -1966,6 +1966,7 @@ def launch_workflow(
     claim_digest = str(spec.claim_digest or "").strip()
     initial_meta: dict[str, Any] = dict(launch_meta or {})
     initial_meta["run_id"] = run_id
+    initial_meta["runtime"] = spec.runtime
     if claim_digest:
         initial_meta["claim_digest"] = claim_digest
     if len(initial_meta) > 1:

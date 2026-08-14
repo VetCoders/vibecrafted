@@ -8,8 +8,8 @@ _vc_source_launcher_ulimits() {
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   for candidate in \
     "$script_dir/../runtime/scripts/lib/ulimits.sh" \
-    "${VIBECRAFTED_ROOT:-}/runtime/scripts/lib/ulimits.sh" \
-    "${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current/runtime/scripts/lib/ulimits.sh" \
+    "${VIBECRAFTED_ROOT:-}/vibecrafted-core/vibecrafted_core/runtime/scripts/lib/ulimits.sh" \
+    "${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/lib/ulimits.sh" \
     "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/runtime/scripts/lib/ulimits.sh"; do
     [[ -n "$candidate" && -r "$candidate" ]] || continue
     # shellcheck disable=SC1090
@@ -42,6 +42,19 @@ else
 fi
 crafted_skills="$crafted_home/skills"
 crafted_tools="$(_expand_home_path "${VIBECRAFTED_TOOLS_HOME:-$crafted_runtime_home/tools}")/vibecrafted-current"
+
+# The installer stages npm-provided agent CLIs under $crafted_home/tools/node/bin
+# and reports them as installed — but that directory never reaches the user's
+# PATH, so a fresh install answered `vibecrafted init claude` with exit 1 and
+# zero output. Teach the deck where its own installer puts them. Appended, never
+# prepended: an operator's own agent install keeps winning.
+crafted_agent_bin="$crafted_home/tools/node/bin"
+if [[ -d "$crafted_agent_bin" ]]; then
+  case ":${PATH:-}:" in
+    *":$crafted_agent_bin:"*) ;;
+    *) export PATH="${PATH:+$PATH:}$crafted_agent_bin" ;;
+  esac
+fi
 
 _bold='\033[1m'
 _dim='\033[2m'
@@ -171,6 +184,31 @@ _has_agent() {
   esac
 }
 
+# A missing agent CLI is the stranger's first-use cliff: `init` used to answer
+# a bare `return 1` — exit 1, zero bytes, nothing to act on. Name the gap and
+# hand over the one command that closes it.
+_require_agent_cli() {
+  local agent="${1:-}"
+  command -v "$agent" >/dev/null 2>&1 && return 0
+  local staged="$crafted_agent_bin/$agent"
+  printf '%b✗%b %s CLI is not available.\n' "$_red" "$_reset" "$agent" >&2
+  if [[ -e "$staged" ]]; then
+    printf '  Found at %s but it is not executable from here.\n' "$staged" >&2
+    printf '  Fix: chmod +x %s\n' "$staged" >&2
+  else
+    printf '  Install it, then re-run this command:\n' >&2
+    case "$agent" in
+      claude) printf '    npm install -g @anthropic-ai/claude-code\n' >&2 ;;
+      codex) printf '    npm install -g @openai/codex\n' >&2 ;;
+      junie) printf '    npm install -g @jetbrains/junie\n' >&2 ;;
+      grok) printf '    npm install -g @xai-official/grok\n' >&2 ;;
+      agy) printf '    install Google Antigravity CLI, then: agy install\n' >&2 ;;
+    esac
+    printf '  Or check the whole fleet: vibecrafted doctor\n' >&2
+  fi
+  return 1
+}
+
 _has_mode() {
   local candidate="${1:-}"
   local mode
@@ -244,7 +282,7 @@ _helper_candidates() {
   local repo_source repo_helper package_root
   repo_source="$(_repo_source_root 2>/dev/null || true)"
   package_root="$(_package_resource_root 2>/dev/null || true)"
-  repo_helper="$(_script_repo_root)/runtime/shell/vetcoders.sh"
+  repo_helper="$(_script_repo_root)/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
   if [[ -n "$repo_source" ]]; then
     printf '%s\n' "$repo_source/runtime/shell/vetcoders.sh"
     printf '%s\n' "$repo_source/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
@@ -255,7 +293,7 @@ _helper_candidates() {
   # Prefer the staged control plane over the mutable shared skill store so a
   # freshly updated launcher cannot be shadowed by older installed helpers.
   printf '%s\n' \
-    "$crafted_tools/runtime/shell/vetcoders.sh" \
+    "$crafted_tools/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh" \
     "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" \
     "$crafted_skills/runtime/shell/vetcoders.sh" \
     "$repo_helper"
@@ -353,8 +391,8 @@ _loop_script() {
     "${repo_source:+$repo_source/runtime/scripts/vibecrafted-loop.sh}" \
     "${repo_source:+$repo_source/vibecrafted-core/vibecrafted_core/runtime/scripts/vibecrafted-loop.sh}" \
     "${package_root:+$package_root/runtime/scripts/vibecrafted-loop.sh}" \
-    "$crafted_tools/runtime/scripts/vibecrafted-loop.sh" \
-    "$(_script_repo_root)/runtime/scripts/vibecrafted-loop.sh"; do
+    "$crafted_tools/vibecrafted-core/vibecrafted_core/runtime/scripts/vibecrafted-loop.sh" \
+    "$(_script_repo_root)/vibecrafted-core/vibecrafted_core/runtime/scripts/vibecrafted-loop.sh"; do
     [[ -n "$candidate" && -f "$candidate" ]] || continue
     printf '%s\n' "$candidate"
     return 0
@@ -370,8 +408,8 @@ _cron_script() {
     "${repo_source:+$repo_source/runtime/scripts/vibecrafted-cron.sh}" \
     "${repo_source:+$repo_source/vibecrafted-core/vibecrafted_core/runtime/scripts/vibecrafted-cron.sh}" \
     "${package_root:+$package_root/runtime/scripts/vibecrafted-cron.sh}" \
-    "$crafted_tools/runtime/scripts/vibecrafted-cron.sh" \
-    "$(_script_repo_root)/runtime/scripts/vibecrafted-cron.sh"; do
+    "$crafted_tools/vibecrafted-core/vibecrafted_core/runtime/scripts/vibecrafted-cron.sh" \
+    "$(_script_repo_root)/vibecrafted-core/vibecrafted_core/runtime/scripts/vibecrafted-cron.sh"; do
     [[ -n "$candidate" && -f "$candidate" ]] || continue
     printf '%s\n' "$candidate"
     return 0
@@ -3481,7 +3519,7 @@ cmd_server() {
         return 1
       fi
 
-      local site_root="${VIBECRAFTED_RUNTIME_HOME:-$HOME/.local/share/vibecrafted}/server/site"
+      local site_root="${VIBECRAFTED_RUNTIME_ROOT:-${VIBECRAFTED_RUNTIME_HOME:-$HOME/.local/share/vibecrafted}}/server/site"
       if [[ ! -d "$site_root" ]]; then
         printf "%b✗%b site assets directory not found at %s. Please run 'make install-all' or 'make install-server' first.\n" "$_red" "$_reset" "$site_root" >&2
         return 1
@@ -3806,7 +3844,7 @@ cmd_server() {
       fi
 
       # 2. Site root & Fonts check
-      local site_root="${VIBECRAFTED_RUNTIME_HOME:-$HOME/.local/share/vibecrafted}/server/site"
+      local site_root="${VIBECRAFTED_RUNTIME_ROOT:-${VIBECRAFTED_RUNTIME_HOME:-$HOME/.local/share/vibecrafted}}/server/site"
       if [[ -d "$site_root" ]]; then
         printf "  [%b✓%b] Site root present at %s\n" "$_green" "$_reset" "$site_root"
         if [[ -d "$site_root/fonts" ]]; then
@@ -4450,13 +4488,7 @@ cmd_init() {
     return 1
   }
 
-  case "$agent" in
-    claude) command -v claude >/dev/null 2>&1 || return 1 ;;
-    codex) command -v codex >/dev/null 2>&1 || return 1 ;;
-    agy) command -v agy >/dev/null 2>&1 || return 1 ;;
-    junie) command -v junie >/dev/null 2>&1 || return 1 ;;
-    grok) command -v grok >/dev/null 2>&1 || return 1 ;;
-  esac
+  _require_agent_cli "$agent" || return 1
 
   [[ $# -gt 0 ]] && shift
   printf '%b⚒%b  Starting %b%s%b with vc-init...\n' "$_copper" "$_reset" "$_bold" "$agent" "$_reset"

@@ -5,8 +5,22 @@ import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-COMMON_SH = REPO_ROOT / "runtime" / "scripts" / "common.sh"
-AWAIT_SH = REPO_ROOT / "runtime" / "scripts" / "await.sh"
+COMMON_SH = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "scripts"
+    / "common.sh"
+)
+AWAIT_SH = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "scripts"
+    / "await.sh"
+)
 
 
 def _bash(script: str) -> subprocess.CompletedProcess[str]:

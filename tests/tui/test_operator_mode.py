@@ -9,7 +9,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
+HELPER_SCRIPT = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "shell"
+    / "vetcoders.sh"
+)
 
 
 def _write_capture_command(bin_dir: Path, name: str, capture_file: Path) -> None:
@@ -210,7 +217,16 @@ def test_vc_start_launches_operator_entrypoint_layout(tmp_path: Path) -> None:
     assert expected_session in payload
     assert "--new-session-with-layout" in payload
     assert (
-        str(REPO_ROOT / "config" / "vc-frame" / "layouts" / "operator.kdl") in payload
+        str(
+            REPO_ROOT
+            / "vibecrafted-core"
+            / "vibecrafted_core"
+            / "config"
+            / "vc-frame"
+            / "layouts"
+            / "operator.kdl"
+        )
+        in payload
     )
 
 
@@ -269,6 +285,8 @@ def test_vc_start_with_stale_frame_env_creates_session_foreground(
 def test_operator_console_first_screen_is_actionable() -> None:
     payload = (
         REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
         / "runtime"
         / "vc-operator"
         / "mission-control"
@@ -344,7 +362,13 @@ def test_explicit_gc_apply_never_selects_untyped_sessions(tmp_path: Path) -> Non
     fake_bin.mkdir()
     _write_implicit_gc_probe_vc_frame(fake_bin)
     script = (
-        REPO_ROOT / "runtime" / "vc-operator" / "mission-control" / "vc-frame-gc.sh"
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "vc-operator"
+        / "mission-control"
+        / "vc-frame-gc.sh"
     )
     env = os.environ.copy()
     env.update(
@@ -484,7 +508,14 @@ def test_operator_console_does_not_run_implicit_session_gc(tmp_path: Path) -> No
             "SHELL": str(fake_shell),
         }
     )
-    source_mission_control = REPO_ROOT / "runtime" / "vc-operator" / "mission-control"
+    source_mission_control = (
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "vc-operator"
+        / "mission-control"
+    )
     operator_console = mission_control / "operator-console.sh"
     gc_script = mission_control / "vc-frame-gc.sh"
     shutil.copy2(source_mission_control / operator_console.name, operator_console)
@@ -1035,7 +1066,12 @@ def test_spawn_script_prefers_repo_runtime_over_installed_copy(tmp_path: Path) -
     )
 
     assert result.stdout.strip() == str(
-        REPO_ROOT / "runtime" / "scripts" / "marbles_spawn.sh"
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "scripts"
+        / "marbles_spawn.sh"
     )
 
 
@@ -1256,7 +1292,16 @@ def test_skill_bootstraps_fresh_operator_session_when_existing_one_is_dead(
     assert f"Session '{expected_session}' is dead; preserving it" in result.stderr
     assert f"kill-session {expected_session}" not in payload
     assert (
-        str(REPO_ROOT / "config" / "vc-frame" / "layouts" / "operator.kdl") in payload
+        str(
+            REPO_ROOT
+            / "vibecrafted-core"
+            / "vibecrafted_core"
+            / "config"
+            / "vc-frame"
+            / "layouts"
+            / "operator.kdl"
+        )
+        in payload
     )
     assert "--new-session-with-layout" in payload and recovery_session in payload
     assert "OSA " not in payload

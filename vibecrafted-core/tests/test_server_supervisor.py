@@ -252,9 +252,29 @@ def test_plistlib_renderer_preserves_metacharacters_without_xml_injection(
         "VIBECRAFTED_SERVER_SUPERVISOR_RUNTIME_SHA256",
         "VIBECRAFTED_SERVER_SUPERVISOR_VERSION",
         "VIBECRAFTED_SERVER_LAUNCHER_SHA256",
+        "VIBECRAFTED_TRIAGE_RUN",
     }
     assert b"&amp;" in rendered
     assert b"<path>" not in rendered
+
+
+def test_launch_agent_propagates_terminal_triage_kill_switch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    config = _config(tmp_path, launcher)
+    monkeypatch.setenv("VIBECRAFTED_TRIAGE_RUN", "0")
+
+    payload = plistlib.loads(
+        supervisor.render_launch_agent_plist(
+            config,
+            supervisor_binary=supervisor_binary,
+        )
+    )
+
+    assert payload["EnvironmentVariables"]["VIBECRAFTED_TRIAGE_RUN"] == "0"
 
 
 def test_service_install_is_idempotent_and_refuses_symlink_destination(
@@ -1322,12 +1342,14 @@ def test_child_environment_is_a_minimal_nonsecret_allowlist(
     monkeypatch.setenv("GITHUB_TOKEN", "must-not-cross")
     monkeypatch.setenv("OPENAI_API_KEY", "must-not-cross")
     monkeypatch.setenv("VIBECRAFTED_STOP_TERM_WAIT_TICKS", "9")
+    monkeypatch.setenv("VIBECRAFTED_TRIAGE_RUN", "0")
 
     environment = supervisor._child_environment(config.paths)
 
     assert "GITHUB_TOKEN" not in environment
     assert "OPENAI_API_KEY" not in environment
     assert environment["VIBECRAFTED_STOP_TERM_WAIT_TICKS"] == "9"
+    assert environment["VIBECRAFTED_TRIAGE_RUN"] == "0"
     assert environment["VIBECRAFTED_HOME"] == str(config.paths.home)
     assert environment["VIBECRAFTED_RUNTIME_HOME"] == str(config.paths.runtime_home)
     assert environment["VIBECRAFTED_SERVER_SUPERVISOR_CHILD"] == "1"

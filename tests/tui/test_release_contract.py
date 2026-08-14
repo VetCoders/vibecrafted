@@ -55,6 +55,9 @@ def test_macos_publisher_cold_verifies_exact_uploaded_bytes() -> None:
     assert "xcrun stapler validate" in publisher
     assert "spctl --assess --type open" in publisher
     assert "code-scanning/alerts?state=open&ref=refs/heads/main" in publisher
+    assert "per_page=1" in publisher
+    assert "gh api --paginate" not in publisher
+    assert "--slurp --jq" not in publisher
     assert 'gh release edit "$TAG"' in publisher
 
     expected_assets = publisher.split('EXPECTED_ASSETS="', 1)[1].split('"', 1)[0]
@@ -75,27 +78,73 @@ def test_builder_emits_the_canonical_versioned_dmg_and_checksum() -> None:
         'DMG_NAME="Vibecrafted_${VERSION}-${RELEASE_DATE}-${ROOT_SHA:0:8}.dmg"'
         in builder
     )
+    assert 'RUNTIME_VERSION="${VERSION}+g${ROOT_SHA:0:8}"' in builder
+    assert 'printf \'%s\\n\' "$RUNTIME_VERSION" > "$runtime/VERSION"' in builder
     assert 'DMG_CHECKSUM="$DMG.sha256"' in builder
     assert 'LEGACY_DMG="$DIST_DIR/Vibecrafted.dmg"' in builder
     assert 'rm -f "$DMG_CHECKSUM" "$LEGACY_DMG"' in builder
     assert '/usr/bin/shasum -a 256 "$DMG_NAME"' in builder
     assert "-type d -name __pycache__" in builder
     assert "-name '*.pyc'" in builder
+    assert "-name '.DS_Store'" in builder
+    assert "build-server-release" in builder
+    assert 'install -m 0755 "$server_source" "$runtime/bin/vc-server"' in builder
+    assert '"$runtime/server/site/"' in builder
+    assert "vc-server-supervisor:vibecrafted_core.server_supervisor" in builder
+    assert '"$runtime/runtime"' not in builder
 
 
 def test_release_bundle_binds_the_vibecrafted_app_icon() -> None:
     project = (REPO_ROOT / "vibecrafted-app/shell-agent/app/project.yml").read_text(
         encoding="utf-8"
     )
+    info_plist = (
+        REPO_ROOT / "vibecrafted-app/shell-agent/app/Vibecrafted/Info.plist"
+    ).read_text(encoding="utf-8")
     manifest = (REPO_ROOT / "scripts/unified_product_manifest.py").read_text(
+        encoding="utf-8"
+    )
+    builder = (REPO_ROOT / "scripts/build-vibecrafted-release.sh").read_text(
+        encoding="utf-8"
+    )
+    icon_builder = (REPO_ROOT / "scripts/build-vibecrafted-icon.sh").read_text(
         encoding="utf-8"
     )
     icon = REPO_ROOT / "vibecrafted-app/shell-agent/app/Vibecrafted/Vibecrafted.icns"
 
-    assert "INFOPLIST_KEY_CFBundleIconFile: Vibecrafted" in project
+    assert "INFOPLIST_FILE: Vibecrafted/Info.plist" in project
+    assert "<key>CFBundleIconFile</key>" in info_plist
+    assert "<string>Vibecrafted.icns</string>" in info_plist
     assert 'plist["CFBundleIconFile"] = contract.PRODUCT_ICON_FILE' in manifest
     assert icon.is_file()
     assert icon.stat().st_size > 100_000
+    assert "$TERMINAL_REPO/assets/icon/vc-terminal-icon.png" in builder
+    assert "$TERMINAL_REPO/assets/icon/terminal.png" in builder
+    assert '"$ICON_SOURCE" "$resources/Vibecrafted.icns" "$ICON_REFERENCE"' in builder
+    assert "! -name 'Vibecrafted.icns'" in builder
+    assert "iconutil -c icns" in icon_builder
+    assert 'cmp -s "$ICONSET/icon_128x128.png" "$REFERENCE"' in icon_builder
+
+
+def test_mission_control_failure_board_exposes_absolute_failure_time() -> None:
+    view = (
+        REPO_ROOT
+        / "vibecrafted-app/shell-agent/app/Vibecrafted/Views/MissionControlViewController.swift"
+    ).read_text(encoding="utf-8")
+    ffi = (REPO_ROOT / "vibecrafted-app/shell-agent/ffi/src/lib.rs").read_text(
+        encoding="utf-8"
+    )
+    mission = (
+        REPO_ROOT / "vibecrafted-app/tui-agent/src/mission_control.rs"
+    ).read_text(encoding="utf-8")
+
+    assert '("Date", "DATE", 145)' in view
+    assert 'case "DATE": return dateTime(item.occurredAt)' in view
+    assert "private static let iso8601DateFormatter" in view
+    assert "private static let failureDateFormatter" in view
+    assert "ISO8601DateFormatter().date" not in view
+    assert "pub occurred_at: Option<String>" in ffi
+    assert "occurred_at: Some(record.completed_at.to_rfc3339())" in mission
 
 
 def test_signed_bundle_runtime_cannot_write_python_bytecode() -> None:
@@ -133,8 +182,13 @@ def test_publisher_writes_the_mandatory_release_report() -> None:
 
 
 def test_vc_release_skill_locks_four_mandatory_report_sections() -> None:
-    skill = (REPO_ROOT / "skills/vc-release/SKILL.md").read_text(encoding="utf-8")
-    template = REPO_ROOT / "skills/vc-release/references/release-report-template.md"
+    skill = (
+        REPO_ROOT / "vibecrafted-core/vibecrafted_core/skills/vc-release/SKILL.md"
+    ).read_text(encoding="utf-8")
+    template = (
+        REPO_ROOT
+        / "vibecrafted-core/vibecrafted_core/skills/vc-release/references/release-report-template.md"
+    )
 
     assert "## Release Report Contract" in skill
     for required in (

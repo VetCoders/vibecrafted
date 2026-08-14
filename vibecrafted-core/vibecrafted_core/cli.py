@@ -528,6 +528,61 @@ def _print_launch_receipt(payload: dict[str, Any]) -> None:
     print("=====================================================================")
 
 
+# Parity contract with the shell launcher's `spawn_watch_startup`
+# (runtime/scripts/lib/launcher_watch.sh): same markers, same short window.
+# The core dispatch path carried no such guard, so a fresh machine's first
+# run — always unauthenticated — printed a receipt that reads like success
+# while the worker had already died on "Not logged in".
+STARTUP_FAILURE_HINTS: tuple[tuple[str, str], ...] = (
+    ("Not logged in", "run `{agent}` once and complete the login, then retry"),
+    ("Please run /login", "run `{agent}` once and complete the login, then retry"),
+    ("Permission denied", "check file permissions for the run root"),
+    ("command not found", "the agent CLI is not on PATH — vibecrafted doctor"),
+)
+STARTUP_HEALTHY_MARKERS: tuple[str, ...] = ('"type":"user"', '"type":"assistant"')
+
+
+def _watch_launch_startup(
+    payload: dict[str, Any], seconds: float | None = None
+) -> None:
+    """Report a worker that died in its first seconds instead of leaving the
+    receipt as the last word. Silent when the worker starts working."""
+    if seconds is None:
+        try:
+            seconds = float(os.environ.get("VIBECRAFTED_SPAWN_WATCH_SECONDS", "6"))
+        except ValueError:
+            seconds = 6.0
+    transcript = str(payload.get("transcript") or "")
+    # `accepted` may be absent OR present-but-null; only an explicit False
+    # means the launch was refused and there is nothing to watch.
+    if seconds <= 0 or not transcript or payload.get("accepted") is False:
+        return
+    agent = str(payload.get("agent") or "the agent")
+    path = Path(transcript)
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        for marker, hint in STARTUP_FAILURE_HINTS:
+            if marker in text:
+                # Flush the receipt first: piped stdout is block-buffered while
+                # stderr is not, so the warning would otherwise surface above
+                # the receipt it is meant to qualify.
+                sys.stdout.flush()
+                print(
+                    f"\n⚠  Worker stopped right after launch: {marker}",
+                    file=sys.stderr,
+                )
+                print(f"   Fix: {hint.format(agent=agent)}", file=sys.stderr)
+                print(f"   Transcript: {transcript}", file=sys.stderr)
+                return
+        if any(marker in text for marker in STARTUP_HEALTHY_MARKERS):
+            return  # the worker is producing turns — leave it alone
+        time.sleep(0.25)
+
+
 def _launch_receipt_reasons(payload: dict[str, Any]) -> list[str]:
     raw = payload.get("reasons") or payload.get("block_reasons")
     if isinstance(raw, str):
@@ -1362,6 +1417,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         _print_launch_receipt(result)
+        _watch_launch_startup(result)
     return 0 if result.get("accepted") else 1
 
 

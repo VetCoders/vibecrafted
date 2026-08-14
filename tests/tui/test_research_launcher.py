@@ -20,7 +20,14 @@ import pytest
 from vibecrafted_core.cli import _normalize_research_arity_args
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
+HELPER_SCRIPT = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "shell"
+    / "vetcoders.sh"
+)
 
 
 def _env(tmp_path: Path, *, crafted_home: Path | None = None) -> dict[str, str]:

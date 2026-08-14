@@ -16,7 +16,10 @@ set -euo pipefail
 #   --mirror            Delete extra files in installed dirs
 #   --list              Show available skills (redirects to list subcommand)
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# This shim lives under vibecrafted-core/vibecrafted_core/runtime/scripts in
+# both a source checkout and the immutable installed generation. Walk back to
+# the distribution root, where the single Smart Installer is owned.
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 installer="$repo_root/scripts/vetcoders_install.py"
 
 if [[ ! -f "$installer" ]]; then

@@ -24,6 +24,14 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
     }
   }
 
+  private static let iso8601DateFormatter = ISO8601DateFormatter()
+  private static let failureDateFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "yyyy-MM-dd HH:mm"
+    return formatter
+  }()
+
   private let scrollView = NSScrollView()
   private let contentView = NSView()
   private let stackView = NSStackView()
@@ -197,6 +205,7 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
       section: .failures,
       columns: [
         ("Run", "RUN_ID", 240),
+        ("Date", "DATE", 145),
         ("Agent", "AGENT", 90),
         ("Skill", "SKILL", 120),
         ("Reason", "REASON", 320),
@@ -496,6 +505,7 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
       let item = snapshot.failures[row]
       switch column {
       case "RUN_ID": return item.runId
+      case "DATE": return dateTime(item.occurredAt)
       case "AGENT": return displayValue(item.agent)
       case "SKILL": return displayValue(item.skill)
       case "REASON": return displayValue(item.reason)
@@ -583,6 +593,14 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
       return "—"
     }
     return value
+  }
+
+  private func dateTime(_ value: String?) -> String {
+    guard let value, let date = Self.iso8601DateFormatter.date(from: value) else {
+      return "—"
+    }
+    Self.failureDateFormatter.timeZone = .current
+    return Self.failureDateFormatter.string(from: date)
   }
 
   private func focusSection(_ sectionID: String) {

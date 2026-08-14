@@ -86,12 +86,18 @@ def test_vc_alias_matrix_script_exists_and_is_executable_gate() -> None:
 
 
 def test_sync_script_covers_both_deck_paths() -> None:
-    """Install sync must copy scripts/vibecrafted AND packaged deck twin."""
+    """Install sync must project the packaged owner to both launcher paths."""
     script = REPO_ROOT / "scripts" / "sync-vc-alias-runtime.sh"
     assert script.is_file()
     body = script.read_text(encoding="utf-8")
-    assert "scripts/vibecrafted" in body
-    assert "vibecrafted_core/deck/vibecrafted" in body
+    assert (
+        'CANONICAL_DECK="$ROOT/vibecrafted-core/vibecrafted_core/deck/vibecrafted"'
+        in body
+    )
+    assert 'CHECKOUT_MIRROR="$ROOT/scripts/vibecrafted"' in body
+    assert 'cp -f "$CANONICAL_DECK" "$CHECKOUT_MIRROR"' in body
+    assert 'cp -f "$CHECKOUT_MIRROR" "$CANONICAL_DECK"' not in body
+    assert 'copy_one "$CANONICAL_DECK" "$GEN/scripts/vibecrafted"' in body
     assert "runtime/shell/lib/dispatch.sh" in body
     assert "runtime/shell/lib/marbles.sh" in body
 

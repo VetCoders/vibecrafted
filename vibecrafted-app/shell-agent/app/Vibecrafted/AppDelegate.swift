@@ -1,4 +1,17 @@
 import AppKit
+import Darwin
+
+private struct CanonicalRuntimeInstall {
+  let root: URL
+  let terminal: URL
+  let frame: URL
+  let start: URL
+  let terminalConfig: URL
+  let frameConfig: URL
+  let runtimeHome: URL
+  let configHome: URL
+  let craftedHome: URL
+}
 
 final class EventObserver: @unchecked Sendable, EventCallback {
   func onEvent(eventJson: String) {
@@ -30,6 +43,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    if ProcessInfo.processInfo.arguments.contains("--bootstrap-only") {
+      do {
+        let install = try installCanonicalRuntime()
+        print(install.root.path)
+        exit(EXIT_SUCCESS)
+      } catch {
+        fputs("Vibecrafted bootstrap failed: \(error)\n", stderr)
+        exit(EXIT_FAILURE)
+      }
+    }
+
     buildMainMenu()
     buildStatusItem()
 
@@ -64,37 +88,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       return
     }
 
-    let appRoot = Bundle.main.bundleURL
-    let terminal = appRoot.appendingPathComponent("Contents/Helpers/vc-terminal")
-    let frame = appRoot.appendingPathComponent("Contents/Helpers/vc-frame")
-    let config = appRoot.appendingPathComponent(
-      "Contents/Resources/terminal/vibecrafted.toml")
-    let start = appRoot.appendingPathComponent("Contents/Resources/runtime/bin/vc-start")
-    for required in [terminal, frame, start] where !FileManager.default.isExecutableFile(
+    let install: CanonicalRuntimeInstall
+    do {
+      install = try installCanonicalRuntime()
+    } catch {
+      print("Cannot publish the canonical Vibecrafted runtime: \(error)")
+      return
+    }
+
+    for required in [install.terminal, install.frame, install.start]
+      where !FileManager.default.isExecutableFile(
       atPath: required.path)
     {
       print("Bundled product entry is missing or not executable: \(required.path)")
       return
     }
-    guard FileManager.default.fileExists(atPath: config.path) else {
-      print("Bundled terminal config is missing: \(config.path)")
+    guard FileManager.default.fileExists(atPath: install.terminalConfig.path) else {
+      print("Canonical terminal config is missing: \(install.terminalConfig.path)")
       return
     }
 
     let host = ProcessInfo.processInfo.environment
-    let home = host["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path
-    let runtimeHome =
-      host["VIBECRAFTED_RUNTIME_HOME"]
-      ?? host["XDG_DATA_HOME"].map { "\($0)/vibecrafted" }
-      ?? "\(home)/.local/share/vibecrafted"
-    do {
-      try FileManager.default.createDirectory(
-        atPath: runtimeHome, withIntermediateDirectories: true)
-    } catch {
-      print("Cannot create Vibecrafted runtime home \(runtimeHome): \(error)")
-      return
-    }
-
     let inherited = [
       "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "COLORTERM", "TMPDIR",
       "SHELL",
@@ -104,15 +118,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
     environment["PYTHONNOUSERSITE"] = "1"
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
-    environment["VIBECRAFTED_RUNTIME_HOME"] = runtimeHome
-    environment["VIBECRAFTED_APP_ROOT"] = appRoot.path
-    environment["VIBECRAFTED_VC_FRAME_BIN"] = frame.path
+    environment["XDG_CONFIG_HOME"] = install.configHome.path
+    environment["VIBECRAFTED_HOME"] = install.craftedHome.path
+    environment["VIBECRAFTED_RUNTIME_HOME"] = install.runtimeHome.path
+    environment["VIBECRAFTED_RUNTIME_ROOT"] = install.root.path
+    environment["VIBECRAFTED_ROOT"] = install.root.path
+    environment["VIBECRAFTED_PYTHON"] = install.root.appendingPathComponent("bin/python3").path
+    environment["VIBECRAFTED_VC_FRAME_BIN"] = install.frame.path
+    environment["VC_FRAME_CONFIG_DIR"] = install.frameConfig.path
 
     let process = Process()
-    process.executableURL = terminal
+    process.executableURL = install.terminal
     process.arguments = [
-      "--config-file", config.path,
-      "-e", start.path, "operator",
+      "--config-file", install.terminalConfig.path,
+      "-e", install.start.path, "operator",
     ]
     process.environment = environment
     do {
@@ -120,6 +139,192 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       terminalProcess = process
     } catch {
       print("Failed to launch bundled vc-terminal: \(error)")
+    }
+  }
+
+  private func installCanonicalRuntime() throws -> CanonicalRuntimeInstall {
+    let manager = FileManager.default
+    let host = ProcessInfo.processInfo.environment
+    let home = host["HOME"] ?? manager.homeDirectoryForCurrentUser.path
+    let runtimeHome = URL(
+      fileURLWithPath:
+        host["VIBECRAFTED_RUNTIME_HOME"]
+        ?? host["XDG_DATA_HOME"].map { "\($0)/vibecrafted" }
+        ?? "\(home)/.local/share/vibecrafted", isDirectory: true)
+    let configHome = URL(
+      fileURLWithPath: host["XDG_CONFIG_HOME"] ?? "\(home)/.config", isDirectory: true)
+    let productConfig = configHome.appendingPathComponent("vibecrafted", isDirectory: true)
+    let craftedHome = URL(
+      fileURLWithPath: host["VIBECRAFTED_HOME"] ?? "\(home)/.vibecrafted", isDirectory: true)
+    let launcherHome = URL(
+      fileURLWithPath: host["VIBECRAFTED_LAUNCHER_BIN"] ?? "\(home)/.local/bin",
+      isDirectory: true)
+
+    let appRoot = Bundle.main.bundleURL
+    let bundledRuntime = appRoot.appendingPathComponent(
+      "Contents/Resources/runtime", isDirectory: true)
+    let versionURL = bundledRuntime.appendingPathComponent("VERSION")
+    let version = try String(contentsOf: versionURL, encoding: .utf8)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let allowed = CharacterSet(charactersIn: "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.+_-")
+    guard !version.isEmpty, version.unicodeScalars.allSatisfy(allowed.contains) else {
+      throw NSError(
+        domain: "io.vetcoders.vibecrafted.install", code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "invalid bundled VERSION: \(version)"])
+    }
+
+    let releases = runtimeHome.appendingPathComponent("releases", isDirectory: true)
+    let generation = releases.appendingPathComponent(version, isDirectory: true)
+    try manager.createDirectory(at: releases, withIntermediateDirectories: true)
+    try manager.createDirectory(at: productConfig, withIntermediateDirectories: true)
+    try manager.createDirectory(at: craftedHome, withIntermediateDirectories: true)
+    try manager.createDirectory(
+      at: craftedHome.appendingPathComponent("artifacts", isDirectory: true),
+      withIntermediateDirectories: true)
+    try manager.createDirectory(
+      at: craftedHome.appendingPathComponent("control_plane", isDirectory: true),
+      withIntermediateDirectories: true)
+    try manager.createDirectory(at: launcherHome, withIntermediateDirectories: true)
+
+    if !manager.fileExists(atPath: generation.path) {
+      let staging = releases.appendingPathComponent(
+        ".\(version).staging-\(UUID().uuidString)", isDirectory: true)
+      defer { try? manager.removeItem(at: staging) }
+      try manager.copyItem(at: bundledRuntime, to: staging)
+      let bin = staging.appendingPathComponent("bin", isDirectory: true)
+      try manager.createDirectory(at: bin, withIntermediateDirectories: true)
+      try manager.copyItem(
+        at: appRoot.appendingPathComponent("Contents/Helpers/vc-terminal"),
+        to: bin.appendingPathComponent("vc-terminal"))
+      try manager.copyItem(
+        at: appRoot.appendingPathComponent("Contents/Helpers/vc-frame"),
+        to: bin.appendingPathComponent("vc-frame"))
+      try assertNoSymlinks(below: staging)
+      try manager.moveItem(at: staging, to: generation)
+    }
+    try assertNoSymlinks(below: generation)
+    let bin = generation.appendingPathComponent("bin", isDirectory: true)
+
+    let sourceTerminalConfig = generation.appendingPathComponent(
+      "config/vc-terminal/vibecrafted.toml")
+    let terminalConfig = productConfig.appendingPathComponent("terminal.toml")
+    if !manager.fileExists(atPath: terminalConfig.path) {
+      try manager.copyItem(at: sourceTerminalConfig, to: terminalConfig)
+    }
+    let sourceFrameConfig = generation.appendingPathComponent(
+      "vibecrafted-core/vibecrafted_core/config/vc-frame", isDirectory: true)
+    let frameConfig = productConfig.appendingPathComponent("vc-frame", isDirectory: true)
+    if !manager.fileExists(atPath: frameConfig.path) {
+      try manager.copyItem(at: sourceFrameConfig, to: frameConfig)
+    }
+    let sourceShell = generation.appendingPathComponent(
+      "vibecrafted-core/vibecrafted_core/runtime/shell", isDirectory: true)
+    let productShell = productConfig.appendingPathComponent("shell", isDirectory: true)
+    if !manager.fileExists(atPath: productShell.path) {
+      try manager.copyItem(at: sourceShell, to: productShell)
+    }
+    try assertNoSymlinks(below: productConfig)
+
+    let terminal = generation.appendingPathComponent("bin/vc-terminal")
+    let frame = generation.appendingPathComponent("bin/vc-frame")
+    let start = generation.appendingPathComponent("bin/vc-start")
+    let deck = generation.appendingPathComponent("bin/vibecrafted")
+    let server = generation.appendingPathComponent("bin/vc-server")
+    let guardian = generation.appendingPathComponent("bin/vc-guardian")
+    let supervisor = generation.appendingPathComponent("bin/vc-server-supervisor")
+    let workflow = generation.appendingPathComponent("bin/vc-workflow")
+    for required in [terminal, frame, start, deck, server, guardian, supervisor, workflow]
+      where !manager.isExecutableFile(atPath: required.path)
+    {
+      throw NSError(
+        domain: "io.vetcoders.vibecrafted.install", code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "runtime entry is not executable: \(required.path)"])
+    }
+
+    let common = [
+      "export XDG_CONFIG_HOME=\(shellQuote(configHome.path))",
+      "export VIBECRAFTED_HOME=\(shellQuote(craftedHome.path))",
+      "export VIBECRAFTED_RUNTIME_HOME=\(shellQuote(runtimeHome.path))",
+      "export VIBECRAFTED_RUNTIME_ROOT=\(shellQuote(generation.path))",
+      "export VIBECRAFTED_ROOT=\(shellQuote(generation.path))",
+      "export VIBECRAFTED_PYTHON=\(shellQuote(generation.appendingPathComponent("bin/python3").path))",
+      "export VIBECRAFTED_VC_FRAME_BIN=\(shellQuote(frame.path))",
+      "export VC_FRAME_CONFIG_DIR=\(shellQuote(frameConfig.path))",
+      "export PATH=\(shellQuote("\(generation.appendingPathComponent("bin").path):/usr/bin:/bin:/usr/sbin:/sbin"))",
+    ]
+    let runtimeEntries = try manager.contentsOfDirectory(
+      at: bin, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])
+    for entry in runtimeEntries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+      let name = entry.lastPathComponent
+      guard name != "python3", name != "vc-terminal" else { continue }
+      let values = try entry.resourceValues(forKeys: [.isRegularFileKey])
+      guard values.isRegularFile == true, manager.isExecutableFile(atPath: entry.path) else { continue }
+      try writeLauncher(
+        launcherHome.appendingPathComponent(name), common: common, executable: entry)
+    }
+    try writeLauncher(
+      launcherHome.appendingPathComponent("vc-terminal"), common: common, executable: terminal,
+      leadingArguments: ["--config-file", terminalConfig.path])
+
+    let active: [String: String] = [
+      "schema": "vibecrafted.active-runtime.v1",
+      "version": version,
+      "runtime_root": generation.path,
+      "app_root": appRoot.path,
+    ]
+    let activeData = try JSONSerialization.data(
+      withJSONObject: active, options: [.prettyPrinted, .sortedKeys])
+    try activeData.write(to: runtimeHome.appendingPathComponent("active.json"), options: .atomic)
+
+    return CanonicalRuntimeInstall(
+      root: generation, terminal: terminal, frame: frame, start: start,
+      terminalConfig: terminalConfig, frameConfig: frameConfig, runtimeHome: runtimeHome,
+      configHome: configHome, craftedHome: craftedHome)
+  }
+
+  private func assertNoSymlinks(below root: URL) throws {
+    let keys: [URLResourceKey] = [.isSymbolicLinkKey]
+    if try root.resourceValues(forKeys: Set(keys)).isSymbolicLink == true {
+      throw NSError(
+        domain: "io.vetcoders.vibecrafted.install", code: 3,
+        userInfo: [NSLocalizedDescriptionKey: "symlink is forbidden: \(root.path)"])
+    }
+    guard let enumerator = FileManager.default.enumerator(
+      at: root, includingPropertiesForKeys: keys, options: [], errorHandler: nil)
+    else { return }
+    for case let item as URL in enumerator {
+      if try item.resourceValues(forKeys: Set(keys)).isSymbolicLink == true {
+        throw NSError(
+          domain: "io.vetcoders.vibecrafted.install", code: 3,
+          userInfo: [NSLocalizedDescriptionKey: "symlink is forbidden in runtime: \(item.path)"])
+      }
+    }
+  }
+
+  private func shellQuote(_ value: String) -> String {
+    "'\(value.replacingOccurrences(of: "'", with: "'\"'\"'"))'"
+  }
+
+  private func writeLauncher(
+    _ destination: URL, common: [String], executable: URL, leadingArguments: [String] = []
+  ) throws {
+    let arguments = leadingArguments.map(shellQuote).joined(separator: " ")
+    let prefix = arguments.isEmpty ? "" : "\(arguments) "
+    let body =
+      (["#!/bin/bash", "set -euo pipefail"] + common
+        + ["exec \(shellQuote(executable.path)) \(prefix)\"$@\""])
+      .joined(separator: "\n") + "\n"
+    let temporary = destination.deletingLastPathComponent().appendingPathComponent(
+      ".\(destination.lastPathComponent).new-\(UUID().uuidString)")
+    try body.write(to: temporary, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o755], ofItemAtPath: temporary.path)
+    if rename(temporary.path, destination.path) != 0 {
+      let code = errno
+      try? FileManager.default.removeItem(at: temporary)
+      throw NSError(
+        domain: NSPOSIXErrorDomain, code: Int(code),
+        userInfo: [NSLocalizedDescriptionKey: "cannot atomically publish \(destination.path)"])
     }
   }
 

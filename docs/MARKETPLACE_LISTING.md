@@ -38,9 +38,12 @@ market. `vc-release` deploys.
 
 ## Requirements
 
-- macOS or Linux
-- Guided browser installer for human onboarding; compact CLI path for automation
-- Git, Python 3.10+, `make`
+- macOS, Linux, or Windows through WSL2 (no native Windows build)
+- Today: bootstrap installer on macOS/Linux/WSL2
+  (`curl -fsSL https://vibecrafted.io/install.sh | bash`).
+  Signed `Vibecrafted.app` DMG when a GitHub Release actually attaches one.
+  Windows: install WSL2, then the same bootstrap inside the distro.
+- Git, Python 3.10+, `make` for the source-checkout path
 - One or more agent CLIs: Claude Code, Codex, or Gemini CLI
 - Required foundations: Loctree (structural analysis), AICX (session history)
 
@@ -62,7 +65,7 @@ convergence, packaging, and release.
 - repository: https://github.com/vetcoders/vibecrafted
 - documentation: https://vibecrafted.io/en/quickstart/
 - faq: https://vibecrafted.io/en/faq/
-- license: Business Source License 1.1 with Additional Use Grant for non-competitive small-team production use
+- license: Business Source License 1.1 (SPDX: BUSL-1.1) with Additional Use Grant for non-competitive small-team production use
 
 ---
 

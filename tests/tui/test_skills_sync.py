@@ -5,8 +5,22 @@ import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SKILLS_SYNC = REPO_ROOT / "runtime" / "scripts" / "skills_sync.sh"
-INSTALL_SHELL = REPO_ROOT / "runtime" / "scripts" / "install-shell.sh"
+SKILLS_SYNC = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "scripts"
+    / "skills_sync.sh"
+)
+INSTALL_SHELL = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "scripts"
+    / "install-shell.sh"
+)
 
 
 def _write_stub_command(bin_dir: Path, name: str, body: str) -> None:
@@ -52,14 +66,20 @@ def test_skills_sync_with_shell_targets_canonical_helper_and_both_shells(
     stdout = result.stdout
 
     assert "Syncing optional shell helper layer to fakehost" in stdout
-    assert "$HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills" in stdout
+    assert (
+        "$HOME/.local/share/vibecrafted/tools/vibecrafted-current/"
+        "vibecrafted-core/vibecrafted_core/skills" in stdout
+    )
     assert "$HOME/.vibecrafted/skills" not in stdout
     assert "_template" not in stdout
     assert "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" in stdout
     assert "ssh fakehost ln -sfn" in stdout
     assert "Skipping remote $HOME/.bashrc update" not in stdout
     assert "Skipping remote $HOME/.zshrc update" not in stdout
-    assert "$HOME/.local/share/vibecrafted/tools/vibecrafted-local/skills" in stdout
+    assert (
+        "$HOME/.local/share/vibecrafted/tools/vibecrafted-local/"
+        "vibecrafted-core/vibecrafted_core/skills" in stdout
+    )
     assert "rsync" in stdout
     assert ".bashrc" in stdout
     assert ".zshrc" in stdout
@@ -102,7 +122,10 @@ def test_skills_sync_with_shell_real_run_targets_canonical_helper_and_both_shell
 
     log = log_file.read_text(encoding="utf-8")
 
-    assert "$HOME/.local/share/vibecrafted/tools/vibecrafted-local/skills" in log
+    assert (
+        "$HOME/.local/share/vibecrafted/tools/vibecrafted-local/"
+        "vibecrafted-core/vibecrafted_core/skills" in log
+    )
     assert "$HOME/.vibecrafted/skills" not in log
     assert "_template" not in log
     assert "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" in log
@@ -138,10 +161,14 @@ def test_install_shell_shim_prefers_current_control_plane_before_home_store(
     )
 
     shim = (config / "vetcoders" / "vc-skills.sh").read_text(encoding="utf-8")
-    tools_path = '"$crafted_tools_home/vibecrafted-current/runtime/shell/vetcoders.sh"'
+    tools_path = (
+        '"$crafted_tools_home/vibecrafted-current/vibecrafted-core/'
+        'vibecrafted_core/runtime/shell/vetcoders.sh"'
+    )
     home_path = '"$crafted_home/runtime/shell/vetcoders.sh"'
 
     assert shim.index(tools_path) < shim.index(home_path)
+    assert "vibecrafted-current/runtime/shell/vetcoders.sh" not in shim
     assert str(REPO_ROOT) not in shim
     assert "DEV MODE OPT-IN: live repo override via VIBECRAFTED_ROOT" in shim
 

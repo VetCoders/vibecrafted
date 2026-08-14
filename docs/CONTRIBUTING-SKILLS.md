@@ -3,12 +3,14 @@
 This guide walks an operator (human or agent) through authoring a new `vc-*`
 skill from scratch and getting it merged into vibecrafted.
 
-If you have not read [`skills/LIVING_TREE_RULE.md`](../skills/LIVING_TREE_RULE.md)
+If you have not read
+[`vibecrafted-core/vibecrafted_core/skills/LIVING_TREE_RULE.md`](../vibecrafted-core/vibecrafted_core/skills/LIVING_TREE_RULE.md)
 yet, do that first. Every contribution lands on a Living Tree branch under
 concurrent agent activity, and the skill you author will run inside that same
 discipline.
 
-**Also read** [`skills/DELEGATION_MATRIX.md`](../skills/DELEGATION_MATRIX.md)
+**Also read**
+[`vibecrafted-core/vibecrafted_core/skills/DELEGATION_MATRIX.md`](../vibecrafted-core/vibecrafted_core/skills/DELEGATION_MATRIX.md)
 before writing invocation rails. The matrix is the operator canon for
 **per-launcher** literals (`vibecrafted review <agent>`, not a generic
 `vibecrafted <workflow> <agent>` placeholder). Progressive disclosure:
@@ -24,7 +26,7 @@ operator situation maps to one named workflow that produces one decisive
 outcome. The shape on disk:
 
 ```
-skills/<skill-name>/
+vibecrafted-core/vibecrafted_core/skills/<skill-name>/
 ├── SKILL.md         # default doc, YAML frontmatter at top
 ├── README.md        # optional operator-facing overview
 ├── examples/        # at least one realistic trigger + expected behavior
@@ -37,11 +39,11 @@ skills/<skill-name>/
 
 Look at three shipped skills to calibrate scope:
 
-- [`skills/vc-init/SKILL.md`](../skills/vc-init/SKILL.md) — full-shape default
+- [`vibecrafted-core/vibecrafted_core/skills/vc-init/SKILL.md`](../vibecrafted-core/vibecrafted_core/skills/vc-init/SKILL.md) — full-shape default
   reference, multi-sense pipeline, foundation deps, deep authority labels.
-- [`skills/vc-marbles/SKILL.md`](../skills/vc-marbles/SKILL.md) — execution-shape
+- [`vibecrafted-core/vibecrafted_core/skills/vc-marbles/SKILL.md`](../vibecrafted-core/vibecrafted_core/skills/vc-marbles/SKILL.md) — execution-shape
   reference: tight loop, single deliverable per round, falsifier-driven.
-- [`skills/vc-polarize/SKILL.md`](../skills/vc-polarize/SKILL.md) — minimal-shape
+- [`vibecrafted-core/vibecrafted_core/skills/vc-polarize/SKILL.md`](../vibecrafted-core/vibecrafted_core/skills/vc-polarize/SKILL.md) — minimal-shape
   reference, narrow purpose, leans on a sibling foundation tool.
 
 If your draft starts looking longer than `vc-init`, you are probably packing
@@ -66,10 +68,11 @@ The scaffolder enforces:
 
 - name starts with `vc-`
 - lowercase letters, digits, single hyphens only
-- no collision with an existing `skills/` entry
-- the default template at `skills/_template/` is the source of truth
+- no collision with an existing package-owned skills entry
+- the default template at `vibecrafted-core/vibecrafted_core/skills/_template/` is the source of truth
 
-On success it copies `skills/_template/` to `skills/vc-my-new-skill/` and
+On success it copies the package-owned template to
+`vibecrafted-core/vibecrafted_core/skills/vc-my-new-skill/` and
 substitutes:
 
 | Placeholder                | Becomes                            |
@@ -162,7 +165,7 @@ Before opening a PR:
       concrete name in the skill body).
 - [ ] Description is third-person with concrete trigger phrases (skill-development).
 - [ ] Body stays lean; heavy procedure lives under `references/` when needed.
-- [ ] Closing path points at [`VERIFICATION_RULE.md`](../skills/VERIFICATION_RULE.md)
+- [ ] Closing path points at [`VERIFICATION_RULE.md`](../vibecrafted-core/vibecrafted_core/skills/VERIFICATION_RULE.md)
       when the skill can claim "done".
 - [ ] `make test-skills` passes green from a clean checkout.
 - [ ] `make doctor` lists your skill cleanly.
@@ -191,7 +194,8 @@ If `make doctor` does not list your skill, the install path did not register it.
 Re-run the installer in dev mode (`make setup-dev`) and re-check.
 
 For deeper verification, the launcher (`vibecrafted start`) should accept
-`vc-<your-name>` as a valid argument once the skill is on disk in `skills/`
+`vc-<your-name>` as a valid argument once the skill is on disk in the
+package-owned skills directory
 and the helper shim is reinstalled.
 
 ---
@@ -204,9 +208,9 @@ vibecrafted commits ship with the `[<agent>/<workflow>]` prefix per the
 ```
 [claude/skill-authoring] feat(skills): add vc-my-new-skill
 
-- skills/vc-my-new-skill/SKILL.md: trigger + acceptance + anti-patterns
-- skills/vc-my-new-skill/README.md: operator overview
-- skills/vc-my-new-skill/examples/example-prompt.md: realistic trigger pair
+- vibecrafted-core/vibecrafted_core/skills/vc-my-new-skill/SKILL.md: trigger + acceptance + anti-patterns
+- vibecrafted-core/vibecrafted_core/skills/vc-my-new-skill/README.md: operator overview
+- vibecrafted-core/vibecrafted_core/skills/vc-my-new-skill/examples/example-prompt.md: realistic trigger pair
 
 Authored-By: claude <agents@vetcoders.io>
 session_id: 019e93be-379d-7303-9ad4-ffae468db99f
@@ -230,9 +234,9 @@ MSG
 
 make commit-safe \
   MSG_FILE=/tmp/vc-skill-commit.txt \
-  FILES="skills/vc-my-new-skill/SKILL.md \
-         skills/vc-my-new-skill/README.md \
-         skills/vc-my-new-skill/examples/example-prompt.md"
+  FILES="vibecrafted-core/vibecrafted_core/skills/vc-my-new-skill/SKILL.md \
+         vibecrafted-core/vibecrafted_core/skills/vc-my-new-skill/README.md \
+         vibecrafted-core/vibecrafted_core/skills/vc-my-new-skill/examples/example-prompt.md"
 ```
 
 The CI gate at `.github/workflows/skill-loader.yml` will run `make test-skills`
@@ -270,14 +274,14 @@ across ubuntu + macos. Open the PR against `develop`.
 
 ## Where the wiring lives
 
-| Surface              | Path                                                                          |
-| -------------------- | ----------------------------------------------------------------------------- |
-| Scaffolder           | [`tools/vc-skill-new.sh`](../tools/vc-skill-new.sh)                           |
-| Template source      | [`skills/_template/`](../skills/_template)                                    |
-| Frontmatter gate     | [`tests/skill_loader_smoke.sh`](../tests/skill_loader_smoke.sh)               |
-| Living Tree Rule     | [`skills/LIVING_TREE_RULE.md`](../skills/LIVING_TREE_RULE.md)                 |
-| Commit safety helper | [`scripts/lib/living-tree-commit.sh`](../scripts/lib/living-tree-commit.sh)   |
-| CI gate              | [`.github/workflows/skill-loader.yml`](../.github/workflows/skill-loader.yml) |
+| Surface              | Path                                                                                                                              |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Scaffolder           | [`tools/vc-skill-new.sh`](../tools/vc-skill-new.sh)                                                                               |
+| Template source      | [`vibecrafted-core/vibecrafted_core/skills/_template/`](../vibecrafted-core/vibecrafted_core/skills/_template)                    |
+| Frontmatter gate     | [`tests/skill_loader_smoke.sh`](../tests/skill_loader_smoke.sh)                                                                   |
+| Living Tree Rule     | [`vibecrafted-core/vibecrafted_core/skills/LIVING_TREE_RULE.md`](../vibecrafted-core/vibecrafted_core/skills/LIVING_TREE_RULE.md) |
+| Commit safety helper | [`scripts/lib/living-tree-commit.sh`](../scripts/lib/living-tree-commit.sh)                                                       |
+| CI gate              | [`.github/workflows/skill-loader.yml`](../.github/workflows/skill-loader.yml)                                                     |
 
 ---
 

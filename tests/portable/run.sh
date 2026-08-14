@@ -118,19 +118,19 @@ print_installer_logs() {
 log "syntax checks"
 bash -n \
   "$repo_root/install.sh" \
-  "$repo_root/runtime/scripts/install.sh" \
-  "$repo_root/runtime/scripts/install-shell.sh" \
-  "$repo_root/runtime/scripts/skills_sync.sh" \
-  "$repo_root/runtime/scripts/observe.sh" \
-  "$repo_root/runtime/scripts/common.sh" \
-  "$repo_root/runtime/scripts/codex_spawn.sh" \
-  "$repo_root/runtime/scripts/claude_spawn.sh" \
-  "$repo_root/runtime/scripts/agy_spawn.sh"
+  "$repo_root/vibecrafted-core/vibecrafted_core/runtime/scripts/install.sh" \
+  "$repo_root/vibecrafted-core/vibecrafted_core/runtime/scripts/install-shell.sh" \
+  "$repo_root/vibecrafted-core/vibecrafted_core/runtime/scripts/skills_sync.sh" \
+  "$repo_root/vibecrafted-core/vibecrafted_core/runtime/scripts/observe.sh" \
+  "$repo_root/vibecrafted-core/vibecrafted_core/runtime/scripts/common.sh" \
+  "$repo_root/vibecrafted-core/vibecrafted_core/runtime/scripts/codex_spawn.sh" \
+  "$repo_root/vibecrafted-core/vibecrafted_core/runtime/scripts/claude_spawn.sh" \
+  "$repo_root/vibecrafted-core/vibecrafted_core/runtime/scripts/agy_spawn.sh"
 # Shell helpers are bash-compatible; verify with bash -n
-bash -n "$repo_root/runtime/shell/vetcoders.sh"
+bash -n "$repo_root/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
 # If zsh is available, also verify zsh syntax
 if command -v zsh >/dev/null 2>&1; then
-  zsh -n "$repo_root/runtime/shell/vetcoders.sh"
+  zsh -n "$repo_root/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
 fi
 
 workspace="$(mktemp -d)"
@@ -195,7 +195,7 @@ fi
 
 require_symlink "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current"
 require_file "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current/Makefile"
-require_file "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"
+require_file "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/codex_spawn.sh"
 # Runtime contract (test_install_all_paths_do_not_install_shell_helpers_by_default):
 # the default install lane (install.sh -> make install-auto -> make install) installs
 # tools and views but does NOT wire the legacy shell helpers or touch shell rc files.
@@ -204,7 +204,7 @@ require_file "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current
 
 log "install smoke into clean HOME"
 HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
-  bash "$repo_root/runtime/scripts/install.sh" \
+  bash "$repo_root/vibecrafted-core/vibecrafted_core/runtime/scripts/install.sh" \
   --source "$repo_root" \
   --tool codex --tool claude --tool agy \
   --with-shell --write-shell-rc
@@ -220,9 +220,9 @@ log "stage python launcher tools (uv-tool shim)"
 HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" INSTALL_TOOLS_SERVICE_POLICY=isolated \
   make --no-print-directory -C "$repo_root" install-python-tools
 
-require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"
-require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/claude_spawn.sh"
-require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/agy_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/codex_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/claude_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/agy_spawn.sh"
 require_file "$home_dir/.local/bin/vibecrafted"
 require_symlink "$home_dir/.local/bin/vc-help"
 require_symlink "$home_dir/.local/bin/vc-marbles"
@@ -230,15 +230,16 @@ require_symlink "$home_dir/.local/bin/vc-marbles"
 require_symlink "$home_dir/.agents/skills/vc-agents"
 require_symlink "$home_dir/.codex/skills/vc-agents"
 require_symlink "$home_dir/.claude/skills/vc-agents"
-require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"
-require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/claude_spawn.sh"
-require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/agy_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/codex_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/claude_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/agy_spawn.sh"
 # Canonical + compat helper locations
 require_file "$config_dir/vetcoders/vc-skills.sh"
 require_file "$config_dir/zsh/vc-skills.zsh"
 assert_contains "$config_dir/vetcoders/vc-skills.sh" '𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. helper shim'
 bad_helper_candidate="\${VIBECRAFTED_ROOT:-}/runtime/shell/vetcoders.sh"
 assert_not_contains "$config_dir/vetcoders/vc-skills.sh" "$bad_helper_candidate"
+assert_not_contains "$config_dir/vetcoders/vc-skills.sh" "vibecrafted-current/runtime/shell/vetcoders.sh"
 # Host-shell helper sourcing is intentionally retired (install-shell.sh:
 # the helper is loaded by vc-start, never by the ordinary host shell).
 # --write-shell-rc now means: PATH-only launcher guard in an rcfile, and any
@@ -351,9 +352,9 @@ common_env=(
 )
 
 log "headless spawn smoke"
-env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh" --mode plan --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
-env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/claude_spawn.sh" --mode review --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
-env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/agy_spawn.sh" --mode implement --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
+env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/codex_spawn.sh" --mode plan --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
+env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/claude_spawn.sh" --mode review --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
+env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/scripts/agy_spawn.sh" --mode implement --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
 
 codex_meta="$(find "$work_repo/.vibecrafted/reports" -maxdepth 1 -type f -name '*_codex.meta.json' | sort | tail -n 1)"
 claude_meta="$(find "$work_repo/.vibecrafted/reports" -maxdepth 1 -type f -name '*_claude.meta.json' | sort | tail -n 1)"
@@ -517,22 +518,22 @@ echo rsync "$@"
 EOF_RSYNC
 chmod +x "$fake_bin/rsync"
 
-sync_output="$(env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" bash "$repo_root/runtime/scripts/skills_sync.sh" fakehost --source "$repo_root" --dry-run)"
+sync_output="$(env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" bash "$repo_root/vibecrafted-core/vibecrafted_core/runtime/scripts/skills_sync.sh" fakehost --source "$repo_root" --dry-run)"
 grep -q "Syncing skills from" <<<"$sync_output" || die "Sync dry-run failed to start"
 grep -q '^  rsync ' <<<"$sync_output" || die "Sync dry-run didn't print planned rsync commands"
 ! grep -q '^rsync ' <<<"$sync_output" || die "Sync dry-run executed rsync instead of printing it"
 # shellcheck disable=SC2016 # matching literal $HOME in sync output, not expanding
-grep -q '\$HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills' <<<"$sync_output" || die "Sync dry-run didn't target the staged canonical skill store"
+grep -q '\$HOME/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/skills' <<<"$sync_output" || die "Sync dry-run didn't target the package-owned canonical skill store"
 # shellcheck disable=SC2016 # matching literal $HOME in sync output, not expanding
 ! grep -q '\$HOME/.vibecrafted/skills' <<<"$sync_output" || die "Sync dry-run still targets the legacy state-home skill store"
 
 log "docs truth checks"
 # shellcheck disable=SC2016 # backticks are literal content we're matching, not command substitution
-assert_not_contains "$repo_root/skills/vc-followup/SKILL.md" 'Use canonical Terminal spawn (`osascript`)'
-assert_not_contains "$repo_root/skills/vc-workflow/SKILL.md" 'osascript preferred'
+assert_not_contains "$repo_root/vibecrafted-core/vibecrafted_core/skills/vc-followup/SKILL.md" 'Use canonical Terminal spawn (`osascript`)'
+assert_not_contains "$repo_root/vibecrafted-core/vibecrafted_core/skills/vc-workflow/SKILL.md" 'osascript preferred'
 assert_not_contains "$repo_root/docs/FRONTIER.md" 'vetcoders.zsh'
 assert_not_contains "$repo_root/docs/FAQ-ANSWERED.md" 'truth as of March 2026'
-[[ ! -e "$repo_root/skills/vc-subagents/SKILL.md" ]] || die 'vc-subagents should not exist'
+[[ ! -e "$repo_root/vibecrafted-core/vibecrafted_core/skills/vc-subagents/SKILL.md" ]] || die 'vc-subagents should not exist'
 if [[ -e "$repo_root/docs/index.html" ]]; then
   assert_not_contains "$repo_root/docs/index.html" 'Canonical osascript Terminal spawn'
   assert_contains "$repo_root/docs/index.html" 'https://vibecrafted.io/'
@@ -547,7 +548,7 @@ assert_contains "$repo_root/docs/QUICK_START.md" 'vibecrafted implement codex'
 assert_contains "$repo_root/docs/presence/quickstart.html" 'https://vibecrafted.io/en/quickstart/'
 assert_contains "$repo_root/docs/presence/quickstart.html" 'window.location.replace("https://vibecrafted.io/en/quickstart/")'
 assert_not_contains "$repo_root/docs/presence/quickstart.html" 'vibecrafted workflow claude --prompt "Plan and implement auth module"'
-[[ -e "$repo_root/skills/vc-suite-showcase.html" ]] && die 'vc-suite-showcase.html should not exist (was mv to docs/index.html)'
+[[ -e "$repo_root/vibecrafted-core/vibecrafted_core/skills/vc-suite-showcase.html" ]] && die 'vc-suite-showcase.html should not exist (was mv to docs/index.html)'
 
 log "portable checks passed"
 log "portable checks passed"

@@ -12,13 +12,62 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-COMMON_SH = REPO_ROOT / "runtime" / "scripts" / "common.sh"
-SHELL_SH = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
-CLAUDE_SPAWN_SH = REPO_ROOT / "runtime" / "scripts" / "claude_spawn.sh"
-CODEX_SPAWN_SH = REPO_ROOT / "runtime" / "scripts" / "codex_spawn.sh"
-CODEX_STREAM_BRIDGE = REPO_ROOT / "runtime" / "scripts" / "codex_stream_bridge.py"
-CODEX_STREAM_FILTER = REPO_ROOT / "runtime" / "scripts" / "codex_stream_filter.jq"
-CORE_RUNTIME_HELPER = REPO_ROOT / "runtime" / "helpers" / "vetcoders-runtime-core.sh"
+COMMON_SH = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "scripts"
+    / "common.sh"
+)
+SHELL_SH = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "shell"
+    / "vetcoders.sh"
+)
+CLAUDE_SPAWN_SH = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "scripts"
+    / "claude_spawn.sh"
+)
+CODEX_SPAWN_SH = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "scripts"
+    / "codex_spawn.sh"
+)
+CODEX_STREAM_BRIDGE = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "scripts"
+    / "codex_stream_bridge.py"
+)
+CODEX_STREAM_FILTER = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "scripts"
+    / "codex_stream_filter.jq"
+)
+CORE_RUNTIME_HELPER = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "helpers"
+    / "vetcoders-runtime-core.sh"
+)
 CORE_PACKAGE_DIR = REPO_ROOT / "vibecrafted-core"
 
 
@@ -800,15 +849,31 @@ def test_marbles_dispatch_sites_route_placeholder_filter_through_helper() -> Non
     # marbles_spawn.sh and marbles_next.sh have been collapsed into a single
     # spawn_clean_model() helper. If a future change reintroduces the
     # inline chain, this test fires before the regression ships.
-    spawn_text = (REPO_ROOT / "runtime" / "scripts" / "marbles_spawn.sh").read_text(
-        encoding="utf-8"
-    )
-    next_text = (REPO_ROOT / "runtime" / "scripts" / "marbles_next.sh").read_text(
-        encoding="utf-8"
-    )
-    util_text = (REPO_ROOT / "runtime" / "scripts" / "lib" / "util.sh").read_text(
-        encoding="utf-8"
-    )
+    spawn_text = (
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "scripts"
+        / "marbles_spawn.sh"
+    ).read_text(encoding="utf-8")
+    next_text = (
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "scripts"
+        / "marbles_next.sh"
+    ).read_text(encoding="utf-8")
+    util_text = (
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "scripts"
+        / "lib"
+        / "util.sh"
+    ).read_text(encoding="utf-8")
 
     # Helper exists in exactly one place.
     assert "spawn_clean_model()" in util_text

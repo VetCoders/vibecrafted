@@ -7,6 +7,7 @@ import queue
 import stat
 import subprocess
 import threading
+import time
 import urllib.error
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
@@ -1380,6 +1381,11 @@ def test_durable_triage_outbox_survives_crash_before_worker_and_recovers(
         "_reconcile_terminal_triage_run",
         reconcile,
     )
+    monkeypatch.setattr(
+        guardian_module,
+        "_terminal_triage_failure_reason",
+        lambda _run_id: "triage_incomplete",
+    )
     guardian_module._recover_terminal_triage_outbox()
 
     assert attempted == ["run-crash-window"]
@@ -1399,7 +1405,7 @@ def test_terminal_triage_outbox_recovery_scan_is_bounded(
     reads: list[Path] = []
     original_read = guardian_module._read_terminal_triage_outbox
 
-    def recording_read(path: Path) -> tuple[str, int]:
+    def recording_read(path: Path) -> guardian_module.TerminalTriageOutboxRecord:
         reads.append(path)
         return original_read(path)
 
@@ -1412,6 +1418,11 @@ def test_terminal_triage_outbox_recovery_scan_is_bounded(
         guardian_module,
         "_reconcile_terminal_triage_run",
         lambda _run_id: False,
+    )
+    monkeypatch.setattr(
+        guardian_module,
+        "_terminal_triage_failure_reason",
+        lambda _run_id: "temporary_failure",
     )
 
     guardian_module._recover_terminal_triage_outbox()
@@ -1469,24 +1480,158 @@ def test_stale_worker_cannot_clear_newer_triage_generation(
 ) -> None:
     monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
     path = guardian_module._persist_terminal_triage_outbox("run-generation")
-    _run_id, first_generation = guardian_module._read_terminal_triage_outbox(path)
+    first = guardian_module._read_terminal_triage_outbox(path)
     guardian_module._persist_terminal_triage_outbox("run-generation")
-    _run_id, second_generation = guardian_module._read_terminal_triage_outbox(path)
+    second = guardian_module._read_terminal_triage_outbox(path)
 
-    assert second_generation > first_generation
+    assert second.queued_at_ns > first.queued_at_ns
     assert (
         guardian_module._clear_terminal_triage_outbox(
             "run-generation",
-            expected_generation=first_generation,
+            expected_generation=first.queued_at_ns,
         )
         is False
     )
     assert path.is_file()
     assert guardian_module._clear_terminal_triage_outbox(
         "run-generation",
-        expected_generation=second_generation,
+        expected_generation=second.queued_at_ns,
     )
     assert not path.exists()
+
+
+def test_terminal_triage_outbox_reads_v1_and_migrates_on_schedule(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
+    path = guardian_module._terminal_triage_outbox_path("run-v1")
+    guardian_module._atomic_private_write(
+        path,
+        b'{"queued_at_ns":1,"run_id":"run-v1","schema":"vibecrafted.terminal-triage-outbox.v1"}\n',
+    )
+
+    legacy = guardian_module._read_terminal_triage_outbox(path)
+    assert legacy.attempts == 0
+    guardian_module._persist_terminal_triage_outbox("run-v1")
+    migrated = guardian_module._read_terminal_triage_outbox(path)
+
+    assert migrated.queued_at_ns > legacy.queued_at_ns
+    assert migrated.attempts == 0
+    assert json.loads(path.read_text(encoding="utf-8"))["schema"] == (
+        guardian_module.TERMINAL_TRIAGE_OUTBOX_SCHEMA
+    )
+
+
+def test_terminal_triage_retry_has_backoff_and_preserves_budget_on_reschedule(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
+    path = guardian_module._persist_terminal_triage_outbox("run-backoff")
+    first = guardian_module._read_terminal_triage_outbox(path)
+
+    assert guardian_module._refresh_terminal_triage_outbox(
+        "run-backoff",
+        expected_generation=first.queued_at_ns,
+        reason="temporary_failure",
+    )
+    backed_off = guardian_module._read_terminal_triage_outbox(path)
+    assert backed_off.attempts == 1
+    assert backed_off.next_retry_at_ns > time.time_ns()
+
+    attempted: list[str] = []
+    monkeypatch.setattr(
+        guardian_module,
+        "_reconcile_terminal_triage_run",
+        lambda run_id: attempted.append(run_id) or True,
+    )
+    guardian_module._recover_terminal_triage_outbox()
+    assert attempted == []
+
+    guardian_module._persist_terminal_triage_outbox("run-backoff")
+    rescheduled = guardian_module._read_terminal_triage_outbox(path)
+    assert rescheduled.attempts == 1
+    assert rescheduled.next_retry_at_ns == backed_off.next_retry_at_ns
+
+
+def test_terminal_triage_retry_reason_is_bounded_by_utf8_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
+    path = guardian_module._persist_terminal_triage_outbox("run-unicode-reason")
+    first = guardian_module._read_terminal_triage_outbox(path)
+    reason = "x" * (guardian_module.MAX_STATE_TEXT_BYTES - 1) + "€tail"
+
+    assert guardian_module._refresh_terminal_triage_outbox(
+        "run-unicode-reason",
+        expected_generation=first.queued_at_ns,
+        reason=reason,
+    )
+
+    refreshed = guardian_module._read_terminal_triage_outbox(path)
+    assert refreshed.last_reason == "x" * (guardian_module.MAX_STATE_TEXT_BYTES - 1)
+    assert len(refreshed.last_reason.encode("utf-8")) <= (
+        guardian_module.MAX_STATE_TEXT_BYTES
+    )
+
+
+def test_permanent_terminal_triage_failure_dead_letters_without_invoking_vc_frame(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
+    path = guardian_module._persist_terminal_triage_outbox("run-poison")
+    monkeypatch.setattr(
+        guardian_module,
+        "_terminal_triage_failure_reason",
+        lambda _run_id: "transfer_proof_invalid: receipt identity mismatch",
+    )
+    monkeypatch.setattr(
+        guardian_module,
+        "_reconcile_terminal_triage_run",
+        lambda _run_id: pytest.fail("permanent poison must not invoke vc-frame"),
+    )
+
+    guardian_module._recover_terminal_triage_outbox()
+
+    assert not path.exists()
+    dead_letters = list(
+        guardian_module._terminal_triage_quarantine_root().glob("*.dead-letter.json")
+    )
+    assert len(dead_letters) == 1
+    payload = json.loads(dead_letters[0].read_text(encoding="utf-8"))
+    assert payload["run_id"] == "run-poison"
+    assert payload["reason"].startswith("transfer_proof_invalid:")
+
+
+def test_terminal_triage_exhausts_bounded_retry_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(guardian_module, "vibecrafted_home", lambda: tmp_path)
+    monkeypatch.setattr(guardian_module, "TERMINAL_TRIAGE_MAX_ATTEMPTS", 1)
+    path = guardian_module._persist_terminal_triage_outbox("run-exhausted")
+    record = guardian_module._read_terminal_triage_outbox(path)
+
+    assert guardian_module._refresh_terminal_triage_outbox(
+        "run-exhausted",
+        expected_generation=record.queued_at_ns,
+        reason="temporary_failure",
+    )
+
+    assert not path.exists()
+    assert (
+        len(
+            list(
+                guardian_module._terminal_triage_quarantine_root().glob(
+                    "*.dead-letter.json"
+                )
+            )
+        )
+        == 1
+    )
 
 
 def test_terminal_triage_scheduler_uses_one_coalescing_background_worker(
@@ -1516,6 +1661,11 @@ def test_terminal_triage_scheduler_uses_one_coalescing_background_worker(
         guardian_module,
         "_reconcile_terminal_triage_run",
         reconcile,
+    )
+    monkeypatch.setattr(
+        guardian_module,
+        "_terminal_triage_failure_reason",
+        lambda _run_id: "triage_incomplete",
     )
 
     assert guardian_module._schedule_terminal_triage_run("run-coalesced") is True

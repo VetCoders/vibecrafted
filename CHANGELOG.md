@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 > **One Vibecrafted.** The first release whose installable boundary is exactly
 > one signed and notarized `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`.
+>
+> Derived from `git log` after the 3.7.1 bump (`ef700e52` … `545aa1d2`).
+> `v3.7.1` is not tagged yet; latest published GitHub Release is still
+> `v3.5.0`.
 
 ### Added
 
@@ -19,6 +23,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Fail-closed macOS publication target that downloads draft assets back from
   GitHub, byte-compares them, verifies signed release-output, mounts the DMG,
   runs the walk-around probes and only then publishes.
+- Hermetic in-app runtime layout: the desktop product carries its own
+  generation instead of projecting a checkout `runtime/` symlink
+  (`45f29fbf`).
+- Honest install channel matrix: macOS/Linux bootstrap today; signed DMG
+  when a release actually carries one; Windows is WSL2 plus that same
+  bootstrap (`fb341fb7`).
 
 ### Changed
 
@@ -29,6 +39,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   packaging workflow and update channel were retired.
 - Tag CI is read-only source validation. Apple signing/notarization and release
   publication remain on the explicit macOS operator boundary.
+- First-use copy on `vc-start` and `doctor` names what is missing instead of
+  scaring a plain install (`89b9c42b`, `4ffcf789`, `14579808`).
+- Windows refuse path now talks about WSL2 in v3 language, not a leftover
+  v1.x claim (`545aa1d2`).
+
+### Fixed
+
+- Docker image seeds skills from the canonical package and keeps executable
+  modes on staged scripts (`f6d70400`, `2162a71e`).
+- Docs launcher is shellcheck-clean (`be37f10b`).
+- Installer preserves verified archive modes (`680a3261`).
+- Guardian bounds retry reasons by UTF-8 bytes and bounds terminal-triage
+  reconciliation (`b58c8d8a`, `16f5b685`).
+- App binds the canonical icon and failure dates; Mission Control date
+  formatters are reused (`6d4c0377`, `4162aaf6`).
+- CodeQL publication gate is actually executable (`bb0ca1a0`).
 
 ### Security
 

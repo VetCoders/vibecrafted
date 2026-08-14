@@ -25,6 +25,7 @@ import errno
 import fcntl
 import hashlib
 import importlib
+import importlib.util
 import json
 import math
 import os
@@ -902,13 +903,7 @@ def detect_cargo() -> str | None:
 
 
 def source_skills_root(repo_root: Path) -> Path:
-    """Locate the skills source directory: the repo's `skills/`, or the packaged
-    vibecrafted_core/skills fallback, or the repo root itself if neither exists.
-    """
-    skills_dir = repo_root / "skills"
-    if skills_dir.is_dir():
-        return skills_dir
-
+    """Locate the one package-owned skills source directory."""
     packaged_skills_dir = repo_root / "vibecrafted-core" / "vibecrafted_core" / "skills"
     if packaged_skills_dir.is_dir():
         return packaged_skills_dir
@@ -2032,7 +2027,7 @@ def _doctor_launcher_source_root(store_path: Path) -> Path | None:
     for candidate in candidates:
         launcher = candidate / "scripts" / "vibecrafted"
         version = candidate / "VERSION"
-        skills_dir = candidate / "skills"
+        skills_dir = source_skills_root(candidate)
         if launcher.is_file() and version.is_file() and skills_dir.is_dir():
             return candidate
     return None
@@ -2063,7 +2058,7 @@ def _doctor_fix_launchers(store_path: Path, state: InstallState) -> list[DoctorF
             )
         _install_launcher(source_root, dry_run=False, update_rc=False)
         state.launcher_entries = _snapshot_launcher_entries()
-        state.save(store_path)
+        state.save(vibecrafted_home())
     except Exception as exc:  # noqa: BLE001  # pragma: no cover - surface repair failures
         return [
             DoctorFinding(
@@ -2967,7 +2962,7 @@ _RUNTIME_GENERATION_REQUIRED_HASHES = (
         {
             Path("VERSION"),
             Path("scripts/vibecrafted"),
-            _RUNTIME_GENERATION_PROJECTED_CONFIG,
+            _RUNTIME_GENERATION_CANONICAL_CONFIG,
             _RUNTIME_GENERATION_ENTRYPOINT,
         }
     )
@@ -3119,7 +3114,7 @@ _RUNTIME_VERIFIER_UNTYPED_OBJECT_MATCHER_PATHS = frozenset(
     }
 )
 _RUNTIME_ACTIVE_TEXT_ROOTS = (
-    Path("config/vc-frame"),
+    Path("vibecrafted-core/vibecrafted_core/config/vc-frame"),
     Path("runtime/generated"),
     Path("vibecrafted-core/vibecrafted_core/runtime"),
 )
@@ -7907,8 +7902,17 @@ def _materialize_vc_frame_generation(runtime_root: Path) -> None:
     module_path = (
         runtime_root / "vibecrafted-core" / "vibecrafted_core" / "vc_frame_staging.py"
     )
-    source = runtime_root / "config" / "vc-frame"
-    destination = runtime_root / "runtime" / "generated" / "vc-frame"
+    source = (
+        runtime_root / "vibecrafted-core" / "vibecrafted_core" / "config" / "vc-frame"
+    )
+    destination = (
+        runtime_root
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "generated"
+        / "vc-frame"
+    )
     if not module_path.is_file():
         raise OSError(
             f"candidate runtime has no vc-frame staging implementation: {module_path}"
@@ -8496,13 +8500,16 @@ def _validate_runtime_verifier_semantics(runtime_root: Path) -> None:
         if not isinstance(legacy_hashes, dict):  # pragma: no cover - loader owns this.
             raise OSError("captured runtime manifest has no hash inventory")
         legacy_manifest["hashes"] = {
-            relative.as_posix(): legacy_hashes[relative.as_posix()]
-            for relative in (
-                Path("VERSION"),
-                Path("scripts/vibecrafted"),
-                _RUNTIME_GENERATION_PROJECTED_CONFIG,
-                _RUNTIME_GENERATION_ENTRYPOINT,
-            )
+            Path("VERSION").as_posix(): legacy_hashes[Path("VERSION").as_posix()],
+            Path("scripts/vibecrafted").as_posix(): legacy_hashes[
+                Path("scripts/vibecrafted").as_posix()
+            ],
+            _RUNTIME_GENERATION_PROJECTED_CONFIG.as_posix(): legacy_hashes[
+                _RUNTIME_GENERATION_CANONICAL_CONFIG.as_posix()
+            ],
+            _RUNTIME_GENERATION_ENTRYPOINT.as_posix(): legacy_hashes[
+                _RUNTIME_GENERATION_ENTRYPOINT.as_posix()
+            ],
         }
         _write_runtime_verifier_snapshot(
             legacy_snapshot,
@@ -9021,17 +9028,15 @@ def _is_framework_source_root(repo_root: Path) -> bool:
     """True if `repo_root` looks like a complete Vibecrafted framework source checkout (VERSION,
     launcher, skills, and runtime present).
     """
-    skills_dir = repo_root / "skills"
     packaged_skills_dir = repo_root / "vibecrafted-core" / "vibecrafted_core" / "skills"
-    runtime_dir = repo_root / "runtime"
     packaged_runtime_dir = (
         repo_root / "vibecrafted-core" / "vibecrafted_core" / "runtime"
     )
     return (
         (repo_root / "VERSION").is_file()
         and (repo_root / "scripts" / "vibecrafted").is_file()
-        and (skills_dir.is_dir() or packaged_skills_dir.is_dir())
-        and (runtime_dir.is_dir() or packaged_runtime_dir.is_dir())
+        and packaged_skills_dir.is_dir()
+        and packaged_runtime_dir.is_dir()
     )
 
 
@@ -9522,25 +9527,34 @@ def _copy_managed_launcher(src: Path, dst: Path) -> bool:
 
 
 def _canonical_store_path(shared_home: Path, *, create: bool = False) -> Path:
-    """Return the canonical skill store under staged tools, not state home."""
+    """Return the one package-owned skill store through the stable runtime pointer."""
     current_link = _current_tools_link(shared_home)
-    if current_link.exists() or current_link.is_symlink():
-        return current_link / "skills"
-    if create:
-        return _ensure_current_tools_target(shared_home) / "skills"
-    return shared_home / "skills"
+    if create and not (current_link.exists() or current_link.is_symlink()):
+        _ensure_current_tools_target(shared_home)
+    return current_link / "vibecrafted-core" / "vibecrafted_core" / "skills"
+
+
+def _install_state_file(store_path: Path) -> Path:
+    """Return mutable install state outside immutable runtime generations.
+
+    Existing store-local and legacy ``~/.vibecrafted/skills`` manifests remain
+    readable for uninstall/doctor migration, but every new install writes the
+    canonical state file directly under ``VIBECRAFTED_HOME``.
+    """
+    canonical = vibecrafted_home() / STATE_FILE
+    candidates = (
+        canonical,
+        store_path / STATE_FILE,
+        vibecrafted_home() / "skills" / STATE_FILE,
+    )
+    return next(
+        (candidate for candidate in candidates if candidate.exists()), canonical
+    )
 
 
 def _load_install_state(store_path: Path) -> InstallState:
-    """Load install state from `store_path`, falling back to the legacy store's state if newer."""
-    state = InstallState.load(store_path)
-    if (store_path / STATE_FILE).exists():
-        return state
-
-    legacy_store = vibecrafted_home() / "skills"
-    if legacy_store != store_path and (legacy_store / STATE_FILE).exists():
-        return InstallState.load(legacy_store)
-    return state
+    """Load canonical install state, accepting prior store-local manifests."""
+    return InstallState.load(_install_state_file(store_path).parent)
 
 
 def _canonical_path_preserving_final_symlink(path: Path) -> Path:
@@ -9951,6 +9965,15 @@ def _secure_walkaround_launcher_issues(
                     f"manifest-bound file is invalid:{relative}:{exc}"
                 )
                 continue
+            if (
+                relative != _RUNTIME_GENERATION_PROJECTED_CONFIG
+                and resolved != candidate
+            ):
+                issues.append(
+                    f"{SECURE_WALKAROUND_LAUNCHER}:corrupt:"
+                    f"manifest-bound file is aliased:{relative}"
+                )
+                continue
             allowed = {candidate}
             if relative == _RUNTIME_GENERATION_PROJECTED_CONFIG:
                 topology_error = _runtime_projection_topology_error(
@@ -9978,24 +10001,40 @@ def _secure_walkaround_launcher_issues(
 
 
 def _verifier_bytecode_shadow_issues(current_tools: Path) -> list[str]:
-    """Reject adjacent bytecode for the two manifest-bound verifier modules."""
+    """Reject verifier bytecode that can bypass or outlive its bound source.
+
+    CPython's ordinary ``__pycache__`` entries are derived caches and are safe
+    when their source exists: timestamp and checked-hash modes validate the
+    source before use. Adjacent bytecode, orphan caches, and unchecked-hash
+    caches remain fail-closed because they can execute without the manifest-
+    bound ``.py`` bytes governing them.
+    """
     package = current_tools / "vibecrafted-core" / "vibecrafted_core"
     issues: list[str] = []
-    bytecode_patterns = (
-        "product_contract.pyc",
-        "product_contract.pyo",
-        "walkaround_runner.pyc",
-        "walkaround_runner.pyo",
-        "__pycache__/product_contract.*.pyc",
-        "__pycache__/product_contract.*.pyo",
-        "__pycache__/walkaround_runner.*.pyc",
-        "__pycache__/walkaround_runner.*.pyo",
-    )
-    for pattern in bytecode_patterns:
-        for candidate in package.glob(pattern):
-            issues.append(
-                f"{candidate.relative_to(package)}:corrupt:verifier bytecode shadow"
-            )
+    modules = ("product_contract", "walkaround_runner")
+    for module in modules:
+        for suffix in ("pyc", "pyo"):
+            for candidate in package.glob(f"{module}.{suffix}"):
+                issues.append(
+                    f"{candidate.relative_to(package)}:corrupt:verifier bytecode shadow"
+                )
+
+        source = package / f"{module}.py"
+        for candidate in package.glob(f"__pycache__/{module}.*.py[co]"):
+            reason = ""
+            if not source.is_file():
+                reason = "orphan verifier bytecode cache"
+            else:
+                try:
+                    header = candidate.read_bytes()[:8]
+                except OSError:
+                    header = b""
+                if len(header) == 8 and header[:4] == importlib.util.MAGIC_NUMBER:
+                    flags = struct.unpack("<I", header[4:8])[0]
+                    if flags & 0x01 and not flags & 0x02:
+                        reason = "unchecked-hash verifier bytecode cache"
+            if reason:
+                issues.append(f"{candidate.relative_to(package)}:corrupt:{reason}")
     return sorted(set(issues))
 
 
@@ -10112,7 +10151,8 @@ def _marbles_orchestrator_expr() -> str:
     return (
         '"${VIBECRAFTED_MARBLES_ORCHESTRATOR:-'
         "${VIBECRAFTED_TOOLS_HOME:-$HOME/.local/share/vibecrafted/tools}"
-        '/vibecrafted-current/runtime/vc-marbles/orchestrator}"'
+        "/vibecrafted-current/vibecrafted-core/vibecrafted_core/"
+        'runtime/vc-marbles/orchestrator}"'
     )
 
 
@@ -11067,7 +11107,7 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
         return findings
 
     # 2. State file exists
-    state_file = store_path / STATE_FILE
+    state_file = _install_state_file(store_path)
     if state_file.exists():
         findings.append(DoctorFinding("ok", "state", "Install manifest found"))
     else:
@@ -11102,7 +11142,9 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
     source_root = None
     source_candidate = _doctor_launcher_source_root(store_path)
     if source_candidate is not None:
-        skills_src = source_candidate / "skills"
+        skills_src = (
+            source_candidate / "vibecrafted-core" / "vibecrafted_core" / "skills"
+        )
         if skills_src.is_dir():
             source_root = skills_src
     drifted: list[str] = []
@@ -12272,17 +12314,20 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
 
     # --- Execute: rsync skills ---
     print(bold("Installing shared skills..."))
-    if not dry_run:
-        store_path.mkdir(parents=True, exist_ok=True)
-
     skills_dir = source_skills_root(repo_root)
-    for name in selected_skills:
-        src = skills_dir / name
-        dst = store_path / name
-        print(f"  {dim('->')} {name}")
-        rsync_skill(src, dst, dry_run=dry_run, mirror=mirror)
-    for rule in sync_skill_root_rules(skills_dir, store_path, dry_run=dry_run):
-        print(f"  {dim('->')} {rule}")
+    packaged_skills = repo_root / "vibecrafted-core" / "vibecrafted_core" / "skills"
+    if skills_dir == packaged_skills:
+        print(f"  {OK} Skills are carried by the immutable runtime generation")
+    else:
+        if not dry_run:
+            store_path.mkdir(parents=True, exist_ok=True)
+        for name in selected_skills:
+            src = skills_dir / name
+            dst = store_path / name
+            print(f"  {dim('->')} {name}")
+            rsync_skill(src, dst, dry_run=dry_run, mirror=mirror)
+        for rule in sync_skill_root_rules(skills_dir, store_path, dry_run=dry_run):
+            print(f"  {dim('->')} {rule}")
     print()
 
     # --- Execute: staged control plane ---
@@ -12363,7 +12408,14 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     # --- Execute: shell helpers ---
     if install_shell:
         print(bold("Installing shell helper..."))
-        shell_script = repo_root / "runtime" / "scripts" / "install-shell.sh"
+        shell_script = (
+            repo_root
+            / "vibecrafted-core"
+            / "vibecrafted_core"
+            / "runtime"
+            / "scripts"
+            / "install-shell.sh"
+        )
         if shell_script.exists():
             shell_cmd = ["bash", str(shell_script), "--source", str(repo_root)]
             if write_shell_rc:
@@ -12406,8 +12458,9 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
         install_path=str(store_path),
     )
     if not dry_run:
-        state.save(store_path)
-        print(f"  {OK} Install manifest saved to {store_path / STATE_FILE}")
+        state_file = vibecrafted_home() / STATE_FILE
+        state.save(state_file.parent)
+        print(f"  {OK} Install manifest saved to {state_file}")
     else:
         print(f"  {SKIP} Dry run — manifest not saved")
     print()
@@ -12553,7 +12606,12 @@ def _print_unicode_summary(
     _out = out or sys.stdout
     fw_ver_display = get_install_version(repo_root)
     skill_count = len(skills)
-    current_runtime = _current_tools_link(store_path) / "runtime"
+    current_runtime = (
+        _current_tools_link(store_path)
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+    )
 
     def _agent_spawn_present(agent: str) -> bool:
         """True if a spawn script for `agent` exists in the staged runtime or the legacy
@@ -12730,23 +12788,27 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
 
         # Install skills
         print("Installing skills:")
-        if not dry_run:
-            store_path.mkdir(parents=True, exist_ok=True)
         skills_dir = source_skills_root(repo_root)
-        # One live counter line (§6.6), per-skill detail stays in the log.
-        total_skills = len(selected_skills)
-        for idx, name in enumerate(selected_skills, 1):
-            src = skills_dir / name
-            dst = store_path / name
-            print(f"  -> {name}")
-            if _compact_status_is_live(out):
-                frame = SPINNER_FRAMES[idx % len(SPINNER_FRAMES)]
-                _compact_line(
-                    out, dim(frame), "Skills", f"installing {idx}/{total_skills}"
-                )
-            rsync_skill(src, dst, dry_run=dry_run, mirror=mirror)
-        for rule in sync_skill_root_rules(skills_dir, store_path, dry_run=dry_run):
-            print(f"  -> {rule}")
+        packaged_skills = repo_root / "vibecrafted-core" / "vibecrafted_core" / "skills"
+        if skills_dir == packaged_skills:
+            print("  carried by immutable runtime generation")
+        else:
+            if not dry_run:
+                store_path.mkdir(parents=True, exist_ok=True)
+            # One live counter line (§6.6), per-skill detail stays in the log.
+            total_skills = len(selected_skills)
+            for idx, name in enumerate(selected_skills, 1):
+                src = skills_dir / name
+                dst = store_path / name
+                print(f"  -> {name}")
+                if _compact_status_is_live(out):
+                    frame = SPINNER_FRAMES[idx % len(SPINNER_FRAMES)]
+                    _compact_line(
+                        out, dim(frame), "Skills", f"installing {idx}/{total_skills}"
+                    )
+                rsync_skill(src, dst, dry_run=dry_run, mirror=mirror)
+            for rule in sync_skill_root_rules(skills_dir, store_path, dry_run=dry_run):
+                print(f"  -> {rule}")
         print()
 
         print("Refreshing staged control plane:")
@@ -12845,7 +12907,14 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         # Shell helpers
         if install_shell:
             print("Installing shell helper:")
-            shell_script = repo_root / "runtime" / "scripts" / "install-shell.sh"
+            shell_script = (
+                repo_root
+                / "vibecrafted-core"
+                / "vibecrafted_core"
+                / "runtime"
+                / "scripts"
+                / "install-shell.sh"
+            )
             if shell_script.exists():
                 shell_cmd = ["bash", str(shell_script), "--source", str(repo_root)]
                 if write_shell_rc:
@@ -12915,8 +12984,9 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             install_path=str(store_path),
         )
         if not dry_run:
-            state.save(store_path)
-            print(f"Manifest saved: {store_path / STATE_FILE}")
+            state_file = vibecrafted_home() / STATE_FILE
+            state.save(state_file.parent)
+            print(f"Manifest saved: {state_file}")
         print()
 
         # Doctor (logged)
@@ -13504,7 +13574,13 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     shared_home = vibecrafted_home()
     store_path = _canonical_store_path(shared_home)
     state = _load_install_state(store_path)
-    state_file = store_path / STATE_FILE
+    state_file = _install_state_file(store_path)
+    legacy_store = shared_home / "skills"
+    if state_file.parent == legacy_store and not store_path.exists():
+        # A pre-generation install owns mutable skill copies under state home.
+        # Preserve that one-way uninstall migration without recreating the
+        # legacy store for current installs.
+        store_path = legacy_store
     dry_run = args.dry_run
     bundle = set(_known_bundle_names())
     helper_file = _helper_target_path()
@@ -13797,7 +13873,7 @@ def cmd_restore(args: argparse.Namespace) -> int:
         print()
 
     # Remove manifest (since we're reverting to pre-install state)
-    state_file = store_path / STATE_FILE
+    state_file = _install_state_file(store_path)
     if state_file.exists() and not dry_run:
         state_file.unlink()
 

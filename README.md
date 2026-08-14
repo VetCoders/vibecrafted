@@ -18,6 +18,12 @@
   <a href="docs/FAQ.md">FAQ</a>
 </p>
 
+<p align="center">
+  <a href="LICENSE"><img alt="License: BUSL-1.1" src="https://img.shields.io/badge/license-BUSL--1.1-blue.svg"></a>
+  <a href="VERSION"><img alt="Version 3.7.1" src="https://img.shields.io/badge/version-3.7.1-informational.svg"></a>
+  <a href="docs/INSTALL.md"><img alt="Platform: macOS, Linux, Windows (WSL2)" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows%20(WSL2)-lightgrey.svg"></a>
+</p>
+
 ---
 
 ## The Weekend Hangover
@@ -158,31 +164,52 @@ The `//` is not decoration. It is the mark.
 
 ## Install
 
-One signed product carries the terminal substrate, session interior and the
-matching Vibecrafted runtime:
+**macOS and Linux:**
 
-Open the [latest release](https://github.com/vetcoders/vibecrafted/releases/latest),
-download the canonically named
-`Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`, verify its adjacent
-`.dmg.sha256`, then open the DMG.
+```bash
+curl -fsSL https://vibecrafted.io/install.sh | bash
+```
 
-Drag `Vibecrafted.app` to Applications and launch it. Every new or restored
-`workspace_id` enters through the bundled `vc-start`; the app sources its own
-XDG/runtime environment and does not overwrite your Alacritty, Zellij,
-vc-frame or shell configuration. `vc-terminal` and `vc-frame` are internal
-donors, not additional products to install.
+**Windows:** install WSL2 once, then use the same bootstrap inside it:
 
-Inside a source checkout, `make install` remains a developer/control-plane
-staging tool. It is not the public app installation or update channel.
+```powershell
+wsl --install
+wsl bash -c 'curl -fsSL https://vibecrafted.io/install.sh | bash'
+```
 
-Shell is the everyday operator entry. When a browser-guided install is the
-better human surface, run `make wizard` or `make gui-install`.
+**From source** (power users, maintainers, anyone who wants the gates):
+
+```bash
+git clone https://github.com/vetcoders/vibecrafted.git
+cd vibecrafted && make install
+make help-dev   # the full target surface
+```
+
+**macOS desktop app:** the intended end-user shape is one Developer ID signed
+and notarized `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg` carrying matching
+builds of `vc-terminal`, `vc-frame`, `vc-start` and the complete runtime.
+Download it and its adjacent `.dmg.sha256` from the
+[latest release](https://github.com/vetcoders/vibecrafted/releases/latest),
+verify the checksum, then open the DMG. No published release carries a DMG yet
+— use the bootstrap until one does. The build path exists (`make release`) but
+has not been exercised since the runtime layout changed, so treat it as
+unproven rather than ready.
+
+Every new or restored `workspace_id` enters through the bundled `vc-start`.
+Vibecrafted sources its own XDG/runtime environment and does not overwrite your
+Alacritty, Zellij, vc-frame or shell configuration. `vc-terminal` and `vc-frame`
+are internal donors, not additional products to install.
+
+When a browser-guided install is the better human surface, run `make wizard` or
+`make gui-install`.
 
 Verify the installed product:
 
 ```bash
 vibecrafted doctor
 ```
+
+Full matrix, per-platform detail and troubleshooting: [docs/INSTALL.md](docs/INSTALL.md).
 
 Prefer a containerized operator runtime when you want the framework isolated
 from the host toolchain:

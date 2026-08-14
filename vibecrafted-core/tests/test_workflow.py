@@ -279,6 +279,7 @@ def test_launch_workflow_preseeds_machine_owned_claim_digest(
     assert truth["completed"] is True
     meta = json.loads(Path(payload["meta"]).read_text(encoding="utf-8"))
     assert meta["run_id"] == payload["run_id"]
+    assert meta["runtime"] == "headless"
     assert meta["claim_digest"] == digest
     assert f"claim_digest: {digest}" in Path(payload["report"]).read_text(
         encoding="utf-8"

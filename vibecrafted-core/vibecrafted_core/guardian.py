@@ -74,7 +74,9 @@ GUARDIAN_STATE_SCHEMA = "vibecrafted.guardian-state.v2"
 GUARDIAN_STATE_SCHEMA_V1 = "vibecrafted.guardian-state.v1"
 GUARDIAN_DEAD_LETTER_SCHEMA = "vibecrafted.guardian-dead-letters.v2"
 GUARDIAN_READY_SCHEMA = "vibecrafted.guardian-ready.v1"
-TERMINAL_TRIAGE_OUTBOX_SCHEMA = "vibecrafted.terminal-triage-outbox.v1"
+TERMINAL_TRIAGE_OUTBOX_SCHEMA = "vibecrafted.terminal-triage-outbox.v2"
+TERMINAL_TRIAGE_OUTBOX_SCHEMA_V1 = "vibecrafted.terminal-triage-outbox.v1"
+TERMINAL_TRIAGE_DEAD_LETTER_SCHEMA = "vibecrafted.terminal-triage-dead-letter.v1"
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
 DEFAULT_RECOVERY_TIMEOUT_SECONDS = 5.0
 DEFAULT_BACKOFF_INITIAL_SECONDS = 1.0
@@ -86,6 +88,9 @@ TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT = 4096
 TERMINAL_TRIAGE_OUTBOX_ATTEMPT_LIMIT = 64
 TERMINAL_TRIAGE_QUARANTINE_CAPACITY = 256
 TERMINAL_TRIAGE_RETRY_SECONDS = 15.0
+TERMINAL_TRIAGE_RETRY_INITIAL_SECONDS = 30.0
+TERMINAL_TRIAGE_RETRY_MAX_SECONDS = 30.0 * 60.0
+TERMINAL_TRIAGE_MAX_ATTEMPTS = 8
 MAX_PENDING_RECORDS = 1024
 MAX_PENDING_ATTEMPTS = 8
 MAX_STATE_BYTES = 8 * 1024 * 1024
@@ -141,6 +146,14 @@ class GuardianLockSecurityError(GuardianStateError):
 
 
 CursorToken = int | str
+
+
+def _truncate_utf8_bytes(value: str, maximum: int = MAX_STATE_TEXT_BYTES) -> str:
+    """Return the longest valid UTF-8 prefix whose encoding fits `maximum`."""
+    encoded = value.encode("utf-8")
+    if len(encoded) <= maximum:
+        return value
+    return encoded[:maximum].decode("utf-8", errors="ignore")
 
 
 def _bounded_text(
@@ -2073,6 +2086,17 @@ def _canonical_triage_run_id(run_id: object) -> str:
     return candidate
 
 
+@dataclass(frozen=True)
+class TerminalTriageOutboxRecord:
+    """One bounded retry receipt for terminal projection reconciliation."""
+
+    run_id: str
+    queued_at_ns: int
+    attempts: int = 0
+    next_retry_at_ns: int = 0
+    last_reason: str = ""
+
+
 def _terminal_triage_outbox_root() -> Path:
     """Return (creating if needed) the durable terminal-triage outbox directory."""
     root = vibecrafted_home() / "control_plane" / "guardian" / "triage-outbox"
@@ -2201,9 +2225,9 @@ def _persist_terminal_triage_outbox(run_id: str) -> Path:
     # Existing jobs may always refresh their generation. New jobs are admitted
     # only while the bounded recovery page can still cover every valid record.
     with _TERMINAL_TRIAGE_LOCK:
-        previous_generation = 0
+        previous = TerminalTriageOutboxRecord(candidate, 0)
         try:
-            _run_id, previous_generation = _read_terminal_triage_outbox(path)
+            previous = _read_terminal_triage_outbox(path)
             exists = True
         except FileNotFoundError:
             exists = False
@@ -2226,22 +2250,33 @@ def _persist_terminal_triage_outbox(run_id: str) -> Path:
                     "terminal triage outbox capacity could not be established "
                     "within its bounded scheduling scan"
                 )
-        generation = max(time.time_ns(), previous_generation + 1)
+        generation = max(time.time_ns(), previous.queued_at_ns + 1)
         _atomic_private_write(
             path,
-            _terminal_triage_outbox_document(candidate, generation),
+            _terminal_triage_outbox_document(
+                TerminalTriageOutboxRecord(
+                    candidate,
+                    generation,
+                    attempts=previous.attempts,
+                    next_retry_at_ns=previous.next_retry_at_ns,
+                    last_reason=previous.last_reason,
+                )
+            ),
         )
     return path
 
 
-def _terminal_triage_outbox_document(run_id: str, queued_at_ns: int) -> bytes:
+def _terminal_triage_outbox_document(record: TerminalTriageOutboxRecord) -> bytes:
     """Serialize one terminal-triage outbox record to canonical JSON bytes."""
     return (
         json.dumps(
             {
                 "schema": TERMINAL_TRIAGE_OUTBOX_SCHEMA,
-                "run_id": run_id,
-                "queued_at_ns": queued_at_ns,
+                "run_id": record.run_id,
+                "queued_at_ns": record.queued_at_ns,
+                "attempts": record.attempts,
+                "next_retry_at_ns": record.next_retry_at_ns,
+                "last_reason": record.last_reason,
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -2251,13 +2286,42 @@ def _terminal_triage_outbox_document(run_id: str, queued_at_ns: int) -> bytes:
     ).encode("utf-8")
 
 
-def _read_terminal_triage_outbox(path: Path) -> tuple[str, int]:
+def _read_terminal_triage_outbox(path: Path) -> TerminalTriageOutboxRecord:
     """Read and validate one outbox record; enforces its filename binds its run id."""
     payload = _strict_json_loads(_read_private_file(path, maximum=64 * 1024))
+    if not isinstance(payload, dict):
+        raise GuardianStateError(f"terminal triage outbox is invalid: {path}")
+    schema = payload.get("schema")
+    if schema == TERMINAL_TRIAGE_OUTBOX_SCHEMA_V1:
+        expected_fields = {"schema", "run_id", "queued_at_ns"}
+        attempts = 0
+        next_retry_at_ns = 0
+        last_reason = ""
+    elif schema == TERMINAL_TRIAGE_OUTBOX_SCHEMA:
+        expected_fields = {
+            "schema",
+            "run_id",
+            "queued_at_ns",
+            "attempts",
+            "next_retry_at_ns",
+            "last_reason",
+        }
+        attempts = payload.get("attempts")
+        next_retry_at_ns = payload.get("next_retry_at_ns")
+        last_reason = payload.get("last_reason")
+        if (
+            type(attempts) is not int
+            or attempts < 0
+            or type(next_retry_at_ns) is not int
+            or next_retry_at_ns < 0
+            or not isinstance(last_reason, str)
+            or len(last_reason.encode("utf-8")) > MAX_STATE_TEXT_BYTES
+        ):
+            raise GuardianStateError(f"terminal triage outbox is invalid: {path}")
+    else:
+        raise GuardianStateError(f"terminal triage outbox is invalid: {path}")
     if (
-        not isinstance(payload, dict)
-        or set(payload) != {"schema", "run_id", "queued_at_ns"}
-        or payload.get("schema") != TERMINAL_TRIAGE_OUTBOX_SCHEMA
+        set(payload) != expected_fields
         or type(payload.get("queued_at_ns")) is not int
         or payload["queued_at_ns"] <= 0
     ):
@@ -2267,7 +2331,13 @@ def _read_terminal_triage_outbox(path: Path) -> tuple[str, int]:
         raise GuardianStateError(
             f"terminal triage outbox filename does not bind its run id: {path}"
         )
-    return run_id, payload["queued_at_ns"]
+    return TerminalTriageOutboxRecord(
+        run_id,
+        payload["queued_at_ns"],
+        attempts=attempts,
+        next_retry_at_ns=next_retry_at_ns,
+        last_reason=last_reason,
+    )
 
 
 def _clear_terminal_triage_outbox(
@@ -2280,8 +2350,8 @@ def _clear_terminal_triage_outbox(
     with _TERMINAL_TRIAGE_LOCK:
         try:
             if expected_generation is not None:
-                _current_run_id, current_generation = _read_terminal_triage_outbox(path)
-                if current_generation != expected_generation:
+                current = _read_terminal_triage_outbox(path)
+                if current.queued_at_ns != expected_generation:
                     return False
             _validate_existing_private_file(path)
             path.unlink()
@@ -2291,26 +2361,150 @@ def _clear_terminal_triage_outbox(
     return True
 
 
+def _terminal_triage_failure_reason(run_id: str) -> str:
+    """Read the last durable triage failure without invoking a terminal process."""
+
+    meta = (
+        vibecrafted_home()
+        / "control_plane"
+        / "runtime_runs"
+        / _canonical_triage_run_id(run_id)
+        / "meta.json"
+    )
+    try:
+        payload = _strict_json_loads(_read_private_file(meta, maximum=MAX_STATE_BYTES))
+    except (FileNotFoundError, OSError, ValueError, GuardianStateError):
+        return "runtime_meta_unavailable"
+    if not isinstance(payload, dict):
+        return "runtime_meta_invalid"
+    last_error = payload.get("triage_last_error")
+    if isinstance(last_error, dict):
+        reason = str(last_error.get("reason") or "").strip()
+        if reason:
+            return _truncate_utf8_bytes(reason)
+    return _truncate_utf8_bytes(
+        str(payload.get("triage_reason") or "triage_incomplete")
+    )
+
+
+def _terminal_triage_reason_is_permanent(reason: str) -> bool:
+    """Classify stale/proven-invalid projection work that operator action must resolve."""
+
+    normalized = reason.strip().lower()
+    missing_session = "not found" in normalized and (
+        "session '" in normalized or 'session "' in normalized
+    )
+    return (
+        missing_session
+        or normalized.startswith("transfer_proof_invalid:")
+        or any(
+            marker in normalized
+            for marker in (
+                "origin tab no longer exists",
+                "origin tab is not proven closed",
+                "receipt identity",
+                "runtime_meta_unavailable",
+                "runtime_meta_invalid",
+            )
+        )
+    )
+
+
+def _dead_letter_terminal_triage_outbox_locked(
+    record: TerminalTriageOutboxRecord,
+    reason: str,
+) -> bool:
+    """Retire one valid poison job into bounded operator-visible quarantine."""
+
+    outbox_path = _terminal_triage_outbox_path(record.run_id)
+    quarantine_root = _terminal_triage_quarantine_root()
+    if not _terminal_triage_quarantine_has_capacity(quarantine_root):
+        LOGGER.critical(
+            "terminal triage quarantine is full; poison job remains at %s",
+            outbox_path,
+        )
+        return False
+    digest = hashlib.sha256(record.run_id.encode("utf-8")).hexdigest()[:16]
+    destination = quarantine_root / (
+        f"{time.time_ns()}-{digest}-{secrets.token_hex(4)}.dead-letter.json"
+    )
+    document = (
+        json.dumps(
+            {
+                "schema": TERMINAL_TRIAGE_DEAD_LETTER_SCHEMA,
+                "run_id": record.run_id,
+                "attempts": record.attempts + 1,
+                "reason": _truncate_utf8_bytes(reason),
+                "dead_lettered_at_ns": time.time_ns(),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
+    _atomic_private_write(destination, document)
+    try:
+        current = _read_terminal_triage_outbox(outbox_path)
+        if current.queued_at_ns != record.queued_at_ns:
+            destination.unlink(missing_ok=True)
+            _fsync_directory(quarantine_root)
+            return False
+        outbox_path.unlink()
+    except FileNotFoundError:
+        destination.unlink(missing_ok=True)
+        _fsync_directory(quarantine_root)
+        return False
+    _fsync_directory(outbox_path.parent)
+    LOGGER.error(
+        "terminal triage dead-lettered %s after %s attempt(s): %s",
+        record.run_id,
+        record.attempts + 1,
+        reason,
+    )
+    return True
+
+
 def _refresh_terminal_triage_outbox(
     run_id: str,
     *,
     expected_generation: int,
+    reason: str,
 ) -> bool:
-    """Rotate one retry only if no newer scheduler write superseded it."""
+    """Back off one retry or dead-letter it after a bounded attempt budget."""
 
     candidate = _canonical_triage_run_id(run_id)
     path = _terminal_triage_outbox_path(candidate)
     with _TERMINAL_TRIAGE_LOCK:
         try:
-            _current_run_id, current_generation = _read_terminal_triage_outbox(path)
+            current = _read_terminal_triage_outbox(path)
         except (FileNotFoundError, OSError, ValueError, GuardianStateError):
             return False
-        if current_generation != expected_generation:
+        if current.queued_at_ns != expected_generation:
             return False
-        generation = max(time.time_ns(), current_generation + 1)
+        attempts = current.attempts + 1
+        if (
+            _terminal_triage_reason_is_permanent(reason)
+            or attempts >= TERMINAL_TRIAGE_MAX_ATTEMPTS
+        ):
+            return _dead_letter_terminal_triage_outbox_locked(current, reason)
+        generation = max(time.time_ns(), current.queued_at_ns + 1)
+        delay_seconds = min(
+            TERMINAL_TRIAGE_RETRY_MAX_SECONDS,
+            TERMINAL_TRIAGE_RETRY_INITIAL_SECONDS * (2 ** (attempts - 1)),
+        )
         _atomic_private_write(
             path,
-            _terminal_triage_outbox_document(candidate, generation),
+            _terminal_triage_outbox_document(
+                TerminalTriageOutboxRecord(
+                    candidate,
+                    generation,
+                    attempts=attempts,
+                    next_retry_at_ns=time.time_ns()
+                    + int(delay_seconds * 1_000_000_000),
+                    last_reason=_truncate_utf8_bytes(reason),
+                )
+            ),
         )
     return True
 
@@ -2344,11 +2538,39 @@ def _reconcile_terminal_triage_run(run_id: str) -> bool:
     return triage_outcome_is_complete(outcome)
 
 
+def _attempt_terminal_triage_record(record: TerminalTriageOutboxRecord) -> None:
+    """Attempt one due job, with poison detection before any vc-frame invocation."""
+
+    existing_reason = _terminal_triage_failure_reason(record.run_id)
+    if _terminal_triage_reason_is_permanent(existing_reason):
+        with _TERMINAL_TRIAGE_LOCK:
+            try:
+                current = _read_terminal_triage_outbox(
+                    _terminal_triage_outbox_path(record.run_id)
+                )
+            except (FileNotFoundError, OSError, ValueError, GuardianStateError):
+                return
+            if current.queued_at_ns == record.queued_at_ns:
+                _dead_letter_terminal_triage_outbox_locked(current, existing_reason)
+        return
+    if _reconcile_terminal_triage_run(record.run_id):
+        _clear_terminal_triage_outbox(
+            record.run_id,
+            expected_generation=record.queued_at_ns,
+        )
+        return
+    _refresh_terminal_triage_outbox(
+        record.run_id,
+        expected_generation=record.queued_at_ns,
+        reason=_terminal_triage_failure_reason(record.run_id),
+    )
+
+
 def _recover_terminal_triage_outbox() -> None:
     """Retry a bounded oldest-first page of durable jobs."""
 
     root = _terminal_triage_outbox_root()
-    newest_first: list[tuple[int, str, Path]] = []
+    newest_first: list[tuple[int, str, TerminalTriageOutboxRecord]] = []
     scanned = 0
     scan_saturated = False
     if TERMINAL_TRIAGE_OUTBOX_SCAN_LIMIT <= 0:
@@ -2362,12 +2584,14 @@ def _recover_terminal_triage_outbox() -> None:
             continue
         scanned += 1
         try:
-            run_id, queued_at_ns = _read_terminal_triage_outbox(path)
+            record = _read_terminal_triage_outbox(path)
         except Exception:
             if not _quarantine_terminal_triage_outbox(path):
                 LOGGER.exception("terminal triage outbox remains corrupt: %s", path)
             continue
-        item = (-queued_at_ns, run_id, path)
+        if record.next_retry_at_ns > time.time_ns():
+            continue
+        item = (-record.queued_at_ns, record.run_id, record)
         if len(newest_first) < TERMINAL_TRIAGE_OUTBOX_ATTEMPT_LIMIT:
             heapq.heappush(newest_first, item)
         elif item > newest_first[0]:
@@ -2381,21 +2605,14 @@ def _recover_terminal_triage_outbox() -> None:
         )
 
     candidates = sorted(
-        ((-queued_at_ns, run_id, path) for queued_at_ns, run_id, path in newest_first)
+        (
+            (-queued_at_ns, run_id, record)
+            for queued_at_ns, run_id, record in newest_first
+        )
     )
-    for queued_at_ns, run_id, _path in candidates:
+    for _queued_at_ns, run_id, record in candidates:
         try:
-            complete = _reconcile_terminal_triage_run(run_id)
-            if complete:
-                _clear_terminal_triage_outbox(
-                    run_id,
-                    expected_generation=queued_at_ns,
-                )
-            else:
-                _refresh_terminal_triage_outbox(
-                    run_id,
-                    expected_generation=queued_at_ns,
-                )
+            _attempt_terminal_triage_record(record)
         except Exception:
             LOGGER.exception(
                 "terminal triage outbox retry failed for %s; receipt remains durable",
@@ -2403,7 +2620,8 @@ def _recover_terminal_triage_outbox() -> None:
             )
             _refresh_terminal_triage_outbox(
                 run_id,
-                expected_generation=queued_at_ns,
+                expected_generation=record.queued_at_ns,
+                reason="guardian_reconciliation_exception",
             )
 
 
@@ -2436,17 +2654,9 @@ def _run_terminal_triage_jobs() -> None:
                 _recover_untriaged_runs_background()
             else:
                 path = _terminal_triage_outbox_path(run_id)
-                _queued_run_id, generation = _read_terminal_triage_outbox(path)
-                if _reconcile_terminal_triage_run(run_id):
-                    _clear_terminal_triage_outbox(
-                        run_id,
-                        expected_generation=generation,
-                    )
-                else:
-                    _refresh_terminal_triage_outbox(
-                        run_id,
-                        expected_generation=generation,
-                    )
+                record = _read_terminal_triage_outbox(path)
+                if record.next_retry_at_ns <= time.time_ns():
+                    _attempt_terminal_triage_record(record)
         except Exception:
             LOGGER.exception("terminal triage background job crashed for %s", key)
         finally:

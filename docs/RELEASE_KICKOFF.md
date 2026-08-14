@@ -24,6 +24,10 @@ unexpected release assets, failed Apple validation or failed mounted-DMG
 walk-around. It publishes only after downloading and byte-comparing the draft
 assets.
 
+The ordered command sequence to cut 3.7.1 with that DMG attached — including
+which `$HOME/.keys` files must be present and what each verification step
+proves — is [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
+
 ## Public CTA
 
 Download the canonical `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg` and its

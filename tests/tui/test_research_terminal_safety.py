@@ -7,7 +7,14 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
+HELPER_SCRIPT = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "shell"
+    / "vetcoders.sh"
+)
 
 sys.path.insert(0, str(REPO_ROOT / "vibecrafted-core"))
 

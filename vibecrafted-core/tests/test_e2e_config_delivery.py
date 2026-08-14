@@ -172,10 +172,11 @@ def _run_stage_in_venv(
         tools = Path({str(tools)!r})
         os.environ["XDG_CONFIG_HOME"] = str(home / ".config")
         runtime_root = tools / "vibecrafted-full"
+        runtime_payload = runtime_root / "vibecrafted-core" / "vibecrafted_core" / "runtime"
         (runtime_root / "vibecrafted-core").mkdir(parents=True)
-        (runtime_root / "runtime" / "scripts").mkdir(parents=True)
+        (runtime_payload / "scripts").mkdir(parents=True)
         (runtime_root / "Makefile").write_text("all:\\n\\t@true\\n", encoding="utf-8")
-        (runtime_root / "runtime" / "scripts" / "codex_spawn.sh").write_text(
+        (runtime_payload / "scripts" / "codex_spawn.sh").write_text(
             "#!/usr/bin/env bash\\n", encoding="utf-8"
         )
         if {prefer_repo!r}:
@@ -203,7 +204,7 @@ def _run_stage_in_venv(
             ), f"expected packaged source, got {{src}}"
             materialize_vc_frame_config(
                 src,
-                runtime_root / "runtime" / "generated" / "vc-frame",
+                runtime_payload / "generated" / "vc-frame",
                 pane_shell=resolve_pane_shell({path_env!r}),
                 clipboard_command=resolve_clipboard_command({path_env!r}),
             )
@@ -259,7 +260,8 @@ def _run_stage_in_venv(
             "runtime_makefile_preserved": (current / "Makefile").is_file(),
             "runtime_core_preserved": (current / "vibecrafted-core").is_dir(),
             "runtime_launcher_preserved": (
-                current / "runtime" / "scripts" / "codex_spawn.sh"
+                current / "vibecrafted-core" / "vibecrafted_core"
+                / "runtime" / "scripts" / "codex_spawn.sh"
             ).is_file(),
         }}
         print(json.dumps(out))
@@ -378,15 +380,16 @@ def test_upgrade_flip_atomicity(tmp_path: Path, monkeypatch) -> None:
     home.mkdir()
     tools = home / ".local" / "share" / "vibecrafted" / "tools"
     runtime = tools / "vibecrafted-full"
+    runtime_payload = runtime / "vibecrafted-core" / "vibecrafted_core" / "runtime"
     (runtime / "vibecrafted-core").mkdir(parents=True)
-    (runtime / "runtime" / "scripts").mkdir(parents=True)
+    (runtime_payload / "scripts").mkdir(parents=True)
     (runtime / "Makefile").write_text("all:\n\t@true\n", encoding="utf-8")
-    (runtime / "runtime" / "scripts" / "codex_spawn.sh").write_text(
+    (runtime_payload / "scripts" / "codex_spawn.sh").write_text(
         "#!/usr/bin/env bash\n", encoding="utf-8"
     )
     materialize_vc_frame_config(
         vc_frame_config_source(),
-        runtime / "runtime" / "generated" / "vc-frame",
+        runtime_payload / "generated" / "vc-frame",
         pane_shell=resolve_pane_shell(),
         clipboard_command=resolve_clipboard_command(),
     )
@@ -407,5 +410,12 @@ def test_upgrade_flip_atomicity(tmp_path: Path, monkeypatch) -> None:
     assert current.resolve() == runtime.resolve()
     assert (current / "Makefile").is_file()
     assert (current / "vibecrafted-core").is_dir()
-    assert (current / "runtime" / "scripts" / "codex_spawn.sh").is_file()
+    assert (
+        current
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "scripts"
+        / "codex_spawn.sh"
+    ).is_file()
     assert not list(tools.glob(".vibecrafted-current.tmp.*"))

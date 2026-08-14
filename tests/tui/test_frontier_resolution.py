@@ -9,10 +9,29 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
-COMMON_SCRIPT = REPO_ROOT / "runtime" / "scripts" / "common.sh"
+HELPER_SCRIPT = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "shell"
+    / "vetcoders.sh"
+)
+COMMON_SCRIPT = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "scripts"
+    / "common.sh"
+)
 INSTALL_FRONTIER_SCRIPT = (
-    REPO_ROOT / "runtime" / "scripts" / "install-frontier-config.sh"
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "scripts"
+    / "install-frontier-config.sh"
 )
 
 
@@ -58,7 +77,13 @@ def test_dashboard_layouts_resolve_helpers_from_home_store_first() -> None:
     # no mission-control helper panes, so it has no home-store resolution payload.
     for layout_name in ("dashboard.kdl", "marbles.kdl"):
         payload = (
-            REPO_ROOT / "config" / "vc-frame" / "layouts" / layout_name
+            REPO_ROOT
+            / "vibecrafted-core"
+            / "vibecrafted_core"
+            / "config"
+            / "vc-frame"
+            / "layouts"
+            / layout_name
         ).read_text(encoding="utf-8")
         assert expected_home_root in payload
         assert expected_repo_store_root in payload
@@ -67,7 +92,13 @@ def test_dashboard_layouts_resolve_helpers_from_home_store_first() -> None:
 
 def test_operator_layout_does_not_append_nested_vibecrafted_store() -> None:
     payload = (
-        REPO_ROOT / "config" / "vc-frame" / "layouts" / "operator.kdl"
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "config"
+        / "vc-frame"
+        / "layouts"
+        / "operator.kdl"
     ).read_text(encoding="utf-8")
     assert (
         "${VIBECRAFTED_HOME:-$VIBECRAFTED_ROOT}/.vibecrafted/skills/vc-agents"
@@ -86,6 +117,8 @@ def test_shell_helper_prefers_current_control_plane_over_home_store(
         / "vibecrafted"
         / "tools"
         / "vibecrafted-current"
+        / "vibecrafted-core"
+        / "vibecrafted_core"
         / "skills"
         / "vc-agents"
     )
@@ -196,7 +229,18 @@ def test_vc_dashboard_mixes_companion_vc_frame_config_with_repo_layout(
     assert _expected_operator_session() in payload
     assert f"{_expected_operator_session()}-marbles" not in payload
     assert "--new-session-with-layout" in payload
-    assert str(REPO_ROOT / "config" / "vc-frame" / "layouts" / "marbles.kdl") in payload
+    assert (
+        str(
+            REPO_ROOT
+            / "vibecrafted-core"
+            / "vibecrafted_core"
+            / "config"
+            / "vc-frame"
+            / "layouts"
+            / "marbles.kdl"
+        )
+        in payload
+    )
     assert f"VC_FRAME_CONFIG_DIR={vc_frame_config.parent}" in payload
 
 

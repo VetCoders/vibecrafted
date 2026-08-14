@@ -16,9 +16,17 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 WRAPPER = REPO / "scripts" / "vc-frame-product-entry.sh"
-HELPER = REPO / "runtime" / "shell" / "vetcoders.sh"
-DASHBOARD = REPO / "runtime" / "shell" / "lib" / "dashboard.sh"
-DISPATCH = REPO / "runtime" / "shell" / "lib" / "dispatch.sh"
+HELPER = REPO / "vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
+DASHBOARD = REPO / "vibecrafted-core/vibecrafted_core/runtime/shell/lib/dashboard.sh"
+DISPATCH = (
+    REPO
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "shell"
+    / "lib"
+    / "dispatch.sh"
+)
 FOUNDATIONS = REPO / "scripts" / "install-foundations.sh"
 
 

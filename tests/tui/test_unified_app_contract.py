@@ -724,7 +724,7 @@ def _patch_release_mount(monkeypatch: pytest.MonkeyPatch, app: Path) -> None:
     monkeypatch.setattr(contract, "_run_live_release_checks", lambda *_: {})
 
 
-def test_native_app_launches_only_the_bundled_product_entry() -> None:
+def test_native_app_bootstraps_and_launches_only_the_canonical_product_entry() -> None:
     delegate = (
         REPO_ROOT / "vibecrafted-app/shell-agent/app/Vibecrafted/AppDelegate.swift"
     ).read_text(encoding="utf-8")
@@ -737,7 +737,16 @@ def test_native_app_launches_only_the_bundled_product_entry() -> None:
 
     assert "launchWorkspaceTerminal()" in delegate
     assert "Contents/Helpers/vc-terminal" in delegate
-    assert "Contents/Resources/runtime/bin/vc-start" in delegate
+    assert 'appendingPathComponent("releases", isDirectory: true)' in delegate
+    assert 'appendingPathComponent("active.json")' in delegate
+    assert 'generation.appendingPathComponent("bin/vc-start")' in delegate
+    assert "let runtimeEntries = try manager.contentsOfDirectory" in delegate
+    assert "launcherHome.appendingPathComponent(name)" in delegate
+    assert 'generation.appendingPathComponent("bin/vc-server")' in delegate
+    assert 'generation.appendingPathComponent("bin/vc-guardian")' in delegate
+    assert 'generation.appendingPathComponent("bin/vc-server-supervisor")' in delegate
+    assert "rename(temporary.path, destination.path)" in delegate
+    assert "assertNoSymlinks(below: generation)" in delegate
     assert 'environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"' in delegate
     assert "shell-agent" not in delegate
     assert 'name = "vc-start"' in cargo
@@ -745,6 +754,15 @@ def test_native_app_launches_only_the_bundled_product_entry() -> None:
     assert '"--norc"' in launcher
     assert 'source "$1"; shift; vc-start "$@"' in launcher
     assert 'Command::new("/bin/bash")' in launcher
+
+
+def test_tracked_product_source_contains_no_symlinks() -> None:
+    index = subprocess.check_output(["git", "ls-files", "-s"], cwd=REPO_ROOT, text=True)
+    tracked_symlinks = [
+        line for line in index.splitlines() if line.startswith("120000 ")
+    ]
+
+    assert tracked_symlinks == []
 
 
 def test_versioned_json_schema_matches_runtime_contract_ids() -> None:
@@ -1112,6 +1130,21 @@ def test_valid_app_has_one_bundle_identity_and_three_bound_entrypoints(
         capture_output=True,
         text=True,
     )
+
+
+def test_app_rejects_legacy_icon_resource(
+    tmp_path: Path, macho_executable: Path
+) -> None:
+    app = tmp_path / "Vibecrafted.app"
+    manifest = _app_fixture(app, macho_executable)
+    legacy_icon = app / "Contents/Resources/icon1.icns"
+    legacy_icon.write_bytes(b"legacy-icon")
+    manifest["files"].append(
+        _entry(app, "Contents/Resources/icon1.icns", kind="resource")
+    )
+    _write_app_manifest(app, manifest, sign=True)
+
+    _assert_error(contract.E_BUNDLE, lambda: contract.verify_app(app))
 
 
 def test_outer_macho_code_digest_rejects_substitution_after_resigning(
@@ -1689,13 +1722,14 @@ def test_transaction_rejects_exact_legacy_four_hash_runtime_manifest(
     manifest_path = tmp_path / identity["manifest_path"]
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["hashes"] = {
-        relative: manifest["hashes"][relative]
-        for relative in (
-            "VERSION",
-            "scripts/vibecrafted",
-            "runtime/generated/vc-frame/config.kdl",
-            "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
-        )
+        "VERSION": manifest["hashes"]["VERSION"],
+        "scripts/vibecrafted": manifest["hashes"]["scripts/vibecrafted"],
+        "runtime/generated/vc-frame/config.kdl": manifest["hashes"][
+            "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame/config.kdl"
+        ],
+        "vibecrafted-core/vibecrafted_core/deck/vibecrafted": manifest["hashes"][
+            "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
+        ],
     }
     _write_json(manifest_path, manifest)
     identity["runtime_manifest_sha256"] = _sha256(manifest_path)
@@ -2922,14 +2956,22 @@ def test_unified_release_has_one_top_level_owner() -> None:
     assert 'make -C "$TERMINAL_REPO"' in builder
     assert "release-bins" in builder
     assert 'chmod 0755 "$terminal_source"' in builder
-    assert 'make -C "$FRAME_REPO" release' in builder
+    assert 'make -C "$FRAME_REPO" release-binary' in builder
     assert 'chmod 0755 "$frame_source"' in builder
+    assert "build-server-release" in builder
+    assert '"$runtime/bin/vc-server"' in builder
+    assert '"$runtime/server/site/"' in builder
     assert "uv python install 3.12.3" in builder
     assert "install_name_tool -id '@loader_path/libpython3.12.dylib'" in builder
     assert "--remap-path-prefix=$HOME=/usr/src/operator-home" in builder
     assert "install_name_tool -delete_rpath /usr/lib/swift" in builder
+    assert 'run_bundled_verifier app "$APP" --require-clean' in builder
+    assert "run_bundled_verifier release-output" in builder
+    assert '"$verifier" -m vibecrafted_core.product_contract "$@"' in builder
+    assert '"$REPO_ROOT/scripts/verify-vibecrafted-product.sh"' not in builder
     assert "--noprofile" not in builder  # vc-start, not the release shell, owns this
     assert "vc-frame.real" not in builder
+    assert '"$runtime/runtime"' not in builder
     assert "$(MAKE) -C ../.. release" in shell_makefile
     assert not (REPO_ROOT / "vibecrafted-app/shell-agent/scripts/build-dmg.sh").exists()
 

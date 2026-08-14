@@ -40,9 +40,6 @@ EXPECTED_REQUIRED = {
     "scripts/runtime_paths.py",
     "scripts/vibecrafted",
     "scripts/verify-vibecrafted-product.sh",
-    "runtime/scripts",
-    "runtime/shell/lib",
-    "skills",
     "vibecrafted-core/pyproject.toml",
     "vibecrafted-core/vibecrafted_core/VERSION",
     "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
@@ -62,6 +59,18 @@ EXPECTED_REQUIRED = {
 }
 
 
+def test_docker_entrypoint_seeds_packaged_canonical_skills() -> None:
+    entrypoint = (REPO_ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert (
+        "$VIBECRAFTED_SOURCE/vibecrafted-core/vibecrafted_core/skills/." in entrypoint
+    )
+    assert "$VIBECRAFTED_SOURCE/skills/." not in entrypoint
+    assert "RUN chmod 0755" in dockerfile
+    assert "RUN chmod +x" not in dockerfile
+
+
 def _minimal_payload(root: Path) -> None:
     for relative in manifest.REQUIRED_FILES:
         path = root / relative
@@ -73,22 +82,6 @@ def _minimal_payload(root: Path) -> None:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"runtime sentinel for {relative}\n", encoding="utf-8")
-    # The repo's top-level runtime/ and skills/ are symlinks into the canonical
-    # package path; sshfs-backed mounts (colima containers) drop those symlinks
-    # entirely. Mirror every aliased requirement under its canonical path so
-    # fixtures can exercise the projection with real content behind it.
-    for relative in manifest.REQUIRED_DIRECTORIES:
-        parts = Path(relative).parts
-        if parts and parts[0] in manifest.CANONICAL_PROJECTIONS:
-            canonical = manifest.CANONICAL_PROJECTIONS[parts[0]]
-            (root / canonical.joinpath(*parts[1:])).mkdir(parents=True, exist_ok=True)
-    for relative in manifest.REQUIRED_SURFACE_FILES.values():
-        parts = Path(relative).parts
-        if parts and parts[0] in manifest.CANONICAL_PROJECTIONS:
-            canonical = manifest.CANONICAL_PROJECTIONS[parts[0]]
-            path = root / canonical.joinpath(*parts[1:])
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(f"canonical sentinel for {relative}\n", encoding="utf-8")
 
 
 def _source_provenance_for(
@@ -136,14 +129,6 @@ def _clear_source_provenance_environment(
     monkeypatch.delenv("VIBECRAFTED_SOURCE_REVISION", raising=False)
 
 
-def _replace_alias_directories_with_symlinks(root: Path) -> None:
-    for alias, canonical in manifest.CANONICAL_PROJECTIONS.items():
-        alias_path = root / alias
-        if alias_path.is_dir() and not alias_path.is_symlink():
-            shutil.rmtree(alias_path)
-        alias_path.symlink_to(canonical, target_is_directory=True)
-
-
 def _git(root: Path, *arguments: str) -> str:
     return subprocess.check_output(
         ["git", "-C", str(root), *arguments],
@@ -153,7 +138,6 @@ def _git(root: Path, *arguments: str) -> str:
 
 def _committed_git_source(root: Path) -> str:
     _minimal_payload(root)
-    _replace_alias_directories_with_symlinks(root)
     excluded_fixture = root / "tests" / "dev-only.txt"
     excluded_fixture.parent.mkdir(parents=True)
     excluded_fixture.write_text("committed dev-only fixture\n", encoding="utf-8")
@@ -168,7 +152,6 @@ def _committed_git_source(root: Path) -> str:
 
 def _filter_clean_git_source(root: Path) -> tuple[str, Path]:
     _minimal_payload(root)
-    _replace_alias_directories_with_symlinks(root)
     _git(root, "init", "--quiet")
     _git(root, "config", "user.name", "Distribution Filter Test")
     _git(root, "config", "user.email", "distribution-filter@example.invalid")
@@ -340,7 +323,9 @@ def test_forbidden_artifact_filter_is_safe_for_runtime_subtrees() -> None:
     assert manifest.path_is_forbidden("scripts/__pycache__/helper.pyc")
 
     assert not manifest.path_is_included("SKILL.md")
-    assert manifest.path_is_included("skills/vc-init/SKILL.md")
+    assert manifest.path_is_included(
+        "vibecrafted-core/vibecrafted_core/skills/vc-init/SKILL.md"
+    )
 
 
 def test_secret_env_files_are_forbidden_everywhere() -> None:
@@ -412,38 +397,33 @@ def test_stage_payload_filters_junk_and_mirrors_destination(tmp_path: Path) -> N
     assert not (destination / "orphan.txt").exists()
 
 
-def test_stage_payload_projects_canonical_runtime_when_mount_hides_symlink(
+def test_stage_payload_keeps_runtime_only_in_canonical_package_path(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "source"
     destination = tmp_path / "payload"
     _minimal_payload(source)
-    shutil.rmtree(source / "runtime")
 
     manifest.stage_payload(source, destination, mirror=True)
 
-    runtime_projection = destination / "runtime"
-    assert runtime_projection.is_symlink()
-    assert runtime_projection.readlink() == manifest.CANONICAL_RUNTIME
-    assert (runtime_projection / "scripts" / "README.md").is_file()
-    assert (runtime_projection / "shell" / "lib" / "core.sh").is_file()
+    assert not (destination / "runtime").exists()
+    runtime = destination / "vibecrafted-core/vibecrafted_core/runtime"
+    assert (runtime / "README.md").is_file()
     manifest.validate_payload(destination)
 
 
-def test_stage_payload_projects_canonical_skills_when_mount_hides_symlink(
+def test_stage_payload_keeps_skills_only_in_canonical_package_path(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "source"
     destination = tmp_path / "payload"
     _minimal_payload(source)
-    shutil.rmtree(source / "skills")
 
     manifest.stage_payload(source, destination, mirror=True)
 
-    skills_projection = destination / "skills"
-    assert skills_projection.is_symlink()
-    assert skills_projection.readlink() == manifest.CANONICAL_SKILLS
-    assert (skills_projection / "vc-init" / "SKILL.md").is_file()
+    assert not (destination / "skills").exists()
+    skills = destination / "vibecrafted-core/vibecrafted_core/skills"
+    assert (skills / "LIVING_TREE_RULE.md").is_file()
     manifest.validate_payload(destination)
 
 
@@ -851,7 +831,6 @@ def test_carrier_digest_rejects_every_payload_tree_mutation(
     _clear_source_provenance_environment(monkeypatch)
     source = tmp_path / "source"
     _minimal_payload(source)
-    _replace_alias_directories_with_symlinks(source)
     _write_source_provenance(source)
     target = source / "scripts" / "vetcoders_install.py"
     if mutation == "bytes":
@@ -862,8 +841,9 @@ def test_carrier_digest_rejects_every_payload_tree_mutation(
         target.unlink()
         target.symlink_to("../VERSION")
     elif mutation == "symlink":
-        (source / "runtime").unlink()
-        (source / "runtime").symlink_to(manifest.CANONICAL_SKILLS)
+        runtime = source / "vibecrafted-core/vibecrafted_core/runtime"
+        shutil.rmtree(runtime)
+        runtime.symlink_to("skills")
     elif mutation == "add":
         (source / "scripts" / "added.py").write_text("added\n", encoding="utf-8")
     elif mutation == "delete":

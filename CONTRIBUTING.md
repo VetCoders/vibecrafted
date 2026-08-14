@@ -31,6 +31,13 @@ The codebase is alive. When contributing:
 
 We value aggressive simplification and bold moves over timid preservation.
 
+## Code of Conduct
+
+This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). Report
+conduct issues to **hello@vetcoders.io** — the same public contact used in
+[SECURITY.md](SECURITY.md). Do not open a public issue for either conduct or
+security reports.
+
 ## Brand Marks
 
 When signing contributions or generated artifacts, use the appropriate mark:

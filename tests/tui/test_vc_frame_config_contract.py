@@ -14,7 +14,14 @@ This guards the canonical config so the binding can never silently regress.
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CANONICAL_CONFIG = REPO_ROOT / "config" / "vc-frame" / "config.kdl"
+CANONICAL_CONFIG = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "config"
+    / "vc-frame"
+    / "config.kdl"
+)
 
 
 def _active_kdl(text: str) -> str:
@@ -49,8 +56,7 @@ def test_session_mode_keeps_explicit_hard_quit() -> None:
 
 
 def test_no_zellij_named_config_dir_in_repo() -> None:
-    # The rebrand is complete: the canonical config lives under config/vc-frame/,
-    # never config/zellij/ (a stale zellij dir was the root cause of the load miss).
+    # The rebrand is complete and top-level config contains no zellij namespace.
     assert not (REPO_ROOT / "config" / "zellij").exists(), (
-        "config/zellij must not exist — vc-frame config is config/vc-frame/"
+        "config/zellij must not exist"
     )

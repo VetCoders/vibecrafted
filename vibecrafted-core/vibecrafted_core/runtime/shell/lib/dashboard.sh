@@ -191,7 +191,15 @@ _vetcoders_launch_dashboard() {
   (( $# )) && shift
 
   vc_frame_bin="$(_vetcoders_vc_frame_bin)" || {
-    echo "vc-frame is required for vibecrafted dashboard." >&2
+    # The dashboard is the optional operator surface, not the product. Saying
+    # only "vc-frame is required" left a fresh install looking broken —
+    # especially on platforms the installer ships no vc-frame binary for.
+    # Name the gap, and hand over the path that works without any TUI.
+    echo "vc-frame is not installed — the visual dashboard needs it." >&2
+    echo "Everything else works without it. Run agents headless:" >&2
+    echo "    vibecrafted workflow <agent> -p \"your task\"" >&2
+    echo "    vibecrafted <agent> observe --run-id <id>" >&2
+    echo "To get the dashboard, install vc-frame and re-run: vc-start" >&2
     return 1
   }
 
@@ -207,6 +215,9 @@ _vetcoders_launch_dashboard() {
   if [[ "${VIBECRAFTED_PREFER_REPO_VC_FRAME:-0}" == "1" ]]; then
     repo_source="$(_vetcoders_repo_root)"
     repo_vc_frame_dir="$repo_source/config/vc-frame"
+    if [[ ! -d "$repo_vc_frame_dir" ]]; then
+      repo_vc_frame_dir="$repo_source/vibecrafted-core/vibecrafted_core/config/vc-frame"
+    fi
     if [[ -d "$repo_vc_frame_dir" && -f "$repo_vc_frame_dir/config.kdl" ]]; then
       local repo_layout="$repo_vc_frame_dir/layouts/${layout_name}.kdl"
       if [[ -f "$repo_layout" ]]; then

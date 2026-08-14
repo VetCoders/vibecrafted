@@ -19,9 +19,9 @@ _vetcoders_shell_lib_candidates() {
   local facade_dir="$(_vetcoders_shell_facade_dir)"
   [[ -n "$facade_dir" ]] && printf '%s/lib\n' "$facade_dir"
   if [[ -n "${VIBECRAFTED_ROOT:-}" ]]; then
-    printf '%s/runtime/shell/lib\n' "$VIBECRAFTED_ROOT"
+    printf '%s/vibecrafted-core/vibecrafted_core/runtime/shell/lib\n' "$VIBECRAFTED_ROOT"
   fi
-  printf '%s/vibecrafted-current/runtime/shell/lib\n' "${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}"
+  printf '%s/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/shell/lib\n' "${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}"
   printf '%s/runtime/shell/lib\n' "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
 }
 
@@ -69,7 +69,7 @@ _vetcoders_source_workflow_module() {
 
 _vetcoders_shell_lib_dir="$(_vetcoders_resolve_shell_lib_dir 2>/dev/null || true)"
 if [[ -z "$_vetcoders_shell_lib_dir" ]]; then
-  _vetcoders_runtime_helper="${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current/runtime/helpers/vetcoders-runtime-core.sh"
+  _vetcoders_runtime_helper="${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/helpers/vetcoders-runtime-core.sh"
   if [[ -r "$_vetcoders_runtime_helper" ]]; then
     # shellcheck disable=SC1090
     source "$_vetcoders_runtime_helper"

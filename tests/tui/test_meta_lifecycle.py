@@ -8,7 +8,14 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-COMMON_SH = REPO_ROOT / "runtime" / "scripts" / "common.sh"
+COMMON_SH = (
+    REPO_ROOT
+    / "vibecrafted-core"
+    / "vibecrafted_core"
+    / "runtime"
+    / "scripts"
+    / "common.sh"
+)
 
 _ENV_SANITIZE = """
 unset VC_FRAME VC_FRAME_PANE_ID VC_FRAME_SESSION_NAME VC_FRAME_TAB_NAME VC_FRAME_CONFIG_DIR
@@ -407,7 +414,13 @@ def test_triage_run_is_the_last_step_of_a_generated_launcher() -> None:
     report on exactly the runs that finished cleanly.
     """
     launcher_src = (
-        REPO_ROOT / "runtime" / "scripts" / "lib" / "launcher.sh"
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "scripts"
+        / "lib"
+        / "launcher.sh"
     ).read_text(encoding="utf-8")
     assert (
         launcher_src.count(
@@ -441,7 +454,13 @@ def test_reap_runs_after_artifact_closure_and_before_triage() -> None:
     terminal state is on disk — that is what makes it a *terminal* run's residue.
     """
     launcher_src = (
-        REPO_ROOT / "runtime" / "scripts" / "lib" / "launcher.sh"
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "scripts"
+        / "lib"
+        / "launcher.sh"
     ).read_text(encoding="utf-8")
 
     assert launcher_src.count("spawn_reap_run") == 2, "both branches must sweep"

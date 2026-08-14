@@ -54,12 +54,9 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-# Find source file (new name first, then compat path)
-source_file="$repo_root/runtime/shell/vetcoders.sh"
-[[ -f "$source_file" ]] || source_file="$repo_root/runtime/shell/vetcoders.zsh"
-[[ -f "$source_file" ]] || source_file="$repo_root/runtime/shell/vetcoders.sh"
-[[ -f "$source_file" ]] || source_file="$repo_root/runtime/shell/vetcoders.zsh"
-[[ -f "$source_file" ]] || die "Helper file not found"
+# The Python package is the sole physical owner of runtime assets in source.
+source_file="$repo_root/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
+[[ -f "$source_file" ]] || die "Helper file not found: $source_file"
 
 # Canonical install location (shell-agnostic)
 config_base="${XDG_CONFIG_HOME:-$HOME/.config}"
@@ -92,16 +89,16 @@ _vibecrafted_helper_candidates() {
   # Without env set, resolver uses canonical install paths only —
   # so mid-rebase intermediate states do NOT break other shells.
   if [[ -n "\${VIBECRAFTED_ROOT:-}" ]]; then
-    printf '%s\n' "\$VIBECRAFTED_ROOT/runtime/shell/vetcoders.sh"
-    printf '%s\n' "\$VIBECRAFTED_ROOT/runtime/shell/vetcoders.zsh"
+    printf '%s\n' "\$VIBECRAFTED_ROOT/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh"
+    printf '%s\n' "\$VIBECRAFTED_ROOT/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.zsh"
   fi
   # CANONICAL INSTALL PATHS (always emitted, operator-agnostic):
   # vibecrafted-current symlinks to the active vibecrafted-<channel> install,
   # so this path stays stable across versions and points at the staged source
   # tree the installer copied into the XDG data runtime.
   printf '%s\n' \
-    "\$crafted_tools_home/vibecrafted-current/runtime/shell/vetcoders.sh" \
-    "\$crafted_tools_home/vibecrafted-current/runtime/shell/vetcoders.zsh" \
+    "\$crafted_tools_home/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh" \
+    "\$crafted_tools_home/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.zsh" \
     "\$crafted_home/runtime/shell/vetcoders.sh" \
     "\$crafted_home/runtime/shell/vetcoders.zsh"
 }

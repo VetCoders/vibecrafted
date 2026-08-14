@@ -110,13 +110,18 @@ That means the positioning has to stay sharp:
   Free for personal use and startups. Enterprise licensing available.
 
 - Platform
-  macOS, Linux
+  macOS, Linux, Windows (WSL2)
 
 - Guided install CTA
-  open the [latest release](https://github.com/vetcoders/vibecrafted/releases/latest), verify and open `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`
+  macOS/Linux/WSL2 bootstrap: `curl -fsSL https://vibecrafted.io/install.sh | bash`.
+  When a release attaches a DMG, macOS can instead open
+  `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg` from the
+  [latest release](https://github.com/vetcoders/vibecrafted/releases/latest)
+  (none published yet).
 
 - Direct install CTA
-  Checkout-only maintainer staging: `make install-auto`
+  Source checkout: `git clone` then `make install`. Maintainer staging:
+  `make install-auto`.
 
 ## Canonical submission packet
 
@@ -138,7 +143,9 @@ Prepare these fields once, then reuse them across directories:
   https://vibecrafted.io/
 
 - Install method
-  Browser-based guided installer for human onboarding, compact CLI path for automation.
+  Bootstrap `install.sh` on macOS, Linux and WSL2; signed DMG on macOS when a
+  release attaches one; `install.ps1` is a WSL2 handoff, not a native Windows
+  installer.
 
 - Best-fit audience
   Founders and software teams shipping AI-generated or AI-maintained repos into production.
@@ -165,8 +172,11 @@ shows the old direct-only install CTA or the older self-referential promise.
 Every public surface should agree on:
 
 - promise: `Release engine for AI-built software.`
-- primary CTA: open the [latest release](https://github.com/vetcoders/vibecrafted/releases/latest), verify and open `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`
-- secondary CTA: checkout-only maintainer staging with `make install-auto`
+- primary CTA: `curl -fsSL https://vibecrafted.io/install.sh | bash` on
+  macOS, Linux and WSL2 (Windows: `wsl --install`, then that bootstrap)
+- secondary CTA: signed `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg` when
+  a GitHub Release actually attaches one; until then say so
+- source CTA: checkout and `make install` / `make install-auto`
 - audience: founders and teams shipping AI-generated repos into production
 
 ## Directory-specific notes
@@ -299,8 +309,8 @@ launch fields:
 | Docs             | `https://vibecrafted.io/en/quickstart/`                                                                                                                                                                                                                 |
 | Category         | `Developer Tools`, `AI Agents`, `Release Engineering`                                                                                                                                                                                                   |
 | Pricing          | `Free for personal use and startups. Enterprise licensing available.`                                                                                                                                                                                   |
-| Primary CTA      | Open the [latest release](https://github.com/vetcoders/vibecrafted/releases/latest), verify and open `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg`                                                                                                      |
-| Backup CTA       | Source-checkout maintainer staging with `make install-auto`                                                                                                                                                                                             |
+| Primary CTA      | `curl -fsSL https://vibecrafted.io/install.sh \| bash` on macOS, Linux, WSL2                                                                                                                                                                            |
+| Backup CTA       | Signed DMG from the [latest release](https://github.com/vetcoders/vibecrafted/releases/latest) when one is attached; otherwise `git clone` + `make install`                                                                                             |
 | 160-char summary | `Vibecrafted hardens AI-generated repos through structural mapping, convergence loops, install audits, and launch-ready packaging.`                                                                                                                     |
 | 300-char summary | `Vibecrafted is the release engine for AI-built software. It takes the repo your agents already produced and drives it through perception, verification, convergence loops, install truth, and launch-readiness work until the product is fit to ship.` |
 

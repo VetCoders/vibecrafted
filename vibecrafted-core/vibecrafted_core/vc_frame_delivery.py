@@ -3,8 +3,8 @@
 Delivery contract (plan vcframe-config-delivery):
 - Source: ``vc_frame_config_source()`` (wheel package data or checkout).
 - Install: materialize host-adapted config inside an unpublished generation.
-- Wire: point user views through
-  ``tools/vibecrafted-current/runtime/generated/vc-frame/`` without mutating
+- Wire: point user views through the canonical package-owned
+  ``vibecrafted_core/runtime/generated/vc-frame/`` without mutating
   the published generation.
 - Ownership: config delivery never creates or flips the runtime-owned
   ``vibecrafted-current`` symlink.
@@ -162,6 +162,11 @@ def _timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
 
+def _runtime_payload_root(runtime_root: Path) -> Path:
+    """Return the sole package-owned runtime tree inside a generation."""
+    return runtime_root / "vibecrafted-core" / "vibecrafted_core" / "runtime"
+
+
 def _complete_runtime_root(current: Path, *, dry_run: bool) -> Path:
     """Resolve the single runtime owner and refuse config-only substitutes."""
     if dry_run and not (current.exists() or current.is_symlink()):
@@ -176,7 +181,7 @@ def _complete_runtime_root(current: Path, *, dry_run: bool) -> Path:
     required = (
         runtime_root / "Makefile",
         runtime_root / "vibecrafted-core",
-        runtime_root / "runtime" / "scripts",
+        _runtime_payload_root(runtime_root) / "scripts",
     )
     missing = [
         str(path.relative_to(runtime_root)) for path in required if not path.exists()
@@ -195,7 +200,7 @@ def _require_materialized_config(runtime_root: Path, *, dry_run: bool) -> Path:
     Raises when the published runtime lacks a complete ``config.kdl``/``layouts``/
     ``themes`` set — the store-current channel refuses to wire a partial config.
     """
-    generated = runtime_root / "runtime" / "generated" / "vc-frame"
+    generated = _runtime_payload_root(runtime_root) / "generated" / "vc-frame"
     if dry_run and not runtime_root.exists():
         return generated
     required = (
@@ -302,9 +307,9 @@ def plan_delivery(
     """Compute (and, unless ``dry_run``, apply) the vc-frame config delivery plan.
 
     Re-materializes host-adapted config from the package source into the published
-    generation's ``runtime/generated/vc-frame`` (never mutating the source itself
-    or the ``vibecrafted-current`` owner symlink), then wires both the legacy view
-    and frontier projections to point at that generation.
+    generation's package-owned ``runtime/generated/vc-frame`` (never mutating
+    the source itself or the ``vibecrafted-current`` owner symlink), then wires
+    both the legacy view and frontier projections to point at that generation.
     """
     source = vc_frame_config_source()
     tools = tools_home if tools_home is not None else vibecrafted_tools_home()
@@ -334,7 +339,7 @@ def plan_delivery(
     # The mirrored distribution exposes package data through a symlink back to
     # ``<runtime>/config/vc-frame``.  Never stage *into* that package path:
     # deleting the previous generated tree would then delete the source.
-    # Re-materialize only into runtime/generated/vc-frame (below).
+    # Re-materialize only into the package-owned runtime/generated/vc-frame.
     if not use_repo:
         _require_materialized_config(runtime_root, dry_run=dry_run)
         plan.actions.append(
@@ -347,7 +352,7 @@ def plan_delivery(
         # Re-materialize into the published generation's generated/ tree so
         # `vibecrafted config install` refreshes operator scripts + Super binds
         # without a full tools republish. Does not flip vibecrafted-current.
-        generated = current / "runtime" / "generated" / "vc-frame"
+        generated = _runtime_payload_root(current) / "generated" / "vc-frame"
         if dry_run:
             plan.actions.append(
                 WireAction(

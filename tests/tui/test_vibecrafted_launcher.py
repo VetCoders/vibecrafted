@@ -823,7 +823,14 @@ def test_dispatch_launcher_runs_async_lifecycle(tmp_path: Path) -> None:
 
 
 def test_vetcoders_shell_entrypoint_stays_thin_facade() -> None:
-    facade = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
+    facade = (
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "shell"
+        / "vetcoders.sh"
+    )
     lib_dir = facade.parent / "lib"
     body = facade.read_text(encoding="utf-8")
 
@@ -992,6 +999,8 @@ def test_installed_launcher_prefers_current_control_plane_helper_over_home_store
         runtime_root
         / "tools"
         / "vibecrafted-current"
+        / "vibecrafted-core"
+        / "vibecrafted_core"
         / "runtime"
         / "scripts"
         / "marbles_spawn.sh"
@@ -1001,6 +1010,8 @@ def test_installed_launcher_prefers_current_control_plane_helper_over_home_store
         runtime_root
         / "tools"
         / "vibecrafted-current"
+        / "vibecrafted-core"
+        / "vibecrafted_core"
         / "runtime"
         / "shell"
         / "vetcoders.sh"
@@ -1772,6 +1783,8 @@ def test_generic_skill_fallback_routes_unwrapped_skills(
         / "vibecrafted"
         / "tools"
         / "vibecrafted-current"
+        / "vibecrafted-core"
+        / "vibecrafted_core"
         / "runtime"
         / "shell"
         / "vetcoders.sh"
@@ -1820,6 +1833,8 @@ def test_generic_skill_fallback_routes_skill_wrappers(
         / "vibecrafted"
         / "tools"
         / "vibecrafted-current"
+        / "vibecrafted-core"
+        / "vibecrafted_core"
         / "runtime"
         / "shell"
         / "vetcoders.sh"
@@ -1884,7 +1899,7 @@ def test_generic_skill_entry_preserves_marbles_options_for_junie(
     script = "\n".join(
         [
             "set -euo pipefail",
-            f"source {REPO_ROOT / 'runtime' / 'shell' / 'vetcoders.sh'}",
+            f"source {REPO_ROOT / 'vibecrafted-core' / 'vibecrafted_core' / 'runtime' / 'shell' / 'vetcoders.sh'}",
             "_vetcoders_marbles() {",
             '  printf "%s\\n" "$@" > "$CAPTURE_FILE"',
             "}",
@@ -1922,6 +1937,8 @@ def test_marbles_delete_control_subcommand_routes_to_helper(tmp_path: Path) -> N
         / "vibecrafted"
         / "tools"
         / "vibecrafted-current"
+        / "vibecrafted-core"
+        / "vibecrafted_core"
         / "runtime"
         / "shell"
         / "vetcoders.sh"
@@ -2213,9 +2230,21 @@ def test_dashboard_subcommand_launches_repo_owned_vc_frame_layout(
     assert _expected_operator_session() in payload
     assert "--new-session-with-layout" in payload
     assert (
-        str(REPO_ROOT / "config" / "vc-frame" / "layouts" / "dashboard.kdl") in payload
+        str(
+            REPO_ROOT
+            / "vibecrafted-core"
+            / "vibecrafted_core"
+            / "config"
+            / "vc-frame"
+            / "layouts"
+            / "dashboard.kdl"
+        )
+        in payload
     )
-    assert f"VC_FRAME_CONFIG_DIR={REPO_ROOT / 'config' / 'vc-frame'}" in payload
+    assert (
+        f"VC_FRAME_CONFIG_DIR={REPO_ROOT / 'vibecrafted-core' / 'vibecrafted_core' / 'config' / 'vc-frame'}"
+        in payload
+    )
 
 
 def test_start_subcommand_launches_operator_entrypoint_layout(tmp_path: Path) -> None:
@@ -2251,9 +2280,21 @@ def test_start_subcommand_launches_operator_entrypoint_layout(tmp_path: Path) ->
     assert expected_session in payload
     assert "--new-session-with-layout" in payload
     assert (
-        str(REPO_ROOT / "config" / "vc-frame" / "layouts" / "operator.kdl") in payload
+        str(
+            REPO_ROOT
+            / "vibecrafted-core"
+            / "vibecrafted_core"
+            / "config"
+            / "vc-frame"
+            / "layouts"
+            / "operator.kdl"
+        )
+        in payload
     )
-    assert f"VC_FRAME_CONFIG_DIR={REPO_ROOT / 'config' / 'vc-frame'}" in payload
+    assert (
+        f"VC_FRAME_CONFIG_DIR={REPO_ROOT / 'vibecrafted-core' / 'vibecrafted_core' / 'config' / 'vc-frame'}"
+        in payload
+    )
 
 
 def test_resume_subcommand_forwards_session_and_prompt_to_agent(
@@ -3080,7 +3121,14 @@ def _generate_and_run_spawn_launcher(
     plan.write_text("Hermetic launcher salvage fixture.\n", encoding="utf-8")
     root.mkdir()
 
-    spawn_script = REPO_ROOT / "runtime" / "scripts" / f"{agent}_spawn.sh"
+    spawn_script = (
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "scripts"
+        / f"{agent}_spawn.sh"
+    )
     dry_run = subprocess.run(
         [
             "bash",
