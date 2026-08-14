@@ -30,7 +30,9 @@ if [[ "${VIBECRAFTED_DOCKER_SEED_SKILLS:-1}" == "1" ]]; then
   if [[ "$should_seed" == "1" ]]; then
     rm -rf "$skills_dir"
     mkdir -p "$skills_dir"
-    cp -a "$VIBECRAFTED_SOURCE/skills/." "$skills_dir/"
+    cp -a \
+      "$VIBECRAFTED_SOURCE/vibecrafted-core/vibecrafted_core/skills/." \
+      "$skills_dir/"
     printf '%s\n' "$source_version" > "$seed_file"
   fi
 fi
