@@ -61,11 +61,14 @@ EXPECTED_REQUIRED = {
 
 def test_docker_entrypoint_seeds_packaged_canonical_skills() -> None:
     entrypoint = (REPO_ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
 
     assert (
         "$VIBECRAFTED_SOURCE/vibecrafted-core/vibecrafted_core/skills/." in entrypoint
     )
     assert "$VIBECRAFTED_SOURCE/skills/." not in entrypoint
+    assert "RUN chmod 0755" in dockerfile
+    assert "RUN chmod +x" not in dockerfile
 
 
 def _minimal_payload(root: Path) -> None:
