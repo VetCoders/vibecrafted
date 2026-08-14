@@ -673,7 +673,7 @@ test-parity:
 #
 # `make skill-new NAME=vc-my-skill` wraps tools/vc-skill-new.sh. The script
 # enforces name validation (vc- prefix, lowercase, no collisions) and copies
-# skills/_template/ with placeholder substitution. See
+# the package-owned skills/_template/ with placeholder substitution. See
 # docs/CONTRIBUTING-SKILLS.md for the full operator authoring guide.
 # -----------------------------------------------------------------------------
 
@@ -681,7 +681,7 @@ skill-new:
 	@if [ -z "$(NAME)" ]; then \
 		echo "usage: make skill-new NAME=vc-<skill-name>" >&2; \
 		echo "" >&2; \
-		echo "Scaffold a new vc-* skill from skills/_template/." >&2; \
+		echo "Scaffold a new vc-* skill from vibecrafted-core/vibecrafted_core/skills/_template/." >&2; \
 		echo "See docs/CONTRIBUTING-SKILLS.md for the authoring guide." >&2; \
 		exit 2; \
 	fi

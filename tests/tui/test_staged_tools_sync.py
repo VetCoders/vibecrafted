@@ -7058,6 +7058,11 @@ def test_compact_install_refreshes_current_tools_from_local_checkout(
     assert (current_link / "scripts" / "vibecrafted").read_text(
         encoding="utf-8"
     ) == '#!/usr/bin/env bash\nprintf "fresh installed launcher\\n"\n'
+    package_skills = current_link / "vibecrafted-core" / "vibecrafted_core" / "skills"
+    assert (package_skills / "vc-init" / "SKILL.md").is_file()
+    assert not (current_link / "skills").exists()
+    assert (crafted_home / installer.STATE_FILE).is_file()
+    assert not (package_skills / installer.STATE_FILE).exists()
 
 
 def _build_symlinked_skill_store(tmp_path: Path) -> tuple[Path, Path]:

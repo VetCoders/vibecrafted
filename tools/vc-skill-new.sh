@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # vc-skill-new.sh — Plan 04 skill scaffolder.
 #
-# Scaffold a new vc-* skill from skills/_template/ with placeholder
+# Scaffold a new vc-* skill from the package-owned skills/_template/ with placeholder
 # substitution. Validates name, refuses collisions, and emits operator
 # next-step hints on success.
 #
@@ -13,10 +13,10 @@
 #   - After the prefix: one lowercase letter followed by lowercase letters,
 #     digits, or hyphens. No uppercase, no underscores, no leading digit,
 #     no trailing hyphen, no double-hyphen.
-#   - Must not collide with an existing directory under skills/.
+#   - Must not collide with an existing package-owned skill directory.
 #
 # Behavior:
-#   - Copies skills/_template/ to skills/<skill-name>/.
+#   - Copies the package-owned skills/_template/ to skills/<skill-name>/.
 #   - Substitutes placeholders in every text file:
 #       {{SKILL_NAME}}            → user-supplied name (e.g. vc-foo-bar)
 #       {{SKILL_NAME_NO_PREFIX}}  → name with "vc-" stripped (e.g. foo-bar)
@@ -36,7 +36,7 @@ if [[ $# -ne 1 ]]; then
     cat >&2 <<'USAGE'
 usage: tools/vc-skill-new.sh <skill-name>
 
-Scaffold a new vc-* skill from skills/_template/.
+Scaffold a new vc-* skill from the package-owned skills/_template/.
 
 The name must start with "vc-" and use only lowercase letters, digits, and
 single hyphens. Examples:
@@ -79,8 +79,8 @@ SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-TEMPLATE_DIR="$REPO_ROOT/skills/_template"
-SKILLS_DIR="$REPO_ROOT/skills"
+SKILLS_DIR="$REPO_ROOT/vibecrafted-core/vibecrafted_core/skills"
+TEMPLATE_DIR="$SKILLS_DIR/_template"
 TARGET_DIR="$SKILLS_DIR/$SKILL_NAME"
 
 if [[ ! -d "$TEMPLATE_DIR" ]]; then
@@ -168,15 +168,15 @@ fi
 # ----- success report ---------------------------------------------------------
 
 cat <<EOF
-vc-skill-new: scaffolded $SKILL_NAME at skills/$SKILL_NAME/
+vc-skill-new: scaffolded $SKILL_NAME at vibecrafted-core/vibecrafted_core/skills/$SKILL_NAME/
 
 Next moves:
-  1. Edit skills/$SKILL_NAME/SKILL.md and replace every TODO marker.
-  2. Classify launcher vs foundation via skills/DELEGATION_MATRIX.md
+  1. Edit vibecrafted-core/vibecrafted_core/skills/$SKILL_NAME/SKILL.md and replace every TODO marker.
+  2. Classify launcher vs foundation via vibecrafted-core/vibecrafted_core/skills/DELEGATION_MATRIX.md
      (literals for this skill: vibecrafted $SKILL_NAME_NO_PREFIX <agent>).
-  3. Edit skills/$SKILL_NAME/README.md and tick the authoring checklist
+  3. Edit vibecrafted-core/vibecrafted_core/skills/$SKILL_NAME/README.md and tick the authoring checklist
      in docs/CONTRIBUTING-SKILLS.md (matrix gate + progressive disclosure).
-  4. Drop a realistic example into skills/$SKILL_NAME/examples/.
+  4. Drop a realistic example into vibecrafted-core/vibecrafted_core/skills/$SKILL_NAME/examples/.
   5. Verify it parses cleanly:
 
        make test-skills

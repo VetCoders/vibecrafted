@@ -6,7 +6,7 @@ usage() {
 Usage: skills_sync.sh <host> [--source <repo-root>] [--tool <codex|claude|agy>]... [--dry-run] [--mirror] [--with-shell] [--no-zshrc] [--no-bashrc] [--no-verify]
 
 Sync canonical skill directories from this repo to the staged tools store:
-  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills
+  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/skills
 
 Then create symlink views inside the remote tool homes:
   $HOME/.codex/skills
@@ -53,7 +53,7 @@ printf "\\n"
 '
 }
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 verify=1
 dry_run=0
 mirror=0
@@ -153,12 +153,14 @@ remote_tools_target='$HOME/.local/share/vibecrafted/tools/vibecrafted-local'
 # shellcheck disable=SC2088,SC2016
 remote_current_link='$HOME/.local/share/vibecrafted/tools/vibecrafted-current'
 # shellcheck disable=SC2088,SC2016
-remote_shared_target='$HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills'
+remote_package_target='$HOME/.local/share/vibecrafted/tools/vibecrafted-local/vibecrafted-core/vibecrafted_core/skills'
+# shellcheck disable=SC2088,SC2016
+remote_shared_target='$HOME/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/skills'
 printf -- '-- canonical staged tools -> %s:%s\n' "$host" "$remote_shared_target"
 if (( dry_run )); then
-  printf '  ssh %s mkdir -p %s/skills && ln -sfn %s %s\n' "$host" "$remote_tools_target" "$remote_tools_target" "$remote_current_link"
+  printf '  ssh %s mkdir -p %s && ln -sfn %s %s\n' "$host" "$remote_package_target" "$remote_tools_target" "$remote_current_link"
 else
-  ssh -n "$host" "mkdir -p $remote_tools_target/skills && ln -sfn $remote_tools_target $remote_current_link" \
+  ssh -n "$host" "mkdir -p $remote_package_target && ln -sfn $remote_tools_target $remote_current_link" \
     || die "Could not prepare staged tools store on $host"
 fi
 
@@ -174,7 +176,7 @@ for localized_dir in "${localized_rule_dirs[@]}"; do
   done
 done
 for rule_path in "${rule_files[@]}"; do
-  remote_rule_dir="$(dirname "$remote_tools_target/skills/$rule_path")"
+  remote_rule_dir="$(dirname "$remote_package_target/$rule_path")"
   if (( dry_run )); then
     printf '  ssh %s mkdir -p %s\n' "$host" "$remote_rule_dir"
   else
@@ -182,22 +184,22 @@ for rule_path in "${rule_files[@]}"; do
       || die "Could not create $remote_rule_dir on $host"
   fi
   if (( dry_run )); then
-    printf '  rsync %s %s %s:%s\n' "${rsync_args[*]}" "$skills_root/$rule_path" "$host" "$remote_tools_target/skills/$rule_path"
+    printf '  rsync %s %s %s:%s\n' "${rsync_args[*]}" "$skills_root/$rule_path" "$host" "$remote_package_target/$rule_path"
   else
-    rsync "${rsync_args[@]}" "$skills_root/$rule_path" "$host:$remote_tools_target/skills/$rule_path"
+    rsync "${rsync_args[@]}" "$skills_root/$rule_path" "$host:$remote_package_target/$rule_path"
   fi
 done
 for skill in "${skills[@]}"; do
   name="$(basename "$skill")"
   if (( ! dry_run )); then
-    ssh -n "$host" "mkdir -p $remote_tools_target/skills/$name" || die "Could not create $remote_tools_target/skills/$name on $host"
+    ssh -n "$host" "mkdir -p $remote_package_target/$name" || die "Could not create $remote_package_target/$name on $host"
   else
-    printf '  ssh %s mkdir -p %s/skills/%s\n' "$host" "$remote_tools_target" "$name"
+    printf '  ssh %s mkdir -p %s/%s\n' "$host" "$remote_package_target" "$name"
   fi
   if (( dry_run )); then
-    printf '  rsync %s %s %s:%s\n' "${rsync_args[*]}" "$skill/" "$host" "$remote_tools_target/skills/$name/"
+    printf '  rsync %s %s %s:%s\n' "${rsync_args[*]}" "$skill/" "$host" "$remote_package_target/$name/"
   else
-    rsync "${rsync_args[@]}" "$skill/" "$host:$remote_tools_target/skills/$name/"
+    rsync "${rsync_args[@]}" "$skill/" "$host:$remote_package_target/$name/"
   fi
 done
 printf '\n'
@@ -302,9 +304,9 @@ fi
 printf 'Verifying shared skill store on %s\n' "$host"
 ssh -n "$host" 'for f in \
   $HOME/.local/share/vibecrafted/tools/vibecrafted-current/scripts/vibecrafted \
-  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills/vc-agents/SKILL.md \
-  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/runtime/shell/vetcoders.sh \
-  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/runtime/helpers/vetcoders-runtime-core.sh; do
+  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/skills/vc-agents/SKILL.md \
+  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/shell/vetcoders.sh \
+  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/helpers/vetcoders-runtime-core.sh; do
   if [ -e "$f" ]; then
     echo "OK $f"
   else

@@ -539,7 +539,7 @@ def test_cmd_doctor_fix_launchers_repairs_missing_wrappers(
     assert not (crafted_home / "bin" / "vc-init").exists()
     assert not (crafted_home / "bin" / "vc-start").exists()
 
-    refreshed_state = installer.InstallState.load(current_link / "skills")
+    refreshed_state = installer.InstallState.load(crafted_home)
     assert any(entry.endswith("/vc-init") for entry in refreshed_state.launcher_entries)
     findings = installer.run_doctor(store_path, refreshed_state)
     indexed = {finding.component: finding for finding in findings}

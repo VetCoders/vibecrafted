@@ -25,7 +25,7 @@ set -euo pipefail
 SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SKILLS_DIR="$REPO_ROOT/skills"
+SKILLS_DIR="$REPO_ROOT/vibecrafted-core/vibecrafted_core/skills"
 EXPERIMENTAL_DIR="$SKILLS_DIR/experimental"
 FOUNDATIONS_DIR="$SKILLS_DIR/foundations"
 FIXTURES_DIR="$SCRIPT_DIR/fixtures"
@@ -331,8 +331,8 @@ fi
 #       check as every shipped skill,
 #   (b) rejects an invalid name with nonzero exit and emits no skill dir.
 #
-# The skill_loader_smoke phase-1 glob is `skills/vc-*/` — that means the
-# `skills/_template/` scaffold source is auto-skipped (it does not match
+# The phase-1 glob is the package-owned `skills/vc-*/` — that means the
+# `_template/` scaffold source is auto-skipped (it does not match
 # the prefix). The phase below is the explicit gate on the scaffolder
 # tooling itself rather than on its output as cargo-cult.
 # -----------------------------------------------------------------------------

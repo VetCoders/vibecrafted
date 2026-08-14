@@ -7,8 +7,8 @@ _vetcoders_spawn_home() {
   local crafted_tools_home="${VIBECRAFTED_TOOLS_HOME:-$xdg_data_home/vibecrafted/tools}"
   local crafted_runtime="$crafted_home/runtime"
   local crafted_store="$crafted_home/skills/vc-agents"
-  local current_runtime="$crafted_tools_home/vibecrafted-current/runtime"
-  local current_store="$crafted_tools_home/vibecrafted-current/skills/vc-agents"
+  local current_runtime="$crafted_tools_home/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime"
+  local current_store="$crafted_tools_home/vibecrafted-current/vibecrafted-core/vibecrafted_core/skills/vc-agents"
   local repo_root
   repo_root="${VIBECRAFTED_ROOT:-$(_vetcoders_repo_root)}"
   local legacy_store="$HOME/.runtime/skills/vc-agents"

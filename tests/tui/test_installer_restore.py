@@ -131,7 +131,9 @@ def test_uninstall_never_recurses_through_current_link_into_checkout(
     home = tmp_path / "home"
     tools_home = home / ".local" / "share" / "vibecrafted" / "tools"
     checkout = tmp_path / "checkout"
-    checkout_skill = checkout / "skills" / "vc-init"
+    checkout_skill = (
+        checkout / "vibecrafted-core" / "vibecrafted_core" / "skills" / "vc-init"
+    )
     current = tools_home / "vibecrafted-current"
 
     monkeypatch.setenv("HOME", str(home))
@@ -152,5 +154,5 @@ def test_uninstall_never_recurses_through_current_link_into_checkout(
     assert checkout_skill.is_dir()
     assert (checkout_skill / "SKILL.md").is_file()
     assert not current.exists() and not current.is_symlink()
-    assert str(checkout / "skills") in output
+    assert str(checkout / "vibecrafted-core" / "vibecrafted_core" / "skills") in output
     assert "outside the managed tools root" in output

@@ -3,6 +3,47 @@ from pathlib import Path
 from scripts import vetcoders_install as installer
 
 
+def test_canonical_store_is_the_package_owned_generation_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    crafted_home = tmp_path / "state"
+    tools_home = tmp_path / "tools"
+    generation = tools_home / "vibecrafted-generation-test"
+    package_skills = generation / "vibecrafted-core" / "vibecrafted_core" / "skills"
+    package_skills.mkdir(parents=True)
+    tools_home.mkdir(parents=True, exist_ok=True)
+    (tools_home / "vibecrafted-current").symlink_to(generation)
+    monkeypatch.setattr(installer, "vibecrafted_home", lambda: crafted_home)
+    monkeypatch.setattr(installer, "vibecrafted_tools_home", lambda: tools_home)
+
+    store = installer._canonical_store_path(crafted_home)
+
+    assert store == (
+        tools_home
+        / "vibecrafted-current"
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "skills"
+    )
+    assert store.resolve() == package_skills
+
+
+def test_install_state_lives_outside_the_immutable_generation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    crafted_home = tmp_path / "state"
+    store = tmp_path / "generation/vibecrafted-core/vibecrafted_core/skills"
+    store.mkdir(parents=True)
+    monkeypatch.setattr(installer, "vibecrafted_home", lambda: crafted_home)
+
+    state_file = installer._install_state_file(store)
+    installer.InstallState(framework_version="3.7.1").save(state_file.parent)
+
+    assert state_file == crafted_home / installer.STATE_FILE
+    assert not (store / installer.STATE_FILE).exists()
+    assert installer._load_install_state(store).framework_version == "3.7.1"
+
+
 def test_default_skill_view_has_one_cross_agent_owner() -> None:
     assert installer.SYMLINK_TARGETS == ["agents"]
 
