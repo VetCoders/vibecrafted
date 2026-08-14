@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # vc-frame-product-entry.sh — product choke point for bare `vc-frame`
 #
-# Installed as ~/.local/bin/vc-frame (wrapper). Real binary lives at
-# $VIBECRAFTED_VC_FRAME_BIN or next to this script as vc-frame.real /
-# cargo/bin/vc-frame.
+# Installed as ~/.local/bin/vc-frame (wrapper). The authoritative binary lives
+# in the product environment, the Cargo prefix, or Vibecrafted's data root.
 #
 # Policy (goal: bare frame is backyard-safe):
 #   1. Always pin VC_FRAME_CONFIG_DIR to product frontier/view when present
@@ -17,15 +16,6 @@ resolve_real_bin() {
   if [[ -n "${VIBECRAFTED_VC_FRAME_BIN:-}" && -x "${VIBECRAFTED_VC_FRAME_BIN}" ]]; then
     printf '%s\n' "$VIBECRAFTED_VC_FRAME_BIN"
     return 0
-  fi
-  local self here
-  self="$(command -v vc-frame 2>/dev/null || true)"
-  if [[ -n "$self" ]]; then
-    here="$(cd "$(dirname "$self")" && pwd)"
-    if [[ -x "$here/vc-frame.real" ]]; then
-      printf '%s\n' "$here/vc-frame.real"
-      return 0
-    fi
   fi
   for candidate in \
     "${HOME}/.cargo/bin/vc-frame" \

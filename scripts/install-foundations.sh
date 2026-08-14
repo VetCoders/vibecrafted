@@ -757,10 +757,12 @@ install_vcframe() {
 
 # Product entry wrapper: ~/.local/bin/vc-frame → product choke + real binary.
 install_vc_frame_product_wrapper() {
-  local real dest wrapper_src cargo_bin
+  local real dest wrapper_src cargo_bin product_bin legacy_bin
   dest="$LAUNCHER_PREFIX/vc-frame"
   wrapper_src="$SOURCE_DIR/scripts/vc-frame-product-entry.sh"
   cargo_bin="${HOME}/.cargo/bin/vc-frame"
+  product_bin="${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/bin/vc-frame"
+  legacy_bin="$LAUNCHER_PREFIX/vc-frame.real"
 
   if [[ ! -f "$wrapper_src" ]]; then
     warn "product entry wrapper source missing: $wrapper_src"
@@ -773,15 +775,13 @@ install_vc_frame_product_wrapper() {
     real="$VIBECRAFTED_VC_FRAME_BIN"
   elif [[ -x "$cargo_bin" ]] && ! head -c 2 "$cargo_bin" 2>/dev/null | grep -q '#!'; then
     real="$cargo_bin"
+  elif [[ -x "$product_bin" ]] && ! head -c 2 "$product_bin" 2>/dev/null | grep -q '#!'; then
+    real="$product_bin"
   elif [[ -x "$dest" ]] && ! head -c 2 "$dest" 2>/dev/null | grep -q '#!'; then
-    # Move real binary aside once.
-    mkdir -p "$LAUNCHER_PREFIX"
-    if [[ ! -e "$LAUNCHER_PREFIX/vc-frame.real" ]]; then
-      mv "$dest" "$LAUNCHER_PREFIX/vc-frame.real"
-    fi
-    real="$LAUNCHER_PREFIX/vc-frame.real"
-  elif [[ -x "$LAUNCHER_PREFIX/vc-frame.real" ]]; then
-    real="$LAUNCHER_PREFIX/vc-frame.real"
+    real="$dest"
+  elif [[ -x "$legacy_bin" ]] && ! head -c 2 "$legacy_bin" 2>/dev/null | grep -q '#!'; then
+    # One-way migration from the retired sibling shadow into the product data root.
+    real="$legacy_bin"
   fi
 
   if [[ -z "$real" ]]; then
@@ -790,30 +790,17 @@ install_vc_frame_product_wrapper() {
   fi
 
   if (( CHECK_ONLY )); then
-    info "Would install product vc-frame entry wrapper -> $dest (real=$real)"
+    info "Would install product vc-frame entry wrapper -> $dest (real=$real; remove legacy=$legacy_bin)"
     return 0
   fi
 
-  mkdir -p "$LAUNCHER_PREFIX"
-  if [[ -x "$dest" ]] && ! head -c 2 "$dest" 2>/dev/null | grep -q '#!'; then
-    if [[ ! -e "$LAUNCHER_PREFIX/vc-frame.real" ]]; then
-      cp -p "$dest" "$LAUNCHER_PREFIX/vc-frame.real" 2>/dev/null || mv "$dest" "$LAUNCHER_PREFIX/vc-frame.real"
-      real="$LAUNCHER_PREFIX/vc-frame.real"
-    fi
+  mkdir -p "$LAUNCHER_PREFIX" "$(dirname "$product_bin")"
+  if [[ "$real" == "$dest" || "$real" == "$legacy_bin" ]]; then
+    install -m 0755 "$real" "$product_bin"
+    real="$product_bin"
   fi
   install -m 0755 "$wrapper_src" "$dest"
-  # Ensure wrapper can find real bin via env default path. The wrapper's
-  # runtime resolve order prefers vc-frame.real next to itself, so a stale
-  # moved-aside copy would silently shadow a fresher authoritative binary
-  # forever while this function reports real=$cargo_bin. Refresh it with a
-  # COPY, never a symlink: the bin-dir ownership contract forbids
-  # cargo-owned symlinks in ~/.local/bin (a symlink drifts implicitly the
-  # moment `cargo install` re-runs; a copy only moves through install).
-  if [[ -n "$real" && "$real" != "$LAUNCHER_PREFIX/vc-frame.real" ]] \
-    && ! cmp -s "$real" "$LAUNCHER_PREFIX/vc-frame.real" 2>/dev/null; then
-    rm -f "$LAUNCHER_PREFIX/vc-frame.real" 2>/dev/null || true
-    cp -p "$real" "$LAUNCHER_PREFIX/vc-frame.real" 2>/dev/null || true
-  fi
+  rm -f "$legacy_bin"
   ok "product vc-frame entry installed: $dest (real=$real)"
 }
 
