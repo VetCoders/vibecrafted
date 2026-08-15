@@ -23,8 +23,8 @@ option_as_alt = "Both"
 size = 19.5
 
 [font.offset]
-x = -3
-y = -8
+x = -1
+y = 2
 
 [font.normal]
 family = "Spot Mono"
