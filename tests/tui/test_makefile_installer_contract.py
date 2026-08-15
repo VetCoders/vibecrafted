@@ -151,6 +151,10 @@ def test_release_workflow_is_read_only_and_validates_the_exact_tag_source() -> N
     assert "run: make unified-product-contract-gate" in workflow
     assert "run: make test-core" in workflow
     assert "run: make semgrep" in workflow
+    assert "runs-on: macos-15" in workflow
+    assert "run: brew install shellcheck" in workflow
+    assert "ubuntu-latest" not in workflow
+    assert "apt-get" not in workflow
     assert 'test "$GITHUB_REF_TYPE" = "tag"' in workflow
     assert 'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"' in workflow
     assert 'release_tag_ref="refs/vibecrafted-release-tags/$GITHUB_REF_NAME"' in workflow

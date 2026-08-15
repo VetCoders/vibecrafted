@@ -269,6 +269,8 @@ build_product() {
   /bin/cp -R "$REPO_ROOT/bin/." "$runtime/bin/"
   /bin/cp -R "$REPO_ROOT/vibecrafted-core/vibecrafted_core" \
     "$runtime/vibecrafted-core/"
+  printf '%s\n' "$RUNTIME_VERSION" \
+    > "$runtime/vibecrafted-core/vibecrafted_core/VERSION"
   /bin/cp -R "$REPO_ROOT/config/." "$runtime/config/"
   mkdir -p "$runtime/server/site"
   /bin/cp -R "$server_site/." "$runtime/server/site/"
