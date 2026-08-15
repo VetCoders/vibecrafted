@@ -3067,6 +3067,7 @@ _RUNTIME_VERIFIER_TYPED_OBJECT_SCHEMA_PATHS = frozenset(
         "$defs/moduleBinding",
         "$defs/outerBundleCode",
         "$defs/launchContract",
+        "$defs/launchContract/properties/primary_shell",
         "$defs/launchContract/properties/shell",
         "$defs/launchContract/properties/environment",
         "$defs/productManifest",
