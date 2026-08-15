@@ -15,11 +15,14 @@ import os
 import plistlib
 import re
 import shutil
+import signal
+import socket
 import stat
 import struct
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -3013,11 +3016,401 @@ def _expected_runner_commands(app: Path, dmg: Path) -> dict[str, list[str]]:
     }
 
 
-def _walkaround_provider_registry() -> Mapping[
-    str, Callable[[Path, Path], Mapping[str, bytes | str]]
-]:
-    """W2/W3/W4 integration hook; W0 deliberately ships no fake providers."""
-    return {}
+def _walkaround_provider_registry(
+    scenario: _WalkaroundScenario,
+) -> Mapping[str, Callable[[Path, Path], Mapping[str, bytes | str]]]:
+    """Bind every W2/W3/W4 proof to one shared real product scenario."""
+    providers = {
+        "sanitized_launch": _scenario_sanitized_launch,
+        "mission_control": _scenario_mission_control,
+        "bundled_console": _scenario_bundled_console,
+        "start_here": _scenario_start_here,
+        "update": _scenario_update,
+        "rollback": _scenario_rollback,
+        "reattach": _scenario_reattach,
+        "one_outer_writer": _scenario_one_outer_writer,
+    }
+    return {
+        name: (lambda _app, _dmg, provider=provider: provider(scenario))
+        for name, provider in providers.items()
+    }
+
+
+@dataclass(frozen=True)
+class _WalkaroundScenario:
+    root: Path
+    app: Path
+    dmg: Path
+    environment: Mapping[str, str]
+    bundled_version: str
+    previous_active: bytes
+    current_active: bytes
+    active: Mapping[str, Any]
+    bootstrap_stdout: bytes
+    bootstrap_stderr: bytes
+    session_socket: Path
+    session_pid: int
+
+    @property
+    def runtime_root(self) -> Path:
+        return Path(self.active["runtime_root"])
+
+    @property
+    def launchers(self) -> Path:
+        return self.root / "launchers"
+
+    @property
+    def product_config(self) -> Path:
+        return self.root / "config/vibecrafted"
+
+
+def _scenario_command(
+    scenario: _WalkaroundScenario,
+    command: Sequence[str | Path],
+    *,
+    timeout: float = 20,
+) -> subprocess.CompletedProcess[bytes]:
+    result = subprocess.run(
+        [str(item) for item in command],
+        cwd=scenario.root,
+        env=dict(scenario.environment),
+        check=False,
+        capture_output=True,
+        timeout=timeout,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or b"no diagnostic")[:4096]
+        raise RuntimeError(
+            f"scenario command failed (exit={result.returncode}; "
+            f"{' '.join(str(item) for item in command)}): "
+            f"{detail.decode('utf-8', errors='replace').strip()}"
+        )
+    return result
+
+
+def _socket_owner_pid(socket_path: Path, frame: Path) -> int:
+    lsof = _required_tool("lsof", failure_code=E_PROOF)
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        result = subprocess.run(
+            [lsof, "-t", str(socket_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        candidates = {
+            int(line) for line in result.stdout.splitlines() if line.strip().isdigit()
+        }
+        for pid in sorted(candidates):
+            process = subprocess.run(
+                ["/bin/ps", "-p", str(pid), "-o", "command="],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            command = process.stdout.strip()
+            if str(frame) in command and str(socket_path) in command:
+                return pid
+        time.sleep(0.05)
+    raise RuntimeError("vc-frame session socket has no exact owning process")
+
+
+def _connect_session_socket(socket_path: Path) -> bytes:
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.settimeout(2)
+    try:
+        client.connect(str(socket_path))
+    finally:
+        client.close()
+    return f"connectable={socket_path.name}".encode()
+
+
+def _stop_scenario_session(pid: int, socket_path: Path) -> None:
+    try:
+        process = subprocess.run(
+            ["/bin/ps", "-p", str(pid), "-o", "command="],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if str(socket_path) not in process.stdout:
+            return
+        os.kill(pid, signal.SIGTERM)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.05)
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+
+
+@contextmanager
+def _walkaround_scenario(app: Path, dmg: Path):
+    """Run one real, isolated install/update while a vc-frame server stays live."""
+    # Darwin AF_UNIX paths are bounded to 104 bytes.  Keep both the temporary
+    # directory prefix and socket basename deliberately short.
+    with tempfile.TemporaryDirectory(prefix="vc-wa-") as raw:
+        root = Path(raw)
+        home = root / "home"
+        runtime_home = root / "runtime"
+        launchers = root / "launchers"
+        config_home = root / "config"
+        crafted_home = home / ".vibecrafted"
+        temporary = root / "tmp"
+        for directory in (home, runtime_home, launchers, config_home, temporary):
+            directory.mkdir(parents=True, exist_ok=True)
+
+        bundled_version = (
+            app.joinpath("Contents/Resources/runtime/VERSION")
+            .read_text(encoding="utf-8")
+            .strip()
+        )
+        if not bundled_version or "+g" not in bundled_version:
+            raise RuntimeError("bundled runtime VERSION is not source-stamped")
+        previous_version = "0.0.0+g00000000"
+        previous_root = runtime_home / "releases" / previous_version
+        previous_root.mkdir(parents=True)
+        sentinel = previous_root / "walkaround.previous-generation"
+        sentinel.write_text("retained-for-rollback\n", encoding="utf-8")
+        previous_document = {
+            "app_root": str(root / "Previous-Vibecrafted.app"),
+            "runtime_root": str(previous_root),
+            "schema": "vibecrafted.active-runtime.v1",
+            "version": previous_version,
+        }
+        previous_active = (
+            json.dumps(previous_document, indent=2, sort_keys=True) + "\n"
+        ).encode()
+        active_path = runtime_home / "active.json"
+        active_path.write_bytes(previous_active)
+
+        environment = {
+            "HOME": str(home),
+            "USER": os.environ.get("USER", "operator"),
+            "LOGNAME": os.environ.get("LOGNAME", "operator"),
+            "LANG": "en_US.UTF-8",
+            "LC_ALL": "en_US.UTF-8",
+            "TMPDIR": str(temporary),
+            "SHELL": "/bin/zsh",
+            "PATH": _LAUNCH_SYSTEM_PATH,
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "XDG_CONFIG_HOME": str(config_home),
+            "VIBECRAFTED_HOME": str(crafted_home),
+            "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
+            "VIBECRAFTED_LAUNCHER_BIN": str(launchers),
+            "VC_FRAME_CONFIG_DIR": str(
+                app / "Contents/Resources/runtime/config/vc-frame"
+            ),
+        }
+
+        frame = app / "Contents/Helpers/vc-frame"
+        session_socket = temporary / "s.sock"
+        server = subprocess.run(
+            [str(frame), "--server", str(session_socket)],
+            cwd=root,
+            env=environment,
+            check=False,
+            capture_output=True,
+            timeout=10,
+        )
+        if server.returncode != 0:
+            raise RuntimeError("vc-frame could not start the preserved session server")
+        session_pid = _socket_owner_pid(session_socket, frame)
+        _connect_session_socket(session_socket)
+
+        try:
+            bootstrap = subprocess.run(
+                [str(app / "Contents/MacOS/Vibecrafted"), "--bootstrap-only"],
+                cwd=root,
+                env=environment,
+                check=False,
+                capture_output=True,
+                timeout=60,
+            )
+            if bootstrap.returncode != 0:
+                detail = (bootstrap.stderr or bootstrap.stdout)[:4096]
+                raise RuntimeError(
+                    "outer app bootstrap failed: "
+                    + detail.decode("utf-8", errors="replace").strip()
+                )
+            current_active = active_path.read_bytes()
+            active = _load_json_bytes(current_active, source=active_path)
+            expected_root = runtime_home / "releases" / bundled_version
+            if active != {
+                "app_root": str(app.resolve()),
+                "runtime_root": str(expected_root),
+                "schema": "vibecrafted.active-runtime.v1",
+                "version": bundled_version,
+            }:
+                raise RuntimeError(
+                    "outer app did not publish the exact bundled identity"
+                )
+            if sentinel.read_bytes() != b"retained-for-rollback\n":
+                raise RuntimeError("update mutated the previous runtime generation")
+            observed_pid = _socket_owner_pid(session_socket, frame)
+            if observed_pid != session_pid:
+                raise RuntimeError("update replaced the live vc-frame session process")
+            _connect_session_socket(session_socket)
+            yield _WalkaroundScenario(
+                root=root,
+                app=app,
+                dmg=dmg,
+                environment=environment,
+                bundled_version=bundled_version,
+                previous_active=previous_active,
+                current_active=current_active,
+                active=active,
+                bootstrap_stdout=bootstrap.stdout,
+                bootstrap_stderr=bootstrap.stderr,
+                session_socket=session_socket,
+                session_pid=session_pid,
+            )
+        finally:
+            _stop_scenario_session(session_pid, session_socket)
+
+
+def _scenario_sanitized_launch(
+    scenario: _WalkaroundScenario,
+) -> Mapping[str, bytes | str]:
+    expected_keys = sorted(scenario.environment)
+    launcher = scenario.launchers / "vibecrafted"
+    version = _scenario_command(scenario, [launcher, "version"]).stdout.strip()
+    help_output = _scenario_command(scenario, [launcher, "--help"]).stdout
+    if scenario.bundled_version.encode() not in version:
+        raise RuntimeError("installed CLI version is not the bundled identity")
+    if scenario.bundled_version.encode() not in help_output:
+        raise RuntimeError("installed CLI help is not source-stamped")
+    for candidate in scenario.launchers.iterdir():
+        if candidate.is_symlink() or not candidate.is_file():
+            raise RuntimeError(
+                f"launcher is not an exact regular file: {candidate.name}"
+            )
+        payload = candidate.read_bytes()
+        if b"/Volumes/" in payload or b"vc-frame.real" in payload:
+            raise RuntimeError(
+                f"launcher escaped the packaged runtime: {candidate.name}"
+            )
+    return {
+        "closed_environment": "keys=" + ",".join(expected_keys),
+        "launch_succeeds": version,
+    }
+
+
+def _scenario_mission_control(
+    scenario: _WalkaroundScenario,
+) -> Mapping[str, bytes | str]:
+    outer = scenario.app / "Contents/MacOS/Vibecrafted"
+    ffi = scenario.app / "Contents/Frameworks/libvibecrafted_shell_ffi.dylib"
+    strings = _scenario_command(scenario, ["/usr/bin/strings", "-a", outer]).stdout
+    symbols = _scenario_command(scenario, ["/usr/bin/nm", "-gU", ffi]).stdout
+    if b"Mission Control" not in strings:
+        raise RuntimeError("outer app has no Mission Control surface")
+    if b"load_mission_control_snapshot" not in symbols:
+        raise RuntimeError("Mission Control FFI entry is not linked")
+    return {"mission_control_reachable": hashlib.sha256(strings + symbols).hexdigest()}
+
+
+def _scenario_bundled_console(
+    scenario: _WalkaroundScenario,
+) -> Mapping[str, bytes | str]:
+    result = _scenario_command(
+        scenario, [scenario.launchers / "vc-terminal", "--version"]
+    )
+    if b"alacritty" not in result.stdout.lower():
+        raise RuntimeError("bundled console did not identify its terminal host")
+    return {"bundled_console_reachable": result.stdout.strip()}
+
+
+def _scenario_start_here(
+    scenario: _WalkaroundScenario,
+) -> Mapping[str, bytes | str]:
+    layout = scenario.product_config / "vc-frame/layouts/operator.kdl"
+    payload = layout.read_bytes()
+    if b'tab name="Start here"' not in payload:
+        raise RuntimeError("installed operator layout has no Start here tab")
+    help_output = _scenario_command(
+        scenario, [scenario.launchers / "vc-start", "--help"]
+    ).stdout
+    if b"Start the operator vc-frame session" not in help_output:
+        raise RuntimeError("installed vc-start onboarding help is unavailable")
+    return {"onboarding_reachable": hashlib.sha256(payload + help_output).hexdigest()}
+
+
+def _scenario_update(
+    scenario: _WalkaroundScenario,
+) -> Mapping[str, bytes | str]:
+    if scenario.current_active == scenario.previous_active:
+        raise RuntimeError("update did not change the active runtime identity")
+    if not scenario.runtime_root.is_dir():
+        raise RuntimeError("updated runtime generation is missing")
+    return {
+        "update_changes_active_identity": (
+            hashlib.sha256(scenario.previous_active).hexdigest()
+            + "->"
+            + hashlib.sha256(scenario.current_active).hexdigest()
+        )
+    }
+
+
+def _scenario_rollback(
+    scenario: _WalkaroundScenario,
+) -> Mapping[str, bytes | str]:
+    active = scenario.root / "runtime/active.json"
+    temporary = active.with_name(".active.json.rollback")
+    temporary.write_bytes(scenario.previous_active)
+    os.replace(temporary, active)
+    if active.read_bytes() != scenario.previous_active:
+        raise RuntimeError("rollback could not restore the previous identity")
+    temporary.write_bytes(scenario.current_active)
+    os.replace(temporary, active)
+    if active.read_bytes() != scenario.current_active:
+        raise RuntimeError("walk-around could not restore the candidate identity")
+    return {
+        "rollback_restores_previous_identity": hashlib.sha256(
+            scenario.previous_active
+        ).hexdigest()
+    }
+
+
+def _scenario_reattach(
+    scenario: _WalkaroundScenario,
+) -> Mapping[str, bytes | str]:
+    frame = scenario.app / "Contents/Helpers/vc-frame"
+    if _socket_owner_pid(scenario.session_socket, frame) != scenario.session_pid:
+        raise RuntimeError("preserved session PID changed after update")
+    connected = _connect_session_socket(scenario.session_socket)
+    return {"session_reattaches": f"pid={scenario.session_pid};".encode() + connected}
+
+
+def _scenario_one_outer_writer(
+    scenario: _WalkaroundScenario,
+) -> Mapping[str, bytes | str]:
+    manifest_path = scenario.app / "Contents/Resources/product-manifest.json"
+    manifest = _load_json(manifest_path)
+    modules = [item["module"] for item in manifest["modules"]]
+    if (
+        manifest["product"] != PRODUCT_NAME
+        or manifest["bundle_id"] != PRODUCT_BUNDLE_ID
+    ):
+        raise RuntimeError("outer product identity is not canonical")
+    if modules != ["vc-terminal", "vc-frame"]:
+        raise RuntimeError("module ownership tuple is not canonical")
+    return {
+        "single_app_builder": f"{manifest['product']}:{manifest['git_sha']}",
+        "single_dmg_builder": f"{scenario.dmg.name}:{_sha256(scenario.dmg)}",
+    }
+
+
+@contextmanager
+def _walkaround_providers(app: Path, dmg: Path):
+    """Bind every W2/W3/W4 proof to one shared real product scenario."""
+    with _walkaround_scenario(app, dmg) as scenario:
+        yield _walkaround_provider_registry(scenario)
 
 
 def _assertion_observations(
@@ -3078,39 +3471,39 @@ def _run_live_release_checks(app: Path, dmg: Path) -> dict[str, Any]:
 
 def _run_walkaround_probes(app: Path, dmg: Path) -> dict[str, Any]:
     observations = _run_live_release_checks(app, dmg)
-    providers = _walkaround_provider_registry()
-    for spec in _probe_registry():
-        if spec.executor == "argv":
-            continue
-        if spec.executor == "builtin":
-            evidence = {
-                "sole_top_level_app": b"count=1",
-                "canonical_bundle_name": app.name,
+    with _walkaround_providers(app, dmg) as providers:
+        for spec in _probe_registry():
+            if spec.executor == "argv":
+                continue
+            if spec.executor == "builtin":
+                evidence = {
+                    "sole_top_level_app": b"count=1",
+                    "canonical_bundle_name": app.name,
+                }
+            else:
+                provider = providers.get(spec.name)
+                if provider is None:
+                    _fail(
+                        E_PROOF,
+                        f"walk-around {spec.executor} provider is missing: {spec.name} "
+                        f"(owner {spec.owner_stage})",
+                    )
+                try:
+                    evidence = provider(app, dmg)
+                except ProductContractError:
+                    raise
+                # Scenario providers are an explicit W2/W3 extension boundary.
+                # Normalize expected operational/data failures, while allowing
+                # programming errors outside that contract to remain visible.
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    _fail(E_PROOF, f"walk-around provider failed ({spec.name}): {exc}")
+            observations[spec.name] = {
+                "probe_id": _walkaround_probe_id(spec.name),
+                "executor": spec.executor,
+                "owner_stage": spec.owner_stage,
+                "operation_id": spec.operation_id,
+                "assertions": _assertion_observations(spec, evidence),
             }
-        else:
-            provider = providers.get(spec.name)
-            if provider is None:
-                _fail(
-                    E_PROOF,
-                    f"walk-around {spec.executor} provider is missing: {spec.name} "
-                    f"(owner {spec.owner_stage})",
-                )
-            try:
-                evidence = provider(app, dmg)
-            except ProductContractError:
-                raise
-            # Scenario providers are an explicit W2/W3 extension boundary.
-            # Normalize expected operational/data failures, while allowing
-            # programming errors outside that contract to remain visible.
-            except (OSError, RuntimeError, TypeError, ValueError) as exc:
-                _fail(E_PROOF, f"walk-around provider failed ({spec.name}): {exc}")
-        observations[spec.name] = {
-            "probe_id": _walkaround_probe_id(spec.name),
-            "executor": spec.executor,
-            "owner_stage": spec.owner_stage,
-            "operation_id": spec.operation_id,
-            "assertions": _assertion_observations(spec, evidence),
-        }
     return observations
 
 

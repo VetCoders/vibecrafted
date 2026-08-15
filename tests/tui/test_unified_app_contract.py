@@ -772,6 +772,10 @@ def test_native_app_bootstraps_and_launches_only_the_canonical_product_entry() -
     assert 'generation.appendingPathComponent("bin/vc-start")' in delegate
     assert "let runtimeEntries = try manager.contentsOfDirectory" in delegate
     assert "launcherHome.appendingPathComponent(name)" in delegate
+    assert (
+        'launcherHome.appendingPathComponent("vc-terminal"), common: common, '
+        "executable: terminalHost" in delegate
+    )
     assert 'generation.appendingPathComponent("bin/vc-server")' in delegate
     assert 'generation.appendingPathComponent("bin/vc-guardian")' in delegate
     assert 'generation.appendingPathComponent("bin/vc-server-supervisor")' in delegate
@@ -2113,7 +2117,12 @@ def test_walkaround_missing_scenario_provider_fails_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(contract, "_run_live_release_checks", lambda *_: {})
-    monkeypatch.setattr(contract, "_walkaround_provider_registry", dict)
+
+    @contextmanager
+    def missing_providers(*_args: object):
+        yield {}
+
+    monkeypatch.setattr(contract, "_walkaround_providers", missing_providers)
 
     _assert_error(
         contract.E_PROOF,
@@ -2121,6 +2130,16 @@ def test_walkaround_missing_scenario_provider_fails_closed(
             tmp_path / "Vibecrafted.app", tmp_path / "Vibecrafted.dmg"
         ),
     )
+
+
+def test_walkaround_production_registry_covers_all_late_stage_probes() -> None:
+    providers = contract._walkaround_provider_registry(object())  # type: ignore[arg-type]
+
+    assert set(providers) == {
+        spec.name
+        for spec in contract._probe_registry()
+        if spec.executor in {"scenario", "pipeline_gate"}
+    }
 
 
 def test_walkaround_scenario_provider_normalizes_only_contract_failures(
@@ -2139,11 +2158,11 @@ def test_walkaround_scenario_provider_normalizes_only_contract_failures(
     def operational_failure(*_args: object) -> dict[str, str]:
         raise RuntimeError("scenario unavailable")
 
-    monkeypatch.setattr(
-        contract,
-        "_walkaround_provider_registry",
-        lambda: {"scenario": operational_failure},
-    )
+    @contextmanager
+    def operational_providers(*_args: object):
+        yield {"scenario": operational_failure}
+
+    monkeypatch.setattr(contract, "_walkaround_providers", operational_providers)
     _assert_error(
         contract.E_PROOF,
         lambda: contract._run_walkaround_probes(
@@ -2154,11 +2173,11 @@ def test_walkaround_scenario_provider_normalizes_only_contract_failures(
     def programming_failure(*_args: object) -> dict[str, str]:
         raise AssertionError("provider invariant")
 
-    monkeypatch.setattr(
-        contract,
-        "_walkaround_provider_registry",
-        lambda: {"scenario": programming_failure},
-    )
+    @contextmanager
+    def programming_providers(*_args: object):
+        yield {"scenario": programming_failure}
+
+    monkeypatch.setattr(contract, "_walkaround_providers", programming_providers)
     with pytest.raises(AssertionError, match="provider invariant"):
         contract._run_walkaround_probes(
             tmp_path / "Vibecrafted.app", tmp_path / "Vibecrafted.dmg"
@@ -3002,6 +3021,7 @@ def test_unified_release_has_one_top_level_owner() -> None:
     assert 'run_bundled_verifier app "$APP" --require-clean' in builder
     assert "run_bundled_verifier release-output" in builder
     assert '"$verifier" -m vibecrafted_core.product_contract "$@"' in builder
+    assert '"$runtime/vibecrafted-core/vibecrafted_core/VERSION"' in builder
     assert '"$REPO_ROOT/scripts/verify-vibecrafted-product.sh"' not in builder
     assert "--noprofile" not in builder  # vc-start, not the release shell, owns this
     assert "vc-frame.real" not in builder

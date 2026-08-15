@@ -328,7 +328,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         launcherHome.appendingPathComponent(name), common: common, executable: entry)
     }
     try writeLauncher(
-      launcherHome.appendingPathComponent("vc-terminal"), common: common, executable: terminal,
+      launcherHome.appendingPathComponent("vc-terminal"), common: common, executable: terminalHost,
       leadingArguments: ["--config-file", terminalConfig.path])
 
     let active: [String: String] = [
