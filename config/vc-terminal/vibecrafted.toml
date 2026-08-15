@@ -20,7 +20,7 @@ dynamic_padding = true
 option_as_alt = "Both"
 
 [font]
-size = 19.5
+size = 18.5
 
 [font.offset]
 x = -1
@@ -45,6 +45,16 @@ vi_mode_style = { shape = "Beam", blinking = "Off" }
 [selection]
 semantic_escape_chars = ",│`|:\"' ()[]{}<>\\t"
 save_to_clipboard = true
+
+# Open URLs in the system browser with Command+Click.
+[[hints.enabled]]
+command = "open"
+hyperlinks = true
+post_processing = true
+persist = false
+mouse = { enabled = true, mods = "Command" }
+binding = { key = "O", mods = "Control|Shift" }
+regex = '(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file:|git://|ssh:|ftp://)[^\u0000-\u001F\u007F-\u009F<>"\s{-}\^⟨⟩`\\]+'
 
 # Polish diacritics on either Option key, while keeping Option as Alt/Meta.
 [[keyboard.bindings]]
