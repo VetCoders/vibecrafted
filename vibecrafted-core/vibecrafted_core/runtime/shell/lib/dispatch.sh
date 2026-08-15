@@ -470,7 +470,8 @@ Uniform skill flags:
   --session <id>                 Resume session id
 
 Utilities:
-  repo-full                      Full git context dump
+  vc-git                         Git truth + visible worktree inventory
+  repo-full                      Legacy full git context helper
   skills-sync                    Sync skills to agents
   vc-frontier-paths              Show frontier config paths
   vc-frontier-install            Install frontier presets (starship/atuin/vc_frame)

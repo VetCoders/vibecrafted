@@ -18,6 +18,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   and complete runtime, with signed source/module receipts.
 - Durable `workspace_id` and automatic bundled `vc-start` entry for every new
   or restored workspace.
+- Public `vc-git` operator command exposes branch, dirt, recent commits and
+  every active worktree without requiring an MCP client.
 - App-owned XDG/runtime environment: the product does not overwrite user
   terminal, shell or vc-frame configuration.
 - Fail-closed macOS publication target that downloads draft assets back from
@@ -33,6 +35,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 
 - `vibecrafted` is the sole owner of app/DMG/install/update.
+- Quick cmd uses `Shift+Cmd+.` and the top bar advertises both entry chords:
+  `✍ Composer ⌘E` and `❯_ Quick cmd ⇧⌘.`.
 - `vc-terminal` is a deterministic binary donor; its standalone App/DMG/MSI,
   signing, notarization and install surfaces were retired.
 - `vc-frame` is the session interior; its standalone installer, release assets,

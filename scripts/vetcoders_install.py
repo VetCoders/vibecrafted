@@ -2487,6 +2487,7 @@ PYTHON_ENTRYPOINT_LAUNCHERS = [
     "vc-dou",
     "vc-followup",
     "vc-guard",
+    "vc-git",
     "vc-hydrate",
     "vc-implement",
     "vc-intents",

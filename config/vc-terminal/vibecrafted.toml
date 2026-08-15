@@ -184,6 +184,11 @@ mods = "Command"
 chars = "\u001b[1;9B"
 
 [[keyboard.bindings]]
+key = "Period"
+mods = "Command|Shift"
+chars = "\u001b[46;10u"
+
+[[keyboard.bindings]]
 key = "E"
 mods = "Command"
 chars = "\u001b[101;9u"

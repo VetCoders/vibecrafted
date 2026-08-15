@@ -218,7 +218,7 @@ def _app_fixture(app: Path, macho_executable: Path) -> dict[str, Any]:
         _codesign_macho(app / relative)
     primary_shell = app / contract._LAUNCH_PRIMARY_SHELL
     primary_shell.parent.mkdir(parents=True, exist_ok=True)
-    primary_shell.write_text("#!/bin/zsh\nexec vc-start \"$@\"\n", encoding="utf-8")
+    primary_shell.write_text('#!/bin/zsh\nexec vc-start "$@"\n', encoding="utf-8")
     primary_shell.chmod(0o755)
     terminal_app = app / "Contents/Helpers/vc-terminal.app"
     terminal_icon = terminal_app / "Contents/Resources/alacritty.icns"
@@ -254,9 +254,7 @@ def _app_fixture(app: Path, macho_executable: Path) -> dict[str, Any]:
             },
             handle,
         )
-    terminal_product_entry = _entry(
-        app, terminal_relative, kind="executable"
-    )
+    terminal_product_entry = _entry(app, terminal_relative, kind="executable")
     frame_product_entry = _entry(app, "Contents/Helpers/vc-frame", kind="executable")
 
     def add_module_binding(
@@ -3016,9 +3014,9 @@ def test_terminal_policy_uses_operator_toml_and_primary_shell_chain() -> None:
     terminal = (REPO_ROOT / "config/vc-terminal/vibecrafted.toml").read_text(
         encoding="utf-8"
     )
-    primary_shell = (
-        REPO_ROOT / "config/alacritty/launch-primary-shell.zsh"
-    ).read_text(encoding="utf-8")
+    primary_shell = (REPO_ROOT / "config/alacritty/launch-primary-shell.zsh").read_text(
+        encoding="utf-8"
+    )
     delegate = (
         REPO_ROOT / "vibecrafted-app/shell-agent/app/Vibecrafted/AppDelegate.swift"
     ).read_text(encoding="utf-8")
@@ -3032,11 +3030,14 @@ def test_terminal_policy_uses_operator_toml_and_primary_shell_chain() -> None:
     assert "save_to_clipboard = true" in terminal
     assert 'command = "open"' in terminal
     assert 'mods = "Command"' in terminal
+    assert 'key = "Period"' in terminal
+    assert 'mods = "Command|Shift"' in terminal
+    assert 'chars = "\\u001b[46;10u"' in terminal
     assert "launch-primary-shell.zsh" in terminal
     assert "$VIBECRAFTED_RUNTIME_ROOT/bin/vc-start" in terminal
-    assert '${1##*/}' in primary_shell
+    assert "${1##*/}" in primary_shell
     assert '"$1" "${@:2}"' in primary_shell
-    assert 'process.executableURL = install.terminalHost' in delegate
+    assert "process.executableURL = install.terminalHost" in delegate
     assert '"-e", install.primaryShell.path, install.start.path, "operator"' in delegate
 
 
