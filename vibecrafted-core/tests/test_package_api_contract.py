@@ -118,6 +118,13 @@ def test_version_bump_updates_every_declared_projection(tmp_path: Path) -> None:
         tmp_path / "vibecrafted-server" / "web" / "Cargo.toml",
         tmp_path / "vibecrafted-server" / "control-core" / "Cargo.toml",
     )
+    cargo_locks = {
+        tmp_path / "vibecrafted-server" / "Cargo.lock": (
+            "control-core",
+            "vibecrafted-server-web",
+        ),
+        tmp_path / "vibecrafted-app" / "Cargo.lock": ("control-core",),
+    }
     version_file.write_text("1.4.1\n", encoding="utf-8")
     for pyproject in pyprojects:
         pyproject.parent.mkdir(parents=True)
@@ -133,6 +140,16 @@ def test_version_bump_updates_every_declared_projection(tmp_path: Path) -> None:
         cargo.write_text(
             '[package]\nname = "fixture"\nversion = "1.4.1"\n\n'
             '[dependencies.leptos]\nversion = "0.8"\n',
+            encoding="utf-8",
+        )
+    for lock_path, package_names in cargo_locks.items():
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path.write_text(
+            "# generated fixture\n"
+            + "".join(
+                f'[[package]]\nname = "{name}"\nversion = "1.4.1"\n\n'
+                for name in package_names
+            ),
             encoding="utf-8",
         )
 
@@ -162,6 +179,14 @@ def test_version_bump_updates_every_declared_projection(tmp_path: Path) -> None:
         manifest = tomllib.loads(cargo.read_text(encoding="utf-8"))
         assert manifest["package"]["version"] == "1.5.0"
         assert manifest["dependencies"]["leptos"]["version"] == "0.8"
+    for lock_path, package_names in cargo_locks.items():
+        packages = {
+            package["name"]: package["version"]
+            for package in tomllib.loads(lock_path.read_text(encoding="utf-8"))[
+                "package"
+            ]
+        }
+        assert {packages[name] for name in package_names} == {"1.5.0"}
 
 
 def test_version_bump_rejects_drift_without_partial_writes(tmp_path: Path) -> None:

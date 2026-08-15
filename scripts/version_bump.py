@@ -31,6 +31,13 @@ CARGO_RELATIVES = (
     Path("vibecrafted-server/web/Cargo.toml"),
     Path("vibecrafted-server/control-core/Cargo.toml"),
 )
+CARGO_LOCK_PACKAGES = {
+    Path("vibecrafted-server/Cargo.lock"): (
+        "control-core",
+        "vibecrafted-server-web",
+    ),
+    Path("vibecrafted-app/Cargo.lock"): ("control-core",),
+}
 
 
 def _parse_version(value: str) -> tuple[int, int, int]:
@@ -102,6 +109,64 @@ def _replace_table_version(text: str, version: str, table: str) -> str:
     if not replaced:
         raise ValueError(f"TOML file has no [{table}] version declaration")
     return "".join(output)
+
+
+def _replace_lock_package_versions(
+    text: str,
+    package_names: tuple[str, ...],
+    current: str,
+    next_version: str,
+) -> str:
+    """Update local product packages in a Cargo.lock without invoking Cargo.
+
+    Registry dependencies may legitimately share a package name or product-like
+    version, so only the explicitly owned package blocks are rewritten. Every
+    expected package must occur exactly once and agree with VERSION before any
+    file is written.
+    """
+    lines = text.splitlines(keepends=True)
+    found: dict[str, tuple[int, str]] = {}
+    block_name: str | None = None
+    block_version_index: int | None = None
+    block_version: str | None = None
+
+    def finish_block() -> None:
+        if block_name not in package_names:
+            return
+        if block_version_index is None or block_version is None:
+            raise ValueError(f"Cargo.lock package {block_name!r} has no version")
+        if block_name in found:
+            raise ValueError(f"Cargo.lock package {block_name!r} is duplicated")
+        found[block_name] = (block_version_index, block_version)
+
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == "[[package]]":
+            finish_block()
+            block_name = None
+            block_version_index = None
+            block_version = None
+            continue
+        if block_name is None and stripped.startswith('name = "'):
+            block_name = stripped.removeprefix('name = "').removesuffix('"')
+        elif block_version_index is None and stripped.startswith('version = "'):
+            block_version_index = index
+            block_version = stripped.removeprefix('version = "').removesuffix('"')
+    finish_block()
+
+    missing = [name for name in package_names if name not in found]
+    if missing:
+        raise ValueError(f"Cargo.lock package missing: {', '.join(missing)}")
+    drift = {name: value for name, (_, value) in found.items() if value != current}
+    if drift:
+        details = ", ".join(f"{name}={value}" for name, value in drift.items())
+        raise ValueError(
+            f"Version drift detected; expected {current} in Cargo.lock: {details}"
+        )
+    for index, _value in found.values():
+        newline = "\n" if lines[index].endswith("\n") else ""
+        lines[index] = f'version = "{next_version}"{newline}'
+    return "".join(lines)
 
 
 def _version_projections(
@@ -193,6 +258,16 @@ def update_version_declarations(version_file: Path, requested: str) -> tuple[str
             }
         )
         updates.update({path: next_version + "\n" for path in packaged_versions})
+        for relative, package_names in CARGO_LOCK_PACKAGES.items():
+            lock_path = version_file.parent / relative
+            if not lock_path.exists():
+                continue
+            updates[lock_path] = _replace_lock_package_versions(
+                lock_path.read_text(encoding="utf-8"),
+                package_names,
+                current,
+                next_version,
+            )
 
     for path, content in updates.items():
         path.write_text(content, encoding="utf-8")
