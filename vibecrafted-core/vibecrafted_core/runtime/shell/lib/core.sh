@@ -103,3 +103,26 @@ _vetcoders_path_with_bundled_bin_priority() {
   done < <(_vetcoders_bundled_bin_dirs)
   printf '%s\n' "${bundled_path:+$bundled_path${current_path:+:}}$current_path"
 }
+
+_vetcoders_aicx_bin() {
+  local xdg_data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+  local runtime_bin="${VIBECRAFTED_RUNTIME_BIN:-${VIBECRAFTED_RUNTIME_HOME:-$xdg_data_home/vibecrafted}/bin}"
+  local candidate=""
+
+  # Foundation discovery is deterministic and independent of interactive
+  # shell startup. Explicit/operator and Vibecrafted-owned paths win; the
+  # Cargo location is retained for source installs during the transition.
+  for candidate in \
+    "${VIBECRAFTED_AICX_BIN:-}" \
+    "$runtime_bin/aicx" \
+    "$HOME/.local/bin/aicx" \
+    "$HOME/.cargo/bin/aicx"
+  do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  command -v aicx 2>/dev/null
+}
