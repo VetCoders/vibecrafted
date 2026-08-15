@@ -1394,3 +1394,47 @@ def test_aicx_resume_fallback_resolves_cargo_foundation_without_shell_path(
     assert result.returncode == 0, result.stderr
     assert "MODE=new_session" in result.stdout
     assert "aicx foundation not found" not in result.stderr
+
+
+def test_aicx_resolver_follows_npm_global_prefix_outside_shell_path(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    npm_prefix = tmp_path / "npm-global"
+    npm_global_bin = npm_prefix / "bin"
+    home.mkdir()
+    fake_bin.mkdir()
+    npm_global_bin.mkdir(parents=True)
+
+    _write_fake_command(
+        fake_bin / "npm",
+        "#!/bin/bash\n"
+        'if [[ "$1 $2" == "prefix -g" ]]; then\n'
+        f'  printf "%s\\n" "{npm_prefix}"\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+    )
+    _write_fake_command(npm_global_bin / "aicx", "#!/bin/bash\nexit 0\n")
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:/usr/bin:/bin"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{SHELL_SH}"\n_vetcoders_aicx_bin',
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == str(npm_global_bin / "aicx")

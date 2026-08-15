@@ -108,6 +108,8 @@ _vetcoders_aicx_bin() {
   local xdg_data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
   local runtime_bin="${VIBECRAFTED_RUNTIME_BIN:-${VIBECRAFTED_RUNTIME_HOME:-$xdg_data_home/vibecrafted}/bin}"
   local candidate=""
+  local npm_bin=""
+  local npm_prefix=""
 
   # Foundation discovery is deterministic and independent of interactive
   # shell startup. Explicit/operator and Vibecrafted-owned paths win; the
@@ -124,5 +126,24 @@ _vetcoders_aicx_bin() {
     fi
   done
 
-  command -v aicx 2>/dev/null
+  candidate="$(command -v aicx 2>/dev/null || true)"
+  if [[ -n "$candidate" && -x "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  # npm-global installs can live outside the deliberately narrow PATH used by
+  # GUI apps and launchd. Ask npm for its active global prefix only as a final
+  # compatibility fallback; the normal fast paths above stay process-free.
+  npm_bin="$(command -v npm 2>/dev/null || true)"
+  if [[ -n "$npm_bin" && -x "$npm_bin" ]]; then
+    npm_prefix="$("$npm_bin" prefix -g 2>/dev/null || true)"
+    candidate="${npm_prefix:+$npm_prefix/bin/aicx}"
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  fi
+
+  return 1
 }
