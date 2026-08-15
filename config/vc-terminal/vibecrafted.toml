@@ -20,7 +20,11 @@ dynamic_padding = true
 option_as_alt = "Both"
 
 [font]
-size = 18.5
+size = 19.5
+
+[font.offset]
+x = -3
+y = -8
 
 [font.normal]
 family = "Spot Mono"
@@ -28,11 +32,19 @@ style = "Regular"
 
 [font.bold]
 family = "Spot Mono"
-style = "Bold"
+style = "Regular"
 
 [font.italic]
 family = "Spot Mono"
 style = "Regular"
+
+[cursor]
+style = { shape = "Underline", blinking = "On" }
+vi_mode_style = { shape = "Beam", blinking = "Off" }
+
+[selection]
+semantic_escape_chars = ",│`|:\"' ()[]{}<>\\t"
+save_to_clipboard = true
 
 # Polish diacritics on either Option key, while keeping Option as Alt/Meta.
 [[keyboard.bindings]]
@@ -204,7 +216,7 @@ green   = "#a6da95"
 yellow  = "#f6c177"
 blue    = "#7dc4e4"
 magenta = "#c4a7e7"
-cyan    = "#9ccfd8"
+cyan    = "#117f92ff"
 white   = "#e0def4"
 
 [colors.bright]

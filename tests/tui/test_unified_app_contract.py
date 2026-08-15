@@ -3024,7 +3024,11 @@ def test_terminal_policy_uses_operator_toml_and_primary_shell_chain() -> None:
     ).read_text(encoding="utf-8")
 
     assert 'family = "Spot Mono"' in terminal
-    assert "size = 18.5" in terminal
+    assert "size = 19.5" in terminal
+    assert "x = -3" in terminal
+    assert "y = -8" in terminal
+    assert 'style = { shape = "Underline", blinking = "On" }' in terminal
+    assert 'cyan    = "#117f92ff"' in terminal
     assert "launch-primary-shell.zsh" in terminal
     assert "$VIBECRAFTED_RUNTIME_ROOT/bin/vc-start" in terminal
     assert '${1##*/}' in primary_shell
