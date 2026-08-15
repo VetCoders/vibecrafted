@@ -113,6 +113,15 @@ def test_installer_smokes_the_packaged_walkaround_entrypoint() -> None:
     assert 'if ! "$$resolved" --help' in install_tools
 
 
+def test_installer_owns_public_vc_git_entrypoint() -> None:
+    assert "vc-git" in installer.PYTHON_ENTRYPOINT_LAUNCHERS
+    assert "vc-git" in installer._installer_managed_launcher_names()
+    pyproject = (REPO_ROOT / "vibecrafted-core/pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+    assert 'vc-git = "vibecrafted_core.git:main"' in pyproject
+
+
 def test_unified_product_contract_gate_executes_installed_runner() -> None:
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     gate = makefile.split("unified-product-contract-gate:", 1)[1].split("\n\n", 1)[0]

@@ -190,10 +190,16 @@ _LAUNCH_INHERITED_ENV = (
     "SHELL",
 )
 _LAUNCH_SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
-_LAUNCH_TERMINAL = "Contents/Helpers/vc-terminal"
+_LAUNCH_TERMINAL = "Contents/Helpers/vc-terminal.app/Contents/MacOS/alacritty"
 _LAUNCH_FRAME = "Contents/Helpers/vc-frame"
 _LAUNCH_CONFIG = "Contents/Resources/terminal/vibecrafted.toml"
 _LAUNCH_SHELL = "Contents/Resources/runtime/bin/vc-start"
+_LAUNCH_PRIMARY_SHELL = (
+    "Contents/Resources/runtime/config/alacritty/launch-primary-shell.zsh"
+)
+_TERMINAL_HELPER_APP = "Contents/Helpers/vc-terminal.app"
+_TERMINAL_HELPER_BUNDLE_ID = "io.vetcoders.vc-terminal"
+_TERMINAL_HELPER_ICON = "alacritty.icns"
 PRODUCT_MANIFEST_REFERENT = "manifests/product-manifest.json"
 RUNTIME_MANIFEST_REFERENT = "manifests/runtime-manifest.json"
 _MAX_SIGNED_PAYLOAD_BYTES = 64 * 1024 * 1024
@@ -1400,10 +1406,15 @@ def _canonical_launch_contract() -> dict[str, Any]:
             "--config-file",
             _LAUNCH_CONFIG,
             "-e",
+            _LAUNCH_PRIMARY_SHELL,
             _LAUNCH_SHELL,
             "operator",
         ],
         "config_path": _LAUNCH_CONFIG,
+        "primary_shell": {
+            "program": _LAUNCH_PRIMARY_SHELL,
+            "argv": [_LAUNCH_SHELL, "operator"],
+        },
         "shell": {"program": _LAUNCH_SHELL, "argv": ["operator"]},
         "environment": {
             "resolver_inputs": ["VIBECRAFTED_RUNTIME_HOME", "XDG_DATA_HOME"],
@@ -1440,7 +1451,15 @@ def _validate_launch_contract(
         _fail(E_SCHEMA, "launch_contract must be an object")
     _expect_keys(
         raw,
-        required={"schema", "program", "argv", "config_path", "shell", "environment"},
+        required={
+            "schema",
+            "program",
+            "argv",
+            "config_path",
+            "primary_shell",
+            "shell",
+            "environment",
+        },
         context="launch_contract",
     )
     if raw["schema"] != LAUNCH_SCHEMA:
@@ -1449,11 +1468,21 @@ def _validate_launch_contract(
     if not isinstance(shell, dict):
         _fail(E_SCHEMA, "launch_contract.shell must be an object")
     _expect_keys(shell, required={"program", "argv"}, context="launch_contract.shell")
+    primary_shell = raw["primary_shell"]
+    if not isinstance(primary_shell, dict):
+        _fail(E_SCHEMA, "launch_contract.primary_shell must be an object")
+    _expect_keys(
+        primary_shell,
+        required={"program", "argv"},
+        context="launch_contract.primary_shell",
+    )
     canonical = _canonical_launch_contract()
     if (
         raw["program"] != _LAUNCH_TERMINAL
         or raw["config_path"] != _LAUNCH_CONFIG
         or raw["argv"] != canonical["argv"]
+        or primary_shell
+        != {"program": _LAUNCH_PRIMARY_SHELL, "argv": [_LAUNCH_SHELL, "operator"]}
         or shell != {"program": _LAUNCH_SHELL, "argv": ["operator"]}
     ):
         _fail(
@@ -1481,6 +1510,7 @@ def _validate_launch_contract(
         _LAUNCH_TERMINAL: "executable",
         _LAUNCH_FRAME: "executable",
         _LAUNCH_CONFIG: "config",
+        _LAUNCH_PRIMARY_SHELL: "resource",
         _LAUNCH_SHELL: "executable",
     }
     for relative, kind in required_files.items():
@@ -1490,6 +1520,9 @@ def _validate_launch_contract(
                 E_ENTRYPOINT,
                 f"launch_contract path is not exact inventory {kind}: {relative}",
             )
+    primary_entry = files[_LAUNCH_PRIMARY_SHELL]
+    if int(str(primary_entry["mode"]), 8) & 0o111 == 0:
+        _fail(E_ENTRYPOINT, "primary-shell launcher is not executable")
     if (
         entrypoints["terminal"] != _LAUNCH_TERMINAL
         or entrypoints["frame"] != _LAUNCH_FRAME
@@ -1961,6 +1994,7 @@ def verify_app(app_path: str | Path, *, require_clean: bool = False) -> dict[str
         exclusions=(
             Path("Contents/_CodeSignature"),
             Path("Contents/CodeResources"),
+            Path("Contents/Helpers/vc-terminal.app/Contents/_CodeSignature"),
             Path(outer_relative),
         ),
     )
@@ -2018,8 +2052,29 @@ def verify_app(app_path: str | Path, *, require_clean: bool = False) -> dict[str
     nested_apps = sorted(
         path.relative_to(app).as_posix() for path in app.rglob("*.app") if path.is_dir()
     )
-    if nested_apps:
+    if nested_apps != [_TERMINAL_HELPER_APP]:
         _fail(E_BUNDLE, f"nested customer app bundles are forbidden: {nested_apps}")
+    terminal_helper = app / _TERMINAL_HELPER_APP
+    helper_plist_path = terminal_helper / "Contents/Info.plist"
+    try:
+        with helper_plist_path.open("rb") as handle:
+            helper_plist = plistlib.load(handle)
+    except (OSError, plistlib.InvalidFileException) as exc:
+        _fail(E_BUNDLE, f"terminal helper Info.plist is invalid: {exc}")
+    if helper_plist.get("CFBundleIdentifier") != _TERMINAL_HELPER_BUNDLE_ID:
+        _fail(E_BUNDLE, "terminal helper bundle identifier is not canonical")
+    if helper_plist.get("CFBundleExecutable") != "alacritty":
+        _fail(E_BUNDLE, "terminal helper executable is not canonical")
+    if helper_plist.get("CFBundleIconFile") != _TERMINAL_HELPER_ICON:
+        _fail(E_BUNDLE, "terminal helper icon is not canonical")
+    helper_icon_relative = (
+        f"{_TERMINAL_HELPER_APP}/Contents/Resources/{_TERMINAL_HELPER_ICON}"
+    )
+    if helper_icon_relative not in validated.entries:
+        _fail(E_INVENTORY, "terminal helper icon is absent from signed inventory")
+    _verify_assembler_signed_macho(terminal_helper, relative=_TERMINAL_HELPER_APP)
+    if _codesign_identifier(terminal_helper) != _TERMINAL_HELPER_BUNDLE_ID:
+        _fail(E_PROOF, "terminal helper signature Identifier is not canonical")
     _verify_product_module_receipts(
         app,
         modules,
@@ -3290,7 +3345,7 @@ def _self_test() -> int:
         mount = root / "mounted"
         app = mount / "Vibecrafted.app"
         app_executable = app / "Contents/MacOS/Vibecrafted"
-        terminal = app / "Contents/Helpers/vc-terminal"
+        terminal = app / _LAUNCH_TERMINAL
         frame = app / "Contents/Helpers/vc-frame"
         product_shell = app / _LAUNCH_SHELL
         for target in (app_executable, terminal, frame, product_shell):
@@ -3303,6 +3358,31 @@ def _self_test() -> int:
                 failure_code=E_PROOF,
                 context=f"self-test could not sign {target.name}",
             )
+        primary_shell = app / _LAUNCH_PRIMARY_SHELL
+        primary_shell.parent.mkdir(parents=True, exist_ok=True)
+        primary_shell.write_text(
+            '#!/bin/zsh\nexec vc-start "$@"\n', encoding="utf-8"
+        )
+        primary_shell.chmod(0o755)
+        terminal_app = app / "Contents/Helpers/vc-terminal.app"
+        terminal_icon = terminal_app / "Contents/Resources/alacritty.icns"
+        terminal_icon.parent.mkdir(parents=True, exist_ok=True)
+        terminal_icon.write_bytes(b"terminal-icns-fixture")
+        with (terminal_app / "Contents/Info.plist").open("wb") as handle:
+            plistlib.dump(
+                {
+                    "CFBundleIdentifier": "io.vetcoders.vc-terminal",
+                    "CFBundleExecutable": "alacritty",
+                    "CFBundleIconFile": "alacritty.icns",
+                    "CFBundlePackageType": "APPL",
+                },
+                handle,
+            )
+        _run_tool(
+            [codesign, "--force", "--sign", "-", str(terminal_app)],
+            failure_code=E_PROOF,
+            context="self-test could not sign terminal helper app",
+        )
         terminal_config = app / _LAUNCH_CONFIG
         terminal_config.parent.mkdir(parents=True, exist_ok=True)
         terminal_config.write_text("[shell]\nprogram = 'vc-start'\n", encoding="utf-8")
@@ -3323,7 +3403,7 @@ def _self_test() -> int:
                 handle,
             )
         terminal_product_entry = _fixture_entry(
-            app, "Contents/Helpers/vc-terminal", kind="executable"
+            app, _LAUNCH_TERMINAL, kind="executable"
         )
         frame_product_entry = _fixture_entry(
             app, "Contents/Helpers/vc-frame", kind="executable"
@@ -3433,6 +3513,16 @@ def _self_test() -> int:
                 ),
                 terminal_product_entry,
                 frame_product_entry,
+                _fixture_entry(
+                    app,
+                    "Contents/Helpers/vc-terminal.app/Contents/Info.plist",
+                    kind="config",
+                ),
+                _fixture_entry(
+                    app,
+                    "Contents/Helpers/vc-terminal.app/Contents/Resources/alacritty.icns",
+                    kind="resource",
+                ),
                 _fixture_entry(app, terminal_binding["manifest_path"], kind="config"),
                 _fixture_entry(app, frame_binding["manifest_path"], kind="config"),
                 _fixture_entry(
@@ -3443,10 +3533,11 @@ def _self_test() -> int:
                 ),
                 _fixture_entry(app, _LAUNCH_CONFIG, kind="config"),
                 _fixture_entry(app, _LAUNCH_SHELL, kind="executable"),
+                _fixture_entry(app, _LAUNCH_PRIMARY_SHELL, kind="resource"),
             ],
             "entrypoints": {
                 "app": "Contents/MacOS/Vibecrafted",
-                "terminal": "Contents/Helpers/vc-terminal",
+                "terminal": _LAUNCH_TERMINAL,
                 "frame": "Contents/Helpers/vc-frame",
             },
             "launch_contract": _canonical_launch_contract(),

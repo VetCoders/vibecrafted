@@ -249,6 +249,11 @@ _vetcoders_launch_dashboard() {
     return 0
   fi
 
+  if (( inside_vc_frame )) && [[ "$current_session" == "$session_name" ]]; then
+    printf 'Already in Vibecrafted workspace: %s\n' "$session_name"
+    return 0
+  fi
+
   if _vetcoders_ensure_vc_frame_session "$session_name" "$layout_file" "$@"; then
     export VIBECRAFTED_OPERATOR_SESSION="${VIBECRAFTED_PREPARED_VC_FRAME_SESSION:-$session_name}"
     export VC_FRAME_SESSION_NAME="$VIBECRAFTED_OPERATOR_SESSION"

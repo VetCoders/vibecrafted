@@ -31,8 +31,10 @@ leave_alt_screen() {
 # Ensure we start on the primary buffer (scrollback + ~Alt wheel bindings).
 leave_alt_screen
 
-if [[ "${1:-}" == "vc-start" ]]; then
-  /bin/zsh -lic 'vc-start'
+if [[ "${1##*/}" == "vc-start" ]]; then
+  vc_start="$1"
+  shift
+  /bin/zsh -lic '"$0" "$@"' "$vc_start" "$@"
   # vc-frame owns its own alternate-buffer lifecycle; clean sticky smcup.
   leave_alt_screen
 fi

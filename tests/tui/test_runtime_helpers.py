@@ -297,6 +297,32 @@ def test_dashboard_uses_bundled_vc_frame_priority_without_path_leak(
     assert result.stdout == f"PATH={initial_path}\n"
 
 
+def test_dashboard_names_the_idempotent_same_workspace_noop(tmp_path: Path) -> None:
+    layout = tmp_path / "operator.kdl"
+    layout.write_text("layout {}\n", encoding="utf-8")
+    result = _run_vetcoders_helper(
+        HELPER_SCRIPT,
+        (
+            '_vetcoders_vc_frame_bin() { printf "/bin/true\\n"; }; '
+            '_vetcoders_load_frontier_sidecars() { :; }; '
+            '_vetcoders_dashboard_layout_file() { printf "%s\\n" "$TEST_LAYOUT"; }; '
+            '_vetcoders_dashboard_session_name() { printf "workspace-42\\n"; }; '
+            '_vetcoders_vc_frame_session_state() { printf "live\\n"; }; '
+            '_vetcoders_in_vc_frame() { return 0; }; '
+            '_vetcoders_launch_dashboard operator'
+        ),
+        {
+            "TEST_LAYOUT": str(layout),
+            "VC_FRAME_PANE_ID": "1",
+            "VC_FRAME_SESSION_NAME": "workspace-42",
+        },
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert result.stdout == "Already in Vibecrafted workspace: workspace-42\n"
+
+
 def test_await_pane_stays_silent_without_meta_helper(
     tmp_path: Path,
 ) -> None:

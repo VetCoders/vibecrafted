@@ -151,10 +151,10 @@ _vetcoders_aicx_resume_fallback() {
   local agent="$1"
   local root="${2:-$(_vetcoders_repo_root)}"
   local hours="${VIBECRAFTED_RESUME_AICX_HOURS:-48}"
-  local tmp_dir context_file meta_file
-  command -v aicx >/dev/null 2>&1 || {
-    echo "aicx not found on PATH — cannot build session-less resume context." >&2
-    echo "Install aicx or pass --session <session_id>." >&2
+  local tmp_dir context_file meta_file aicx_bin
+  aicx_bin="$(_vetcoders_aicx_bin 2>/dev/null)" || {
+    echo "aicx foundation not found in the Vibecrafted runtime, ~/.local/bin, ~/.cargo/bin, or PATH." >&2
+    echo "Install the AICX foundation or pass --session <session_id>." >&2
     return 1
   }
   tmp_dir="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tmp"
@@ -162,7 +162,7 @@ _vetcoders_aicx_resume_fallback() {
   context_file="$tmp_dir/resume-aicx-${agent}-$(date +%Y%m%d_%H%M%S).md"
   meta_file="${context_file}.meta.json"
 
-  python3 - "$agent" "$root" "$hours" "$context_file" "$meta_file" <<'PY' || return 1
+  python3 - "$agent" "$root" "$hours" "$context_file" "$meta_file" "$aicx_bin" <<'PY' || return 1
 from __future__ import annotations
 
 import datetime as dt
@@ -171,7 +171,7 @@ import pathlib
 import subprocess
 import sys
 
-agent, root, hours_s, context_file, meta_file = sys.argv[1:6]
+agent, root, hours_s, context_file, meta_file, aicx_bin = sys.argv[1:7]
 hours = int(hours_s)
 now = dt.datetime.now(dt.timezone.utc)
 cutoff = now - dt.timedelta(hours=hours)
@@ -215,7 +215,7 @@ sessions: list[dict] = []
 for flags in (["--cwd"], []):
     code, out, err = run(
         [
-            "aicx",
+            aicx_bin,
             "sessions",
             "list",
             "--format",
@@ -293,7 +293,7 @@ if candidate is None and resumable_same_agent:
 # Overlay is best-effort and often slow on large repos — never block resume.
 intents_md = ""
 code, out, err = run(
-    ["aicx", "tail", "-H", str(hours), "--limit", "20", "-p", project],
+    [aicx_bin, "tail", "-H", str(hours), "--limit", "20", "-p", project],
     timeout=12,
 )
 if code == 0 and out.strip():
@@ -302,7 +302,7 @@ else:
     degradations.append(f"tail:{code}:{(err or out)[:160]}")
     for project_args in ([project], []):
         cmd = [
-            "aicx",
+            aicx_bin,
             "intents",
             "-H",
             str(hours),
@@ -321,7 +321,7 @@ else:
 
 overlay_blob = ""
 code, out, err = run(
-    ["aicx", "overlay", "--repo", str(root_path), "--format", "json"],
+    [aicx_bin, "overlay", "--repo", str(root_path), "--format", "json"],
     timeout=8,
 )
 if code == 0 and out.strip():

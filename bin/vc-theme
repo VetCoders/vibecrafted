@@ -1,0 +1,55 @@
+#!/bin/sh
+set -eu
+
+action=${1:-toggle}
+runtime_root=${VIBECRAFTED_RUNTIME_ROOT:?VIBECRAFTED_RUNTIME_ROOT is required}
+config_home=${XDG_CONFIG_HOME:-${HOME:?HOME is required}/.config}
+theme_dir=${runtime_root}/config/vc-terminal/themes
+product_dir=${config_home}/vibecrafted
+active_theme=${product_dir}/terminal-theme.toml
+
+theme_name() {
+    if grep -q 'background = "#fafafa"' "$active_theme" 2>/dev/null; then
+        printf '%s\n' light
+    else
+        printf '%s\n' dark
+    fi
+}
+
+publish_theme() {
+    name=$1
+    source=${theme_dir}/${name}.toml
+    test -f "$source" || {
+        printf 'vc-theme: missing signed palette: %s\n' "$source" >&2
+        exit 1
+    }
+    umask 077
+    mkdir -p "$product_dir"
+    temporary=$(mktemp "${product_dir}/.terminal-theme.XXXXXX")
+    trap 'rm -f -- "$temporary"' EXIT HUP INT TERM
+    cp "$source" "$temporary"
+    chmod 0600 "$temporary"
+    mv -f "$temporary" "$active_theme"
+    trap - EXIT HUP INT TERM
+    printf '%s\n' "$name"
+}
+
+case "$action" in
+    current)
+        theme_name
+        ;;
+    light|dark)
+        publish_theme "$action"
+        ;;
+    toggle)
+        if test "$(theme_name)" = dark; then
+            publish_theme light
+        else
+            publish_theme dark
+        fi
+        ;;
+    *)
+        printf 'usage: vc-theme [current|toggle|light|dark]\n' >&2
+        exit 2
+        ;;
+esac

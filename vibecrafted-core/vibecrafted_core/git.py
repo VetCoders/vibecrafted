@@ -1,8 +1,11 @@
-"""Thin git CLI wrappers backing the `repo-full` compact repo-state summary."""
+"""Git truth and the public ``vc-git`` operator command."""
 
 from __future__ import annotations
 
+import argparse
+import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -72,7 +75,9 @@ def _ahead_behind(path: Path, upstream: str) -> tuple[int, int]:
 def _status_counts(path: Path) -> dict[str, int]:
     """Tally staged/unstaged/untracked files from `git status --porcelain`."""
     staged = unstaged = untracked = 0
-    for line in _git_lines(path, "status", "--porcelain"):
+    # Do not route porcelain through ``_git_text``: its outer ``strip()``
+    # removes the first line's significant leading index-column space.
+    for line in _git(path, "status", "--porcelain").stdout.splitlines():
         if line.startswith("??"):
             untracked += 1
             continue
@@ -183,7 +188,7 @@ def repo_full(path: str | Path = ".") -> dict[str, Any]:
 
 
 def repo_full_summary(path: str | Path = ".") -> str:
-    """Render `repo_full` state as a short Markdown summary (branch/dirt/commits)."""
+    """Render repo truth with an explicit, operator-visible worktree inventory."""
     state = repo_full(path)
     status = state["status"]
     lines = [
@@ -198,8 +203,44 @@ def repo_full_summary(path: str | Path = ".") -> str:
         f"- Stashes: {state['stashes']}",
         f"- Worktrees: {len(state['worktrees'])}",
         "",
-        "## Recent commits",
+        "## Worktrees",
     ]
+    for worktree in state["worktrees"]:
+        branch = worktree.get("branch", "detached").removeprefix("refs/heads/")
+        head = worktree.get("HEAD", "unknown")[:9]
+        lines.append(f"- {worktree['path']} [{branch}] {head}")
+    lines.extend(("", "## Recent commits"))
     for commit in state["recent_commits"][:5]:
         lines.append(f"- {commit['short']} {commit['date']} {commit['title']}")
     return "\n".join(lines)
+
+
+def _run_repo_full_shell(path: str | Path) -> int:
+    """Run the original rich ``repo-full`` renderer from packaged runtime data."""
+    root = _require_git_root(Path(path).expanduser().resolve())
+    dispatch = Path(__file__).parent / "runtime" / "shell" / "lib" / "dispatch.sh"
+    result = subprocess.run(
+        ["/bin/bash", "-c", 'source "$1"; repo-full', "vc-git", str(dispatch)],
+        cwd=root,
+        check=False,
+    )
+    return result.returncode
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Expose the original rich repo renderer as a checkout-free executable."""
+    parser = argparse.ArgumentParser(
+        prog="vc-git",
+        description="Show full Git context, including every worktree.",
+    )
+    parser.add_argument("project", nargs="?", default=".", help="repository path")
+    parser.add_argument("--json", action="store_true", help="emit structured JSON")
+    args = parser.parse_args(argv)
+    try:
+        if not args.json:
+            return _run_repo_full_shell(args.project)
+        print(json.dumps(repo_full(args.project), indent=2, sort_keys=True))
+    except RuntimeError as exc:
+        print(f"vc-git: {exc}", file=sys.stderr)
+        return 2
+    return 0

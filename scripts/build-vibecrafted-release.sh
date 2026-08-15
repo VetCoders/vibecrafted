@@ -22,6 +22,7 @@ DMG="$DIST_DIR/$DMG_NAME"
 DMG_CHECKSUM="$DMG.sha256"
 LEGACY_DMG="$DIST_DIR/Vibecrafted.dmg"
 KEYS="${KEYS:-$HOME/.keys}"
+SPOT_MONO_FONT="${VIBECRAFTED_SPOT_MONO_FONT:-$KEYS/fonts/SpotMono.ttc}"
 SIGNING_IDENTITY_FILE="$KEYS/signing-identity.txt"
 CERT_P12="$KEYS/Certificates.p12"
 CERT_PASSWORD_FILE="$KEYS/cert_password.txt"
@@ -96,10 +97,14 @@ prepare_signing_identity() {
     || die "Developer ID identity is not available in the keychain"
 }
 
-for command in cargo codesign git hdiutil install_name_tool make otool uv xcodebuild xcodegen xcrun; do
+for command in cargo codesign file git hdiutil install_name_tool make otool uv xcodebuild xcodegen xcrun; do
   require "$command"
 done
 [[ -f "$SIGNING_IDENTITY_FILE" ]] || die "missing $SIGNING_IDENTITY_FILE"
+[[ -f "$SPOT_MONO_FONT" ]] || die "missing licensed Spot Mono input: $SPOT_MONO_FONT"
+LC_ALL=C file -b "$SPOT_MONO_FONT" \
+  | grep -Eq '(OpenType|TrueType) font collection data' \
+  || die "Spot Mono input is not an OpenType/TrueType font collection"
 prepare_signing_identity
 
 git_sha() { git -C "$1" rev-parse HEAD; }
@@ -143,6 +148,14 @@ sign_macho_tree() {
         "${CODESIGN_KEYCHAIN_ARGS[@]}" "$candidate"
     fi
   done < <(find "$APP/Contents" -type f -print0)
+}
+
+sign_nested_app_bundles() {
+  local nested_app
+  while IFS= read -r -d '' nested_app; do
+    codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" \
+      "${CODESIGN_KEYCHAIN_ARGS[@]}" "$nested_app"
+  done < <(find "$APP/Contents" -mindepth 2 -type d -name '*.app' -print0)
 }
 
 remove_ambient_swift_rpath() {
@@ -222,12 +235,26 @@ build_product() {
     "$APP/Contents/Info.plist" 2>/dev/null \
     || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string Vibecrafted.icns" \
       "$APP/Contents/Info.plist"
+  log "Embedding the canonical Spot Mono terminal family"
+  mkdir -p "$resources/fonts"
+  install -m 0644 "$SPOT_MONO_FONT" "$resources/fonts/SpotMono.ttc"
   remove_ambient_swift_rpath
 
   log "Embedding product modules and the checkout-free runtime"
   local runtime="$resources/runtime"
+  local terminal_app="$APP/Contents/Helpers/vc-terminal.app"
   mkdir -p "$APP/Contents/Helpers" "$resources/terminal" "$runtime/bin"
-  install -m 0755 "$terminal_source" "$APP/Contents/Helpers/vc-terminal"
+  /usr/bin/ditto "$TERMINAL_REPO/extra/osx/vc-terminal.app" "$terminal_app"
+  mkdir -p "$terminal_app/Contents/MacOS" "$terminal_app/Contents/Resources"
+  install -m 0755 "$terminal_source" "$terminal_app/Contents/MacOS/alacritty"
+  install -m 0644 "$resources/Vibecrafted.icns" \
+    "$terminal_app/Contents/Resources/alacritty.icns"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \
+    "$terminal_app/Contents/Info.plist")" == "alacritty" ]] \
+    || die "vc-terminal helper bundle executable contract is invalid"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' \
+    "$terminal_app/Contents/Info.plist")" == "alacritty.icns" ]] \
+    || die "vc-terminal helper bundle icon contract is invalid"
   install -m 0755 "$frame_source" "$APP/Contents/Helpers/vc-frame"
   install -m 0755 "$start_source" "$runtime/bin/vc-start"
   install -m 0755 "$server_source" "$runtime/bin/vc-server"
@@ -304,6 +331,7 @@ build_product() {
 
   log "Signing nested code and binding exact source receipts"
   sign_macho_tree
+  sign_nested_app_bundles
   require_clean_repo "$REPO_ROOT" vibecrafted
   require_clean_repo "$TERMINAL_REPO" vc-terminal
   require_clean_repo "$FRAME_REPO" vc-frame

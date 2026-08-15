@@ -11,7 +11,7 @@ set -euo pipefail
 #   ./migrate_agents_workspace.sh [--dry-run] [dir1 dir2 ...]
 #   By default it scans $VIBECRAFTED_ROOT/ or the current directory
 #
-# To verify org/repo you can also run: zsh -ic 'repo-full'
+# To verify org/repo and expose every worktree, run: vc-git
 
 default_vibecrafted_home() {
   if [[ -n "${VIBECRAFTED_HOME:-}" ]]; then

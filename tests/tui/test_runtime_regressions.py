@@ -1349,3 +1349,48 @@ def test_aicx_resume_fallback_skips_provider_pruned_candidates(
         d.startswith("native_candidate_missing_local:gone-aaaa-1111")
         for d in meta["degradations"]
     ), meta["degradations"]
+
+
+def test_aicx_resume_fallback_resolves_cargo_foundation_without_shell_path(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    repo = tmp_path / "repo"
+    cargo_bin = home / ".cargo" / "bin"
+    repo.mkdir(parents=True)
+    cargo_bin.mkdir(parents=True)
+    _write_fake_command(
+        cargo_bin / "aicx",
+        "#!/bin/bash\n"
+        'if [[ "$1 $2" == "sessions list" ]]; then\n'
+        "  printf '[]\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
+    env["PATH"] = "/usr/bin:/bin"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                f'source "{SHELL_SH}"\n'
+                f"_vetcoders_aicx_resume_fallback codex {shlex.quote(str(repo))}"
+            ),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "MODE=new_session" in result.stdout
+    assert "aicx foundation not found" not in result.stderr

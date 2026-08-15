@@ -118,7 +118,7 @@ a process failure, not bad luck.
 
 ### Ground truth — over intuition
 
-- Git history: `zsh -ic repo-full` (or `git log --graph -n 15` + `git status -sb`).
+- Git history: `vc-git` (or `git log --graph -n 15` + `git status -sb`).
 - Read `.claude/CLAUDE.md` / `.codex/AGENTS.md` / `AGENTS.md`; if a config
   contradicts the code, trust the code.
 - Due-diligence red flags: god tables with no indexes; auth where everyone is

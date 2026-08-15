@@ -147,7 +147,7 @@ _vetcoders_polarize_emit_context_pack() {
   local target_repo="$5"
   local band="$6"
   local task="${7:-}"
-  local org_repo org repo date pack_dir slug raw_path sidecar_path
+  local org_repo org repo date pack_dir slug raw_path sidecar_path aicx_bin
 
   org_repo="$(_vetcoders_org_repo "$target_repo" 2>/dev/null || true)"
   if [[ "$org_repo" == */* ]]; then
@@ -174,11 +174,11 @@ _vetcoders_polarize_emit_context_pack() {
       printf 'vc-polarize: no session UUID found; skipping context-pack emission.\n' >&2
       return 0
     }
-    command -v aicx >/dev/null 2>&1 || {
+    aicx_bin="$(_vetcoders_aicx_bin 2>/dev/null)" || {
       printf 'vc-polarize: aicx not found; skipping context-pack emission. Use --no-context-corpus to silence this optional step.\n' >&2
       return 0
     }
-    aicx extract --agent "$agent" --session "$session_uuid" --output "$raw_path" || {
+    "$aicx_bin" extract --agent "$agent" --session "$session_uuid" --output "$raw_path" || {
       printf 'vc-polarize: aicx extract failed for session %s; skipping context-pack emission.\n' "$session_uuid" >&2
       return 0
     }

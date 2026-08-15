@@ -1,4 +1,4 @@
-# Cut 3.7.1 with a DMG attached
+# Cut 4.0.0 with a DMG attached
 
 Operator sequence. This file does not change the security boundary:
 `.github/workflows/release.yml` stays `contents: read` and does not run
@@ -12,16 +12,16 @@ commands.
 Live install truth for strangers is [INSTALL.md](INSTALL.md): bootstrap
 today; DMG when a release actually carries one. The build path exists and
 is contract-gated, but it has not been exercised since the hermetic
-runtime layout changed — treat the first 3.7.1 DMG as unproven until the
+runtime layout changed — treat the first 4.0.0 DMG as unproven until the
 walk-around below passes.
 
 ## 0. What this cut must produce
 
-One GitHub Release `v3.7.1` whose assets are exactly:
+One GitHub Release `v4.0.0` whose assets are exactly:
 
 | Asset                                     | Proves                                     |
 | ----------------------------------------- | ------------------------------------------ |
-| `Vibecrafted_3.7.1-<YYYYMMDD>-<sha8>.dmg` | signed, notarized desktop product          |
+| `Vibecrafted_4.0.0-<YYYYMMDD>-<sha8>.dmg` | signed, notarized desktop product          |
 | that name plus `.dmg.sha256`              | checksum a stranger can `shasum -a 256 -c` |
 | `release-output.json`                     | bound source revisions + DMG path          |
 | `release-output.json.sig`                 | detached signature over that receipt       |
@@ -29,8 +29,8 @@ One GitHub Release `v3.7.1` whose assets are exactly:
 `publish-release` refuses extra assets. Do not also upload the old
 source-tarball set onto this tag.
 
-`VERSION` is already `3.7.1`. There is a local tag `v3.7.0` and no
-`v3.7.1`. Latest **published** GitHub Release is still `v3.5.0`.
+`VERSION` is already `4.0.0`. There is a local tag `v3.7.1` and no
+`v4.0.0`. Latest **published** GitHub Release is still `v3.5.0`.
 
 ## 1. Signing material that must already exist
 
@@ -63,7 +63,7 @@ Also required on this Mac:
 
 ```bash
 # this repo
-test "$(tr -d '[:space:]' < VERSION)" = "3.7.1"
+test "$(tr -d '[:space:]' < VERSION)" = "4.0.0"
 git status --porcelain          # must be empty
 git rev-parse --abbrev-ref HEAD
 
@@ -100,8 +100,8 @@ Expected outputs under `dist/`:
 
 ```text
 Vibecrafted.app
-Vibecrafted_3.7.1-<YYYYMMDD>-<sha8>.dmg
-Vibecrafted_3.7.1-<YYYYMMDD>-<sha8>.dmg.sha256
+Vibecrafted_4.0.0-<YYYYMMDD>-<sha8>.dmg
+Vibecrafted_4.0.0-<YYYYMMDD>-<sha8>.dmg.sha256
 release-output.json
 release-output.json.sig
 ```
@@ -110,10 +110,10 @@ release-output.json.sig
 
 ```bash
 cd dist
-shasum -a 256 -c Vibecrafted_3.7.1-*.dmg.sha256
-xcrun stapler validate Vibecrafted_3.7.1-*.dmg
+shasum -a 256 -c Vibecrafted_4.0.0-*.dmg.sha256
+xcrun stapler validate Vibecrafted_4.0.0-*.dmg
 spctl --assess --type open --context context:primary-signature --verbose=2 \
-  Vibecrafted_3.7.1-*.dmg
+  Vibecrafted_4.0.0-*.dmg
 
 uv run --project vibecrafted-core verify-vibecrafted-walkaround verify-release \
   --release-output dist/release-output.json \
@@ -122,7 +122,7 @@ uv run --project vibecrafted-core verify-vibecrafted-walkaround verify-release \
 uv run --project vibecrafted-core verify-vibecrafted-walkaround walkaround \
   --release-output dist/release-output.json \
   --signature dist/release-output.json.sig \
-  --output /tmp/vibecrafted-3.7.1-walkaround.json
+  --output /tmp/vibecrafted-4.0.0-walkaround.json
 ```
 
 | Command                      | What a pass proves                                       |
@@ -139,10 +139,10 @@ uv run --project vibecrafted-core verify-vibecrafted-walkaround walkaround \
 
 ```bash
 # annotated tag at this exact HEAD (not a lightweight tag)
-git tag -a v3.7.1 -m "Vibecrafted 3.7.1"
+git tag -a v4.0.0 -m "Vibecrafted 4.0.0"
 
 # OPERATOR BUTTON — this worker does not push
-git push origin v3.7.1
+git push origin v4.0.0
 ```
 
 Wait for `.github/workflows/release.yml` (`Release source gate`) to go
@@ -190,12 +190,12 @@ notarized, and the mounted app matches the signed receipt.
 ## 7. Public confirmation
 
 ```bash
-gh release view v3.7.1 --json tagName,isDraft,isLatest,assets \
+gh release view v4.0.0 --json tagName,isDraft,isLatest,assets \
   --jq '{tag:.tagName,draft:.isDraft,latest:.isLatest,assets:[.assets[].name]}'
 ```
 
 Expected: `draft=false`, `latest=true`, four names, one of them matching
-`Vibecrafted_3.7.1-*.dmg`.
+`Vibecrafted_4.0.0-*.dmg`.
 
 Then update the staged Homebrew cask coordinates in
 `packaging/homebrew/Casks/vibecrafted-app.rb` (in the tap repo, after the
@@ -208,7 +208,7 @@ tap exists). See [packaging/homebrew/README.md](../packaging/homebrew/README.md)
 - `release.yml` red or still running
 - Open CodeQL alert on `main`
 - `spctl` or `stapler` fail on either the local or the downloaded DMG
-- Temptation to "just `gh release upload`" a source tarball onto `v3.7.1`
+- Temptation to "just `gh release upload`" a source tarball onto `v4.0.0`
   — `publish-release` will reject unexpected assets
 
 If you only need a local unsigned look, stop after `make dmg` and do not

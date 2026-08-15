@@ -29,7 +29,7 @@ def _entry(root: Path, relative: str, *, kind: str | None = None) -> dict[str, A
     path = root / relative
     if kind is None:
         if relative in {
-            "Contents/Helpers/vc-terminal",
+            "Contents/Helpers/vc-terminal.app/Contents/MacOS/alacritty",
             "Contents/Helpers/vc-frame",
             "Contents/Resources/runtime/bin/vc-start",
         }:
@@ -37,7 +37,7 @@ def _entry(root: Path, relative: str, *, kind: str | None = None) -> dict[str, A
         elif path.suffix == ".dylib":
             kind = "dylib"
         elif (
-            relative.startswith("Contents/MacOS/")
+            (relative.startswith("Contents/MacOS/") or "/Contents/MacOS/" in relative)
             and os.access(path, os.X_OK)
             or (
                 "/python/bin/" in relative
@@ -148,7 +148,7 @@ def produce_app(args: argparse.Namespace) -> None:
             app,
             name="vc-terminal",
             source=args.terminal_source.resolve(),
-            product_relative="Contents/Helpers/vc-terminal",
+            product_relative="Contents/Helpers/vc-terminal.app/Contents/MacOS/alacritty",
             git_sha=args.terminal_sha,
             version=args.version,
         ),
@@ -214,7 +214,7 @@ def produce_app(args: argparse.Namespace) -> None:
         "files": files,
         "entrypoints": {
             "app": outer_relative,
-            "terminal": "Contents/Helpers/vc-terminal",
+            "terminal": "Contents/Helpers/vc-terminal.app/Contents/MacOS/alacritty",
             "frame": "Contents/Helpers/vc-frame",
         },
         "launch_contract": contract._canonical_launch_contract(),

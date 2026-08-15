@@ -227,20 +227,38 @@
     "launchContract": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema", "program", "argv", "config_path", "shell", "environment"],
+      "required": [
+        "schema", "program", "argv", "config_path", "primary_shell", "shell", "environment"
+      ],
       "properties": {
         "schema": { "const": "io.vetcoders.vibecrafted.launch.v1" },
-        "program": { "const": "Contents/Helpers/vc-terminal" },
+        "program": {
+          "const": "Contents/Helpers/vc-terminal.app/Contents/MacOS/alacritty"
+        },
         "argv": {
           "const": [
             "--config-file",
             "Contents/Resources/terminal/vibecrafted.toml",
             "-e",
+            "Contents/Resources/runtime/config/alacritty/launch-primary-shell.zsh",
             "Contents/Resources/runtime/bin/vc-start",
             "operator"
           ]
         },
         "config_path": { "const": "Contents/Resources/terminal/vibecrafted.toml" },
+        "primary_shell": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["program", "argv"],
+          "properties": {
+            "program": {
+              "const": "Contents/Resources/runtime/config/alacritty/launch-primary-shell.zsh"
+            },
+            "argv": {
+              "const": ["Contents/Resources/runtime/bin/vc-start", "operator"]
+            }
+          }
+        },
         "shell": {
           "type": "object",
           "additionalProperties": false,

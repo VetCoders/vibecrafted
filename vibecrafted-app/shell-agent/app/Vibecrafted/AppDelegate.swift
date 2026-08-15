@@ -1,11 +1,14 @@
 import AppKit
+import CoreText
 import Darwin
 
 private struct CanonicalRuntimeInstall {
   let root: URL
   let terminal: URL
+  let terminalHost: URL
   let frame: URL
   let start: URL
+  let primaryShell: URL
   let terminalConfig: URL
   let frameConfig: URL
   let runtimeHome: URL
@@ -96,7 +99,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       return
     }
 
-    for required in [install.terminal, install.frame, install.start]
+    for required in [
+      install.terminal, install.terminalHost, install.frame, install.start,
+      install.primaryShell,
+    ]
       where !FileManager.default.isExecutableFile(
       atPath: required.path)
     {
@@ -105,6 +111,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     guard FileManager.default.fileExists(atPath: install.terminalConfig.path) else {
       print("Canonical terminal config is missing: \(install.terminalConfig.path)")
+      return
+    }
+    do {
+      try registerBundledFonts()
+    } catch {
+      print("Cannot register the bundled terminal font: \(error)")
       return
     }
 
@@ -128,10 +140,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     environment["VC_FRAME_CONFIG_DIR"] = install.frameConfig.path
 
     let process = Process()
-    process.executableURL = install.terminal
+    process.executableURL = install.terminalHost
     process.arguments = [
       "--config-file", install.terminalConfig.path,
-      "-e", install.start.path, "operator",
+      "-e", install.primaryShell.path, install.start.path, "operator",
     ]
     process.environment = environment
     do {
@@ -139,6 +151,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       terminalProcess = process
     } catch {
       print("Failed to launch bundled vc-terminal: \(error)")
+    }
+  }
+
+  private func registerBundledFonts() throws {
+    let font = Bundle.main.bundleURL.appendingPathComponent(
+      "Contents/Resources/fonts/SpotMono.ttc")
+    guard FileManager.default.fileExists(atPath: font.path) else {
+      throw NSError(
+        domain: "io.vetcoders.vibecrafted.fonts", code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "bundled SpotMono.ttc is missing"])
+    }
+
+    var registrationError: Unmanaged<CFError>?
+    if !CTFontManagerRegisterFontsForURL(font as CFURL, .session, &registrationError) {
+      let message = registrationError?.takeRetainedValue().localizedDescription
+        ?? "CoreText rejected SpotMono.ttc"
+      // A system-installed Spot Mono can already occupy the session scope.
+      // Accept that case only when CoreText resolves the required family.
+      let descriptor = CTFontDescriptorCreateWithAttributes(
+        [kCTFontFamilyNameAttribute as String: "Spot Mono"] as CFDictionary)
+      guard let match = CTFontDescriptorCreateMatchingFontDescriptor(descriptor, nil),
+        CTFontDescriptorCopyAttribute(match, kCTFontFamilyNameAttribute) as? String == "Spot Mono"
+      else {
+        throw NSError(
+          domain: "io.vetcoders.vibecrafted.fonts", code: 2,
+          userInfo: [NSLocalizedDescriptionKey: message])
+      }
     }
   }
 
@@ -194,7 +233,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       let bin = staging.appendingPathComponent("bin", isDirectory: true)
       try manager.createDirectory(at: bin, withIntermediateDirectories: true)
       try manager.copyItem(
-        at: appRoot.appendingPathComponent("Contents/Helpers/vc-terminal"),
+        at: appRoot.appendingPathComponent(
+          "Contents/Helpers/vc-terminal.app/Contents/MacOS/alacritty"),
         to: bin.appendingPathComponent("vc-terminal"))
       try manager.copyItem(
         at: appRoot.appendingPathComponent("Contents/Helpers/vc-frame"),
@@ -205,12 +245,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     try assertNoSymlinks(below: generation)
     let bin = generation.appendingPathComponent("bin", isDirectory: true)
 
-    let sourceTerminalConfig = generation.appendingPathComponent(
+    // The terminal policy and palettes are signed, version-bound inputs. The
+    // tiny entry file is regenerated on every launch and imports the current
+    // generation plus one product-owned mutable palette. We never read or
+    // mutate the user's Alacritty configuration.
+    let terminalPolicy = generation.appendingPathComponent(
       "config/vc-terminal/vibecrafted.toml")
-    let terminalConfig = productConfig.appendingPathComponent("terminal.toml")
-    if !manager.fileExists(atPath: terminalConfig.path) {
-      try manager.copyItem(at: sourceTerminalConfig, to: terminalConfig)
+    let terminalThemes = generation.appendingPathComponent(
+      "config/vc-terminal/themes", isDirectory: true)
+    let terminalTheme = productConfig.appendingPathComponent("terminal-theme.toml")
+    if !manager.fileExists(atPath: terminalTheme.path) {
+      try manager.copyItem(
+        at: terminalThemes.appendingPathComponent("dark.toml"), to: terminalTheme)
     }
+    let terminalConfig = productConfig.appendingPathComponent("terminal-entry.toml")
+    let terminalEntry = """
+      # Generated by Vibecrafted.app. Do not point this at a private Alacritty config.
+      [general]
+      import = [
+        \(tomlBasicString(terminalPolicy.path)),
+        \(tomlBasicString(terminalTheme.path)),
+      ]
+      live_config_reload = true
+      """
+    try Data(terminalEntry.utf8).write(to: terminalConfig, options: .atomic)
     let sourceFrameConfig = generation.appendingPathComponent(
       "vibecrafted-core/vibecrafted_core/config/vc-frame", isDirectory: true)
     let frameConfig = productConfig.appendingPathComponent("vc-frame", isDirectory: true)
@@ -226,14 +284,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     try assertNoSymlinks(below: productConfig)
 
     let terminal = generation.appendingPathComponent("bin/vc-terminal")
+    let terminalHost = appRoot.appendingPathComponent(
+      "Contents/Helpers/vc-terminal.app/Contents/MacOS/alacritty")
     let frame = generation.appendingPathComponent("bin/vc-frame")
     let start = generation.appendingPathComponent("bin/vc-start")
+    let primaryShell = generation.appendingPathComponent(
+      "config/alacritty/launch-primary-shell.zsh")
     let deck = generation.appendingPathComponent("bin/vibecrafted")
     let server = generation.appendingPathComponent("bin/vc-server")
     let guardian = generation.appendingPathComponent("bin/vc-guardian")
     let supervisor = generation.appendingPathComponent("bin/vc-server-supervisor")
     let workflow = generation.appendingPathComponent("bin/vc-workflow")
-    for required in [terminal, frame, start, deck, server, guardian, supervisor, workflow]
+    for required in [
+      terminal, terminalHost, frame, start, primaryShell, deck, server, guardian,
+      supervisor, workflow,
+    ]
       where !manager.isExecutableFile(atPath: required.path)
     {
       throw NSError(
@@ -277,9 +342,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     try activeData.write(to: runtimeHome.appendingPathComponent("active.json"), options: .atomic)
 
     return CanonicalRuntimeInstall(
-      root: generation, terminal: terminal, frame: frame, start: start,
-      terminalConfig: terminalConfig, frameConfig: frameConfig, runtimeHome: runtimeHome,
-      configHome: configHome, craftedHome: craftedHome)
+      root: generation, terminal: terminal, terminalHost: terminalHost, frame: frame,
+      start: start, primaryShell: primaryShell, terminalConfig: terminalConfig,
+      frameConfig: frameConfig, runtimeHome: runtimeHome, configHome: configHome,
+      craftedHome: craftedHome)
   }
 
   private func assertNoSymlinks(below root: URL) throws {
@@ -303,6 +369,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
   private func shellQuote(_ value: String) -> String {
     "'\(value.replacingOccurrences(of: "'", with: "'\"'\"'"))'"
+  }
+
+  private func tomlBasicString(_ value: String) -> String {
+    let escaped = value
+      .replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+    return "\"\(escaped)\""
   }
 
   private func writeLauncher(
