@@ -193,6 +193,7 @@ _LAUNCH_INHERITED_ENV = (
     "SHELL",
 )
 _LAUNCH_SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+_WALKAROUND_TEMP_PARENT = Path("/tmp")
 _LAUNCH_TERMINAL = "Contents/Helpers/vc-terminal.app/Contents/MacOS/alacritty"
 _LAUNCH_FRAME = "Contents/Helpers/vc-frame"
 _LAUNCH_CONFIG = "Contents/Resources/terminal/vibecrafted.toml"
@@ -3153,7 +3154,9 @@ def _walkaround_scenario(app: Path, dmg: Path):
     """Run one real, isolated install/update while a vc-frame server stays live."""
     # Darwin AF_UNIX paths are bounded to 104 bytes.  Keep both the temporary
     # directory prefix and socket basename deliberately short.
-    with tempfile.TemporaryDirectory(prefix="vc-wa-") as raw:
+    with tempfile.TemporaryDirectory(
+        prefix="vc-wa-", dir=_WALKAROUND_TEMP_PARENT
+    ) as raw:
         root = Path(raw)
         home = root / "home"
         runtime_home = root / "runtime"

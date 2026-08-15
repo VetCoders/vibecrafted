@@ -2142,6 +2142,15 @@ def test_walkaround_production_registry_covers_all_late_stage_probes() -> None:
     }
 
 
+def test_walkaround_session_socket_stays_below_darwin_sun_path_limit() -> None:
+    representative = (
+        contract._WALKAROUND_TEMP_PARENT / "vc-wa-xxxxxxxx" / "tmp" / "s.sock"
+    )
+
+    assert contract._WALKAROUND_TEMP_PARENT == Path("/tmp")
+    assert len(os.fsencode(representative)) < 104
+
+
 def test_walkaround_scenario_provider_normalizes_only_contract_failures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
