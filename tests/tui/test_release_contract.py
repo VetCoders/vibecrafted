@@ -33,6 +33,10 @@ def test_tag_workflow_is_a_read_only_source_gate() -> None:
     assert "run: make unified-product-contract-gate" in workflow
     assert "run: make test-core" in workflow
     assert "run: make semgrep" in workflow
+    assert "runs-on: macos-15" in workflow
+    assert "run: brew install shellcheck" in workflow
+    assert "ubuntu-latest" not in workflow
+    assert "apt-get" not in workflow
     assert "contents: write" not in workflow
     assert "gh release create" not in workflow
     assert "gh release upload" not in workflow
