@@ -3036,7 +3036,7 @@ def test_terminal_policy_uses_operator_toml_and_primary_shell_chain() -> None:
     assert "launch-primary-shell.zsh" in terminal
     assert "$VIBECRAFTED_RUNTIME_ROOT/bin/vc-start" in terminal
     assert "${1##*/}" in primary_shell
-    assert '"$1" "${@:2}"' in primary_shell
+    assert '"$0" "$@"' in primary_shell
     assert "process.executableURL = install.terminalHost" in delegate
     assert '"-e", install.primaryShell.path, install.start.path, "operator"' in delegate
 

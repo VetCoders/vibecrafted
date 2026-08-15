@@ -34,7 +34,7 @@ leave_alt_screen
 if [[ "${1##*/}" == "vc-start" ]]; then
   vc_start="$1"
   shift
-  /bin/zsh -lic '"$1" "${@:2}"' -- "$vc_start" "$@"
+  /bin/zsh -lic '"$0" "$@"' "$vc_start" "$@"
   # vc-frame owns its own alternate-buffer lifecycle; clean sticky smcup.
   leave_alt_screen
 fi

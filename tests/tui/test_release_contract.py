@@ -139,7 +139,7 @@ def test_release_bundle_binds_the_canonical_terminal_policy_and_font() -> None:
     )
 
     assert 'family = "Spot Mono"' in terminal
-    assert 'size = 14.5' in terminal
+    assert 'size = 18.5' in terminal
     assert 'background = "#0b0b12"' in terminal
     assert 'chars = "\\u001b[101;9u"' in terminal
     assert "/Users/" not in terminal
