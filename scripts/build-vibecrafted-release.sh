@@ -150,6 +150,14 @@ sign_macho_tree() {
   done < <(find "$APP/Contents" -type f -print0)
 }
 
+sign_nested_app_bundles() {
+  local nested_app
+  while IFS= read -r -d '' nested_app; do
+    codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" \
+      "${CODESIGN_KEYCHAIN_ARGS[@]}" "$nested_app"
+  done < <(find "$APP/Contents" -mindepth 2 -type d -name '*.app' -print0)
+}
+
 remove_ambient_swift_rpath() {
   local executable="$APP/Contents/MacOS/Vibecrafted"
   local rpaths
@@ -234,8 +242,19 @@ build_product() {
 
   log "Embedding product modules and the checkout-free runtime"
   local runtime="$resources/runtime"
+  local terminal_app="$APP/Contents/Helpers/vc-terminal.app"
   mkdir -p "$APP/Contents/Helpers" "$resources/terminal" "$runtime/bin"
-  install -m 0755 "$terminal_source" "$APP/Contents/Helpers/vc-terminal"
+  /usr/bin/ditto "$TERMINAL_REPO/extra/osx/vc-terminal.app" "$terminal_app"
+  mkdir -p "$terminal_app/Contents/MacOS" "$terminal_app/Contents/Resources"
+  install -m 0755 "$terminal_source" "$terminal_app/Contents/MacOS/alacritty"
+  install -m 0644 "$resources/Vibecrafted.icns" \
+    "$terminal_app/Contents/Resources/alacritty.icns"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \
+    "$terminal_app/Contents/Info.plist")" == "alacritty" ]] \
+    || die "vc-terminal helper bundle executable contract is invalid"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' \
+    "$terminal_app/Contents/Info.plist")" == "alacritty.icns" ]] \
+    || die "vc-terminal helper bundle icon contract is invalid"
   install -m 0755 "$frame_source" "$APP/Contents/Helpers/vc-frame"
   install -m 0755 "$start_source" "$runtime/bin/vc-start"
   install -m 0755 "$server_source" "$runtime/bin/vc-server"
@@ -312,6 +331,7 @@ build_product() {
 
   log "Signing nested code and binding exact source receipts"
   sign_macho_tree
+  sign_nested_app_bundles
   require_clean_repo "$REPO_ROOT" vibecrafted
   require_clean_repo "$TERMINAL_REPO" vc-terminal
   require_clean_repo "$FRAME_REPO" vc-frame

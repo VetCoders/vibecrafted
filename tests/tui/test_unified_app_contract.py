@@ -201,20 +201,40 @@ def _module_fixture(
 
 
 def _app_fixture(app: Path, macho_executable: Path) -> dict[str, Any]:
+    terminal_relative = "Contents/Helpers/vc-terminal.app/Contents/MacOS/alacritty"
     for relative in (
         "Contents/MacOS/Vibecrafted",
-        "Contents/Helpers/vc-terminal",
+        terminal_relative,
         "Contents/Helpers/vc-frame",
         "Contents/Resources/runtime/bin/vc-start",
     ):
         (app / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(macho_executable, app / relative)
     for relative in (
-        "Contents/Helpers/vc-terminal",
+        terminal_relative,
         "Contents/Helpers/vc-frame",
         "Contents/Resources/runtime/bin/vc-start",
     ):
         _codesign_macho(app / relative)
+    primary_shell = app / contract._LAUNCH_PRIMARY_SHELL
+    primary_shell.parent.mkdir(parents=True, exist_ok=True)
+    primary_shell.write_text("#!/bin/zsh\nexec vc-start \"$@\"\n", encoding="utf-8")
+    primary_shell.chmod(0o755)
+    terminal_app = app / "Contents/Helpers/vc-terminal.app"
+    terminal_icon = terminal_app / "Contents/Resources/alacritty.icns"
+    terminal_icon.parent.mkdir(parents=True, exist_ok=True)
+    terminal_icon.write_bytes(b"terminal-icns-fixture")
+    with (terminal_app / "Contents/Info.plist").open("wb") as handle:
+        plistlib.dump(
+            {
+                "CFBundleIdentifier": "io.vetcoders.vc-terminal",
+                "CFBundleExecutable": "alacritty",
+                "CFBundleIconFile": "alacritty.icns",
+                "CFBundlePackageType": "APPL",
+            },
+            handle,
+        )
+    _codesign_app(terminal_app)
     terminal_config = app / "Contents/Resources/terminal/vibecrafted.toml"
     terminal_config.parent.mkdir(parents=True, exist_ok=True)
     terminal_config.write_text("[shell]\nprogram = 'vc-start'\n", encoding="utf-8")
@@ -235,7 +255,7 @@ def _app_fixture(app: Path, macho_executable: Path) -> dict[str, Any]:
             handle,
         )
     terminal_product_entry = _entry(
-        app, "Contents/Helpers/vc-terminal", kind="executable"
+        app, terminal_relative, kind="executable"
     )
     frame_product_entry = _entry(app, "Contents/Helpers/vc-frame", kind="executable")
 
@@ -341,6 +361,16 @@ def _app_fixture(app: Path, macho_executable: Path) -> dict[str, Any]:
             ),
             terminal_product_entry,
             frame_product_entry,
+            _entry(
+                app,
+                "Contents/Helpers/vc-terminal.app/Contents/Info.plist",
+                kind="config",
+            ),
+            _entry(
+                app,
+                "Contents/Helpers/vc-terminal.app/Contents/Resources/alacritty.icns",
+                kind="resource",
+            ),
             _entry(app, terminal_binding["manifest_path"], kind="config"),
             _entry(app, frame_binding["manifest_path"], kind="config"),
             _entry(app, terminal_binding["assembly_receipt_path"], kind="config"),
@@ -355,10 +385,11 @@ def _app_fixture(app: Path, macho_executable: Path) -> dict[str, Any]:
                 "Contents/Resources/runtime/bin/vc-start",
                 kind="executable",
             ),
+            _entry(app, contract._LAUNCH_PRIMARY_SHELL, kind="resource"),
         ],
         "entrypoints": {
             "app": "Contents/MacOS/Vibecrafted",
-            "terminal": "Contents/Helpers/vc-terminal",
+            "terminal": terminal_relative,
             "frame": "Contents/Helpers/vc-frame",
         },
         "launch_contract": copy.deepcopy(contract._canonical_launch_contract()),
@@ -628,7 +659,7 @@ def _developer_id_release_app(root: Path, macho_executable: Path) -> Path:
     app = root / "Vibecrafted.app"
     _app_fixture(app, macho_executable)
     nested = [
-        app / "Contents/Helpers/vc-terminal",
+        app / "Contents/Helpers/vc-terminal.app/Contents/MacOS/alacritty",
         app / "Contents/Helpers/vc-frame",
         app / "Contents/Resources/runtime/bin/vc-start",
     ]
@@ -736,7 +767,8 @@ def test_native_app_bootstraps_and_launches_only_the_canonical_product_entry() -
     )
 
     assert "launchWorkspaceTerminal()" in delegate
-    assert "Contents/Helpers/vc-terminal" in delegate
+    assert "Contents/Helpers/vc-terminal.app/Contents/MacOS/alacritty" in delegate
+    assert "config/alacritty/launch-primary-shell.zsh" in delegate
     assert 'appendingPathComponent("releases", isDirectory: true)' in delegate
     assert 'appendingPathComponent("active.json")' in delegate
     assert 'generation.appendingPathComponent("bin/vc-start")' in delegate
@@ -2956,6 +2988,10 @@ def test_unified_release_has_one_top_level_owner() -> None:
     assert 'make -C "$TERMINAL_REPO"' in builder
     assert "release-bins" in builder
     assert 'chmod 0755 "$terminal_source"' in builder
+    assert 'local terminal_app="$APP/Contents/Helpers/vc-terminal.app"' in builder
+    assert '"$terminal_app/Contents/MacOS/alacritty"' in builder
+    assert '"$terminal_app/Contents/Resources/alacritty.icns"' in builder
+    assert "sign_nested_app_bundles" in builder
     assert 'make -C "$FRAME_REPO" release-binary' in builder
     assert 'chmod 0755 "$frame_source"' in builder
     assert "build-server-release" in builder
@@ -2974,6 +3010,27 @@ def test_unified_release_has_one_top_level_owner() -> None:
     assert '"$runtime/runtime"' not in builder
     assert "$(MAKE) -C ../.. release" in shell_makefile
     assert not (REPO_ROOT / "vibecrafted-app/shell-agent/scripts/build-dmg.sh").exists()
+
+
+def test_terminal_policy_uses_operator_toml_and_primary_shell_chain() -> None:
+    terminal = (REPO_ROOT / "config/vc-terminal/vibecrafted.toml").read_text(
+        encoding="utf-8"
+    )
+    primary_shell = (
+        REPO_ROOT / "config/alacritty/launch-primary-shell.zsh"
+    ).read_text(encoding="utf-8")
+    delegate = (
+        REPO_ROOT / "vibecrafted-app/shell-agent/app/Vibecrafted/AppDelegate.swift"
+    ).read_text(encoding="utf-8")
+
+    assert 'family = "Spot Mono"' in terminal
+    assert "size = 18.5" in terminal
+    assert "launch-primary-shell.zsh" in terminal
+    assert "$VIBECRAFTED_RUNTIME_ROOT/bin/vc-start" in terminal
+    assert '${1##*/}' in primary_shell
+    assert '"$1" "${@:2}"' in primary_shell
+    assert 'process.executableURL = install.terminalHost' in delegate
+    assert '"-e", install.primaryShell.path, install.start.path, "operator"' in delegate
 
 
 def test_manifest_producer_emits_an_app_accepted_by_the_runtime_verifier(

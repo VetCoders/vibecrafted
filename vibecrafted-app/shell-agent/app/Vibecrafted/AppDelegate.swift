@@ -5,8 +5,10 @@ import Darwin
 private struct CanonicalRuntimeInstall {
   let root: URL
   let terminal: URL
+  let terminalHost: URL
   let frame: URL
   let start: URL
+  let primaryShell: URL
   let terminalConfig: URL
   let frameConfig: URL
   let runtimeHome: URL
@@ -97,7 +99,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       return
     }
 
-    for required in [install.terminal, install.frame, install.start]
+    for required in [
+      install.terminal, install.terminalHost, install.frame, install.start,
+      install.primaryShell,
+    ]
       where !FileManager.default.isExecutableFile(
       atPath: required.path)
     {
@@ -135,10 +140,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     environment["VC_FRAME_CONFIG_DIR"] = install.frameConfig.path
 
     let process = Process()
-    process.executableURL = install.terminal
+    process.executableURL = install.terminalHost
     process.arguments = [
       "--config-file", install.terminalConfig.path,
-      "-e", install.start.path, "operator",
+      "-e", install.primaryShell.path, install.start.path, "operator",
     ]
     process.environment = environment
     do {
@@ -228,7 +233,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       let bin = staging.appendingPathComponent("bin", isDirectory: true)
       try manager.createDirectory(at: bin, withIntermediateDirectories: true)
       try manager.copyItem(
-        at: appRoot.appendingPathComponent("Contents/Helpers/vc-terminal"),
+        at: appRoot.appendingPathComponent(
+          "Contents/Helpers/vc-terminal.app/Contents/MacOS/alacritty"),
         to: bin.appendingPathComponent("vc-terminal"))
       try manager.copyItem(
         at: appRoot.appendingPathComponent("Contents/Helpers/vc-frame"),
@@ -259,14 +265,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     try assertNoSymlinks(below: productConfig)
 
     let terminal = generation.appendingPathComponent("bin/vc-terminal")
+    let terminalHost = appRoot.appendingPathComponent(
+      "Contents/Helpers/vc-terminal.app/Contents/MacOS/alacritty")
     let frame = generation.appendingPathComponent("bin/vc-frame")
     let start = generation.appendingPathComponent("bin/vc-start")
+    let primaryShell = generation.appendingPathComponent(
+      "config/alacritty/launch-primary-shell.zsh")
     let deck = generation.appendingPathComponent("bin/vibecrafted")
     let server = generation.appendingPathComponent("bin/vc-server")
     let guardian = generation.appendingPathComponent("bin/vc-guardian")
     let supervisor = generation.appendingPathComponent("bin/vc-server-supervisor")
     let workflow = generation.appendingPathComponent("bin/vc-workflow")
-    for required in [terminal, frame, start, deck, server, guardian, supervisor, workflow]
+    for required in [
+      terminal, terminalHost, frame, start, primaryShell, deck, server, guardian,
+      supervisor, workflow,
+    ]
       where !manager.isExecutableFile(atPath: required.path)
     {
       throw NSError(
@@ -310,9 +323,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     try activeData.write(to: runtimeHome.appendingPathComponent("active.json"), options: .atomic)
 
     return CanonicalRuntimeInstall(
-      root: generation, terminal: terminal, frame: frame, start: start,
-      terminalConfig: terminalConfig, frameConfig: frameConfig, runtimeHome: runtimeHome,
-      configHome: configHome, craftedHome: craftedHome)
+      root: generation, terminal: terminal, terminalHost: terminalHost, frame: frame,
+      start: start, primaryShell: primaryShell, terminalConfig: terminalConfig,
+      frameConfig: frameConfig, runtimeHome: runtimeHome, configHome: configHome,
+      craftedHome: craftedHome)
   }
 
   private func assertNoSymlinks(below root: URL) throws {
