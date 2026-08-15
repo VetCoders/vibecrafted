@@ -1,0 +1,32 @@
+# 𝓥𝓲𝓫𝓮𝓬𝓻𝓪𝓯𝓽𝓮𝓭 Light Palette
+[colors.primary]
+background = "#fafafa"
+foreground = "#232529"
+
+[colors.cursor]
+cursor = "#d4a574"
+text = "#fafafa"
+
+[colors.selection]
+text = "#ffffff"
+background = "#d4a574"
+
+[colors.normal]
+black   = "#26233a"
+red     = "#b4637a"
+green   = "#286983"
+yellow  = "#ea9d34"
+blue    = "#31748f"
+magenta = "#907aa9"
+cyan    = "#56949f"
+white   = "#575279"
+
+[colors.bright]
+black   = "#6e6a86"
+red     = "#d7827e"
+green   = "#31748f"
+yellow  = "#d08770"
+blue    = "#286983"
+magenta = "#c4a7e7"
+cyan    = "#25838a"
+white   = "#907aa9"

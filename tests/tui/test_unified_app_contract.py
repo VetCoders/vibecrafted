@@ -3014,6 +3014,12 @@ def test_terminal_policy_uses_operator_toml_and_primary_shell_chain() -> None:
     terminal = (REPO_ROOT / "config/vc-terminal/vibecrafted.toml").read_text(
         encoding="utf-8"
     )
+    dark = (
+        REPO_ROOT / "config/vc-terminal/themes/dark.toml"
+    ).read_text(encoding="utf-8")
+    light = (
+        REPO_ROOT / "config/vc-terminal/themes/light.toml"
+    ).read_text(encoding="utf-8")
     primary_shell = (REPO_ROOT / "config/alacritty/launch-primary-shell.zsh").read_text(
         encoding="utf-8"
     )
@@ -3026,7 +3032,9 @@ def test_terminal_policy_uses_operator_toml_and_primary_shell_chain() -> None:
     assert "x = -1" in terminal
     assert "y = 2" in terminal
     assert 'style = { shape = "Underline", blinking = "On" }' in terminal
-    assert 'cyan    = "#117f92"' in terminal
+    assert 'cyan    = "#7dc4e4"' in dark
+    assert 'cyan    = "#56949f"' in light
+    assert "live_config_reload = true" in terminal
     assert "save_to_clipboard = true" in terminal
     assert 'command = "open"' in terminal
     assert 'mods = "Command"' in terminal
@@ -3039,6 +3047,8 @@ def test_terminal_policy_uses_operator_toml_and_primary_shell_chain() -> None:
     assert '"$0" "$@"' in primary_shell
     assert "process.executableURL = install.terminalHost" in delegate
     assert '"-e", install.primaryShell.path, install.start.path, "operator"' in delegate
+    assert 'productConfig.appendingPathComponent("terminal-entry.toml")' in delegate
+    assert 'productConfig.appendingPathComponent("terminal-theme.toml")' in delegate
 
 
 def test_manifest_producer_emits_an_app_accepted_by_the_runtime_verifier(

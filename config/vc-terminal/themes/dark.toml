@@ -1,0 +1,32 @@
+# 𝓥𝓲𝓫𝓮𝓬𝓻𝓪𝓯𝓽𝓮𝓭 Dark Palette
+[colors.primary]
+background = "#0b0b12"
+foreground = "#e0def4"
+
+[colors.cursor]
+cursor = "#d4a574"
+text = "#1a1a2e"
+
+[colors.selection]
+text = "#ffffff"
+background = "#d4a574"
+
+[colors.normal]
+black   = "#26233a"
+red     = "#eb6f92"
+green   = "#a6da95"
+yellow  = "#f6c177"
+blue    = "#7dc4e4"
+magenta = "#c4a7e7"
+cyan    = "#7dc4e4"
+white   = "#e0def4"
+
+[colors.bright]
+black   = "#097880"
+red     = "#eb6f92"
+green   = "#a6da95"
+yellow  = "#f6c177"
+blue    = "#7dc4e4"
+magenta = "#c4a7e7"
+cyan    = "#097880"
+white   = "#e0def4"

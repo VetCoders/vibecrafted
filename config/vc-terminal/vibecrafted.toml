@@ -2,7 +2,7 @@
 # Vibecrafted.app loads this file explicitly and never imports or mutates the
 # user's Alacritty configuration.
 [general]
-live_config_reload = false
+live_config_reload = true
 
 [terminal]
 # The app passes the generation-bound primary-shell path with `-e`. This
@@ -214,35 +214,6 @@ bindings = [
   { mouse = "WheelUp",   mods = "Shift", action = "ScrollLineUp" },
   { mouse = "WheelDown", mods = "Shift", action = "ScrollLineDown" },
 ]
-
-# Vibecrafted copper palette.
-[colors.primary]
-background = "#0b0b12"
-foreground = "#e0def4"
-
-[colors.cursor]
-cursor = "#d4a574"
-text = "#1a1a2e"
-
-[colors.normal]
-black   = "#26233a"
-red     = "#eb6f92"
-green   = "#a6da95"
-yellow  = "#f6c177"
-blue    = "#7dc4e4"
-magenta = "#c4a7e7"
-cyan    = "#117f92"
-white   = "#e0def4"
-
-[colors.bright]
-black   = "#6e6a86"
-red     = "#eb6f92"
-green   = "#a6da95"
-yellow  = "#f6c177"
-blue    = "#7dc4e4"
-magenta = "#c4a7e7"
-cyan    = "#9ccfd8"
-white   = "#e0def4"
 
 # Composer: Shift+Enter inserts a newline.
 [[keyboard.bindings]]
