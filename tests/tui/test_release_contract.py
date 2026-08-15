@@ -24,12 +24,12 @@ def test_tag_workflow_is_a_read_only_source_gate() -> None:
 
     assert "permissions:\n  contents: read" in workflow
     assert "persist-credentials: false" in workflow
-    assert 'test "$(git cat-file -t "$GITHUB_REF_NAME")" = "tag"' in workflow
-    assert 'test "$(git rev-parse "$GITHUB_REF_NAME")" = "$GITHUB_SHA"' in workflow
-    assert (
-        'test "$(git rev-list -n 1 "$GITHUB_REF_NAME")" = "$(git rev-parse HEAD)"'
-        in workflow
-    )
+    assert 'test "$GITHUB_REF_TYPE" = "tag"' in workflow
+    assert 'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"' in workflow
+    assert 'release_tag_ref="refs/vibecrafted-release-tags/$GITHUB_REF_NAME"' in workflow
+    assert '"refs/tags/$GITHUB_REF_NAME:$release_tag_ref"' in workflow
+    assert 'test "$(git cat-file -t "$release_tag_ref")" = "tag"' in workflow
+    assert 'test "$(git rev-list -n 1 "$release_tag_ref")" = "$GITHUB_SHA"' in workflow
     assert "run: make unified-product-contract-gate" in workflow
     assert "run: make test-core" in workflow
     assert "run: make semgrep" in workflow
