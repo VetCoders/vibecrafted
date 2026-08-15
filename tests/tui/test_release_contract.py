@@ -23,7 +23,9 @@ def test_tag_workflow_is_a_read_only_source_gate() -> None:
     workflow = (REPO_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
     assert "runs-on: macos-15" in workflow
-    assert "run: brew install shellcheck" in workflow
+    assert "brew install shellcheck" in workflow
+    assert 'HOMEBREW_NO_AUTO_UPDATE: "1"' in workflow
+    assert 'HOMEBREW_NO_INSTALL_CLEANUP: "1"' in workflow
     assert "permissions:\n  contents: read" in workflow
     assert "persist-credentials: false" in workflow
     assert 'test "$GITHUB_REF_TYPE" = "tag"' in workflow
