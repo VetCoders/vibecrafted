@@ -148,6 +148,8 @@ def test_unified_product_contract_gate_executes_installed_runner() -> None:
 def test_release_workflow_is_read_only_and_validates_the_exact_tag_source() -> None:
     workflow = (REPO_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
+    assert "runs-on: macos-15" in workflow
+    assert "run: brew install shellcheck" in workflow
     assert "run: make unified-product-contract-gate" in workflow
     assert "run: make test-core" in workflow
     assert "run: make semgrep" in workflow

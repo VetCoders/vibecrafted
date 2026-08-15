@@ -22,6 +22,8 @@ def test_public_install_surfaces_point_at_the_single_dmg() -> None:
 def test_tag_workflow_is_a_read_only_source_gate() -> None:
     workflow = (REPO_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
+    assert "runs-on: macos-15" in workflow
+    assert "run: brew install shellcheck" in workflow
     assert "permissions:\n  contents: read" in workflow
     assert "persist-credentials: false" in workflow
     assert 'test "$GITHUB_REF_TYPE" = "tag"' in workflow
