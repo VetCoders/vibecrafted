@@ -105,6 +105,20 @@ _ks_die() { printf '[keychain-session] FATAL: %s\n' "$*" >&2; exit 1; }
 
 _ks_security() { "$KEYCHAIN_SESSION_SECURITY_BIN" "$@"; }
 
+# Labels become directory names below KEYCHAIN_SESSION_STATE_DIR. Keep this
+# validation on every public operation, not only begin: `end ..` must never
+# resolve state outside the session root, and `path .` must never expose an
+# alias for the shared state directory. The allowlist also makes the label safe
+# to carry across separate CI shell steps without encoding or shell parsing.
+_ks_validate_label() {
+  local label="$1"
+  case "$label" in
+    ''|.|..|*/*|*[!A-Za-z0-9._-]*)
+      _ks_die "label must be a bare [A-Za-z0-9._-] name, got: ${label}"
+      ;;
+  esac
+}
+
 # --------------------------------------------------------------------------
 # Parsing. `security list-keychains -d user` prints one indented, quoted path
 # per line. We hand back one raw path per line: whitespace trimmed, surrounding
@@ -205,9 +219,7 @@ keychain_session_begin() {
   local -a current=() kept=()
   local entry snapshot default_now
 
-  case "$label" in
-    ''|*/*|*' '*) _ks_die "label must be a bare name, got: ${label}" ;;
-  esac
+  _ks_validate_label "$label"
 
   _ks_label="$label"
   _ks_state_dir="$KEYCHAIN_SESSION_STATE_DIR/$label"
@@ -357,6 +369,7 @@ keychain_session_end() {
   local -a kept=() current=()
 
   [[ -n "$label" ]] || return 0
+  _ks_validate_label "$label"
   local state_dir="$KEYCHAIN_SESSION_STATE_DIR/$label"
   [[ -d "$state_dir" ]] || return 0
   _ks_state_dir="$state_dir"
@@ -453,6 +466,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       ;;
     path)
       label="${2:?label required}"
+      _ks_validate_label "$label"
       cat "$KEYCHAIN_SESSION_STATE_DIR/$label/owned-path" 2>/dev/null || {
         printf 'no active keychain session: %s\n' "$label" >&2
         exit 3
@@ -461,6 +475,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       ;;
     password-file)
       label="${2:?label required}"
+      _ks_validate_label "$label"
       printf '%s/%s/password\n' "$KEYCHAIN_SESSION_STATE_DIR" "$label"
       ;;
     *)

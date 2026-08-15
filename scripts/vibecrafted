@@ -455,11 +455,16 @@ _vibecrafted_python() {
       # Strip leading/trailing whitespace
       py="${py#"${py%%[![:space:]]*}"}"
       py="${py%"${py##*[![:space:]]}"}"
-      # A direct absolute interpreter path is safe. `/usr/bin/env bash` and
-      # other argument-bearing shebangs are launch recipes, not Python paths.
+      # A direct absolute path is not sufficient: installed product launchers
+      # may be Bash wrappers. Accept only Python-shaped interpreter names so a
+      # `#!/bin/bash` supervisor can never become `/bin/bash -m ...`.
       if [[ "$py" == /* && "$py" != *[[:space:]]* && -x "$py" ]]; then
-        printf '%s\n' "$py"
-        return 0
+        case "${py##*/}" in
+          python|python[0-9]*|pypy|pypy[0-9]*)
+            printf '%s\n' "$py"
+            return 0
+            ;;
+        esac
       fi
     fi
   done

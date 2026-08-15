@@ -537,6 +537,38 @@ fi
 assert_list_equals "$LOGIN"
 teardown_env
 
+# ==========================================================================
+# 19. Labels are path components. Dot aliases must be rejected by every public
+#     operation before `security` runs or session state can escape its root.
+# ==========================================================================
+setup_env
+test_case "path-alias labels are rejected before mutation"
+seed_list "$HOME/Library/Keychains/login.keychain-db"
+mkdir -p "$KEYCHAIN_SESSION_STATE_DIR"
+printf 'keep\n' > "$KEYCHAIN_SESSION_STATE_DIR/sentinel"
+for label in . ..; do
+  for operation in begin end path password-file; do
+    rc=0
+    output="$(bash "$LIB" "$operation" "$label" 2>&1)" || rc=$?
+    if [[ $rc -ne 0 && "$output" == *"label must be a bare"* ]]; then
+      ok "$operation rejects label '$label'"
+    else
+      bad "$operation accepted label '$label' (rc=$rc, output=$output)"
+    fi
+  done
+done
+if [[ -f "$KEYCHAIN_SESSION_STATE_DIR/sentinel" ]]; then
+  ok "rejected labels left the state root intact"
+else
+  bad "a rejected label mutated the state root"
+fi
+if [[ ! -s "$FAKE_SECURITY_STATE/argv.log" ]]; then
+  ok "rejected labels never reached security"
+else
+  bad "a rejected label reached security: $(tr '\n' '|' < "$FAKE_SECURITY_STATE/argv.log")"
+fi
+teardown_env
+
 printf '\n============================================================\n'
 printf 'keychain-session: %d passed, %d failed\n' "$PASS" "$FAIL"
 printf '============================================================\n'

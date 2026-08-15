@@ -154,12 +154,12 @@ chars = "Ż"
 [[keyboard.bindings]]
 key = "Left"
 mods = "Alt"
-chars = "\u001Bb"
+chars = "\u001bb"
 
 [[keyboard.bindings]]
 key = "Right"
 mods = "Alt"
-chars = "\u001Bf"
+chars = "\u001bf"
 
 # ─── Cmd → vc-frame: the product switcher (key-contract v3) ─────────────────
 # Host translates Cmd into kitty CSI-u with super bit so vc-frame sees Super+key
@@ -168,22 +168,22 @@ chars = "\u001Bf"
 [[keyboard.bindings]]
 key = "Left"
 mods = "Command"
-chars = "\u001B[1;9D"
+chars = "\u001b[1;9D"
 
 [[keyboard.bindings]]
 key = "Right"
 mods = "Command"
-chars = "\u001B[1;9C"
+chars = "\u001b[1;9C"
 
 [[keyboard.bindings]]
 key = "Up"
 mods = "Command"
-chars = "\u001B[1;9A"
+chars = "\u001b[1;9A"
 
 [[keyboard.bindings]]
 key = "Down"
 mods = "Command"
-chars = "\u001B[1;9B"
+chars = "\u001b[1;9B"
 
 [[keyboard.bindings]]
 key = "Period"
@@ -193,7 +193,7 @@ chars = "\u001b[46;10u"
 [[keyboard.bindings]]
 key = "E"
 mods = "Command"
-chars = "\u001B[101;9u"
+chars = "\u001b[101;9u"
 
 [scrolling]
 # Keep enough output to actually browse after long make/help dumps.

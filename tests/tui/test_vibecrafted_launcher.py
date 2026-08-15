@@ -153,6 +153,35 @@ def _write_trimmed_launcher(script_path: Path) -> None:
     script_path.chmod(0o755)
 
 
+def test_python_resolver_skips_bash_product_launchers(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    launcher_copy = tmp_path / "vibecrafted-deck"
+    fake_python = fake_bin / "python3"
+    fake_bin.mkdir()
+    _write_trimmed_launcher(launcher_copy)
+
+    for name in ("vc-server-supervisor", "vibecrafted"):
+        wrapper = fake_bin / name
+        wrapper.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+    fake_python.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    fake_python.chmod(0o755)
+
+    env = os.environ.copy()
+    env.pop("VIBECRAFTED_PYTHON", None)
+    env["PATH"] = f"{fake_bin}:/usr/bin:/bin"
+    result = subprocess.run(
+        ["bash", "-c", f'source "{launcher_copy}"; _vibecrafted_python'],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout.strip()) == fake_python
+
+
 def _write_fake_command(bin_dir: Path, name: str, capture_file: Path) -> None:
     script_names = [name]
     if name == "vc-frame":
