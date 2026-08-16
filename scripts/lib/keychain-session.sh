@@ -94,6 +94,10 @@ KEYCHAIN_SESSION_SECURITY_BIN="${KEYCHAIN_SESSION_SECURITY_BIN:-/usr/bin/securit
 # the tests get a hermetic directory and so a CI job can hand state from the
 # "import certificate" step to the "remove keychain" step.
 KEYCHAIN_SESSION_STATE_DIR="${KEYCHAIN_SESSION_STATE_DIR:-${TMPDIR:-/tmp}/codescribe-keychain-session}"
+# Explicit keychain paths are enough for `security import`, identity lookup and
+# `codesign --keychain`. Registering a build keychain in the user's global
+# search list is therefore legacy opt-in, never the safe default.
+KEYCHAIN_SESSION_REGISTER_SEARCH_LIST="${KEYCHAIN_SESSION_REGISTER_SEARCH_LIST:-0}"
 
 KEYCHAIN_SESSION_PATH=""
 _ks_label=""
@@ -220,6 +224,10 @@ keychain_session_begin() {
   local entry snapshot default_now
 
   _ks_validate_label "$label"
+  case "$KEYCHAIN_SESSION_REGISTER_SEARCH_LIST" in
+    0|1) ;;
+    *) _ks_die "KEYCHAIN_SESSION_REGISTER_SEARCH_LIST must be 0 or 1" ;;
+  esac
 
   _ks_label="$label"
   _ks_state_dir="$KEYCHAIN_SESSION_STATE_DIR/$label"
@@ -282,8 +290,11 @@ keychain_session_begin() {
   _ks_security set-keychain-settings -lut 21600 "$KEYCHAIN_SESSION_PATH"
   _ks_security unlock-keychain -p "$password" "$KEYCHAIN_SESSION_PATH"
 
-  _ks_write_search_list "$KEYCHAIN_SESSION_PATH" "${kept[@]}" \
-    || _ks_die "could not install the ephemeral keychain into the search list"
+  if [[ "$KEYCHAIN_SESSION_REGISTER_SEARCH_LIST" == "1" ]]; then
+    _ks_log "legacy opt-in: registering the ephemeral keychain in the user search list"
+    _ks_write_search_list "$KEYCHAIN_SESSION_PATH" "${kept[@]}" \
+      || _ks_die "could not install the ephemeral keychain into the search list"
+  fi
 
   # NOT the default keychain, unless explicitly asked for. `security
   # default-keychain -d user -s` is a side effect on the whole login session,
@@ -361,7 +372,7 @@ _ks_generate_password() {
 keychain_session_password_file() { _ks_state_path password; }
 
 # --------------------------------------------------------------------------
-# end — remove-self, in the order that survives a vanished file
+# end — remove-self, including cleanup for legacy search-list registration
 # --------------------------------------------------------------------------
 keychain_session_end() {
   local label="${1:-$_ks_label}"

@@ -124,6 +124,10 @@ setup_env() {
   export KEYCHAIN_SESSION_SECURITY_BIN="$ROOT/bin/security"
   export KEYCHAIN_SESSION_STATE_DIR="$ROOT/session-state"
   export KEYCHAIN_SESSION_LOCK_WAIT_SECS=3
+  # Most historical cases exercise cleanup compatibility for an older caller
+  # that explicitly opted into search-list registration. Production defaults
+  # are covered separately below and never mutate the global list.
+  export KEYCHAIN_SESSION_REGISTER_SEARCH_LIST=1
   export HOME="$ROOT/home"
   mkdir -p "$ROOT/bin" "$FAKE_SECURITY_STATE" "$HOME/Library/Keychains"
   make_fake_security "$KEYCHAIN_SESSION_SECURITY_BIN"
@@ -198,7 +202,33 @@ run_child() {
 }
 
 # ==========================================================================
-# 1. Exact restoration on the happy path
+# 1. Safe default: an active build never enters the global search list
+# ==========================================================================
+setup_env
+test_case "safe default never registers an ephemeral keychain globally"
+LOGIN="$HOME/Library/Keychains/login.keychain-db"
+seed_list "$LOGIN"
+unset KEYCHAIN_SESSION_REGISTER_SEARCH_LIST
+# shellcheck disable=SC2016  # expansion belongs to the generated child shell
+run_child 'keychain_session_begin codescribe-signing >/dev/null
+           cat "$FAKE_SECURITY_STATE/search-list" > "'"$ROOT"'/list-during.txt"
+           keychain_session_end' >/dev/null
+if [[ "$(cat "$ROOT/list-during.txt")" == "$LOGIN" ]]; then
+  ok "user search list untouched WHILE the session is active"
+else
+  bad "ephemeral keychain entered the user search list: $(tr '\n' '|' < "$ROOT/list-during.txt")"
+fi
+if awk -F'\t' '$1=="list-keychains" {for(i=2;i<=NF;i++) if($i=="-s") exit 1} END{exit 0}' \
+      "$FAKE_SECURITY_STATE/argv.log"; then
+  ok "safe default issued no mutating list-keychains call"
+else
+  bad "safe default mutated the user search list"
+fi
+assert_list_equals "$LOGIN"
+teardown_env
+
+# ==========================================================================
+# 2. Exact restoration for an explicit legacy opt-in
 # ==========================================================================
 setup_env
 test_case "exact restoration, single pre-existing keychain"

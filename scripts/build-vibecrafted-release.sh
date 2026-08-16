@@ -32,6 +32,7 @@ BUILD_NUMBER="${BUILD_NUMBER:-$(date -u +%Y%m%d%H%M%S)}"
 MODE="release"
 SIGNING_IDENTITY=""
 TEMP_KEYCHAIN_PATH=""
+SIGNING_KEYCHAIN_LABEL="vibecrafted-signing-$$"
 CODESIGN_KEYCHAIN_ARGS=()
 export MACOSX_DEPLOYMENT_TARGET=14.0
 # Release payloads must not remember the operator account, Cargo registry, or
@@ -62,7 +63,7 @@ require() { command -v "$1" >/dev/null 2>&1 || die "$1 is required"; }
 . "$REPO_ROOT/scripts/lib/keychain-session.sh"
 
 cleanup() {
-  keychain_session_end vibecrafted-signing || true
+  keychain_session_end "$SIGNING_KEYCHAIN_LABEL" || true
 }
 trap cleanup EXIT INT TERM HUP
 
@@ -78,19 +79,18 @@ prepare_signing_identity() {
     cert_password="$(read_trimmed_file "$CERT_PASSWORD_FILE")"
     [[ -n "$cert_password" ]] || die "certificate password is empty"
 
-    # keychain_session_begin does the whole search-list dance: structured argv
-    # snapshot (never `tr '\n' ' '`, which split any keychain path containing a
-    # space into two nonexistent entries), an ephemeral keychain that lives in
-    # its own state dir rather than inside $DIST_DIR — a disposable directory
-    # whose removal is exactly what made the old cleanup unable to unlist — and
-    # traps that also cover Ctrl-C.
+    # The ephemeral keychain lives in its own per-process state directory and
+    # is always addressed explicitly. It is never registered in the user's
+    # global search list: doing so changes keychain lookup for Codescribe and
+    # every other application on the host while a release is running.
     #
     # It deliberately does NOT make this the login session's default keychain.
     # Nothing below needs that: every call names the keychain explicitly. The
     # old `security default-keychain -d user -s "$TEMP_KEYCHAIN_PATH"` is what
     # made Codescribe (and everything else on the host) prompt for a uuidgen
     # password for the whole length of the release.
-    keychain_session_begin vibecrafted-signing
+    KEYCHAIN_SESSION_REGISTER_SEARCH_LIST=0 \
+      keychain_session_begin "$SIGNING_KEYCHAIN_LABEL"
     TEMP_KEYCHAIN_PATH="$KEYCHAIN_SESSION_PATH"
     temp_password="$(cat "$(keychain_session_password_file)")"
 
