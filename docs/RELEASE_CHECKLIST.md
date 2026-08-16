@@ -122,7 +122,7 @@ uv run --project vibecrafted-core verify-vibecrafted-walkaround verify-release \
 uv run --project vibecrafted-core verify-vibecrafted-walkaround walkaround \
   --release-output dist/release-output.json \
   --signature dist/release-output.json.sig \
-  --output /tmp/vibecrafted-4.1.0-walkaround.json
+  --output dist/vibecrafted-4.1.0-walkaround.json
 ```
 
 | Command                      | What a pass proves                                       |

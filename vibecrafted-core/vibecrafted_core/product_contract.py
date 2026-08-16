@@ -3149,6 +3149,36 @@ def _stop_scenario_session(pid: int, socket_path: Path) -> None:
         return
 
 
+def _active_runtime_identity_matches(
+    active: Mapping[str, Any],
+    *,
+    app: Path,
+    runtime_root: Path,
+    version: str,
+) -> bool:
+    """Match one exact identity while tolerating canonical parent aliases."""
+    expected_identity = {
+        "schema": "vibecrafted.active-runtime.v1",
+        "version": version,
+    }
+    if set(active) != {"app_root", "runtime_root", *expected_identity}:
+        return False
+    if any(active.get(key) != value for key, value in expected_identity.items()):
+        return False
+    if not isinstance(active.get("app_root"), str) or not isinstance(
+        active.get("runtime_root"), str
+    ):
+        return False
+    try:
+        return Path(active["app_root"]).resolve(strict=True) == app.resolve(
+            strict=True
+        ) and Path(active["runtime_root"]).resolve(strict=True) == runtime_root.resolve(
+            strict=True
+        )
+    except (OSError, RuntimeError):
+        return False
+
+
 @contextmanager
 def _walkaround_scenario(app: Path, dmg: Path):
     """Run one real, isolated install/update while a vc-frame server stays live."""
@@ -3244,12 +3274,12 @@ def _walkaround_scenario(app: Path, dmg: Path):
             current_active = active_path.read_bytes()
             active = _load_json_bytes(current_active, source=active_path)
             expected_root = runtime_home / "releases" / bundled_version
-            if active != {
-                "app_root": str(app.resolve()),
-                "runtime_root": str(expected_root),
-                "schema": "vibecrafted.active-runtime.v1",
-                "version": bundled_version,
-            }:
+            if not _active_runtime_identity_matches(
+                active,
+                app=app,
+                runtime_root=expected_root,
+                version=bundled_version,
+            ):
                 raise RuntimeError(
                     "outer app did not publish the exact bundled identity"
                 )

@@ -2175,6 +2175,50 @@ def test_walkaround_session_socket_stays_below_darwin_sun_path_limit() -> None:
     assert len(os.fsencode(representative)) < 104
 
 
+def test_walkaround_identity_accepts_only_canonical_parent_aliases(
+    tmp_path: Path,
+) -> None:
+    app = tmp_path / "Vibecrafted.app"
+    runtime_root = tmp_path / "runtime/releases/4.1.0+g12345678"
+    app.mkdir()
+    runtime_root.mkdir(parents=True)
+    alias = tmp_path / "alias"
+    alias.symlink_to(tmp_path, target_is_directory=True)
+
+    active = {
+        "app_root": str(alias / app.name),
+        "runtime_root": str(alias / runtime_root.relative_to(tmp_path)),
+        "schema": "vibecrafted.active-runtime.v1",
+        "version": "4.1.0+g12345678",
+    }
+
+    assert contract._active_runtime_identity_matches(
+        active,
+        app=app,
+        runtime_root=runtime_root,
+        version="4.1.0+g12345678",
+    )
+
+    assert not contract._active_runtime_identity_matches(
+        {**active, "app_root": str(tmp_path / "Different.app")},
+        app=app,
+        runtime_root=runtime_root,
+        version="4.1.0+g12345678",
+    )
+    assert not contract._active_runtime_identity_matches(
+        {**active, "unexpected": "field"},
+        app=app,
+        runtime_root=runtime_root,
+        version="4.1.0+g12345678",
+    )
+    assert not contract._active_runtime_identity_matches(
+        active,
+        app=app,
+        runtime_root=runtime_root,
+        version="4.1.0+gdifferent",
+    )
+
+
 def test_walkaround_scenario_provider_normalizes_only_contract_failures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
