@@ -3749,6 +3749,450 @@ def manual_resume_session(
     }
 
 
+CONTROL_PLANE_RUN_PREFIXES = frozenset(
+    {
+        "work",
+        "impl",
+        "wflw",
+        "rsme",
+        "marb",
+        "just",
+        "scaf",
+        "rese",
+        "revi",
+        "plan",
+        "ship",
+        "loop",
+        "init",
+        "hydr",
+        "deco",
+        "folw",
+        "prun",
+        "trus",
+        "ownr",
+        "polr",
+        "audt",
+        "canr",
+        "delg",
+        "intn",
+        "part",
+        "relz",
+        "wflo",
+        "guar",
+        "guard",
+    }
+)
+OPERATOR_CONTINUABLE_STATES = frozenset(
+    {
+        "stopped",
+        "cancelled",
+        "canceled",
+        "failed",
+        "timed_out",
+        "interrupted",
+        "ghost",
+        "report_missing",
+        "contract_failed",
+        "blocked",
+    }
+)
+OPERATOR_DONE_STATES = frozenset({"completed", "report_validated", "closed"})
+
+
+def looks_like_control_plane_run_id(value: str) -> bool:
+    """True when *value* has the ``<skill4>-YYMMDD-HHMMSS-entropy`` run shape."""
+    text = str(value or "").strip()
+    if not text or text.startswith("-"):
+        return False
+    prefix, _, rest = text.partition("-")
+    if prefix not in CONTROL_PLANE_RUN_PREFIXES or not rest:
+        return False
+    return any(part.isdigit() for part in rest.split("-"))
+
+
+def classify_resume_identity(token: str) -> str:
+    """Classify a resume token as run_id, provider session, or Vibecrafted session."""
+    text = str(token or "").strip()
+    if not text:
+        return "empty"
+    if looks_like_control_plane_run_id(text) or lookup_run(text) is not None:
+        return "run_id"
+    found = find_run_for_identity_token(text)
+    if found is None:
+        return "unknown"
+    runtime_ids = {
+        str(found.get("runtime_session_id") or "").strip(),
+        str(found.get("vibecrafted_session_id") or "").strip(),
+    }
+    runtime_ids.discard("")
+    agent_session = str(
+        found.get("agent_session_id") or found.get("session_id") or ""
+    ).strip()
+    if text in runtime_ids and text != agent_session:
+        return "vibecrafted_session"
+    if text == agent_session and text not in runtime_ids:
+        return "provider_session"
+    if text in runtime_ids:
+        return "vibecrafted_session"
+    if text == agent_session:
+        return "provider_session"
+    return "unknown"
+
+
+def find_run_for_identity_token(token: str) -> dict[str, Any] | None:
+    """Resolve a token against run ids and recorded session fields."""
+    text = str(token or "").strip()
+    if not text:
+        return None
+    direct = lookup_run(text)
+    if direct is not None:
+        return direct
+    root = control_plane_home() / "runtime_runs"
+    if not root.is_dir():
+        return None
+    try:
+        metas = sorted(
+            root.glob("*/meta.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return None
+    for path in metas[:300]:
+        payload = _read_json_object(path)
+        for key in (
+            "agent_session_id",
+            "session_id",
+            "runtime_session_id",
+            "vibecrafted_session_id",
+        ):
+            if str(payload.get(key) or "").strip() != text:
+                continue
+            run_id = str(payload.get("run_id") or path.parent.name)
+            return lookup_run(run_id) or payload
+    return None
+
+
+def _operator_continue_rejection(
+    run_id: str,
+    reason: str,
+    *,
+    detail: str = "",
+    run: dict[str, Any] | None = None,
+    hint: str = "",
+) -> dict[str, Any]:
+    """Build the fail-closed operator-continue receipt."""
+    payload: dict[str, Any] = {
+        "schema": "vibecrafted.operator_continue.v1",
+        "accepted": False,
+        "reason": reason,
+        "run_id": run_id,
+        "resume_mode": "operator_continue",
+    }
+    if detail:
+        payload["detail"] = detail
+    if hint:
+        payload["hint"] = hint
+    if run is not None:
+        payload["run"] = run
+    return payload
+
+
+def _merge_run_and_meta(run: dict[str, Any], meta: dict[str, Any]) -> dict[str, Any]:
+    """Prefer live projection values, then fill blanks from on-disk meta."""
+    merged = dict(meta)
+    for key, value in run.items():
+        if value not in (None, ""):
+            merged[key] = value
+    return merged
+
+
+def _operator_continue_state(run: dict[str, Any]) -> str:
+    """Projected status/state for an operator-continue decision."""
+    return str(run.get("state") or run.get("status") or "").strip().lower()
+
+
+def _worker_process_alive(run: dict[str, Any]) -> bool:
+    """True when a recorded worker/launcher pid still exists."""
+    for key in ("worker_pgid", "worker_pid", "launcher_pid"):
+        raw = run.get(key)
+        if raw in (None, ""):
+            continue
+        try:
+            pid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            return True
+        except OSError:
+            continue
+        else:
+            return True
+    return False
+
+
+def _provider_session_for_continue(run: dict[str, Any]) -> str:
+    """Return a provider session id that is not just the Vibecrafted runtime id."""
+    agent_session = _explicit_native_identity(
+        run.get("agent_session_id") or run.get("session_id") or ""
+    )
+    runtime_session = _explicit_native_identity(
+        run.get("runtime_session_id") or run.get("vibecrafted_session_id") or ""
+    )
+    if not agent_session:
+        return ""
+    if runtime_session and agent_session == runtime_session:
+        return ""
+    return agent_session
+
+
+def _operator_continue_prompt(
+    run_id: str,
+    run: dict[str, Any],
+    extra_prompt: str,
+    *,
+    native_session: str,
+) -> str:
+    """Build the continuation prompt for a stopped/failed parent run."""
+    extra = str(extra_prompt or "").strip()
+    original = ""
+    try:
+        resolved = resolve_run(run_id)
+    except (RunNotResolved, ValueError, OSError):
+        resolved = None
+    if resolved is not None:
+        prompt_path = resolved.run_dir / "prompt.md"
+        try:
+            if prompt_path.is_file():
+                original = prompt_path.read_text(encoding="utf-8")
+        except OSError:
+            original = ""
+    if not original:
+        original = str(run.get("prompt") or "").strip()
+
+    if native_session:
+        header = (
+            f"The tracked Vibecrafted run {run_id} was stopped "
+            "(process group killed). Continue that job from the last honest "
+            "point. Do not restart from zero unless the work is actually "
+            "unfinished at the start."
+        )
+        if extra:
+            return f"{header}\n\n{extra}"
+        return header
+
+    header = (
+        f"This Vibecrafted run ({run_id}) was stopped or interrupted. "
+        "Continue the same job from the last honest point. "
+        "Do not treat this as a greenfield task."
+    )
+    if original and extra:
+        return f"{header}\n\n{original}\n\n---\nOperator continuation:\n\n{extra}"
+    if extra:
+        return f"{header}\n\n{extra}"
+    if original:
+        return f"{header}\n\n{original}"
+    return header
+
+
+def operator_continue_run(
+    run_id: str,
+    source_dir: str | Path = ".",
+    *,
+    prompt: str = "",
+    expected_agent: str = "",
+    root: str | Path = "",
+    model: str = "",
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Continue a stopped/failed control-plane run as a new tracked job.
+
+    Guardian ``native_resume_run`` refuses operator stops on purpose. This is
+    the public operator path: the old PGID is dead, so a new run is launched.
+    A stored provider session (not ``VIBECRAFTED_SESSION_ID``) is resumed
+    natively; otherwise the original prompt is replayed as ``resume-new-session``.
+    """
+    target = str(run_id or "").strip()
+    if not target:
+        return _operator_continue_rejection("", "missing_run_id")
+    kind = classify_resume_identity(target)
+    if kind == "provider_session":
+        found = find_run_for_identity_token(target)
+        found_id = str((found or {}).get("run_id") or "")
+        return _operator_continue_rejection(
+            target,
+            "provider_session_not_run_id",
+            detail="that token is a provider session, not a control-plane run id",
+            hint=(
+                "vibecrafted resume <agent> --session "
+                f"{target}" + (f"  (or --run-id {found_id})" if found_id else "")
+            ),
+            run=found,
+        )
+    if kind == "vibecrafted_session":
+        found = find_run_for_identity_token(target)
+        found_id = str((found or {}).get("run_id") or "")
+        provider = _provider_session_for_continue(found or {})
+        return _operator_continue_rejection(
+            target,
+            "vibecrafted_session_not_run_id",
+            detail=(
+                "that token is VIBECRAFTED_SESSION_ID / runtime_session_id, "
+                "not a control-plane run and not a provider session"
+            ),
+            hint=(
+                (f"vibecrafted resume <agent> --run-id {found_id}" if found_id else "")
+                + (f"  (provider session: --session {provider})" if provider else "")
+            ).strip(),
+            run=found,
+        )
+    if kind == "unknown" and not looks_like_control_plane_run_id(target):
+        return _operator_continue_rejection(
+            target,
+            "not_a_run_id",
+            detail="pass a control-plane run id such as work-YYMMDD-HHMMSS-xxxxx",
+            hint="vibecrafted resume <agent> --run-id <work-...>   or   --session <provider-uuid>",
+        )
+
+    run = lookup_run(target)
+    if run is None:
+        return _operator_continue_rejection(target, "run_not_found")
+    parent = _merge_run_and_meta(run, _native_resume_meta(target, run))
+    requested_agent = str(expected_agent or "").strip().lower()
+    recorded_agent = str(parent.get("agent") or "").strip().lower()
+    if requested_agent and recorded_agent and requested_agent != recorded_agent:
+        return _operator_continue_rejection(
+            target,
+            "agent_mismatch",
+            detail=f"recorded={recorded_agent} requested={requested_agent}",
+            run=parent,
+        )
+    agent = requested_agent or recorded_agent
+    if not agent:
+        return _operator_continue_rejection(target, "missing_agent", run=parent)
+
+    state = _operator_continue_state(parent)
+    if _worker_process_alive(parent) and not _manual_stop_or_cancel(parent):
+        return _operator_continue_rejection(
+            target,
+            "still_running",
+            detail="worker process is still alive; observe or stop first",
+            hint=f"vibecrafted {agent} observe --run-id {target}",
+            run=parent,
+        )
+    if state in OPERATOR_DONE_STATES and not _manual_stop_or_cancel(parent):
+        return _operator_continue_rejection(
+            target,
+            "already_complete",
+            detail=f"state={state} — observe the report instead of launching a twin",
+            hint=f"vibecrafted {agent} observe --run-id {target}",
+            run=parent,
+        )
+    if (
+        state
+        and state not in OPERATOR_CONTINUABLE_STATES
+        and state not in OPERATOR_DONE_STATES
+        and not _manual_stop_or_cancel(parent)
+        and not _run_is_terminal(parent)
+    ):
+        return _operator_continue_rejection(
+            target,
+            "not_continuable",
+            detail=f"state={state}",
+            hint=f"vibecrafted {agent} observe --run-id {target}",
+            run=parent,
+        )
+
+    native_session = _provider_session_for_continue(parent)
+    prompt_body = _operator_continue_prompt(
+        target, parent, prompt, native_session=native_session
+    )
+    resolved_source_dir = Path(source_dir).expanduser().resolve()
+    resolved_root = normalize_run_root(
+        root or parent.get("root") or "",
+        resolved_source_dir,
+    )
+    model_requested = str(model or parent.get("model_requested") or "").strip()
+
+    if native_session:
+        launched = manual_resume_session(
+            agent,
+            native_session,
+            resolved_source_dir,
+            prompt=prompt_body,
+            root=resolved_root,
+            model=model_requested,
+            env=env,
+        )
+        return {
+            **launched,
+            "schema": "vibecrafted.operator_continue.v1",
+            "resume_mode": launched.get("resume_mode") or "manual_explicit",
+            "resume_of": target,
+            "parent_run_id": target,
+            "operator_continue": True,
+        }
+
+    skill = str(parent.get("skill") or "workflow").strip() or "workflow"
+    try:
+        spec = normalize_launch_spec(
+            {
+                "skill": skill,
+                "agent": agent,
+                "prompt": prompt_body,
+                "file": "",
+                "runtime": "headless",
+                "root": str(resolved_root),
+                "mode": "resume-new-session",
+                "model": model_requested,
+            },
+            resolved_source_dir,
+        )
+    except ValueError as exc:
+        return _operator_continue_rejection(
+            target,
+            "launch_spec_invalid",
+            detail=str(exc),
+            run=parent,
+        )
+    try:
+        launched = launch_workflow(
+            spec,
+            resolved_source_dir,
+            env=env,
+            launch_meta={
+                "resume_of": target,
+                "resume_root": target,
+                "resume_mode": "operator_continue",
+                "parent_runtime_session_id": _explicit_native_identity(
+                    parent.get("runtime_session_id")
+                    or parent.get("vibecrafted_session_id")
+                    or ""
+                ),
+            },
+        )
+    except (OSError, ValueError) as exc:
+        return _operator_continue_rejection(
+            target,
+            "launch_rejected",
+            detail=f"{type(exc).__name__}: {exc}",
+            run=parent,
+        )
+    return {
+        **launched,
+        "schema": "vibecrafted.operator_continue.v1",
+        "resume_mode": "resume_new_session",
+        "resume_of": target,
+        "parent_run_id": target,
+        "operator_continue": True,
+        "agent": agent,
+    }
+
+
 def native_resume_run(
     run_id: str,
     source_dir: str | Path = ".",

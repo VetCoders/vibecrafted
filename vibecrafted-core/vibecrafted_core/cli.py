@@ -26,9 +26,13 @@ from .control_plane import (
 from .package_resources import deck_path, package_root
 from .workflow import (
     await_launch_truth,
+    classify_resume_identity,
+    find_run_for_identity_token,
     launch_workflow,
+    looks_like_control_plane_run_id,
     manual_resume_session,
     normalize_launch_spec,
+    operator_continue_run,
 )
 
 AGENTS = {"claude", "codex", "agy", "junie", "grok", "swarm"}
@@ -759,6 +763,188 @@ def _print_run_status(run: dict[str, Any], *, include_tail: bool = True) -> None
         print(f"transcript_tail: unavailable ({tail_error})")
 
 
+def _print_identity_mixup(kind: str, token: str) -> None:
+    """Explain a --run-id/--session mixup in operator language."""
+    found = find_run_for_identity_token(token)
+    found_id = str((found or {}).get("run_id") or "")
+    provider = str((found or {}).get("agent_session_id") or "").strip()
+    runtime = str(
+        (found or {}).get("runtime_session_id")
+        or (found or {}).get("vibecrafted_session_id")
+        or ""
+    ).strip()
+    if kind == "run_id":
+        print(
+            f"That is a control-plane run id, not a provider session: {token}",
+            file=sys.stderr,
+        )
+        print(
+            f"  Use: vibecrafted resume <agent> --run-id {token}",
+            file=sys.stderr,
+        )
+        return
+    if kind == "provider_session":
+        print(
+            f"That is a provider session, not a control-plane run id: {token}",
+            file=sys.stderr,
+        )
+        print(
+            f"  Use: vibecrafted resume <agent> --session {token}",
+            file=sys.stderr,
+        )
+        if found_id:
+            print(
+                f"  Or resume the tracked run: vibecrafted resume <agent> --run-id {found_id}",
+                file=sys.stderr,
+            )
+        return
+    if kind == "vibecrafted_session":
+        print(
+            "That is a Vibecrafted runtime session id "
+            "(VIBECRAFTED_SESSION_ID), not a provider session and not a run id:",
+            file=sys.stderr,
+        )
+        print(f"  {token}", file=sys.stderr)
+        if found_id:
+            print(
+                f"  Use: vibecrafted resume <agent> --run-id {found_id}",
+                file=sys.stderr,
+            )
+        if provider and provider != runtime:
+            print(
+                f"  Provider session: vibecrafted resume <agent> --session {provider}",
+                file=sys.stderr,
+            )
+        return
+    print(
+        f"That token is not a control-plane run id: {token}",
+        file=sys.stderr,
+    )
+    print(
+        "  Control-plane run:  vibecrafted resume <agent> --run-id work-YYMMDD-HHMMSS-xxxxx",
+        file=sys.stderr,
+    )
+    print(
+        "  Provider session:   vibecrafted resume <agent> --session <provider-uuid>",
+        file=sys.stderr,
+    )
+
+
+def _agent_resume(agent: str, argv: Sequence[str]) -> int:
+    """``vibecrafted <agent> resume``: continue a stopped control-plane run."""
+    parser = argparse.ArgumentParser(prog=f"vibecrafted {agent} resume")
+    parser.add_argument("--run-id", default="")
+    parser.add_argument("--last", action="store_true")
+    parser.add_argument("--session", default="")
+    parser.add_argument("-p", "--prompt", default="")
+    parser.add_argument("-f", "--file", dest="prompt_file", default="")
+    parser.add_argument("--root", default="")
+    parser.add_argument("--source-dir", default="")
+    parser.add_argument("--model", default="")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(list(argv))
+
+    session = str(args.session or "").strip()
+    run_id = str(args.run_id or "").strip()
+    if session and not run_id:
+        kind = classify_resume_identity(session)
+        if kind in {"run_id", "vibecrafted_session"} or looks_like_control_plane_run_id(
+            session
+        ):
+            _print_identity_mixup("run_id" if kind == "run_id" else kind, session)
+            if kind == "run_id" or looks_like_control_plane_run_id(session):
+                print(
+                    f"  Hint: vibecrafted {agent} resume --run-id {session}",
+                    file=sys.stderr,
+                )
+            return 2
+        print(
+            "Provider-session resume lives on the deck:",
+            file=sys.stderr,
+        )
+        print(
+            f"  vibecrafted resume {agent} --session {session}",
+            file=sys.stderr,
+        )
+        print(
+            f"Stopped-run resume: vibecrafted {agent} resume --run-id <work-...>",
+            file=sys.stderr,
+        )
+        return 2
+
+    if run_id:
+        kind = classify_resume_identity(run_id)
+        if kind in {"provider_session", "vibecrafted_session"}:
+            _print_identity_mixup(kind, run_id)
+            return 2
+    elif args.last:
+        run = _run_for_agent(agent, "", last=True)
+        if run is None:
+            print(
+                f"No recent {agent} run to resume. Pass --run-id.",
+                file=sys.stderr,
+            )
+            return 1
+        run_id = str(run.get("run_id") or "")
+    else:
+        print(
+            "Resume a stopped run with --run-id <work-...> or --last.",
+            file=sys.stderr,
+        )
+        print(
+            f"  vibecrafted {agent} resume --run-id <work-...>",
+            file=sys.stderr,
+        )
+        print(
+            f"  Provider session: vibecrafted resume {agent} --session <provider-uuid>",
+            file=sys.stderr,
+        )
+        return 2
+
+    prompt = str(args.prompt or "")
+    if args.prompt_file:
+        try:
+            prompt = Path(args.prompt_file).expanduser().read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"error: cannot read --file: {exc}", file=sys.stderr)
+            return 2
+
+    result = operator_continue_run(
+        run_id,
+        source_dir=args.source_dir or package_root(),
+        prompt=prompt,
+        expected_agent=agent,
+        root=args.root,
+        model=args.model,
+    )
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    elif result.get("accepted"):
+        child = str(result.get("run_id") or "")
+        print("=============== OPERATOR CONTINUE RECEIPT ===============")
+        print(f"resume_of:          {result.get('resume_of') or run_id}")
+        print(f"run_id:             {child}")
+        print(f"agent:              {result.get('agent') or agent}")
+        print(f"resume_mode:        {result.get('resume_mode') or ''}")
+        print(f"root:               {result.get('root') or ''}")
+        if result.get("agent_session_id"):
+            print(f"agent_session_id:   {result.get('agent_session_id')}")
+        print(f"observe:            vibecrafted {agent} observe --run-id {child}")
+        print(f"await:              vibecrafted {agent} await --run-id {child}")
+        print("=========================================================")
+        _watch_launch_startup(result)
+    else:
+        reason = str(result.get("reason") or "refused")
+        print(f"error: cannot resume run {run_id}: {reason}", file=sys.stderr)
+        detail = str(result.get("detail") or "").strip()
+        if detail:
+            print(f"detail: {detail}", file=sys.stderr)
+        hint = str(result.get("hint") or "").strip()
+        if hint:
+            print(f"hint: {hint}", file=sys.stderr)
+    return 0 if result.get("accepted") else 1
+
+
 def _agent_observe(agent: str, argv: Sequence[str]) -> int:
     """``vibecrafted <agent> observe`` verb: print/emit one run's current status."""
     parser = argparse.ArgumentParser(prog=f"vibecrafted {agent} observe")
@@ -1051,13 +1237,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "settlements",
         "stop",
     } | set(LAUNCHERS)
-    agent_python_verbs = {"observe", "await", "stop"}
+    agent_python_verbs = {"observe", "await", "stop", "resume"}
     is_lifecycle = shell_wrapper_verb is not None
     if raw_args and shell_wrapper_verb is None:
         first = raw_args[0]
         second = raw_args[1] if len(raw_args) > 1 else ""
         if first in AGENTS and second in agent_python_verbs:
-            # Core owns agent observe/await/stop (read-follows-write via
+            # Core owns agent observe/await/stop/resume (read-follows-write via
             # resolve_run); never delegate these to the legacy deck/observe.sh.
             is_lifecycle = False
         elif first not in python_commands and not first.startswith("-"):
@@ -1119,6 +1305,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .wrappers import stop_main
 
         return stop_main(["--agent", raw_args[0], *raw_args[2:]])
+    if len(raw_args) >= 2 and raw_args[0] in AGENTS and raw_args[1] == "resume":
+        return _agent_resume(raw_args[0], raw_args[2:])
     if len(raw_args) >= 2 and raw_args[0] in AGENTS and raw_args[1] == "observe":
         return _agent_observe(raw_args[0], raw_args[2:])
     if len(raw_args) >= 2 and raw_args[0] in AGENTS and raw_args[1] == "await":

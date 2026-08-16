@@ -670,10 +670,47 @@ _vetcoders_launch_tracked_resume() {
   printf '%s' "$prompt_text" | _vetcoders_run_core_cli "${core_args[@]}"
 }
 
+_vetcoders_looks_like_run_id() {
+  case "${1%%-*}" in
+    work|impl|wflw|rsme|marb|just|scaf|rese|revi|plan|ship|loop|init|hydr|deco|folw|prun|trus|ownr|polr|audt|canr|delg|intn|part|relz|wflo|guar) ;;
+    *) return 1 ;;
+  esac
+  [[ "$1" == *-* ]]
+}
+
 _vetcoders_resume_agent() {
   local tool="$1"
   shift
   _vetcoders_parse_contract "$@" || return 1
+  if [[ -n "${_vetcoders_contract_help:-}" ]]; then
+    echo "Resume a provider session or a stopped control-plane run." >&2
+    echo "  vibecrafted resume ${tool} --session <provider-uuid>" >&2
+    echo "  vibecrafted resume ${tool} --run-id <work-...>" >&2
+    echo "  vibecrafted ${tool} resume --run-id <work-...> | --last" >&2
+    return 0
+  fi
+  if [[ -n "${_vetcoders_contract_run_id:-}" || -n "${_vetcoders_contract_last:-}" ]]; then
+    if [[ -n "${_vetcoders_contract_session:-}" ]]; then
+      echo "--session and --run-id/--last cannot be combined. Use one identity." >&2
+      return 1
+    fi
+    local core_args=(
+      "$tool" resume
+    )
+    [[ -n "${_vetcoders_contract_run_id:-}" ]] && core_args+=(--run-id "$_vetcoders_contract_run_id")
+    [[ -n "${_vetcoders_contract_last:-}" ]] && core_args+=(--last)
+    [[ -n "${_vetcoders_contract_prompt:-}" ]] && core_args+=(--prompt "$_vetcoders_contract_prompt")
+    [[ -n "${_vetcoders_contract_file:-}" ]] && core_args+=(--file "$_vetcoders_contract_file")
+    [[ -n "${_vetcoders_contract_root:-}" ]] && core_args+=(--root "$_vetcoders_contract_root")
+    _vetcoders_run_core_cli "${core_args[@]}"
+    return $?
+  fi
+  if [[ -n "${_vetcoders_contract_session:-}" ]] && _vetcoders_looks_like_run_id "$_vetcoders_contract_session"; then
+    echo "That is a control-plane run id, not a provider session: ${_vetcoders_contract_session}" >&2
+    echo "  Use: vibecrafted resume ${tool} --run-id ${_vetcoders_contract_session}" >&2
+    echo "  Or:  vibecrafted ${tool} resume --run-id ${_vetcoders_contract_session}" >&2
+    return 1
+  fi
   # --fork-session maps onto claude's verified `--resume … --fork-session`
   # compose (continuity capabilities kernel); other providers have no proven
   # equivalent, so anything else fails closed instead of dropping the flag.
