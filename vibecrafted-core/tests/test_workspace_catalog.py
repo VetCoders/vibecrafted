@@ -121,6 +121,112 @@ def test_run_identity_fields_on_resolve(home: Path, tmp_path: Path) -> None:
     assert wc.short_workspace_token(created.workspace_id) in meta["worker_host_session"]
 
 
+def test_runtime_session_attachments_preserve_dead_frame_and_activate_replacement(
+    home: Path, tmp_path: Path
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    workspace = wc.create_workspace(root=root, display_label="repo", select=True)
+    identity = wc.resolve_run_workspace_identity(root=root)
+
+    dead = wc.record_runtime_session_attachment(
+        workspace_id=workspace.workspace_id,
+        vibecrafted_session_id=identity.vibecrafted_session_id,
+        workspace_instance_id=identity.workspace_instance_id,
+        runtime="vc-frame",
+        runtime_session_id="workspace-deadbeef",
+        state="dead",
+        socket_dir="/legacy/socket/root",
+    )
+    live = wc.record_runtime_session_attachment(
+        workspace_id=workspace.workspace_id,
+        vibecrafted_session_id=identity.vibecrafted_session_id,
+        workspace_instance_id=identity.workspace_instance_id,
+        runtime="vc-frame",
+        runtime_session_id="works-beef-r1234",
+        state="live",
+        socket_dir="/legacy/socket/root",
+        replaces_runtime_session_id="workspace-deadbeef",
+    )
+
+    assert dead.session_id == live.session_id == identity.vibecrafted_session_id
+    restored = wc.read_workspace_session(identity.vibecrafted_session_id)
+    assert [(item.runtime_session_id, item.state) for item in restored.attachments] == [
+        ("workspace-deadbeef", "dead"),
+        ("works-beef-r1234", "live"),
+    ]
+    assert restored.attachments[1].replaces_runtime_session_id == "workspace-deadbeef"
+    payload = json.loads(
+        wc.workspace_session_path(identity.vibecrafted_session_id).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert payload["schema"] == wc.SESSION_RECORD_SCHEMA
+    assert payload["workspace_id"] == workspace.workspace_id
+    assert payload["workspace_instance_id"] == identity.workspace_instance_id
+
+
+def test_runtime_session_attachment_rejects_foreign_instance(
+    home: Path, tmp_path: Path
+) -> None:
+    left = tmp_path / "left"
+    right = tmp_path / "right"
+    left.mkdir()
+    right.mkdir()
+    left_workspace = wc.create_workspace(root=left, select=True)
+    right_workspace = wc.create_workspace(root=right, select=False)
+    left_identity = wc.resolve_run_workspace_identity(root=left)
+    right_identity = wc.resolve_run_workspace_identity(
+        root=right,
+        env={wc.ENV_WORKSPACE_ID: right_workspace.workspace_id},
+    )
+
+    with pytest.raises(wc.WorkspaceCatalogError, match="does not belong"):
+        wc.record_runtime_session_attachment(
+            workspace_id=left_workspace.workspace_id,
+            vibecrafted_session_id=left_identity.vibecrafted_session_id,
+            workspace_instance_id=right_identity.workspace_instance_id,
+            runtime="vc-frame",
+            runtime_session_id="workspace-deadbeef",
+            state="dead",
+        )
+
+
+def test_workspace_cli_attaches_runtime_session_to_wes(
+    home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    workspace = wc.create_workspace(root=root, select=True)
+    identity = wc.resolve_run_workspace_identity(root=root)
+
+    result = wc.workspace_cli_main(
+        [
+            "session-attach",
+            "--workspace-id",
+            workspace.workspace_id,
+            "--session-id",
+            identity.vibecrafted_session_id,
+            "--instance-id",
+            identity.workspace_instance_id,
+            "--runtime",
+            "vc-frame",
+            "--runtime-session-id",
+            "workspace-deadbeef",
+            "--state",
+            "dead",
+            "--socket-dir",
+            "/tmp/vc-frame-501",
+            "--json",
+        ]
+    )
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["attachments"][0]["runtime_session_id"] == "workspace-deadbeef"
+    assert payload["attachments"][0]["state"] == "dead"
+
+
 def test_workspace_resolve_cli_reuses_selected_identity_and_stable_session(
     home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

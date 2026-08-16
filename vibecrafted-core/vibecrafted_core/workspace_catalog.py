@@ -52,6 +52,7 @@ WORKSPACE_STATUS_BURIED = "buried"
 INSTANCE_STATUS_LIVE = "live"
 INSTANCE_STATUS_STALE = "stale"
 INSTANCE_STATUS_DETACHED = "detached"
+RUNTIME_SESSION_STATES = frozenset({"live", "dead", "missing"})
 
 ENV_WORKSPACE_ID = "VIBECRAFTED_WORKSPACE_ID"
 ENV_VIBECRAFTED_SESSION_ID = "VIBECRAFTED_SESSION_ID"
@@ -172,6 +173,13 @@ def instance_path(workspace_instance_id: str) -> Path:
 
 def sessions_dir() -> Path:
     return workspaces_dir() / "sessions"
+
+
+def workspace_session_path(vibecrafted_session_id: str) -> Path:
+    session_id = require_uuid(
+        vibecrafted_session_id, field_name="vibecrafted_session_id"
+    )
+    return sessions_dir() / f"{session_id}.json"
 
 
 def migration_report_path() -> Path:
@@ -665,6 +673,114 @@ class WorkspaceInstance:
         )
 
 
+@dataclass(frozen=True)
+class RuntimeSessionAttachment:
+    """One physical runtime incarnation attached to a logical WES session."""
+
+    attachment_id: str
+    runtime: str
+    runtime_session_id: str
+    state: str
+    socket_dir: str
+    attached_at: str
+    updated_at: str
+    replaces_runtime_session_id: str | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "attachment_id": self.attachment_id,
+            "runtime": self.runtime,
+            "runtime_session_id": self.runtime_session_id,
+            "state": self.state,
+            "socket_dir": self.socket_dir,
+            "attached_at": self.attached_at,
+            "updated_at": self.updated_at,
+            "replaces_runtime_session_id": self.replaces_runtime_session_id,
+        }
+
+    @classmethod
+    def from_payload(cls, payload: object) -> RuntimeSessionAttachment:
+        if not isinstance(payload, Mapping):
+            raise WorkspaceCatalogError("runtime session attachment is invalid")
+        state = str(payload.get("state") or "")
+        if state not in RUNTIME_SESSION_STATES:
+            raise WorkspaceCatalogError(f"invalid runtime session state: {state!r}")
+        runtime = str(payload.get("runtime") or "").strip()
+        runtime_session_id = str(payload.get("runtime_session_id") or "").strip()
+        if not runtime or not runtime_session_id:
+            raise WorkspaceCatalogError(
+                "runtime and runtime_session_id are required for an attachment"
+            )
+        replacement = str(payload.get("replaces_runtime_session_id") or "").strip()
+        return cls(
+            attachment_id=require_uuid(
+                payload.get("attachment_id"), field_name="attachment_id"
+            ),
+            runtime=runtime,
+            runtime_session_id=runtime_session_id,
+            state=state,
+            socket_dir=str(payload.get("socket_dir") or ""),
+            attached_at=str(payload.get("attached_at") or ""),
+            updated_at=str(payload.get("updated_at") or ""),
+            replaces_runtime_session_id=replacement or None,
+        )
+
+
+@dataclass(frozen=True)
+class WorkspaceSessionRecord:
+    """WES-owned logical session with preserved physical runtime attachments."""
+
+    session_id: str
+    workspace_id: str
+    workspace_instance_id: str
+    created_at: str
+    updated_at: str
+    attachments: tuple[RuntimeSessionAttachment, ...] = ()
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema": SESSION_RECORD_SCHEMA,
+            "session_id": self.session_id,
+            "vibecrafted_session_id": self.session_id,
+            "workspace_id": self.workspace_id,
+            "workspace_instance_id": self.workspace_instance_id,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "attachments": [item.to_payload() for item in self.attachments],
+        }
+
+    @classmethod
+    def from_payload(cls, payload: object) -> WorkspaceSessionRecord:
+        if not isinstance(payload, Mapping):
+            raise WorkspaceCatalogError("workspace session record is invalid")
+        if payload.get("schema") != SESSION_RECORD_SCHEMA:
+            raise WorkspaceCatalogError("workspace session record schema is invalid")
+        raw_attachments = payload.get("attachments") or []
+        if not isinstance(raw_attachments, Sequence) or isinstance(
+            raw_attachments, (str, bytes)
+        ):
+            raise WorkspaceCatalogError("workspace session attachments are invalid")
+        session_id = require_uuid(
+            payload.get("vibecrafted_session_id") or payload.get("session_id"),
+            field_name="vibecrafted_session_id",
+        )
+        return cls(
+            session_id=session_id,
+            workspace_id=require_uuid(
+                payload.get("workspace_id"), field_name="workspace_id"
+            ),
+            workspace_instance_id=require_uuid(
+                payload.get("workspace_instance_id"),
+                field_name="workspace_instance_id",
+            ),
+            created_at=str(payload.get("created_at") or ""),
+            updated_at=str(payload.get("updated_at") or ""),
+            attachments=tuple(
+                RuntimeSessionAttachment.from_payload(item) for item in raw_attachments
+            ),
+        )
+
+
 # ---------------------------------------------------------------------------
 # worker host routing
 # ---------------------------------------------------------------------------
@@ -1051,6 +1167,143 @@ def claim_live_instance(
                 f"instance {iid} is not live (status={instance.status})"
             )
         return instance
+
+
+# ---------------------------------------------------------------------------
+# logical session records + physical runtime attachments (WES)
+# ---------------------------------------------------------------------------
+
+
+def read_workspace_session(vibecrafted_session_id: str) -> WorkspaceSessionRecord:
+    """Read one logical WES session and all preserved runtime incarnations."""
+
+    path = workspace_session_path(vibecrafted_session_id)
+    with _catalog_lock(exclusive=False):
+        payload = _read_json(path)
+        if payload is None:
+            raise WorkspaceCatalogError(
+                f"workspace session record not found: {vibecrafted_session_id}"
+            )
+        return WorkspaceSessionRecord.from_payload(payload)
+
+
+def record_runtime_session_attachment(
+    *,
+    workspace_id: str,
+    vibecrafted_session_id: str,
+    workspace_instance_id: str,
+    runtime: str,
+    runtime_session_id: str,
+    state: str,
+    socket_dir: str = "",
+    replaces_runtime_session_id: str | None = None,
+) -> WorkspaceSessionRecord:
+    """Attach or refresh a physical runtime incarnation under one WES session.
+
+    This is the sole durable writer for vc-frame recovery evidence. A dead
+    attachment is retained when a live replacement is added; no physical
+    session cache is deleted or rewritten here.
+    """
+
+    wid = require_uuid(workspace_id, field_name="workspace_id")
+    sid = require_uuid(vibecrafted_session_id, field_name="vibecrafted_session_id")
+    iid = require_uuid(workspace_instance_id, field_name="workspace_instance_id")
+    runtime_name = str(runtime or "").strip()
+    physical_id = str(runtime_session_id or "").strip()
+    attachment_state = str(state or "").strip()
+    replacement = str(replaces_runtime_session_id or "").strip() or None
+    if not runtime_name or not physical_id:
+        raise WorkspaceCatalogError("runtime and runtime_session_id are required")
+    if attachment_state not in RUNTIME_SESSION_STATES:
+        raise WorkspaceCatalogError(
+            f"invalid runtime session state: {attachment_state!r}"
+        )
+
+    now = _now_iso()
+    with _catalog_lock(exclusive=True):
+        catalog = _load_catalog_unlocked()
+        if wid not in catalog.workspaces:
+            raise WorkspaceNotFound(f"workspace not found: {wid}")
+        instance_payload = _read_json(instance_path(iid))
+        if instance_payload is None:
+            raise WorkspaceCatalogError(f"workspace instance not found: {iid}")
+        instance = WorkspaceInstance.from_payload(instance_payload)
+        if instance.workspace_id != wid:
+            raise WorkspaceCatalogError(
+                f"workspace instance {iid} does not belong to workspace {wid}"
+            )
+        if instance.vibecrafted_session_id != sid:
+            raise WorkspaceCatalogError(
+                f"workspace instance {iid} does not belong to session {sid}"
+            )
+
+        path = workspace_session_path(sid)
+        current_payload = _read_json(path)
+        if current_payload is None:
+            current = WorkspaceSessionRecord(
+                session_id=sid,
+                workspace_id=wid,
+                workspace_instance_id=iid,
+                created_at=now,
+                updated_at=now,
+                attachments=(),
+            )
+        else:
+            current = WorkspaceSessionRecord.from_payload(current_payload)
+            if current.workspace_id != wid or current.workspace_instance_id != iid:
+                raise WorkspaceCatalogError(
+                    "workspace session ownership does not match the requested instance"
+                )
+
+        attachments = list(current.attachments)
+        match_index = next(
+            (
+                index
+                for index, item in enumerate(attachments)
+                if item.runtime == runtime_name
+                and item.runtime_session_id == physical_id
+                and item.socket_dir == str(socket_dir or "")
+            ),
+            None,
+        )
+        if match_index is None:
+            attachments.append(
+                RuntimeSessionAttachment(
+                    attachment_id=new_uuid7(),
+                    runtime=runtime_name,
+                    runtime_session_id=physical_id,
+                    state=attachment_state,
+                    socket_dir=str(socket_dir or ""),
+                    attached_at=now,
+                    updated_at=now,
+                    replaces_runtime_session_id=replacement,
+                )
+            )
+        else:
+            existing = attachments[match_index]
+            attachments[match_index] = RuntimeSessionAttachment(
+                attachment_id=existing.attachment_id,
+                runtime=existing.runtime,
+                runtime_session_id=existing.runtime_session_id,
+                state=attachment_state,
+                socket_dir=existing.socket_dir,
+                attached_at=existing.attached_at,
+                updated_at=now,
+                replaces_runtime_session_id=(
+                    replacement or existing.replaces_runtime_session_id
+                ),
+            )
+
+        updated = WorkspaceSessionRecord(
+            session_id=sid,
+            workspace_id=wid,
+            workspace_instance_id=iid,
+            created_at=current.created_at,
+            updated_at=now,
+            attachments=tuple(attachments),
+        )
+        _atomic_write_json(path, updated.to_payload())
+        return updated
 
 
 # ---------------------------------------------------------------------------
@@ -1647,7 +1900,7 @@ def settlement_counts_for_workspace(
 
 
 def workspace_cli_main(argv: Sequence[str] | None = None) -> int:
-    """Minimal CLI surface for create/list/select/show/bury/recover/migrate."""
+    """CLI surface for workspace identity, WES attachments, and migration."""
 
     import argparse
 
@@ -1700,6 +1953,21 @@ def workspace_cli_main(argv: Sequence[str] | None = None) -> int:
     resolve_p.add_argument("--root", default="")
     resolve_p.add_argument("--env", action="store_true")
     resolve_p.add_argument("--json", action="store_true")
+
+    attach_p = sub.add_parser(
+        "session-attach", help="attach a physical runtime session to WES"
+    )
+    attach_p.add_argument("--workspace-id", required=True)
+    attach_p.add_argument("--session-id", required=True)
+    attach_p.add_argument("--instance-id", required=True)
+    attach_p.add_argument("--runtime", required=True)
+    attach_p.add_argument("--runtime-session-id", required=True)
+    attach_p.add_argument(
+        "--state", choices=sorted(RUNTIME_SESSION_STATES), required=True
+    )
+    attach_p.add_argument("--socket-dir", default="")
+    attach_p.add_argument("--replaces-runtime-session-id", default="")
+    attach_p.add_argument("--json", action="store_true")
 
     counts_p = sub.add_parser(
         "settlement-counts", help="F/X/N projection scoped to workspace_id"
@@ -1796,6 +2064,18 @@ def workspace_cli_main(argv: Sequence[str] | None = None) -> int:
                     print(f"{key}={value}")
                 return 0
             return _emit(payload, as_json=args.json)
+        if args.action == "session-attach":
+            session = record_runtime_session_attachment(
+                workspace_id=args.workspace_id,
+                vibecrafted_session_id=args.session_id,
+                workspace_instance_id=args.instance_id,
+                runtime=args.runtime,
+                runtime_session_id=args.runtime_session_id,
+                state=args.state,
+                socket_dir=args.socket_dir,
+                replaces_runtime_session_id=(args.replaces_runtime_session_id or None),
+            )
+            return _emit(session.to_payload(), as_json=args.json)
         if args.action == "settlement-counts":
             return _emit(
                 settlement_counts_for_workspace(args.workspace_id),
@@ -1816,15 +2096,19 @@ __all__ = [
     "ENV_WORKSPACE_ID",
     "ENV_WORKSPACE_INSTANCE_ID",
     "INSTANCE_SCHEMA",
+    "RUNTIME_SESSION_STATES",
+    "SESSION_RECORD_SCHEMA",
     "SNAPSHOT_MANIFEST_SCHEMA",
     "BuildId",
     "RunWorkspaceIdentity",
+    "RuntimeSessionAttachment",
     "WorkspaceCatalog",
     "WorkspaceCatalogError",
     "WorkspaceInstance",
     "WorkspaceInstanceBuildMismatch",
     "WorkspaceNotFound",
     "WorkspaceRecord",
+    "WorkspaceSessionRecord",
     "WorkspaceSnapshotManifest",
     "build_empty_snapshot_manifest",
     "bury_workspace",
@@ -1840,6 +2124,8 @@ __all__ = [
     "operator_session_name",
     "read_catalog",
     "read_snapshot_manifest",
+    "read_workspace_session",
+    "record_runtime_session_attachment",
     "recover_workspace",
     "resolve_run_workspace_identity",
     "resolve_worker_host_session",
@@ -1850,5 +2136,6 @@ __all__ = [
     "worker_host_display_label",
     "worker_host_session_name",
     "workspace_cli_main",
+    "workspace_session_path",
     "write_snapshot_manifest",
 ]

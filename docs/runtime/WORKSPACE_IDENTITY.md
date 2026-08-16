@@ -55,7 +55,7 @@ $VIBECRAFTED_HOME/control_plane/workspaces/
   catalog.json                 # vibecrafted.workspace-catalog.v1
   .catalog.lock
   instances/<uuid>.json        # vibecrafted.workspace-instance.v1
-  sessions/                    # reserved for session records
+  sessions/<uuid>.json        # vibecrafted.workspace-session.v1
   snapshot_manifests/<uuid>.json
   migration_report.json
 ```
@@ -70,12 +70,28 @@ vibecrafted workspace select   <workspace_id>
 vibecrafted workspace bury     <workspace_id>     # hide without deleting history
 vibecrafted workspace recover  <workspace_id> [--select]
 vibecrafted workspace materialize <workspace_id> [--root PATH]
+vibecrafted workspace session-attach --workspace-id UUID --session-id UUID \
+  --instance-id UUID --runtime vc-frame --runtime-session-id NAME --state live|dead|missing
 vibecrafted workspace migrate  [--dry-run]
 vibecrafted workspace settlement-counts <workspace_id>
 ```
 
 `bury` detaches live instances. `recover` reactivates the logical workspace
 without pretending an incompatible live runtime can be attached.
+
+## WES runtime attachments
+
+A logical `vibecrafted_session_id` may own multiple physical runtime
+incarnations. They are append-preserved in
+`sessions/<vibecrafted_session_id>.json`; a dead `vc-frame` is evidence, not a
+process to resurrect or delete. A replacement is added as another attachment
+with `replaces_runtime_session_id`, while the dead attachment and its socket
+namespace remain visible to WES.
+
+On macOS, Vibecrafted.app opens new frames under the short product socket root
+`/tmp/vc-frame-$UID`. Before opening the new window it reads the former
+TMPDIR-based namespace and attaches every discovered live/dead session to WES.
+It never kills or rewrites those legacy physical sessions.
 
 ## Worker host routing
 
@@ -185,5 +201,6 @@ vc-frame resurrection.** Cut B must:
 ## Python module
 
 `vibecrafted_core.workspace_catalog` — create/list/select/show/bury/recover,
+WES runtime attachments,
 `resolve_run_workspace_identity`, `resolve_worker_host_session`,
 `settlement_counts_for_workspace`, snapshot manifest helpers.

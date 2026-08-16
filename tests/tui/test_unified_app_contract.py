@@ -3158,6 +3158,35 @@ def test_terminal_policy_uses_operator_toml_and_primary_shell_chain() -> None:
     assert '"-e", install.primaryShell.path, install.start.path, "operator"' in delegate
     assert 'productConfig.appendingPathComponent("terminal-entry.toml")' in delegate
     assert 'productConfig.appendingPathComponent("terminal-theme.toml")' in delegate
+    assert 'let socketRoot = "/tmp/vc-frame-\\(getuid())"' in delegate
+    assert 'environment["VC_FRAME_SOCKET_DIR"] = socketRoot' in delegate
+    assert 'environment["ZELLIJ_SOCKET_DIR"] = socketRoot' in delegate
+    assert 'environment["VIBECRAFTED_LEGACY_VC_FRAME_SOCKET_DIR"]' in delegate
+
+
+def test_primary_shell_exits_instead_of_reusing_pty_after_vc_start_failure(
+    tmp_path: Path,
+) -> None:
+    failing_start = tmp_path / "vc-start"
+    failing_start.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
+    failing_start.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(REPO_ROOT / "config/alacritty/launch-primary-shell.zsh"),
+            str(failing_start),
+            "operator",
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "HOME": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 7
 
 
 def test_manifest_producer_emits_an_app_accepted_by_the_runtime_verifier(

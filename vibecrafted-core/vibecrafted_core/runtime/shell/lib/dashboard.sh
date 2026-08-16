@@ -69,6 +69,13 @@ _vetcoders_control_plane_eye_prepare() {
 _vetcoders_product_entry_prepare() {
   _vetcoders_product_workspace_prepare
 
+  # Vibecrafted.app moved new frames to a short product-owned socket root.
+  # Preserve every physical session found in the old namespace as a WES
+  # attachment before the new visible workspace is opened.
+  if declare -F _vetcoders_import_legacy_vc_frame_sessions >/dev/null 2>&1; then
+    _vetcoders_import_legacy_vc_frame_sessions || return $?
+  fi
+
   # Normalize ambient context first so frontier resolution is stable.
   if declare -F _vetcoders_normalize_ambient_context >/dev/null 2>&1; then
     _vetcoders_normalize_ambient_context || true

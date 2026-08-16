@@ -137,6 +137,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     environment["VIBECRAFTED_PYTHON"] = install.root.appendingPathComponent("bin/python3").path
     environment["VIBECRAFTED_VC_FRAME_BIN"] = install.frame.path
     environment["VC_FRAME_CONFIG_DIR"] = install.frameConfig.path
+    // Keep Unix socket paths below macOS' 104-byte sockaddr_un limit. Preserve
+    // the former TMPDIR namespace for one-way import into WES during startup.
+    let socketRoot = "/tmp/vc-frame-\(getuid())"
+    environment["VC_FRAME_SOCKET_DIR"] = socketRoot
+    environment["ZELLIJ_SOCKET_DIR"] = socketRoot
+    if let temp = host["TMPDIR"]?.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
+      !temp.isEmpty
+    {
+      environment["VIBECRAFTED_LEGACY_VC_FRAME_SOCKET_DIR"] =
+        "/\(temp)/vc-frame-\(getuid())"
+    }
 
     let process = Process()
     process.executableURL = install.terminalHost

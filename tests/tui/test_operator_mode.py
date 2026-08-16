@@ -65,6 +65,10 @@ def _write_stateful_vc_frame(
                 'with capture.open("a", encoding="utf-8") as fh:',
                 '    fh.write("VC_FRAME " + " ".join(args) + "\\n")',
                 'if args[:1] == ["ls"]:',
+                '    if os.environ.get("FAKE_VC_FRAME_DUPLICATE") == "1":',
+                '        print(f"{session} [Created 2m ago]")',
+                '        print(f"{session} [Created 1m ago] (EXITED - attach to resurrect)")',
+                "        sys.exit(0)",
                 '    if state == "live":',
                 '        print(f"{session} [Created 1m ago]")',
                 '    elif state == "dead":',
@@ -1119,6 +1123,127 @@ def test_vc_start_resume_resurrects_dead_session(tmp_path: Path) -> None:
     assert f"kill-session {expected}" not in payload
     assert f"--session {recovery_session}" in payload
     assert "--new-session-with-layout" in payload
+
+
+def test_dead_session_recovery_failure_is_not_reported_as_prepared(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "capture.log"
+    session_state_file = tmp_path / "session-state.txt"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    session_state_file.write_text("dead", encoding="utf-8")
+    _write_stateful_vc_frame(fake_bin, capture_file, session_state_file)
+    vc_frame = fake_bin / "vc-frame"
+    source = vc_frame.read_text(encoding="utf-8")
+    vc_frame.write_text(
+        source.replace(
+            'if "--new-session-with-layout" in args:\n'
+            '    state_file.write_text("live", encoding="utf-8")\n'
+            "    sys.exit(0)",
+            'if "--new-session-with-layout" in args:\n'
+            '    print("socket path rejected", file=sys.stderr)\n'
+            "    sys.exit(2)",
+        ),
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["CAPTURE_FILE"] = str(capture_file)
+    env["SESSION_STATE_FILE"] = str(session_state_file)
+    env["FAKE_VC_FRAME_SESSION"] = _expected_operator_session()
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                '_vetcoders_ensure_vc_frame_session "workspace-deadbeef" '
+                '"$(_vetcoders_operator_layout_file)"; '
+                'rc=$?; printf "prepared=%s\\n" '
+                '"${VIBECRAFTED_PREPARED_VC_FRAME_SESSION:-}"; exit "$rc"'
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert result.stdout.strip() == "prepared="
+    assert "socket path rejected" in result.stderr
+
+
+def test_legacy_frame_namespace_is_attached_to_wes_before_new_window(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    frame_capture = tmp_path / "frame.log"
+    wes_capture = tmp_path / "wes.log"
+    session_state_file = tmp_path / "session-state.txt"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    session_state_file.write_text("dead", encoding="utf-8")
+    _write_stateful_vc_frame(fake_bin, frame_capture, session_state_file)
+    vibecrafted = fake_bin / "vibecrafted"
+    vibecrafted.write_text(
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$WES_CAPTURE_FILE"\n',
+        encoding="utf-8",
+    )
+    vibecrafted.chmod(0o755)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["CAPTURE_FILE"] = str(frame_capture)
+    env["WES_CAPTURE_FILE"] = str(wes_capture)
+    env["SESSION_STATE_FILE"] = str(session_state_file)
+    env["FAKE_VC_FRAME_SESSION"] = "workspace-deadbeef"
+    env["FAKE_VC_FRAME_DUPLICATE"] = "1"
+    env["VIBECRAFTED_WORKSPACE_ID"] = "019ca123-1234-7123-8123-123456789abc"
+    env["VIBECRAFTED_SESSION_ID"] = "019ca124-1234-7123-8123-123456789abc"
+    env["VIBECRAFTED_WORKSPACE_INSTANCE_ID"] = "019ca125-1234-7123-8123-123456789abc"
+    env["VC_FRAME_SOCKET_DIR"] = "/tmp/vc-frame-501"
+    env["ZELLIJ_SOCKET_DIR"] = "/tmp/vc-frame-501"
+    env["VIBECRAFTED_LEGACY_VC_FRAME_SOCKET_DIR"] = "/legacy/vc-frame-501"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f'source "{HELPER_SCRIPT}"; _vetcoders_import_legacy_vc_frame_sessions',
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    args = wes_capture.read_text(encoding="utf-8").splitlines()
+    assert args[:2] == ["workspace", "session-attach"]
+    assert args[args.index("--runtime-session-id") + 1] == "workspace-deadbeef"
+    # vc-frame may expose a live socket and stale EXITED cache with the same
+    # name. One live incarnation wins over duplicate dead metadata.
+    assert args[args.index("--state") + 1] == "live"
+    assert args[args.index("--socket-dir") + 1] == "/legacy/vc-frame-501"
 
 
 def test_vc_dashboard_recreates_dead_run_id_session_without_layout_suffix(
