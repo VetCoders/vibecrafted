@@ -386,6 +386,40 @@ _vetcoders_recovery_vc_frame_session_name() {
   _vetcoders_compact_session_name "${original}-${suffix}" "$suffix" 20
 }
 
+_vetcoders_run_new_vc_frame_session() {
+  local vc_frame_bin="$1"
+  local session_name="$2"
+  local layout_file="$3"
+  local replaces_runtime_session_id="${4:-}"
+  shift 4
+
+  # A foreground vc-frame client does not return until the operator detaches.
+  # Persist the intended physical incarnation first, then promote it to live as
+  # soon as the server socket appears. Otherwise the old ordering leaves WES
+  # unaware of the active session for the entire lifetime of the app window.
+  _vetcoders_record_vc_frame_attachment \
+    missing "$session_name" "$replaces_runtime_session_id" || return $?
+
+  (
+    _vetcoders_wait_for_vc_frame_session "$session_name" &&
+      _vetcoders_record_vc_frame_attachment \
+        live "$session_name" "$replaces_runtime_session_id"
+  ) &
+  local attachment_recorder_pid=$!
+
+  "$vc_frame_bin" "$@" \
+    --session "$session_name" --new-session-with-layout "$layout_file"
+  local frame_rc=$?
+
+  if (( frame_rc != 0 )); then
+    kill "$attachment_recorder_pid" 2>/dev/null || true
+    wait "$attachment_recorder_pid" 2>/dev/null || true
+    return "$frame_rc"
+  fi
+
+  wait "$attachment_recorder_pid"
+}
+
 _vetcoders_ensure_vc_frame_session() {
   local PATH="${PATH:-}"
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
@@ -421,9 +455,14 @@ _vetcoders_ensure_vc_frame_session() {
       if (( inside_vc_frame )); then
         "$vc_frame_bin" action switch-session "$session_name" || return $?
       else
+        # The foreground attach blocks until the client detaches. WES must know
+        # about the live physical session before handing control to the client.
+        _vetcoders_record_vc_frame_attachment live "$session_name" || return $?
         "$vc_frame_bin" "$@" attach "$session_name" || return $?
       fi
-      _vetcoders_record_vc_frame_attachment live "$session_name" || true
+      if (( inside_vc_frame )); then
+        _vetcoders_record_vc_frame_attachment live "$session_name" || true
+      fi
       export VIBECRAFTED_PREPARED_VC_FRAME_SESSION="$session_name"
       ;;
     dead)
@@ -458,9 +497,13 @@ _vetcoders_ensure_vc_frame_session() {
           wait "$bg_pid_dead" 2>/dev/null || true
           "$vc_frame_bin" action switch-session "$session_name" || return $?
         else
-          "$vc_frame_bin" "$@" --session "$session_name" --new-session-with-layout "$layout_file" || return $?
+          _vetcoders_run_new_vc_frame_session \
+            "$vc_frame_bin" "$session_name" "$layout_file" "$dead_session_name" \
+            "$@" || return $?
         fi
-        _vetcoders_record_vc_frame_attachment live "$session_name" "$dead_session_name" || true
+        if (( inside_vc_frame )); then
+          _vetcoders_record_vc_frame_attachment live "$session_name" "$dead_session_name" || true
+        fi
         export VIBECRAFTED_PREPARED_VC_FRAME_SESSION="$session_name"
       else
         echo "Session '$dead_session_name' is dead and no layout is available for a new recovery session." >&2
@@ -493,9 +536,12 @@ _vetcoders_ensure_vc_frame_session() {
           wait "$bg_pid" 2>/dev/null || true
           "$vc_frame_bin" action switch-session "$session_name" || return $?
         else
-          "$vc_frame_bin" "$@" --session "$session_name" --new-session-with-layout "$layout_file" || return $?
+          _vetcoders_run_new_vc_frame_session \
+            "$vc_frame_bin" "$session_name" "$layout_file" "" "$@" || return $?
         fi
-        _vetcoders_record_vc_frame_attachment live "$session_name" || true
+        if (( inside_vc_frame )); then
+          _vetcoders_record_vc_frame_attachment live "$session_name" || true
+        fi
         export VIBECRAFTED_PREPARED_VC_FRAME_SESSION="$session_name"
       else
         echo "Layout file missing and session not found." >&2
