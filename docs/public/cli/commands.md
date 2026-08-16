@@ -127,6 +127,12 @@ otherwise the original prompt is replayed as `resume-new-session`.
 `01a00…` / `VIBECRAFTED_SESSION_ID` is the Vibecrafted runtime session, not
 Claude or Codex.
 
+Bare `vibecrafted resume <agent>` (optional `--root`) opens a **new**
+interactive session and attaches an AICX continuity pack. It never
+native-attaches the last same-agent candidate. `--root` is an AICX project
+filter, not a session picker. The catalog in the pack is evidence, not a
+swipe list.
+
 ```bash
 printf '%s' "continue safely" | vibecrafted resume-session codex \
   --agent-session-id <provider-session-id> --prompt-stdin

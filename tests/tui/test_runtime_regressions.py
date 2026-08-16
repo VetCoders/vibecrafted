@@ -284,6 +284,10 @@ def test_bare_resume_keeps_aicx_continuity_in_operator_session(
     assert command.startswith(f"{agent} ")
     assert "AICX OVERLAY BODY" in command
     assert not command.startswith("tracked ")
+    assert "historical-codex-session" not in command
+    assert "--resume" not in command
+    assert "--conversation" not in command
+    assert "--session-id=" not in command
     if headless_flag:
         assert headless_flag not in command
 
@@ -1255,10 +1259,8 @@ def test_worker_spawn_scripts_default_to_headless(
 def test_aicx_resume_fallback_skips_provider_pruned_candidates(
     tmp_path: Path, any_local_copy: bool
 ) -> None:
-    """A native-resume candidate is only valid while the provider still holds
-    the session locally. aicx retains extracts after Claude Code prunes its
-    session store, so an unvalidated candidate dies at launch with
-    "No conversation found with session ID" (observed in the field 2026-07-28).
+    """Bare resume must not native-attach, even when AICX still lists a
+    live same-agent row. Pruned local copies stay catalog evidence.
     """
     import datetime as dt
 
@@ -1336,19 +1338,20 @@ def test_aicx_resume_fallback_skips_provider_pruned_candidates(
     fields = dict(
         line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
     )
-    if any_local_copy:
-        assert fields.get("SESSION_ID") == "live-bbbb-2222"
-        assert fields.get("MODE") == "native_resume"
-    else:
-        assert fields.get("SESSION_ID") == ""
-        assert fields.get("MODE") == "new_session"
+    assert fields.get("SESSION_ID") == ""
+    assert fields.get("MODE") == "new_session"
     meta_files = list((home / ".vibecrafted" / "tmp").glob("*.meta.json"))
     assert meta_files, "fallback must persist its meta sidecar"
     meta = json.loads(meta_files[0].read_text(encoding="utf-8"))
-    assert any(
-        d.startswith("native_candidate_missing_local:gone-aaaa-1111")
-        for d in meta["degradations"]
-    ), meta["degradations"]
+    assert meta["mode"] == "new_session"
+    assert meta["session_id"] == ""
+    pack = next((home / ".vibecrafted" / "tmp").glob("resume-aicx-claude-*.md"))
+    text = pack.read_text(encoding="utf-8")
+    assert "prefer native resume" not in text.lower()
+    assert "recover previous session" not in text.lower()
+    assert "gone-aaaa-1111" in text
+    if any_local_copy:
+        assert "live-bbbb-2222" in text
 
 
 def test_aicx_resume_fallback_resolves_cargo_foundation_without_shell_path(
@@ -1372,7 +1375,8 @@ def test_aicx_resume_fallback_resolves_cargo_foundation_without_shell_path(
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
-    env["PATH"] = "/usr/bin:/bin"
+    python_dir = str(Path(sys.executable).resolve().parent)
+    env["PATH"] = f"{python_dir}:/usr/bin:/bin"
 
     result = subprocess.run(
         [
@@ -1445,8 +1449,11 @@ def test_aicx_resume_fallback_uses_cross_org_exact_repo_filter(
 
     assert result.returncode == 0, result.stderr
     invoked = calls.read_text(encoding="utf-8").splitlines()
+    continuity = [line for line in invoked if line.startswith("continuity ")]
     tail = [line for line in invoked if line.startswith("tail ")]
     intents = [line for line in invoked if line.startswith("intents ")]
+    assert continuity, invoked
+    assert any("-p /codescribe" in line for line in continuity)
     assert len(tail) == 1
     assert len(intents) == 1
     assert tail[0].endswith("-p /codescribe")
@@ -1454,3 +1461,4 @@ def test_aicx_resume_fallback_uses_cross_org_exact_repo_filter(
     pack = next((home / ".vibecrafted" / "tmp").glob("resume-aicx-grok-*.md"))
     text = pack.read_text(encoding="utf-8")
     assert "aicx_project_filter: `/codescribe`" in text
+    assert "prefer native resume" not in text.lower()

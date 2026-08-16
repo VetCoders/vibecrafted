@@ -3,6 +3,17 @@
 All notable changes to 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+### Changed
+
+- Bare `vibecrafted resume <agent>` (and `--root`) opens a new interactive
+  session plus an AICX continuity pack. It no longer native-attaches the last
+  same-agent AICX candidate. Native provider resume requires `--session <id>`.
+- Resume pack assembler lives in `aicx_session_chain` (CLI transport + MCP
+  session-chain contract). Catalog rows are evidence, not a Tinder picker.
+  Empty-with-`-p` is `empty_project`, not a silent scanned=0.
+
 ## 4.1.0 — 2026-08-16
 
 > **One app, one real terminal.** `Vibecrafted.app` owns the macOS product
