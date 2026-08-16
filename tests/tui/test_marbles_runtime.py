@@ -679,6 +679,30 @@ def test_parse_contract_double_dash_still_passes_literal_dash_text() -> None:
     assert "TAIL=--literal-text" in payload
 
 
+def test_parse_contract_accepts_run_id_and_last_flags() -> None:
+    payload = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                "_vetcoders_parse_contract --run-id work-260816-213657-08420 --last; "
+                'printf "RUN=%s\\n" "$_vetcoders_contract_run_id"; '
+                'printf "LAST=%s\\n" "$_vetcoders_contract_last"; '
+                'printf "PROMPT=%s\\n" "$_vetcoders_contract_prompt"'
+            ),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    ).stdout
+    lines = dict(line.split("=", 1) for line in payload.strip().splitlines())
+    assert lines["RUN"] == "work-260816-213657-08420"
+    assert lines["LAST"] == "1"
+    assert lines["PROMPT"] == ""
+
+
 def test_parse_contract_accepts_fork_session_flag() -> None:
     payload = subprocess.run(
         [
