@@ -1,8 +1,10 @@
 pub mod app;
 pub mod config;
 pub mod launch;
+pub mod memory;
 pub mod mission_control;
 pub mod mux;
+pub mod observe;
 pub mod polarize;
 pub mod procs;
 pub mod run_detail;
@@ -34,6 +36,7 @@ pub use mission_control::{
     FailureEntry, FleetHealthSignal, FleetHealthStatus, MissionControlState, SettlementBoardCounts,
     SkillStatsRow, WaveSegment, WaveState, default_artifact_root,
 };
+pub use observe::{ConsoleView, ObserveHealth, ObserveRun, ObserveState};
 pub use polarize::{PolarizeBand, PolarizeIntent};
 pub use run_detail::{RunDetail, load_run_detail};
 pub use skills_catalog::{SkillAgent, SkillEntry, SkillPayload, SkillPayloadKind};
@@ -146,6 +149,18 @@ fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
             }
             _ => {}
         },
+        LaunchFocus::Memory => match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.focus = LaunchFocus::Browse;
+            }
+            KeyCode::Char('m') => {
+                app.refresh_memory();
+            }
+            KeyCode::Char('w') => {
+                launch_aicx_wizard(app)?;
+            }
+            _ => {}
+        },
         LaunchFocus::Search => match key.code {
             KeyCode::Esc | KeyCode::Enter => {
                 app.focus = LaunchFocus::Browse;
@@ -211,12 +226,18 @@ fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
             KeyCode::Tab => app.next_tab(),
             KeyCode::BackTab => app.previous_tab(),
             KeyCode::Up | KeyCode::Char('k') => match app.active_tab() {
+                AppTab::Monitor if app.config.view == crate::observe::ConsoleView::Observe => {
+                    app.move_observe_selection(-1);
+                }
                 AppTab::Monitor => app.move_selection(-1),
                 AppTab::Dispatch => app.move_dispatch_selection(-1),
                 AppTab::Controls => app.move_deep_selection(-1),
                 AppTab::MissionControl => app.move_mission_focus(-1),
             },
             KeyCode::Down | KeyCode::Char('j') => match app.active_tab() {
+                AppTab::Monitor if app.config.view == crate::observe::ConsoleView::Observe => {
+                    app.move_observe_selection(1);
+                }
                 AppTab::Monitor => app.move_selection(1),
                 AppTab::Dispatch => app.move_dispatch_selection(1),
                 AppTab::Controls => app.move_deep_selection(1),
@@ -265,6 +286,13 @@ fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
                 }
             }
             KeyCode::Char('r') => app.refresh(),
+            KeyCode::Char('m') => {
+                app.refresh_memory();
+                app.focus = LaunchFocus::Memory;
+            }
+            KeyCode::Char('w') => {
+                launch_aicx_wizard(app)?;
+            }
             KeyCode::Char('e') => {
                 app.set_active_tab(AppTab::Dispatch);
                 app.dispatch_selected = DispatchFocus::Prompt as usize;
@@ -326,6 +354,19 @@ fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
         },
     }
     Ok(false)
+}
+
+fn launch_aicx_wizard(app: &mut App) -> anyhow::Result<()> {
+    disable_raw_mode().ok();
+    let _ = execute!(io::stdout(), LeaveAlternateScreen);
+    let result = crate::memory::launch_wizard(&app.memory.project);
+    enable_raw_mode().ok();
+    let _ = execute!(io::stdout(), EnterAlternateScreen);
+    match result {
+        Ok(()) => app.append_status("returned from aicx wizard"),
+        Err(error) => app.show_error("aicx wizard failed", vec![error.to_string()]),
+    }
+    Ok(())
 }
 
 fn launch_selected(app: &mut App) -> anyhow::Result<()> {
@@ -746,6 +787,8 @@ mod tests {
                 launch_runtime: LaunchRuntime::Terminal,
                 terminal_binary: "vc-frame".into(),
                 tick_rate: Duration::from_millis(250),
+                server: "http://100.82.232.70:3025".into(),
+                view: crate::observe::ConsoleView::Full,
             },
             state: ControlPlaneState::empty("/tmp/state"),
             runs: vec![
@@ -774,6 +817,8 @@ mod tests {
             mission_control: crate::mission_control::MissionControlState::default(),
             mission_focus: 0,
             mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
+            observe: Default::default(),
+            memory: Default::default(),
         }
     }
 

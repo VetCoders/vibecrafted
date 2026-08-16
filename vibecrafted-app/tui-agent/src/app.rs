@@ -2,7 +2,9 @@ use crate::config::{AppConfig, path_display};
 use crate::launch::{
     LaunchCommand, LaunchKind, LaunchRequest, LaunchRuntime, build_launch_command,
 };
+use crate::memory::{self, MemoryState};
 use crate::mission_control::{self, ActionQueueItem, ActionQueueKind, MissionControlState};
+use crate::observe::{self, ObserveHealth, ObserveState};
 use crate::polarize::{PolarizeBand, PolarizeIntent};
 use crate::skills_catalog::{self, SkillAgent, SkillPayload, SkillPayloadKind};
 use crate::state::{ControlPlaneState, RenderedRun, RunKind, render_runs};
@@ -79,6 +81,7 @@ pub enum LaunchFocus {
     Search,
     Error,
     Artifact,
+    Memory,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,6 +255,8 @@ pub struct App {
     /// Resolved artifact root used by the mission control aggregator;
     /// kept on the App so tests can swap it explicitly.
     pub mission_artifact_root: PathBuf,
+    pub observe: ObserveState,
+    pub memory: MemoryState,
 }
 
 impl App {
@@ -261,6 +266,8 @@ impl App {
         let runs = render_runs(&state);
         let launch_runtime = config.launch_runtime;
         let mission_artifact_root = mission_control::default_artifact_root();
+        let observe_origin = config.server.clone();
+        let memory_project = memory::default_project(&config.launch_root);
         let mut app = Self {
             config,
             state,
@@ -288,12 +295,22 @@ impl App {
             mission_control: MissionControlState::default(),
             mission_focus: 0,
             mission_artifact_root,
+            observe: ObserveState {
+                origin: observe_origin,
+                ..ObserveState::default()
+            },
+            memory: MemoryState {
+                project: memory_project,
+                ..MemoryState::default()
+            },
         };
         apply_run_filters(&mut app.runs, app.queue_scope, &app.search_query);
         app.sync_selection();
         app.refresh_mux();
         app.refresh_polarize();
         app.refresh_mission_control();
+        app.refresh_observe();
+        app.refresh_memory();
         let path = rmcp_mux::ipc::server::socket_path();
         let summaries = std::sync::Arc::new(std::sync::RwLock::new(app.mux_summaries.clone()));
         app.mux_subscriber = Some(crate::mux::MuxSubscriber::start(path, summaries));
@@ -311,6 +328,7 @@ impl App {
         self.refresh_mux();
         self.refresh_polarize();
         self.refresh_mission_control();
+        self.refresh_observe();
     }
 
     /// Refresh the cached Mission Control view. Cheap on small artifact
@@ -318,6 +336,82 @@ impl App {
     /// trees by `mission_control::META_SCAN_CAP`. Called on every
     /// `refresh()` so the dashboard surfaces stay live without doing
     /// disk IO inside the draw path.
+    pub fn refresh_observe(&mut self) {
+        let origin = self.config.server.clone();
+        self.observe.origin = origin.clone();
+        match observe::fetch_state(&origin) {
+            Ok((generated_at, runs)) => {
+                self.observe.generated_at = generated_at;
+                self.observe.status = ObserveHealth::Live;
+                self.observe.error = None;
+                self.observe.runs = runs;
+                if self.observe.selected >= self.observe.runs.len() {
+                    self.observe.selected = self.observe.runs.len().saturating_sub(1);
+                }
+                self.refresh_observe_transcript();
+            }
+            Err(error) => {
+                if self.observe.runs.is_empty() {
+                    self.observe.status = ObserveHealth::Offline;
+                } else {
+                    self.observe.status = ObserveHealth::Degraded;
+                }
+                self.observe.error = Some(error.to_string());
+            }
+        }
+    }
+
+    pub fn refresh_observe_transcript(&mut self) {
+        let Some(run) = self.observe.runs.get(self.observe.selected) else {
+            self.observe.transcript.clear();
+            self.observe.transcript_run_id = None;
+            return;
+        };
+        let run_id = run.run_id.clone();
+        if self.observe.transcript_run_id.as_deref() == Some(run_id.as_str())
+            && !self.observe.transcript.is_empty()
+        {
+            return;
+        }
+        match observe::fetch_transcript(&self.config.server, &run_id) {
+            Ok(body) => {
+                self.observe.transcript = body;
+                self.observe.transcript_run_id = Some(run_id);
+            }
+            Err(error) => {
+                self.observe.transcript = format!("transcript unavailable: {error}");
+                self.observe.transcript_run_id = Some(run_id);
+            }
+        }
+    }
+
+    pub fn move_observe_selection(&mut self, delta: isize) {
+        if self.observe.runs.is_empty() {
+            return;
+        }
+        let count = self.observe.runs.len() as isize;
+        let mut index = self.observe.selected as isize + delta;
+        while index < 0 {
+            index += count;
+        }
+        self.observe.selected = (index % count) as usize;
+        self.observe.transcript.clear();
+        self.observe.transcript_run_id = None;
+        self.refresh_observe_transcript();
+    }
+
+    pub fn refresh_memory(&mut self) {
+        let project = memory::default_project(&self.config.launch_root);
+        self.memory = memory::load_continuity(&project);
+    }
+
+    pub fn open_aicx_wizard(&mut self) {
+        let project = memory::default_project(&self.config.launch_root);
+        if let Err(error) = memory::launch_wizard(&project) {
+            self.show_error("aicx wizard failed", vec![error.to_string()]);
+        }
+    }
+
     pub fn refresh_mission_control(&mut self) {
         self.mission_control = MissionControlState::build_with_intents(
             &self.state,
@@ -851,6 +945,8 @@ impl App {
             "y           copy resume/report/run identity to clipboard".to_string(),
             "f           cycle queue scope: live, history, all".to_string(),
             "/           search runs by id, agent, skill, status, path".to_string(),
+            "m           AICX memory overlay (continuity)".to_string(),
+            "w           open aicx wizard search".to_string(),
             "x           archive selected run from the operator view".to_string(),
             "r           refresh control-plane state".to_string(),
             "?           close this guide".to_string(),
