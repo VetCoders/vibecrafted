@@ -4,7 +4,6 @@ import os
 import subprocess
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 THEME_COMMAND = REPO_ROOT / "bin/vc-theme"
 
@@ -69,8 +68,7 @@ def test_theme_toggle_switches_the_active_vc_frame_session_too(tmp_path: Path) -
     fake_bin.mkdir()
     fake_vc_frame = fake_bin / "vc-frame"
     fake_vc_frame.write_text(
-        "#!/bin/sh\n"
-        'printf "%s\\n" "$*" >> "$VC_FRAME_ACTION_LOG"\n',
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$VC_FRAME_ACTION_LOG"\n',
         encoding="utf-8",
     )
     fake_vc_frame.chmod(0o755)
