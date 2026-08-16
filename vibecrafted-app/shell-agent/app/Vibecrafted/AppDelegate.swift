@@ -75,11 +75,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     launchWorkspaceTerminal()
-    showMainWindowIfNeeded()
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    true
+    false
   }
 
   func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
@@ -417,9 +416,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let menu = NSMenu()
     menu.addItem(
       withTitle: "Open Console", action: #selector(openConsoleFromStatusItem), keyEquivalent: "")
+    menu.addItem(
+      withTitle: "Open vc-terminal", action: #selector(openTerminalFromStatusItem),
+      keyEquivalent: "")
     menu.addItem(.separator())
     menu.addItem(
-      withTitle: "Quit Vibecrafted", action: #selector(NSApplication.terminate(_:)),
+      withTitle: "Quit", action: #selector(NSApplication.terminate(_:)),
       keyEquivalent: "q")
     item.menu = menu
     statusItem = item
@@ -432,6 +434,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         self.showMainWindowIfNeeded()
       }
     }
+  }
+
+  @objc private func openTerminalFromStatusItem() {
+    if let process = terminalProcess, process.isRunning {
+      NSRunningApplication(processIdentifier: process.processIdentifier)?.activate(options: [])
+      return
+    }
+    launchWorkspaceTerminal()
   }
 
   private func buildMainMenu() {

@@ -757,6 +757,9 @@ def test_native_app_bootstraps_and_launches_only_the_canonical_product_entry() -
     delegate = (
         REPO_ROOT / "vibecrafted-app/shell-agent/app/Vibecrafted/AppDelegate.swift"
     ).read_text(encoding="utf-8")
+    info = (
+        REPO_ROOT / "vibecrafted-app/shell-agent/app/Vibecrafted/Info.plist"
+    ).read_text(encoding="utf-8")
     cargo = (REPO_ROOT / "vibecrafted-app/tui-agent/Cargo.toml").read_text(
         encoding="utf-8"
     )
@@ -764,7 +767,28 @@ def test_native_app_bootstraps_and_launches_only_the_canonical_product_entry() -
         encoding="utf-8"
     )
 
-    assert "launchWorkspaceTerminal()" in delegate
+    launch_handler = delegate[
+        delegate.index("func applicationDidFinishLaunching") : delegate.index(
+            "func applicationShouldTerminateAfterLastWindowClosed"
+        )
+    ]
+    assert "launchWorkspaceTerminal()" in launch_handler
+    assert "showMainWindowIfNeeded()" not in launch_handler
+    assert "\t<key>LSUIElement</key>\n\t<true/>" in info
+    assert 'withTitle: "Open Console"' in delegate
+    assert 'withTitle: "Open vc-terminal"' in delegate
+    assert 'withTitle: "Quit"' in delegate
+    assert "process.isRunning" in delegate
+    assert (
+        "NSRunningApplication(processIdentifier: process.processIdentifier)?.activate(options: [])"
+        in delegate
+    )
+    termination_handler = delegate[
+        delegate.index(
+            "func applicationShouldTerminateAfterLastWindowClosed"
+        ) : delegate.index("func applicationSupportsSecureRestorableState")
+    ]
+    assert "    false\n" in termination_handler
     assert "Contents/Helpers/vc-terminal.app/Contents/MacOS/alacritty" in delegate
     assert "config/alacritty/launch-primary-shell.zsh" in delegate
     assert 'appendingPathComponent("releases", isDirectory: true)' in delegate
