@@ -2962,7 +2962,11 @@ def _probe_registry() -> tuple[ProbeSpec, ...]:
         )
     )
     for name, stage, assertions in (
-        ("sanitized_launch", "W2", ("closed_environment", "launch_succeeds")),
+        (
+            "sanitized_launch",
+            "W2",
+            ("closed_environment", "launch_succeeds", "vc_git_reachable"),
+        ),
         ("mission_control", "W2", ("mission_control_reachable",)),
         ("bundled_console", "W2", ("bundled_console_reachable",)),
         ("start_here", "W2", ("onboarding_reachable",)),
@@ -3314,10 +3318,15 @@ def _scenario_sanitized_launch(
     launcher = scenario.launchers / "vibecrafted"
     version = _scenario_command(scenario, [launcher, "version"]).stdout.strip()
     help_output = _scenario_command(scenario, [launcher, "--help"]).stdout
+    vc_git_help = _scenario_command(
+        scenario, [scenario.launchers / "vc-git", "--help"]
+    ).stdout
     if scenario.bundled_version.encode() not in version:
         raise RuntimeError("installed CLI version is not the bundled identity")
     if scenario.bundled_version.encode() not in help_output:
         raise RuntimeError("installed CLI help is not source-stamped")
+    if b"Show full Git context, including every worktree." not in vc_git_help:
+        raise RuntimeError("installed vc-git launcher is unavailable")
     for candidate in scenario.launchers.iterdir():
         if candidate.is_symlink() or not candidate.is_file():
             raise RuntimeError(
@@ -3331,6 +3340,7 @@ def _scenario_sanitized_launch(
     return {
         "closed_environment": "keys=" + ",".join(expected_keys),
         "launch_succeeds": version,
+        "vc_git_reachable": hashlib.sha256(vc_git_help).hexdigest(),
     }
 
 

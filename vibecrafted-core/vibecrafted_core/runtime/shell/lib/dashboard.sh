@@ -49,6 +49,20 @@ _vetcoders_product_workspace_prepare() {
   done <<< "$resolved"
 }
 
+_vetcoders_control_plane_eye_prepare() {
+  command -v vibecrafted >/dev/null 2>&1 || return 0
+  vibecrafted server status >/dev/null 2>&1 && return 0
+
+  # The macOS product owns a persistent LaunchAgent. Reconcile that one owner
+  # instead of starting a second foreground server with hard-coded defaults.
+  # Linux and Windows keep their existing non-mutating entry behavior until
+  # their platform service managers have an equivalent durable owner.
+  if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]; then
+    vibecrafted server service reconcile >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
 # Product lifecycle choke shared by shell `vc-start` and deck `cmd_start`.
 # Pins product config, projects Super/scripts when available, pokes control-plane
 # eye (best-effort). Never loads into ordinary PATH-only shells unless called.
@@ -84,10 +98,8 @@ _vetcoders_product_entry_prepare() {
       >/dev/null 2>&1 || true
   fi
 
-  # Control-plane eye — best effort; never block cockpit if server is down.
-  if command -v vibecrafted >/dev/null 2>&1; then
-    vibecrafted server status >/dev/null 2>&1 || true
-  fi
+  # Control-plane eye — best effort; never block cockpit if repair is unavailable.
+  _vetcoders_control_plane_eye_prepare
 
   export VIBECRAFTED_PRODUCT_ENTRY=1
   return 0

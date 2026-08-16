@@ -388,6 +388,117 @@ def test_vc_start_probe_pins_product_config(tmp_path: Path) -> None:
     assert "should-not-run-in-probe" not in out
 
 
+def test_product_entry_reconciles_the_one_macos_server_service_owner(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    xdg = tmp_path / "xdg"
+    bin_dir = tmp_path / "bin"
+    capture = tmp_path / "server-calls"
+    frontier = xdg / "vetcoders/frontier/vc-frame"
+    (frontier / "layouts").mkdir(parents=True)
+    (frontier / "config.kdl").write_text("// product frontier\n", encoding="utf-8")
+    (frontier / "layouts/operator.kdl").write_text("layout {\n}\n", encoding="utf-8")
+    home.mkdir()
+    bin_dir.mkdir()
+
+    _write_fake_bin(bin_dir, "python3", "#!/usr/bin/env bash\nexit 1\n")
+    _write_fake_bin(bin_dir, "uname", "#!/usr/bin/env bash\necho Darwin\n")
+    _write_fake_bin(
+        bin_dir,
+        "vibecrafted",
+        textwrap.dedent(
+            f"""\
+            #!/usr/bin/env bash
+            printf '%s\\n' "$*" >> "{capture}"
+            if [[ "$*" == "workspace resolve --env" ]]; then exit 0; fi
+            if [[ "$*" == "server status" ]]; then exit 1; fi
+            if [[ "$*" == "server service reconcile" ]]; then exit 0; fi
+            exit 1
+            """
+        ),
+    )
+
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(xdg),
+        "VIBECRAFTED_ROOT": str(REPO),
+        "VIBECRAFTED_PRODUCT_ENTRY_PROBE": "1",
+        "USER": "test",
+    }
+    proc = subprocess.run(
+        ["bash", "-lc", f'source "{HELPER}"; vc-start'],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(REPO),
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    calls = capture.read_text(encoding="utf-8").splitlines()
+    assert "server status" in calls
+    assert "server service reconcile" in calls
+
+
+def test_product_entry_does_not_invent_a_non_macos_service_owner(
+    tmp_path: Path,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    capture = tmp_path / "server-calls"
+    bin_dir.mkdir()
+    _write_fake_bin(bin_dir, "uname", "#!/usr/bin/env bash\necho Linux\n")
+    _write_fake_bin(
+        bin_dir,
+        "vibecrafted",
+        f'#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "{capture}"\nexit 1\n',
+    )
+
+    proc = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{DASHBOARD}"; _vetcoders_control_plane_eye_prepare',
+        ],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"},
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert capture.read_text(encoding="utf-8").splitlines() == ["server status"]
+
+
+def test_product_entry_keeps_a_healthy_macos_server_untouched(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    capture = tmp_path / "server-calls"
+    bin_dir.mkdir()
+    _write_fake_bin(bin_dir, "uname", "#!/usr/bin/env bash\necho Darwin\n")
+    _write_fake_bin(
+        bin_dir,
+        "vibecrafted",
+        f'#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "{capture}"\nexit 0\n',
+    )
+
+    proc = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{DASHBOARD}"; _vetcoders_control_plane_eye_prepare',
+        ],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"},
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert capture.read_text(encoding="utf-8").splitlines() == ["server status"]
+
+
 def test_vc_start_probe_twice_is_stable(tmp_path: Path) -> None:
     """Verification plan: re-run twice for consistent success."""
     home = tmp_path / "home"

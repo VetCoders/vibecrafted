@@ -20,6 +20,7 @@ The product has six working layers:
 | Operator runbook      | `docs/RUNBOOK.md` — terminal-first: cold start, dispatch, supervision, recovery                               |
 | Install and support   | `docs/INSTALL.md` (channel matrix + status), `docs/DOCKER.md`, `make help`, `make help-dev`                   |
 | Release cut           | `docs/RELEASE_KICKOFF.md` (identity), `docs/RELEASE_CHECKLIST.md` (4.1.0 DMG command sequence)                |
+| Next release          | `docs/ROADMAP_4.1.1.md` — planned shared, digestible `vc-init pack` for every provider                        |
 | Package-manager stage | `packaging/` (Homebrew formula + cask; winget skipped — no native Windows build)                              |
 | Install (public docs) | `docs/public/getting-started/`: `install.md` · `build-from-source.md` · `first-run.md` · `update.md`          |
 | Command deck          | `scripts/vibecrafted`, `docs/WORKFLOWS.md`, `docs/SKILLS.md`                                                  |

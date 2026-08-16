@@ -177,7 +177,10 @@ now = dt.datetime.now(dt.timezone.utc)
 cutoff = now - dt.timedelta(hours=hours)
 since = cutoff.date().isoformat()
 root_path = pathlib.Path(root).resolve()
-project = root_path.name
+# AICX's leading-slash filter means an exact repository name across every org.
+# It retains continuity through org moves without the ambiguity of a bare name
+# and without fuzzy-matching sibling repositories such as codescribe-rs.
+project_filter = f"/{root_path.name}"
 degradations: list[str] = []
 max_pack_chars = 48_000
 
@@ -293,30 +296,29 @@ if candidate is None and resumable_same_agent:
 # Overlay is best-effort and often slow on large repos — never block resume.
 intents_md = ""
 code, out, err = run(
-    [aicx_bin, "tail", "-H", str(hours), "--limit", "20", "-p", project],
+    [aicx_bin, "tail", "-H", str(hours), "--limit", "20", "-p", project_filter],
     timeout=12,
 )
 if code == 0 and out.strip():
     intents_md = out.strip()
 else:
     degradations.append(f"tail:{code}:{(err or out)[:160]}")
-    for project_args in ([project], []):
-        cmd = [
-            aicx_bin,
-            "intents",
-            "-H",
-            str(hours),
-            "--limit",
-            "15",
-            "--emit",
-            "markdown",
-        ]
-        if project_args:
-            cmd.extend(["-p", project_args[0]])
-        code, out, err = run(cmd, timeout=12)
-        if code == 0 and out.strip():
-            intents_md = out.strip()
-            break
+    cmd = [
+        aicx_bin,
+        "intents",
+        "-H",
+        str(hours),
+        "--limit",
+        "15",
+        "--emit",
+        "markdown",
+        "-p",
+        project_filter,
+    ]
+    code, out, err = run(cmd, timeout=12)
+    if code == 0 and out.strip():
+        intents_md = out.strip()
+    else:
         degradations.append(f"intents:{code}:{(err or out)[:160]}")
 
 overlay_blob = ""
@@ -342,6 +344,7 @@ lines: list[str] = [
     "",
     f"- agent: `{agent}`",
     f"- root: `{root_path}`",
+    f"- aicx_project_filter: `{project_filter}` (cross-org exact repo name)",
     f"- window: last {hours}h across all agents",
     f"- assembled_at: `{now.isoformat()}`",
 ]

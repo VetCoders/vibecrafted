@@ -1394,3 +1394,63 @@ def test_aicx_resume_fallback_resolves_cargo_foundation_without_shell_path(
     assert result.returncode == 0, result.stderr
     assert "MODE=new_session" in result.stdout
     assert "aicx foundation not found" not in result.stderr
+
+
+def test_aicx_resume_fallback_uses_cross_org_exact_repo_filter(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    repo = tmp_path / "codescribe"
+    fake_bin = tmp_path / "bin"
+    calls = tmp_path / "aicx-calls"
+    for directory in (home, repo, fake_bin):
+        directory.mkdir()
+    _write_fake_command(
+        fake_bin / "aicx",
+        "#!/bin/bash\n"
+        f'printf \'%s\\n\' "$*" >> "{calls}"\n'
+        'if [[ "$1 $2" == "sessions list" ]]; then\n'
+        "  printf '[]\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [[ "$1" == "tail" ]]; then exit 1; fi\n'
+        'if [[ "$1" == "intents" ]]; then\n'
+        "  printf '# Intent Report\\n\\n_No records._\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [[ "$1" == "overlay" ]]; then printf \'{}\\n\'; exit 0; fi\n'
+        "exit 1\n",
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                f'source "{SHELL_SH}"\n'
+                f"_vetcoders_aicx_resume_fallback grok {shlex.quote(str(repo))}"
+            ),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    invoked = calls.read_text(encoding="utf-8").splitlines()
+    tail = [line for line in invoked if line.startswith("tail ")]
+    intents = [line for line in invoked if line.startswith("intents ")]
+    assert len(tail) == 1
+    assert len(intents) == 1
+    assert tail[0].endswith("-p /codescribe")
+    assert intents[0].endswith("-p /codescribe")
+    pack = next((home / ".vibecrafted" / "tmp").glob("resume-aicx-grok-*.md"))
+    text = pack.read_text(encoding="utf-8")
+    assert "aicx_project_filter: `/codescribe`" in text

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -101,8 +104,62 @@ def test_builder_emits_the_canonical_versioned_dmg_and_checksum() -> None:
     assert "build-server-release" in builder
     assert 'install -m 0755 "$server_source" "$runtime/bin/vc-server"' in builder
     assert '"$runtime/server/site/"' in builder
-    assert "vc-server-supervisor:vibecrafted_core.server_supervisor" in builder
+    assert '"$REPO_ROOT/scripts/render-python-entrypoint-launchers.py"' in builder
+    assert '"$REPO_ROOT/vibecrafted-core/pyproject.toml"' in builder
     assert '"$runtime/runtime"' not in builder
+
+
+def test_release_entrypoint_renderer_uses_manifest_and_preserves_existing(
+    tmp_path: Path,
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        """
+[project]
+name = "entrypoint-fixture"
+version = "1.0.0"
+
+[project.scripts]
+demo-cli = "demo_module:main"
+native-cli = "demo_module:main"
+""".lstrip(),
+        encoding="utf-8",
+    )
+    module = tmp_path / "demo_module.py"
+    module.write_text(
+        "import json, sys\n"
+        "def main():\n"
+        "    print(json.dumps(sys.argv))\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "python3").symlink_to(sys.executable)
+    native = bin_dir / "native-cli"
+    native.write_text("native implementation\n", encoding="utf-8")
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/render-python-entrypoint-launchers.py"),
+            "--pyproject",
+            str(pyproject),
+            "--bin-dir",
+            str(bin_dir),
+        ],
+        check=True,
+    )
+
+    assert native.read_text(encoding="utf-8") == "native implementation\n"
+    result = subprocess.run(
+        [str(bin_dir / "demo-cli"), "one"],
+        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": str(tmp_path)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(result.stdout) == ["demo-cli", "one"]
 
 
 def test_release_bundle_binds_the_vibecrafted_app_icon() -> None:

@@ -40,6 +40,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   closure, and validates the immutable annotated-tag source contract.
 - The Ghostty/terminal palette and bundled vc-frame assets preserve readable
   light-mode foregrounds instead of inheriting dark-mode text colors.
+- Product entry reconciles the one configured macOS server LaunchAgent when it
+  is unhealthy, so Live Runs reads the configured control-plane donor instead
+  of waiting forever while no server owns the port.
+- The DMG builder derives missing Python launchers from the package's canonical
+  `[project.scripts]` manifest. Public commands such as `vc-git` can no longer
+  be green in source yet absent from the installed app.
+- Mounted-DMG verification canonicalizes equivalent `/tmp` and `/private/tmp`
+  paths while still requiring the exact signed app and runtime generation.
+- AICX fallback resume uses the exact cross-organization `-p /repo` filter,
+  retaining history through organization renames without ambiguous bare-name
+  failures or an unsafe fallback that mixes unrelated projects into the pack.
 
 ### Security
 

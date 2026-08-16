@@ -2166,6 +2166,18 @@ def test_walkaround_production_registry_covers_all_late_stage_probes() -> None:
     }
 
 
+def test_walkaround_sanitized_launch_requires_public_vc_git() -> None:
+    sanitized = next(
+        spec for spec in contract._probe_registry() if spec.name == "sanitized_launch"
+    )
+
+    assert sanitized.assertions == (
+        "closed_environment",
+        "launch_succeeds",
+        "vc_git_reachable",
+    )
+
+
 def test_walkaround_session_socket_stays_below_darwin_sun_path_limit() -> None:
     representative = (
         contract._WALKAROUND_TEMP_PARENT / "vc-wa-xxxxxxxx" / "tmp" / "s.sock"

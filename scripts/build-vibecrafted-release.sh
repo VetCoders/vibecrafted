@@ -321,22 +321,14 @@ build_product() {
     'exec "$runtime_root/python/bin/python3.12" "$@"' \
     > "$runtime/bin/python3"
   chmod 0755 "$runtime/bin/python3"
-  for entrypoint_module in \
-    'vc-guardian:vibecrafted_core.guardian' \
-    'vc-server-supervisor:vibecrafted_core.server_supervisor' \
-    'verify-vibecrafted-walkaround:vibecrafted_core.walkaround_runner'; do
-    entrypoint="${entrypoint_module%%:*}"
-    module="${entrypoint_module#*:}"
-    # The wrapper must resolve BASH_SOURCE when it runs, not while this bundle is assembled.
-    # shellcheck disable=SC2016
-    printf '%s\n' \
-      '#!/bin/bash' \
-      'set -euo pipefail' \
-      'bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
-      "exec \"\$bin_dir/python3\" -m $module \"\$@\"" \
-      > "$runtime/bin/$entrypoint"
-    chmod 0755 "$runtime/bin/$entrypoint"
-  done
+  # pyproject.toml is the one public Python-command manifest. Preserve curated
+  # native/shell implementations already present in bin and fill every missing
+  # console script from that manifest so the app bootstrap cannot silently
+  # omit a shipped command such as vc-git.
+  "$REPO_ROOT/scripts/project-python" \
+    "$REPO_ROOT/scripts/render-python-entrypoint-launchers.py" \
+    --pyproject "$REPO_ROOT/vibecrafted-core/pyproject.toml" \
+    --bin-dir "$runtime/bin"
 
   if find "$APP" -type l -print -quit | grep -q .; then
     die "assembled app contains symlinks"
