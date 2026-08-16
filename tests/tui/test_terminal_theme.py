@@ -88,3 +88,44 @@ def test_theme_toggle_switches_the_active_vc_frame_session_too(tmp_path: Path) -
     assert action_log.read_text(encoding="utf-8") == (
         "--session workspace-9082c14d action set-light-theme\n"
     )
+
+
+def test_theme_failure_never_publishes_host_palette_before_frame_accepts_it(
+    tmp_path: Path,
+) -> None:
+    config_home = tmp_path / "xdg"
+    product_dir = config_home / "vibecrafted"
+    active_theme = product_dir / "terminal-theme.toml"
+    fake_bin = tmp_path / "bin"
+    observed_theme = tmp_path / "theme-seen-by-frame"
+    product_dir.mkdir(parents=True)
+    fake_bin.mkdir()
+    active_theme.write_text(
+        (REPO_ROOT / "config/vc-terminal/themes/dark.toml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    fake_vc_frame = fake_bin / "vc-frame"
+    fake_vc_frame.write_text(
+        '#!/bin/sh\ncp "$VC_THEME_ACTIVE_FILE" "$VC_THEME_OBSERVED_FILE"\nexit 23\n',
+        encoding="utf-8",
+    )
+    fake_vc_frame.chmod(0o755)
+
+    result = _run_theme(
+        "light",
+        config_home=config_home,
+        extra_env={
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "ZELLIJ_SESSION_NAME": "workspace-9082c14d",
+            "VC_THEME_ACTIVE_FILE": str(active_theme),
+            "VC_THEME_OBSERVED_FILE": str(observed_theme),
+        },
+    )
+
+    dark_palette = (REPO_ROOT / "config/vc-terminal/themes/dark.toml").read_text(
+        encoding="utf-8"
+    )
+    assert result.returncode == 1
+    assert "host palette remains dark" in result.stderr
+    assert observed_theme.read_text(encoding="utf-8") == dark_palette
+    assert active_theme.read_text(encoding="utf-8") == dark_palette
