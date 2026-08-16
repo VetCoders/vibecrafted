@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -45,7 +44,7 @@ def _runtime_env(monkeypatch, tmp_path: Path, run_id: str) -> Path:
         "VIBECRAFTED_TEE_OUTPUT",
     ):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_BIN", str(bin_dir))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
     monkeypatch.setenv("VIBECRAFTED_RUN_ID", run_id)

@@ -48,7 +48,8 @@ from .report_contract import CLAIM_DIGEST_ENV, reserve_launcher_report_template
 from .research_config import ResearchAgentSelection, resolve_research_runtime_config
 from .run_mutation import mutate_run_meta, run_mutation_locks
 from .run_triage import BUCKET_LIVE
-from .spawn import _stdin_command
+from .runtime_paths import agent_tool_search_path
+from .spawn import _resolve_agent_command, _stdin_command
 from .workflow_runtime import WORKER_SIGNAL_DISCIPLINE, native_resume_argv
 from .workflows import registry as workflow_registry
 
@@ -1980,6 +1981,28 @@ def launch_workflow(
         if worker_command_override is not None
         else build_launch_command(spec, source_dir, prompt_file=prompt_path)
     )
+    merged_env = dict(os.environ)
+    if env:
+        merged_env.update(env)
+    merged_env["PATH"] = agent_tool_search_path(merged_env)
+    try:
+        worker_command = _resolve_agent_command(spec.agent, worker_command, merged_env)
+    except FileNotFoundError as exc:
+        return {
+            "accepted": False,
+            "message": f"Failed to launch {spec.skill}: {exc}",
+            "error": f"{type(exc).__name__}: {exc}",
+            "worker_command": worker_command,
+            "run_id": run_id,
+            "agent": spec.agent,
+            "skill": spec.skill,
+            "root": spec.root,
+            "report": str(report_path),
+            "transcript": str(artifacts["transcript"]),
+            "meta": str(artifacts["meta"]),
+            "prompt_file": str(prompt_path),
+            "control_plane": {"sync": "deferred", "run_id": run_id},
+        }
     launch_tracking = _launch_tracking_payload(launch_meta)
     model_receipt = _model_override_receipt(spec.agent, spec.model)
     if spec.model and runtime_kind == "supervised_research":
@@ -2002,9 +2025,6 @@ def launch_workflow(
     launch_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M%S")
     launch_log = launch_dir / f"{stamp}_{spec.skill}.log"
-    merged_env = dict(os.environ)
-    if env:
-        merged_env.update(env)
     merged_env.pop(CLAIM_DIGEST_ENV, None)
     _prepend_pythonpath(merged_env, _core_package_root())
     session_id = ensure_session_id(merged_env.get("VIBECRAFTED_SESSION_ID"))

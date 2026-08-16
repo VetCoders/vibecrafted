@@ -347,6 +347,7 @@ def test_guardian_real_server_fxn_exactly_once(
     monkeypatch.setenv("VIBECRAFTED_HOME", str(vc_home))
     monkeypatch.setenv("VIBECRAFTED_TRUST_JOURNAL", str(journal))
     monkeypatch.setenv("VIBECRAFTED_GUARD", "1")
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_BIN", str(fake_bin))
     monkeypatch.setenv("VC_GUARDIAN_PROOF_CODEX_LOG", str(codex_log))
     monkeypatch.setenv("PATH", str(fake_bin))
     monkeypatch.setenv(

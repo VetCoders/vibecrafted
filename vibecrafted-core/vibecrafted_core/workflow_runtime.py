@@ -22,7 +22,8 @@ from .research_config import (
     ResearchAgentSelection,
     resolve_research_runtime_config,
 )
-from .spawn import _stdin_command
+from .runtime_paths import agent_tool_search_path
+from .spawn import _resolve_agent_command, _stdin_command
 from .supervisor_async import AsyncRunHandle, AsyncSupervisor
 
 
@@ -193,6 +194,7 @@ def _child_env(
     env["VIBECRAFTED_REPORT_PATH"] = str(report)
     env["VIBECRAFTED_TRANSCRIPT_PATH"] = str(transcript)
     env["VIBECRAFTED_META_PATH"] = str(meta)
+    env["PATH"] = agent_tool_search_path(env)
     if model_requested:
         env["VIBECRAFTED_MODEL_REQUESTED"] = model_requested
     return env
@@ -610,13 +612,15 @@ async def _run_child(
         if command is not None
         else _with_model_override(agent, _stdin_command(agent), model_requested)
     )
+    child_env = _child_env(agent, report, transcript, meta, model_requested)
+    child_command = _resolve_agent_command(agent, child_command, child_env)
     if _tee_enabled():
         print(f"\n===== {kind}:{label}:{agent} =====", flush=True)
     handle: AsyncRunHandle = await AsyncSupervisor().run(
         run_id=run_id,
         command=child_command,
         root=root,
-        env=_child_env(agent, report, transcript, meta, model_requested),
+        env=child_env,
         meta_path=meta,
         report_path=report,
         transcript_path=transcript,

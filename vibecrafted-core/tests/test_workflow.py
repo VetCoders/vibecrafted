@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from vibecrafted_core import control_plane, process_control, trust, workflow
+from vibecrafted_core import control_plane, process_control, spawn, trust, workflow
 from vibecrafted_core.settlement import TrustReceiptV1
 
 _NATIVE_RESUME_CLAIM_SCRIPT = r"""
@@ -453,6 +453,54 @@ def test_launch_workflow_keeps_dispatcher_launch_even_if_worker_command_is_bad(
     assert payload["accepted"] is True
     assert payload["run_id"]
     assert payload["worker_command"] == ["definitely-missing-vibecrafted-binary"]
+
+
+def test_resolve_agent_command_uses_canonical_path_not_inherited_path(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    provider_bin = home / ".local/bin"
+    provider_bin.mkdir(parents=True)
+    executable = provider_bin / "claude"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o755)
+
+    resolved = spawn._resolve_agent_command(
+        "claude",
+        ["claude", "-p"],
+        {"HOME": str(home), "PATH": str(tmp_path / "rogue")},
+    )
+
+    assert resolved == [str(executable), "-p"]
+
+
+def test_launch_workflow_rejects_missing_provider_before_acceptance_event(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    spec = workflow.WorkflowLaunchSpec(
+        agent="claude",
+        mode="workflow",
+        skill="workflow",
+        prompt="go",
+        file="",
+        runtime="headless",
+        root=str(tmp_path),
+    )
+    monkeypatch.setattr(workflow, "_stdin_command", lambda _agent: ["claude", "-p"])
+
+    def _missing(*_args: Any, **_kwargs: Any) -> list[str]:
+        raise FileNotFoundError("provider executable 'claude' not found")
+
+    monkeypatch.setattr(workflow, "_resolve_agent_command", _missing)
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(workflow, "append_event", lambda **event: events.append(event))
+
+    payload = workflow.launch_workflow(spec, tmp_path)
+
+    assert payload["accepted"] is False
+    assert "provider executable 'claude' not found" in payload["error"]
+    assert events == []
 
 
 def test_build_launch_command_never_delegates_to_legacy_shell_runtime() -> None:

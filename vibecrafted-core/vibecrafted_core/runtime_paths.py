@@ -7,6 +7,7 @@ callers never hardcode a user's layout; ``resolve_env_path`` is the shared knob.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 
@@ -106,3 +107,50 @@ def vibecrafted_runtime_bin() -> Path:
 def vibecrafted_launcher_bin() -> Path:
     """``$VIBECRAFTED_LAUNCHER_BIN`` or ``~/.local/bin`` — where shims land on PATH."""
     return resolve_env_path("VIBECRAFTED_LAUNCHER_BIN", Path.home() / ".local" / "bin")
+
+
+def agent_tool_search_path(environment: Mapping[str, str] | None = None) -> str:
+    """Return the canonical allowlisted PATH for detached provider processes.
+
+    Launchd and other supervisors intentionally provide a minimal environment.
+    Provider discovery must therefore not depend on interactive shell startup,
+    but it must also not trust arbitrary inherited PATH entries.  Keep this in
+    lockstep with ``runtime/scripts/lib/util.sh:spawn_prepend_agent_tool_paths``.
+    """
+
+    env = os.environ if environment is None else environment
+    raw_home = str(env.get("HOME", "")).strip()
+    home = Path(raw_home).expanduser() if raw_home else Path.home()
+    raw_xdg_data = str(env.get("XDG_DATA_HOME", "")).strip()
+    xdg_data = (
+        Path(raw_xdg_data).expanduser() if raw_xdg_data else home / ".local/share"
+    )
+    raw_runtime_home = str(env.get("VIBECRAFTED_RUNTIME_HOME", "")).strip()
+    runtime_home = (
+        Path(raw_runtime_home).expanduser()
+        if raw_runtime_home
+        else xdg_data / "vibecrafted"
+    )
+    raw_runtime_bin = str(env.get("VIBECRAFTED_RUNTIME_BIN", "")).strip()
+    runtime_bin = (
+        Path(raw_runtime_bin).expanduser() if raw_runtime_bin else runtime_home / "bin"
+    )
+    candidates = (
+        runtime_bin,
+        home / ".local/bin",
+        home / ".cargo/bin",
+        home / "tools/scripts",
+        Path("/opt/homebrew/bin"),
+        Path("/opt/homebrew/sbin"),
+        Path("/usr/local/bin"),
+        Path("/usr/bin"),
+        Path("/bin"),
+        Path("/usr/sbin"),
+        Path("/sbin"),
+    )
+    resolved: list[str] = []
+    for candidate in candidates:
+        text = str(candidate)
+        if candidate.is_dir() and text not in resolved:
+            resolved.append(text)
+    return os.pathsep.join(resolved)
