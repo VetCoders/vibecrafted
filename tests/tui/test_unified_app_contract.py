@@ -3067,12 +3067,12 @@ def test_terminal_policy_uses_operator_toml_and_primary_shell_chain() -> None:
     terminal = (REPO_ROOT / "config/vc-terminal/vibecrafted.toml").read_text(
         encoding="utf-8"
     )
-    dark = (
-        REPO_ROOT / "config/vc-terminal/themes/dark.toml"
-    ).read_text(encoding="utf-8")
-    light = (
-        REPO_ROOT / "config/vc-terminal/themes/light.toml"
-    ).read_text(encoding="utf-8")
+    dark = (REPO_ROOT / "config/vc-terminal/themes/dark.toml").read_text(
+        encoding="utf-8"
+    )
+    light = (REPO_ROOT / "config/vc-terminal/themes/light.toml").read_text(
+        encoding="utf-8"
+    )
     primary_shell = (REPO_ROOT / "config/alacritty/launch-primary-shell.zsh").read_text(
         encoding="utf-8"
     )
