@@ -980,6 +980,7 @@ cmd_doctor_help() {
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted doctor\n'
+  printf '  vibecrafted doctor --fix-server-service\n'
   printf '  vibecrafted check\n'
   printf '\n'
 }
@@ -4670,6 +4671,24 @@ cmd_doctor() {
   # vc-frame delivery, and receipt truth. Calling the installer alone produced
   # a false green while the live server path was broken.
   local source_root="" installer="" core_dir="" python_bin="" doctor_rc=0
+  if _is_help_flag "${1:-}"; then
+    cmd_doctor_help
+    return 0
+  fi
+  if [[ "${1:-}" == "--fix-server-service" ]]; then
+    if [[ "$#" -ne 1 ]]; then
+      printf 'Usage: vibecrafted doctor --fix-server-service\n' >&2
+      return 2
+    fi
+    # Do not weaken the identity guard. The only repair for a mismatched
+    # LaunchAgent is to render it again from the exact staged supervisor and
+    # its sibling launcher, then let launchd verify the new pair.
+    _server_supervisor_cli service install || return $?
+    # A successful mutation is not a health claim. Re-run the full doctor
+    # against the freshly reconciled runtime before returning success.
+    cmd_doctor
+    return $?
+  fi
   case "${1:-}" in
     ""|--json)
       core_dir="$(_core_module_dir 2>/dev/null || true)"
