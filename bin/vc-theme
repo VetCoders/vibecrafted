@@ -18,6 +18,7 @@ theme_name() {
 
 publish_theme() {
     name=$1
+    previous=$(theme_name)
     source=${theme_dir}/${name}.toml
     test -f "$source" || {
         printf 'vc-theme: missing signed palette: %s\n' "$source" >&2
@@ -31,6 +32,20 @@ publish_theme() {
     chmod 0600 "$temporary"
     mv -f "$temporary" "$active_theme"
     trap - EXIT HUP INT TERM
+
+    # A running vc-frame must switch its own palette in the same operation.
+    # Updating only the host palette creates a light terminal behind dark
+    # chrome: plugins retain pale ink and become unreadable on ivory.
+    # Outside a frame this simply writes the next launch's host preference.
+    if test -n "${ZELLIJ_SESSION_NAME:-}"; then
+        if ! vc-frame --session "$ZELLIJ_SESSION_NAME" action "set-${name}-theme" >/dev/null; then
+            # Do not leave a half-applied light/dark transition behind.
+            cp "${theme_dir}/${previous}.toml" "$active_theme"
+            printf 'vc-theme: vc-frame rejected %s theme; host palette restored to %s\n' \
+                "$name" "$previous" >&2
+            return 1
+        fi
+    fi
     printf '%s\n' "$name"
 }
 
