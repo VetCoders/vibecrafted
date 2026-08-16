@@ -170,6 +170,15 @@ def test_release_workflow_is_read_only_and_validates_the_exact_tag_source() -> N
     assert "gh release edit" not in workflow
 
 
+def test_core_gate_isolated_from_the_previously_installed_runtime_stamp() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    gate = makefile.split("\ntest-core:", 1)[1].split("\ndispatch-test:", 1)[0]
+
+    assert "mktemp -d" in gate
+    assert 'VIBECRAFTED_TOOLS_HOME="$$test_tools_home"' in gate
+    assert "vibecrafted-test-core-tools.XXXXXX" in gate
+
+
 def test_bootstrap_help_requires_canonical_provenance_archives() -> None:
     installer = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
     usage = installer.split("usage() {", 1)[1].split("EOF_USAGE", 2)[1]

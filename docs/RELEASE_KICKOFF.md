@@ -24,7 +24,7 @@ unexpected release assets, failed Apple validation or failed mounted-DMG
 walk-around. It publishes only after downloading and byte-comparing the draft
 assets.
 
-The ordered command sequence to cut 4.0.0 with that DMG attached — including
+The ordered command sequence to cut 4.1.0 with that DMG attached — including
 which `$HOME/.keys` files must be present and what each verification step
 proves — is [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
 

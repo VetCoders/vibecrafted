@@ -504,9 +504,13 @@ test-keychain-session:
 
 test-core:
 	@if command -v uv >/dev/null 2>&1; then \
-		uv run --project vibecrafted-core --with pytest python -m pytest vibecrafted-core/tests -q; \
+		test_tools_home=$$(mktemp -d "$${TMPDIR:-/tmp}/vibecrafted-test-core-tools.XXXXXX"); \
+		trap 'rm -rf "$$test_tools_home"' EXIT; \
+		VIBECRAFTED_TOOLS_HOME="$$test_tools_home" uv run --project vibecrafted-core --with pytest python -m pytest vibecrafted-core/tests -q; \
 	else \
-		PYTHONPATH="$(SOURCE)/vibecrafted-core" $(PYTHON) -m pytest vibecrafted-core/tests -q; \
+		test_tools_home=$$(mktemp -d "$${TMPDIR:-/tmp}/vibecrafted-test-core-tools.XXXXXX"); \
+		trap 'rm -rf "$$test_tools_home"' EXIT; \
+		VIBECRAFTED_TOOLS_HOME="$$test_tools_home" PYTHONPATH="$(SOURCE)/vibecrafted-core" $(PYTHON) -m pytest vibecrafted-core/tests -q; \
 	fi
 
 dispatch-test:
