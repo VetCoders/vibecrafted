@@ -24,6 +24,7 @@ from .control_plane import (
     sync_state,
 )
 from .package_resources import deck_path, package_root
+from .runtime_paths import is_operator_home_root, resolve_operator_launch_root
 from .workflow import (
     await_launch_truth,
     classify_resume_identity,
@@ -1550,12 +1551,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 else:
                     _print_resume_session_receipt(resume_result)
                 return 2
+        resume_root = args.root or resolve_operator_launch_root()
+        if is_operator_home_root(resume_root):
+            print(
+                "error: refusing to launch against the home directory; "
+                "open a workspace in Vibecrafted or pass --root",
+                file=sys.stderr,
+            )
+            return 2
         resume_result = manual_resume_session(
             args.agent,
             args.agent_session_id,
             args.source_dir or package_root(),
             prompt=prompt,
-            root=args.root or Path.cwd(),
+            root=resume_root,
             model=args.model,
         )
         if args.json:
@@ -1578,13 +1587,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     research_agents = ()
     if args.command == "research" and isinstance(agent_arg, list):
         research_agents = tuple(agent_arg) if len(agent_arg) > 1 else ()
+    launch_root = args.root or str(resolve_operator_launch_root())
+    if is_operator_home_root(launch_root):
+        print(
+            "error: refusing to launch against the home directory; "
+            "open a workspace in Vibecrafted or pass --root",
+            file=sys.stderr,
+        )
+        return 2
     payload = {
         "skill": LAUNCH_ALIASES.get(args.command, args.command),
         "agent": args.agent,
         "prompt": prompt,
         "file": args.file,
-        "runtime": _default_runtime(args.runtime, args.root),
-        "root": args.root or str(Path.cwd()),
+        "runtime": _default_runtime(args.runtime, launch_root),
+        "root": launch_root,
         "mode": args.mode or args.command,
         "count": args.count,
         "depth": args.depth,

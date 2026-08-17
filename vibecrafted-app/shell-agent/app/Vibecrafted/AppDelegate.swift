@@ -34,6 +34,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   var mainWindow: MainWindowController?
   private var statusItem: NSStatusItem?
   private var terminalProcess: Process?
+  private var eyeReconcileProcess: Process?
   let eventObserver = EventObserver()
 
   func showMainWindowIfNeeded() {
@@ -126,7 +127,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     ]
     var environment = Dictionary(
       uniqueKeysWithValues: inherited.compactMap { key in host[key].map { (key, $0) } })
-    environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+    environment["PATH"] = hostAgentSearchPath(
+      generationBin: install.root.appendingPathComponent("bin"),
+      home: host["HOME"])
     environment["PYTHONNOUSERSITE"] = "1"
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     environment["XDG_CONFIG_HOME"] = install.configHome.path
@@ -161,6 +164,53 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       terminalProcess = process
     } catch {
       print("Failed to launch bundled vc-terminal: \(error)")
+    }
+    reconcileControlPlaneEye(install: install, environment: environment)
+  }
+
+  /// Closed allowlist matching ``runtime_paths.agent_tool_search_path``.
+  /// Codex's shebang is ``#!/usr/bin/env node`` — system PATH alone 127s.
+  private func hostAgentSearchPath(generationBin: URL, home: String?) -> String {
+    var entries: [String] = []
+    func appendDirectory(_ path: String) {
+      var isDirectory: ObjCBool = false
+      guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+        isDirectory.boolValue,
+        !entries.contains(path)
+      else { return }
+      entries.append(path)
+    }
+    appendDirectory(generationBin.path)
+    if let home, !home.isEmpty {
+      appendDirectory((home as NSString).appendingPathComponent(".local/bin"))
+      appendDirectory((home as NSString).appendingPathComponent(".cargo/bin"))
+      appendDirectory((home as NSString).appendingPathComponent("tools/scripts"))
+    }
+    for path in [
+      "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin",
+      "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+    ] {
+      appendDirectory(path)
+    }
+    return entries.joined(separator: ":")
+  }
+
+  private func reconcileControlPlaneEye(
+    install: CanonicalRuntimeInstall, environment: [String: String]
+  ) {
+    let deck = install.root.appendingPathComponent("bin/vibecrafted")
+    guard FileManager.default.isExecutableFile(atPath: deck.path) else { return }
+    let process = Process()
+    process.executableURL = deck
+    process.arguments = ["server", "service", "reconcile"]
+    process.environment = environment
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    do {
+      try process.run()
+      eyeReconcileProcess = process
+    } catch {
+      print("Cannot reconcile the control-plane eye: \(error)")
     }
   }
 
@@ -325,7 +375,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       "export VIBECRAFTED_PYTHON=\(shellQuote(generation.appendingPathComponent("bin/python3").path))",
       "export VIBECRAFTED_VC_FRAME_BIN=\(shellQuote(frame.path))",
       "export VC_FRAME_CONFIG_DIR=\(shellQuote(frameConfig.path))",
-      "export PATH=\(shellQuote("\(generation.appendingPathComponent("bin").path):/usr/bin:/bin:/usr/sbin:/sbin"))",
+      "export PATH=\(shellQuote(hostAgentSearchPath(generationBin: generation.appendingPathComponent("bin"), home: home)))",
     ]
     let runtimeEntries = try manager.contentsOfDirectory(
       at: bin, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])

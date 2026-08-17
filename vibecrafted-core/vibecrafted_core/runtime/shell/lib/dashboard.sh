@@ -67,7 +67,16 @@ _vetcoders_control_plane_eye_prepare() {
 # Pins product config, projects Super/scripts when available, pokes control-plane
 # eye (best-effort). Never loads into ordinary PATH-only shells unless called.
 _vetcoders_product_entry_prepare() {
+  # Host CLIs (node/codex) must be on PATH before workspace resolve and the
+  # control-plane eye — AppDelegate/vc-start start with a closed allowlist.
+  if declare -F _vetcoders_path_with_bundled_bin_priority >/dev/null 2>&1; then
+    PATH="$(_vetcoders_path_with_bundled_bin_priority "${PATH:-}")"
+    export PATH
+  fi
   _vetcoders_product_workspace_prepare
+  if [[ -n "${VIBECRAFTED_WORKSPACE_ROOT:-}" && -d "$VIBECRAFTED_WORKSPACE_ROOT" ]]; then
+    cd "$VIBECRAFTED_WORKSPACE_ROOT" || true
+  fi
 
   # Vibecrafted.app moved new frames to a short product-owned socket root.
   # Preserve every physical session found in the old namespace as a WES

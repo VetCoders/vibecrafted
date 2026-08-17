@@ -8,7 +8,11 @@ from pathlib import Path
 import pytest
 from vibecrafted_core.capabilities import ProbeResult as CliProbe
 from vibecrafted_core.continuity import capabilities as continuity
-from vibecrafted_core.runtime_paths import agent_tool_search_path
+from vibecrafted_core.runtime_paths import (
+    agent_tool_search_path,
+    is_operator_home_root,
+    resolve_operator_launch_root,
+)
 
 ALL_AGENTS = ("claude", "codex", "gemini", "agy", "junie", "grok")
 VERDICTS = {
@@ -143,6 +147,46 @@ def test_agent_tool_search_path_matches_detached_allowlist(tmp_path: Path) -> No
     ]
     assert str(rogue_bin) not in entries
     assert len(entries) == len(set(entries))
+
+
+def test_resolve_operator_launch_root_uses_workspace_from_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "screenscribe"
+    home.mkdir()
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    resolved = resolve_operator_launch_root(
+        cwd=home,
+        env={"HOME": str(home), "VIBECRAFTED_WORKSPACE_ROOT": str(workspace)},
+    )
+    assert resolved == workspace.resolve()
+
+
+def test_resolve_operator_launch_root_keeps_an_explicit_git_tree(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "other"
+    workspace = tmp_path / "selected"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    workspace.mkdir()
+    resolved = resolve_operator_launch_root(
+        cwd=repo,
+        env={"VIBECRAFTED_WORKSPACE_ROOT": str(workspace)},
+    )
+    assert resolved == repo.resolve()
+
+
+def test_is_operator_home_root_matches_only_home(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    other = tmp_path / "repo"
+    home.mkdir()
+    other.mkdir()
+    env = {"HOME": str(home)}
+    assert is_operator_home_root(home, env=env)
+    assert not is_operator_home_root(other, env=env)
 
 
 def test_probe_confirms_fake_agy_contract(

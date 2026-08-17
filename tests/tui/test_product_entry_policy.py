@@ -105,6 +105,15 @@ def test_product_entry_prepare_exists_in_shipped_dashboard() -> None:
     dispatch = DISPATCH.read_text(encoding="utf-8")
     assert "_vetcoders_product_entry_prepare" in dispatch
     assert "VIBECRAFTED_PRODUCT_ENTRY_PROBE" in dispatch
+    start = text.index("_vetcoders_product_entry_prepare() {")
+    end = text.index("\n}", start)
+    body = text[start:end]
+    assert body.index("_vetcoders_path_with_bundled_bin_priority") < body.index(
+        "_vetcoders_product_workspace_prepare"
+    )
+    assert body.index("_vetcoders_product_workspace_prepare") < body.index(
+        "_vetcoders_control_plane_eye_prepare"
+    )
 
 
 def test_shipped_deck_routes_workspace_resolution_to_core(tmp_path: Path) -> None:

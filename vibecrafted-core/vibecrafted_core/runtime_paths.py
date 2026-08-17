@@ -104,6 +104,48 @@ def vibecrafted_runtime_bin() -> Path:
     )
 
 
+def resolve_operator_launch_root(
+    *,
+    cwd: Path | None = None,
+    env: Mapping[str, str] | None = None,
+) -> Path:
+    """Root for `vibecrafted review` and siblings when the operator is at $HOME.
+
+    App shells often start in the home directory. A selected WES workspace is
+    the product root; reviewing `$HOME` is never a useful default.
+    """
+
+    environ = os.environ if env is None else env
+    here = (cwd or Path.cwd()).expanduser().resolve()
+    raw_home = str(environ.get("HOME") or "").strip()
+    home = Path(raw_home).expanduser().resolve() if raw_home else Path.home().resolve()
+    workspace = str(environ.get("VIBECRAFTED_WORKSPACE_ROOT") or "").strip()
+    in_git = (here / ".git").exists() or any(
+        (parent / ".git").exists() for parent in here.parents
+    )
+    if workspace and (here == home or not in_git):
+        selected = Path(workspace).expanduser().resolve()
+        if selected.is_dir():
+            return selected
+    return here
+
+
+def is_operator_home_root(
+    root: str | Path,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> bool:
+    """True when ``root`` is the operator home directory (never a useful launch)."""
+
+    environ = os.environ if env is None else env
+    raw_home = str(environ.get("HOME") or "").strip()
+    home = Path(raw_home).expanduser().resolve() if raw_home else Path.home().resolve()
+    try:
+        return Path(root).expanduser().resolve() == home
+    except OSError:
+        return False
+
+
 def vibecrafted_launcher_bin() -> Path:
     """``$VIBECRAFTED_LAUNCHER_BIN`` or ``~/.local/bin`` — where shims land on PATH."""
     return resolve_env_path("VIBECRAFTED_LAUNCHER_BIN", Path.home() / ".local" / "bin")

@@ -805,13 +805,18 @@ def test_native_app_bootstraps_and_launches_only_the_canonical_product_entry() -
     assert 'generation.appendingPathComponent("bin/vc-server-supervisor")' in delegate
     assert "rename(temporary.path, destination.path)" in delegate
     assert "assertNoSymlinks(below: generation)" in delegate
-    assert 'environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"' in delegate
+    assert 'environment["PATH"] = hostAgentSearchPath(' in delegate
+    assert "func hostAgentSearchPath(generationBin: URL, home: String?)" in delegate
+    assert '"/opt/homebrew/bin"' in delegate
+    assert '["server", "service", "reconcile"]' in delegate
     assert "shell-agent" not in delegate
     assert 'name = "vc-start"' in cargo
     assert '"--noprofile"' in launcher
     assert '"--norc"' in launcher
     assert 'source "$1"; shift; vc-start "$@"' in launcher
     assert 'Command::new("/bin/bash")' in launcher
+    assert "fn host_agent_search_path(" in launcher
+    assert '"/opt/homebrew/bin"' in launcher
 
 
 def test_tracked_product_source_contains_no_symlinks() -> None:

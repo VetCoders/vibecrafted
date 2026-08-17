@@ -652,6 +652,7 @@ def _vc_frame_subprocess_env() -> dict[str, str]:
         socket = f"/tmp/vc-frame-{os.getuid()}"
         env["VC_FRAME_SOCKET_DIR"] = socket
         env["ZELLIJ_SOCKET_DIR"] = socket
+    env["PATH"] = agent_tool_search_path(env)
     return env
 
 

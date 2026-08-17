@@ -1,15 +1,46 @@
 //! Hermetic product entrypoint for the bundled Vibecrafted runtime.
 //!
 //! This executable deliberately does not read a login shell profile. It locates
-//! the runtime carried inside Vibecrafted.app, adds only that runtime bin plus
-//! the system path, sources the shipped shell facade, and enters `vc-start`.
+//! the runtime carried inside Vibecrafted.app, composes the closed host-agent
+//! PATH allowlist (generation bin + Homebrew + `~/.local/bin` + system),
+//! sources the shipped shell facade, and enters `vc-start`.
 
 use std::env;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-const SYSTEM_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
+const SYSTEM_PATH_ENTRIES: &[&str] = &[
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+];
+
+fn host_agent_search_path(runtime_bin: &Path, home: Option<&Path>) -> String {
+    let mut entries = Vec::new();
+    let mut push = |path: PathBuf| {
+        if path.is_dir() {
+            let text = path.display().to_string();
+            if !entries.iter().any(|existing| existing == &text) {
+                entries.push(text);
+            }
+        }
+    };
+    push(runtime_bin.to_path_buf());
+    if let Some(home) = home {
+        push(home.join(".local/bin"));
+        push(home.join(".cargo/bin"));
+        push(home.join("tools/scripts"));
+    }
+    for entry in SYSTEM_PATH_ENTRIES {
+        push(PathBuf::from(entry));
+    }
+    entries.join(":")
+}
 
 fn app_root_from_executable(executable: &Path) -> Option<PathBuf> {
     let root = executable.ancestors().nth(5)?;
@@ -75,7 +106,8 @@ fn run() -> Result<(), String> {
         return Err(format!("bundled vc-frame is missing: {}", frame.display()));
     }
 
-    let runtime_path = format!("{}:{SYSTEM_PATH}", runtime.join("bin").display());
+    let home = env::var_os("HOME").map(PathBuf::from);
+    let runtime_path = host_agent_search_path(&runtime.join("bin"), home.as_deref());
     let mut command = Command::new("/bin/bash");
     command
         .args([
@@ -126,6 +158,16 @@ mod tests {
             Some(PathBuf::from("/Applications/Vibecrafted.app"))
         );
         assert_eq!(app_root_from_executable(Path::new("/tmp/vc-start")), None);
+    }
+
+    #[test]
+    fn host_path_includes_system_bins_and_existing_home_dirs() {
+        let runtime = Path::new("/usr/bin");
+        let path = host_agent_search_path(runtime, Some(Path::new("/nonexistent-vc-home")));
+        assert!(path.split(':').any(|entry| entry == "/usr/bin"));
+        assert!(path.split(':').any(|entry| entry == "/bin"));
+        assert!(!path.contains("/nonexistent-vc-home"));
+        assert!(!path.contains("/attacker"));
     }
 
     #[test]
