@@ -232,7 +232,10 @@ _vetcoders_vc_frame_socket_dir() {
   elif [[ -n "${ZELLIJ_SOCKET_DIR:-}" ]]; then
     printf '%s\n' "$ZELLIJ_SOCKET_DIR"
   elif [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]; then
-    printf '%s/vc-frame-%s\n' "${TMPDIR%/}" "$(id -u)"
+    # macOS sockaddr_un is 104 bytes. TMPDIR is /var/folders/.../T (~50)
+    # plus /vc-frame-$UID/contract_version_N already exhausts the budget
+    # before a workspace-bound session name is appended.
+    printf '/tmp/vc-frame-%s\n' "$(id -u)"
   fi
 }
 
@@ -321,6 +324,8 @@ _vetcoders_operator_session_name() {
 # Worker host session: override → workspace-bound catalog host → basename
 # fallback. Cut A (2026-08-10): basename-only hosts collide across checkouts
 # with the same name; catalog workspace_id is the durable ownership key.
+# 2026-08-17: suffix is `-w` (no spaces). The older `{label}-{short} workers`
+# form overflowed macOS sockaddr_un on the default TMPDIR socket root.
 # The bare basename remains the human operator's interactive card and never
 # hosts a worker tab.
 _vetcoders_effective_worker_session() {
@@ -344,7 +349,7 @@ try:
     from vibecrafted_core.workspace_catalog import resolve_worker_host_session
     print(resolve_worker_host_session(root=root, env=os.environ), end="")
 except Exception:
-    print(f"{Path(root).name or 'vibecrafted'} workers", end="")
+    print(f"{Path(root).name or 'vibecrafted'}-w", end="")
 PY
     )" || resolved=""
   fi
@@ -356,7 +361,7 @@ PY
   local host=""
   host="$(basename "$root_dir")"
   [[ -n "$host" ]] || return 1
-  printf '%s workers\n' "$host"
+  printf '%s-w\n' "$host"
 }
 
 _vetcoders_vc_frame_gc_script() {

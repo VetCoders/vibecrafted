@@ -797,6 +797,22 @@ def short_workspace_token(workspace_id: str) -> str:
     return require_uuid(workspace_id, field_name="workspace_id").replace("-", "")[-8:]
 
 
+WORKER_HOST_SUFFIX = "-w"
+LEGACY_WORKER_HOST_SUFFIX = " workers"
+_MAX_WORKER_HOST_LABEL = 24
+
+
+def _sanitize_worker_host_label(
+    display_label: str, *, max_len: int | None = None
+) -> str:
+    label = (display_label or "workspace").strip() or "workspace"
+    label = re.sub(r"\s+", "-", label)
+    label = re.sub(r"[^A-Za-z0-9._-]+", "", label) or "workspace"
+    if max_len is not None and len(label) > max_len:
+        label = label[:max_len].rstrip("-._") or "workspace"
+    return label
+
+
 def worker_host_session_name(
     *,
     workspace_id: str,
@@ -804,15 +820,25 @@ def worker_host_session_name(
 ) -> str:
     """Workspace-bound worker host session name.
 
-    Display remains readable (``{label}-{short} workers``) while two workspaces
-    sharing the same root basename never collide.
+    Socket-safe token: ``{label}-{short}-w``. No spaces. The older
+    ``{label}-{short} workers`` form overflowed macOS ``sockaddr_un`` (104
+    bytes) on the default TMPDIR socket root and clap reported the overflow
+    as ``session name must be less than 0 characters``.
     """
 
-    label = (display_label or "workspace").strip() or "workspace"
-    # Sanitize multi-word labels into a single shell-friendly token prefix.
-    label = re.sub(r"\s+", "-", label)
-    label = re.sub(r"[^A-Za-z0-9._-]+", "", label) or "workspace"
-    return f"{label}-{short_workspace_token(workspace_id)} workers"
+    label = _sanitize_worker_host_label(display_label, max_len=_MAX_WORKER_HOST_LABEL)
+    return f"{label}-{short_workspace_token(workspace_id)}{WORKER_HOST_SUFFIX}"
+
+
+def legacy_worker_host_session_name(
+    *,
+    workspace_id: str,
+    display_label: str = "",
+) -> str:
+    """Pre-2026-08-17 host name (space + ``workers``). Kept for WES attach."""
+
+    label = _sanitize_worker_host_label(display_label)
+    return f"{label}-{short_workspace_token(workspace_id)}{LEGACY_WORKER_HOST_SUFFIX}"
 
 
 def worker_host_display_label(
@@ -1473,8 +1499,11 @@ def resolve_worker_host_session(
     except WorkspaceCatalogError:
         # Fail open to basename host only for catastrophic catalog failure;
         # callers in tests that set VIBECRAFTED_HOME still get full behavior.
-        base = Path(root or ".").name or "vibecrafted"
-        return f"{base} workers"
+        base = _sanitize_worker_host_label(
+            Path(root or ".").name or "vibecrafted",
+            max_len=_MAX_WORKER_HOST_LABEL,
+        )
+        return f"{base}{WORKER_HOST_SUFFIX}"
 
 
 # ---------------------------------------------------------------------------
@@ -2099,6 +2128,7 @@ __all__ = [
     "RUNTIME_SESSION_STATES",
     "SESSION_RECORD_SCHEMA",
     "SNAPSHOT_MANIFEST_SCHEMA",
+    "WORKER_HOST_SUFFIX",
     "BuildId",
     "RunWorkspaceIdentity",
     "RuntimeSessionAttachment",
@@ -2116,6 +2146,7 @@ __all__ = [
     "claim_live_instance",
     "compute_build_id",
     "create_workspace",
+    "legacy_worker_host_session_name",
     "list_instances",
     "list_workspaces",
     "materialize_instance",

@@ -635,6 +635,26 @@ def _vc_frame_tab_present(vc_frame: str, session: str, tab_name: str) -> bool:
     return visit(payload)
 
 
+def _vc_frame_subprocess_env() -> dict[str, str]:
+    """Env for vc-frame subprocesses.
+
+    Claude / CLI paths do not inherit AppDelegate's short macOS socket root.
+    TMPDIR + contract_version_N already fills sockaddr_un (104 bytes) before
+    a workspace-bound session name is appended.
+    """
+
+    env = dict(os.environ)
+    if (
+        sys.platform == "darwin"
+        and not str(env.get("VC_FRAME_SOCKET_DIR") or "").strip()
+        and not str(env.get("ZELLIJ_SOCKET_DIR") or "").strip()
+    ):
+        socket = f"/tmp/vc-frame-{os.getuid()}"
+        env["VC_FRAME_SOCKET_DIR"] = socket
+        env["ZELLIJ_SOCKET_DIR"] = socket
+    return env
+
+
 def _vc_frame_session_active(vc_frame: str, session: str) -> bool:
     """True only if `session` is a live (non-EXITED) vc-frame session.
 
@@ -653,6 +673,7 @@ def _vc_frame_session_active(vc_frame: str, session: str) -> bool:
             text=True,
             timeout=5,
             check=False,
+            env=_vc_frame_subprocess_env(),
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -681,6 +702,7 @@ def _vc_frame_create_background(vc_frame: str, session: str) -> tuple[bool, str]
             text=True,
             timeout=20,
             check=False,
+            env=_vc_frame_subprocess_env(),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return False, f"{type(exc).__name__}: {exc}"
@@ -733,7 +755,12 @@ def _vc_frame_run_host_action(
     def _run_once() -> subprocess.CompletedProcess[str]:
         """Run the vc-frame host action subprocess once with the configured timeout."""
         return subprocess.run(
-            command, capture_output=True, text=True, timeout=timeout, check=False
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env=_vc_frame_subprocess_env(),
         )
 
     def _combined(result: subprocess.CompletedProcess[str]) -> str:

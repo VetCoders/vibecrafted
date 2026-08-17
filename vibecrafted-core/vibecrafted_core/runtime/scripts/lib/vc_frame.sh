@@ -59,9 +59,9 @@ spawn_session_is_live() {
 # Rules (exact order):
 #   1. VIBECRAFTED_WORKER_SESSION if set — explicit override wins.
 #   2. Else workspace-bound host from the control-plane catalog
-#      ("{label}-{workspace_short} workers") via Python twin — two workspaces
+#      ("{label}-{workspace_short}-w") via Python twin — two workspaces
 #      with the same root basename never share a host (Cut A, 2026-08-10).
-#   3. Emergency fallback: "<basename(root)> workers" only if Python catalog
+#   3. Emergency fallback: "<basename(root)>-w" only if Python catalog
 #      resolution is unavailable.
 # 2026-08-09: the suffix used to be conditional on host == dispatcher seat.
 # That guarded only seat==repo, so dispatch from any other seat landed worker
@@ -99,7 +99,7 @@ try:
     from vibecrafted_core.workspace_catalog import resolve_worker_host_session
     print(resolve_worker_host_session(root=root, env=os.environ), end="")
 except Exception:
-    print(f"{Path(root).name or 'vibecrafted'} workers", end="")
+    print(f"{Path(root).name or 'vibecrafted'}-w", end="")
 PY
     )" || resolved=""
   fi
@@ -111,7 +111,7 @@ PY
   local host=""
   host="$(basename "$repo_root")"
   [[ -n "$host" ]] || return 1
-  printf '%s workers\n' "$host"
+  printf '%s-w\n' "$host"
 }
 
 spawn_in_target_vc_frame_session() {

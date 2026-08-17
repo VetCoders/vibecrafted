@@ -99,8 +99,13 @@ Rules (shell and Python are semantically identical):
 
 1. `VIBECRAFTED_WORKER_SESSION` if set — explicit override.
 2. Else workspace-bound host:
-   `{sanitized_display_label}-{workspace_id_short8} workers`
-3. Emergency fallback only: `{basename(root)} workers` if the catalog cannot open.
+   `{sanitized_display_label}-{workspace_id_short8}-w`
+3. Emergency fallback only: `{basename(root)}-w` if the catalog cannot open.
+
+The older `{label}-{short} workers` form (space in the session name) overflowed
+macOS `sockaddr_un` (104 bytes) on the default TMPDIR socket root. Claude / CLI
+paths that do not inherit AppDelegate must still use `/tmp/vc-frame-$UID`.
+`legacy_worker_host_session_name()` keeps the old token for WES attach.
 
 Two workspaces rooted in directories both named `vibecrafted` never share a
 worker host. The bare basename remains the human operator interactive card.

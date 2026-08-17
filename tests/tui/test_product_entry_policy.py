@@ -42,6 +42,7 @@ def test_wrapper_exists_executable() -> None:
     assert WRAPPER.stat().st_mode & stat.S_IXUSR
     text = WRAPPER.read_text(encoding="utf-8")
     assert "pin_product_config" in text
+    assert "pin_darwin_socket_dir" in text
     assert "is_product_session_name" in text
     assert "vc-frame.real" not in text
 
@@ -265,6 +266,56 @@ def test_wrapper_pins_and_execs_when_frontier_config_present(tmp_path: Path) -> 
     assert proc.returncode == 0, (proc.stdout, proc.stderr)
     assert f"VC_FRAME_CONFIG_DIR={frontier}" in proc.stdout
     assert "args=attach vibecrafted" in proc.stdout
+
+
+def test_wrapper_pins_darwin_socket_dir_when_unset(tmp_path: Path) -> None:
+    """Claude/CLI path: pin /tmp/vc-frame-$UID when neither socket env is set."""
+    home = tmp_path / "home"
+    xdg = tmp_path / "xdg"
+    bin_dir = tmp_path / "bin"
+    home.mkdir()
+    xdg.mkdir()
+    bin_dir.mkdir()
+    real = _write_fake_bin(
+        bin_dir,
+        "vc-frame-bin",
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env bash
+            printf 'VC_FRAME_SOCKET_DIR=%s\\n' "${VC_FRAME_SOCKET_DIR:-}"
+            printf 'ZELLIJ_SOCKET_DIR=%s\\n' "${ZELLIJ_SOCKET_DIR:-}"
+            exit 0
+            """
+        ),
+    )
+    wrapper = bin_dir / "vc-frame"
+    wrapper.write_text(WRAPPER.read_text(encoding="utf-8"), encoding="utf-8")
+    wrapper.chmod(0o755)
+    env = {
+        **{
+            k: v
+            for k, v in os.environ.items()
+            if not k.startswith("VC_FRAME") and k != "ZELLIJ_SOCKET_DIR"
+        },
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(xdg),
+        "VIBECRAFTED_VC_FRAME_BIN": str(real),
+        "USER": "test",
+    }
+    proc = subprocess.run(
+        [str(wrapper), "list-sessions"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        timeout=20,
+    )
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    if sys.platform == "darwin":
+        expected = f"/tmp/vc-frame-{os.getuid()}"
+        assert f"VC_FRAME_SOCKET_DIR={expected}" in proc.stdout
+        assert f"ZELLIJ_SOCKET_DIR={expected}" in proc.stdout
 
 
 def test_wrapper_allows_non_product_session_without_config(tmp_path: Path) -> None:
