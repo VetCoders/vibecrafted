@@ -258,6 +258,72 @@ def test_plistlib_renderer_preserves_metacharacters_without_xml_injection(
     assert b"<path>" not in rendered
 
 
+def test_launch_agent_carries_the_installing_path_and_active_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """launchd hands a job only its plist PATH. A frozen system-only PATH hid
+    Homebrew/cargo/npm bins from the supervisor and every process it spawned, so
+    `#!/usr/bin/env node` agent CLIs exited 127."""
+
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    config = _config(tmp_path, launcher)
+    generation = config.paths.runtime_home / "releases" / "9.9.9"
+    (generation / "bin").mkdir(parents=True)
+    config.paths.runtime_home.mkdir(parents=True, exist_ok=True)
+    (config.paths.runtime_home / "active.json").write_text(
+        json.dumps(
+            {
+                "schema": "vibecrafted.active-runtime.v1",
+                "version": "9.9.9",
+                "runtime_root": str(generation),
+                "app_root": "/Applications/Vibecrafted.app",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PATH", "/opt/homebrew/bin:/usr/bin:/bin")
+
+    payload = plistlib.loads(
+        supervisor.render_launch_agent_plist(
+            config,
+            supervisor_binary=supervisor_binary,
+        )
+    )
+
+    assert payload["EnvironmentVariables"]["PATH"] == (
+        f"{generation / 'bin'}:/opt/homebrew/bin:/usr/bin:/bin"
+    )
+
+    # No active-runtime receipt: the installing PATH still survives whole.
+    (config.paths.runtime_home / "active.json").unlink()
+    payload = plistlib.loads(
+        supervisor.render_launch_agent_plist(
+            config,
+            supervisor_binary=supervisor_binary,
+        )
+    )
+
+    assert payload["EnvironmentVariables"]["PATH"] == "/opt/homebrew/bin:/usr/bin:/bin"
+
+
+def test_child_environment_keeps_the_inherited_path_behind_canonical_bins(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    config = _config(tmp_path, launcher)
+    monkeypatch.setenv("PATH", f"/opt/homebrew/bin:{tmp_path}/.cargo/bin:/usr/bin")
+
+    path = supervisor._child_environment(config.paths)["PATH"].split(os.pathsep)
+
+    assert path[0] == f"{config.paths.operator_home}/.local/bin"
+    assert f"{tmp_path}/.cargo/bin" in path
+    assert path.index("/opt/homebrew/bin") < path.index(f"{tmp_path}/.cargo/bin")
+    assert len(path) == len(set(path))
+
+
 def test_launch_agent_propagates_terminal_triage_kill_switch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
