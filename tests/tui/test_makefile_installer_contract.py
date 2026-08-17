@@ -157,7 +157,9 @@ def test_release_workflow_is_read_only_and_validates_the_exact_tag_source() -> N
     assert "apt-get" not in workflow
     assert 'test "$GITHUB_REF_TYPE" = "tag"' in workflow
     assert 'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"' in workflow
-    assert 'release_tag_ref="refs/vibecrafted-release-tags/$GITHUB_REF_NAME"' in workflow
+    assert (
+        'release_tag_ref="refs/vibecrafted-release-tags/$GITHUB_REF_NAME"' in workflow
+    )
     assert '"refs/tags/$GITHUB_REF_NAME:$release_tag_ref"' in workflow
     assert 'test "$(git cat-file -t "$release_tag_ref")" = "tag"' in workflow
     assert 'test "$(git rev-list -n 1 "$release_tag_ref")" = "$GITHUB_SHA"' in workflow

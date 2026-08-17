@@ -26,7 +26,9 @@ def test_tag_workflow_is_a_read_only_source_gate() -> None:
     assert "persist-credentials: false" in workflow
     assert 'test "$GITHUB_REF_TYPE" = "tag"' in workflow
     assert 'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"' in workflow
-    assert 'release_tag_ref="refs/vibecrafted-release-tags/$GITHUB_REF_NAME"' in workflow
+    assert (
+        'release_tag_ref="refs/vibecrafted-release-tags/$GITHUB_REF_NAME"' in workflow
+    )
     assert '"refs/tags/$GITHUB_REF_NAME:$release_tag_ref"' in workflow
     assert 'test "$(git cat-file -t "$release_tag_ref")" = "tag"' in workflow
     assert 'test "$(git rev-list -n 1 "$release_tag_ref")" = "$GITHUB_SHA"' in workflow
@@ -139,22 +141,21 @@ def test_release_bundle_binds_the_canonical_terminal_policy_and_font() -> None:
     terminal = (REPO_ROOT / "config/vc-terminal/vibecrafted.toml").read_text(
         encoding="utf-8"
     )
-    dark = (
-        REPO_ROOT / "config/vc-terminal/themes/dark.toml"
-    ).read_text(encoding="utf-8")
-    light = (
-        REPO_ROOT / "config/vc-terminal/themes/light.toml"
-    ).read_text(encoding="utf-8")
+    dark = (REPO_ROOT / "config/vc-terminal/themes/dark.toml").read_text(
+        encoding="utf-8"
+    )
+    light = (REPO_ROOT / "config/vc-terminal/themes/light.toml").read_text(
+        encoding="utf-8"
+    )
     app_delegate = (
-        REPO_ROOT
-        / "vibecrafted-app/shell-agent/app/Vibecrafted/AppDelegate.swift"
+        REPO_ROOT / "vibecrafted-app/shell-agent/app/Vibecrafted/AppDelegate.swift"
     ).read_text(encoding="utf-8")
     builder = (REPO_ROOT / "scripts/build-vibecrafted-release.sh").read_text(
         encoding="utf-8"
     )
 
     assert 'family = "Spot Mono"' in terminal
-    assert 'size = 18.5' in terminal
+    assert "size = 18.5" in terminal
     assert "live_config_reload = true" in terminal
     assert 'background = "#0b0b12"' in dark
     assert 'background = "#fafafa"' in light
@@ -168,7 +169,9 @@ def test_release_bundle_binds_the_canonical_terminal_policy_and_font() -> None:
     assert 'productConfig.appendingPathComponent("terminal-entry.toml")' in app_delegate
     assert 'productConfig.appendingPathComponent("terminal-theme.toml")' in app_delegate
     assert 'productConfig.appendingPathComponent("terminal.toml")' not in app_delegate
-    assert 'install -m 0644 "$SPOT_MONO_FONT" "$resources/fonts/SpotMono.ttc"' in builder
+    assert (
+        'install -m 0644 "$SPOT_MONO_FONT" "$resources/fonts/SpotMono.ttc"' in builder
+    )
     assert "missing licensed Spot Mono input" in builder
     assert "(OpenType|TrueType) font collection data" in builder
 

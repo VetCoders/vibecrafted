@@ -304,12 +304,12 @@ def test_dashboard_names_the_idempotent_same_workspace_noop(tmp_path: Path) -> N
         HELPER_SCRIPT,
         (
             '_vetcoders_vc_frame_bin() { printf "/bin/true\\n"; }; '
-            '_vetcoders_load_frontier_sidecars() { :; }; '
+            "_vetcoders_load_frontier_sidecars() { :; }; "
             '_vetcoders_dashboard_layout_file() { printf "%s\\n" "$TEST_LAYOUT"; }; '
             '_vetcoders_dashboard_session_name() { printf "workspace-42\\n"; }; '
             '_vetcoders_vc_frame_session_state() { printf "live\\n"; }; '
-            '_vetcoders_in_vc_frame() { return 0; }; '
-            '_vetcoders_launch_dashboard operator'
+            "_vetcoders_in_vc_frame() { return 0; }; "
+            "_vetcoders_launch_dashboard operator"
         ),
         {
             "TEST_LAYOUT": str(layout),
