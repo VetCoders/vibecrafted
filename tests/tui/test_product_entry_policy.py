@@ -52,6 +52,7 @@ def test_installer_only_mentions_retired_sibling_for_one_way_cleanup() -> None:
     assert text.count("vc-frame.real") == 1
     assert 'legacy_bin="$LAUNCHER_PREFIX/vc-frame.real"' in text
     assert 'rm -f "$legacy_bin"' in text
+    assert 'ln -sfn "$current/bin/vc-frame" "$dest"' in text
 
 
 def test_wrapper_never_executes_retired_sibling_shadow(tmp_path: Path) -> None:

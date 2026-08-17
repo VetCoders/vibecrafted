@@ -85,6 +85,31 @@ def test_launcher_shim_finding_ok_for_immutable_runtime_deck(tmp_path: Path) -> 
     assert "immutable runtime command deck" in finding.message
 
 
+def test_vc_frame_launcher_finding_flags_raw_binary(tmp_path: Path) -> None:
+    binary = tmp_path / "vc-frame"
+    binary.write_bytes(b"\xcf\xfa\xed\xfe" + b"\x00" * 32)
+
+    finding = doctor._vc_frame_launcher_findings(which=lambda _name: str(binary))[0]
+
+    assert finding.level == "fail"
+    assert finding.component == "vc-frame:path"
+    assert "raw binary" in finding.message
+
+
+def test_vc_frame_launcher_finding_ok_for_pinned_wrapper(tmp_path: Path) -> None:
+    wrapper = tmp_path / "vc-frame"
+    wrapper.write_text(
+        "#!/usr/bin/env bash\npin_darwin_socket_dir() { :; }\n",
+        encoding="utf-8",
+    )
+
+    finding = doctor._vc_frame_launcher_findings(which=lambda _name: str(wrapper))[0]
+
+    assert finding.level == "ok"
+    assert finding.component == "vc-frame:path"
+    assert "product wrapper" in finding.message
+
+
 def _stamped_uv_shim(tmp_path: Path) -> Path:
     """A healthy PATH winner: the uv-tool python entrypoint."""
     shim = tmp_path / "bin" / "vibecrafted"
@@ -359,6 +384,7 @@ def test_doctor_run_includes_server_supervision_finding(monkeypatch) -> None:
     monkeypatch.setattr(doctor, "_installer_module", missing_installer)
     monkeypatch.setattr(doctor, "_packaged_asset_findings", list)
     monkeypatch.setattr(doctor, "_launcher_shim_findings", list)
+    monkeypatch.setattr(doctor, "_vc_frame_launcher_findings", list)
     monkeypatch.setattr(doctor, "_codex_mcp_config_findings", list)
     monkeypatch.setattr(doctor, "_server_supervision_findings", lambda: [expected])
     monkeypatch.setattr(doctor, "_vc_frame_delivery_findings", list)
@@ -547,3 +573,7 @@ def test_doctor_summary_counts_findings() -> None:
     assert payload["warnings"] == 1
     assert payload["failures"] == 1
     assert payload["healthy"] is False
+    assert payload["authority"]["available"] is True
+    assert payload["authority"]["healthy"] is False
+    assert payload["authority"]["ok_count"] == 1
+    assert payload["authority"]["failure_count"] == 1

@@ -93,6 +93,13 @@ On macOS, Vibecrafted.app opens new frames under the short product socket root
 TMPDIR-based namespace and attaches every discovered live/dead session to WES.
 It never kills or rewrites those legacy physical sessions.
 
+Claude / CLI / any path that does not inherit AppDelegate must still land on
+that same root. `~/.local/bin/vc-frame` is a symlink into
+`vibecrafted-current/bin/vc-frame` (the product wrapper). A copied Mach-O or
+an old wrapper in `~/.local/bin` is how the previous `/tmp` fix stayed
+app-only. `vibecrafted doctor --json` exposes `authority.available` so host
+path-doctor can stop guessing from symlink shape alone.
+
 ## Worker host routing
 
 Rules (shell and Python are semantically identical):
