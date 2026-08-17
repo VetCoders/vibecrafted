@@ -22,7 +22,7 @@ html,body { margin:0; height:100%; background:var(--bg); color:var(--ink); }
 .center { overflow:auto; padding:16px; }
 .doc { display:none; }
 .doc.is-active { display:block; }
-pre { margin:0; font:12px/1.15 ui-monospace, Menlo, Consolas, monospace; white-space:pre; color:#d7d4cc; }
+pre { margin:0 auto; width:120ch; font:13px/1.7 ui-monospace, "SF Mono", Menlo, Consolas, monospace; white-space:pre; color:#d7d4cc; }
 .right { border-left:1px solid var(--line); padding:16px; font-size:13px; }
 .right h2 { font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--mute); margin:0 0 8px; }
 .right p { margin:0 0 10px; color:var(--mute); }
@@ -33,7 +33,7 @@ pre { margin:0; font:12px/1.15 ui-monospace, Menlo, Consolas, monospace; white-s
 <div class="app">
   <header class="top">
     <div class="brand">Vibecrafted. · Layout studio</div>
-    <small>120×30 komórek · analog CUT-1..n · seed Layout factory</small>
+    <small>120×36 · canva VERTICAL · analog CUT-1..n</small>
   </header>
   <nav class="left"><button type="button" class="tab is-active" data-id="Layout-1">Layout-1<span>Warsztat</span></button><button type="button" class="tab" data-id="Layout-2">Layout-2<span>Nowy agent</span></button><button type="button" class="tab" data-id="Layout-3">Layout-3<span>Po launchu</span></button><button type="button" class="tab" data-id="Layout-4">Layout-4<span>Voc drzwi</span></button><button type="button" class="tab" data-id="Layout-5">Layout-5<span>Nowy dispatch (później)</span></button></nav>
   <main class="center"><section class="doc is-active" id="Layout-1"><pre> Vibecrafted. | L  ○ Start  ◉ Agents  ○ shell  ○ voc                                                      Composer · cmd
@@ -54,6 +54,12 @@ SESSIONS 5          ┌ grok · vibecrafted ────────────
    · resume-grok    │                                                                                                  │
    · Shell          │                                                                                                  │
    · grok           │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
                     │                                                                                                  │
                     │                                                                                                  │
                     │                                                                                                  │
@@ -90,6 +96,12 @@ SESSIONS 5          ┌ grok · vibecrafted ────────────
                     │                                                                                                  │
                     │                                                                                                  │
                     │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
                     │ ╭──────────────────────────────────────────────────────────────────────────────────────────────╮ │
                     │ │ ❯                                                                                            │ │
                     │ ╰─ Grok 4.6 · always-approve ──────────────────────────────────────────────────────────────────╯ │
@@ -112,6 +124,12 @@ SESSIONS 5          ┌ claude · resume · vibecrafted ────────
    · resume-grok    │                                                                                                  │
    · Shell          │                                                                                                  │
    · grok           │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
                     │                                                                                                  │
                     │                                                                                                  │
                     │                                                                                                  │
@@ -148,6 +166,12 @@ SESSIONS 5          ┌ grok · vibecrafted ────────────
                     │                                                                                                  │
                     │                                                                                                  │
                     │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
                     │ ╭──────────────────────────────────────────────────────────────────────────────────────────────╮ │
                     │ │ ❯                                                                                            │ │
                     │ ╰─ Grok 4.6 · always-approve ──────────────────────────────────────────────────────────────────╯ │
@@ -177,6 +201,12 @@ SESSIONS 5          ┌ grok · vibecrafted ────────────
                     │                                                                                                  │
                     │                                                                                                  │
                     │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
                     │ ╭──────────────────────────────────────────────────────────────────────────────────────────────╮ │
                     │ │ ❯                                                                                            │ │
                     │ ╰─ Grok 4.6 · always-approve ──────────────────────────────────────────────────────────────────╯ │
@@ -188,14 +218,14 @@ SESSIONS 5          ┌ grok · vibecrafted ────────────
     <p>authored_by: grok &lt;agents@vetcoders.io&gt;</p>
     <p>session: 01a00bfd-5efc-7bf0-883f-a5d096f5235d</p>
     <p>date: 2026-08-17</p>
-    <p>grid: 120×30</p>
-    <p>Komórki, nie piksele. 120×30 — okno operatora, nie pełny mux 182.</p>
+    <p>grid: 120×36</p>
+    <p>120×36. Szerokość okna operatora, wysokość jak VERTICAL — nie placek 30.</p>
     <p>Layout-5 jest przygaszony w prawie — nie budujemy go teraz.</p>
   </aside>
   <footer class="stat">
     <span>studio · jeden dokument</span>
     <span>znaki/wiersz 120</span>
-    <span>wiersze 30</span>
+    <span>wiersze 36</span>
     <span>Layout-1..5</span>
   </footer>
 </div>

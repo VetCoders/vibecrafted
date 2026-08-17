@@ -7,8 +7,8 @@ owner: grok
 authored_by: grok <agents@vetcoders.io>
 session_id: 01a00bfd-5efc-7bf0-883f-a5d096f5235d
 date: 2026-08-17
-grid: 120x30
-source_cheat: 182x40-fullmux / 120x30-operator
+grid: 120x36
+source_cheat: 120x36-operator-vertical
 scope: agents-workshop
 product: vibecrafted
 next: layout-factory
@@ -28,29 +28,29 @@ owner: grok
 authored_by: grok <agents@vetcoders.io>
 session_id: 01a00bfd-5efc-7bf0-883f-a5d096f5235d
 date: 2026-08-17
-grid: 120x30
+grid: 120x36
 ```
 
 Szukaj `session_id: 01a00bfd-5efc-7bf0-883f-a5d096f5235d` albo `authored_by: grok`.
 
 ## Siatka
 
-Komórka TUI to nie piksel. Pełny mux na ściądze miał ~182 — operator nie ma takiego okna.
-Właściwa kratka makiety: **120×30**.
+Komórka TUI to nie piksel. Canva projektowa bierze **proporcje okna operatora w VERTICAL**, nie pełnego muxa 182.
 
-|           | pełny mux | pomyłka                      | makieta |
-| --------- | --------- | ---------------------------- | ------- |
-| szerokość | ~182      | 180, potem 130 wierszy „4:3” | **120** |
-| wysokość  | ~40       | 130                          | **30**  |
+|           | pełny mux | Twoja ściąga VERTICAL           | makieta |
+| --------- | --------- | ------------------------------- | ------- |
+| szerokość | ~182      | ~126                            | **120** |
+| wysokość  | ~40       | ~30 w zrzucie, za płasko na 120 | **36**  |
 
 ```
 wiersz   1     compact-bar
-wiersze  2–29  ciało   (rail 20 + canvas 100)
-wiersz  30     status-bar
+wiersze  2–35  ciało   (rail 20 + canvas 100)
+wiersz  36     status-bar
 ```
 
-Pasek talii na 120: `[‹2/4›] [Voc] [Nowy]`.
-Karta Nowy agent ma 6 wierszy — jak na Twoim pierwszym rysunku.
+120 zostaje. 36 daje powietrze jak pusta dziura shella na ściądze.
+Pasek talii: `[‹2/4›] [Voc] [Nowy]`. Karta Nowy agent: 6 wierszy.
+Nie kopiujemy Tab #6 / Tab #7 — tylko proporcje canvy.
 
 ## Korekty
 

@@ -7,8 +7,8 @@ owner: grok
 authored_by: grok <agents@vetcoders.io>
 session_id: 01a00bfd-5efc-7bf0-883f-a5d096f5235d
 date: 2026-08-17
-grid: 120x30
-source_cheat: 182x40-fullmux / 120x30-operator
+grid: 120x36
+source_cheat: 120x36-operator-vertical
 scope: agents-workshop
 product: vibecrafted
 next: layout-factory
@@ -39,6 +39,12 @@ SESSIONS 5          ┌ grok · vibecrafted ────────────
    · resume-grok    │                                                                                                  │
    · Shell          │                                                                                                  │
    · grok           │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
+                    │                                                                                                  │
                     │                                                                                                  │
                     │                                                                                                  │
                     │                                                                                                  │

@@ -7,7 +7,7 @@ import html
 import json
 from pathlib import Path
 
-W, H = 120, 30
+W, H = 120, 36
 RAIL = 20
 CANVAS = W - RAIL  # 100
 REPO = Path(__file__).resolve().parents[3]
@@ -70,7 +70,7 @@ def frontmatter(*, layout_id: str, title: str, kind: str = "layout") -> str:
         f"session_id: {SESSION}\n"
         f"date: {DATE}\n"
         f"grid: {W}x{H}\n"
-        f"source_cheat: 182x40-fullmux / 120x30-operator\n"
+        f"source_cheat: 120x36-operator-vertical\n"
         f"scope: agents-workshop\n"
         f"product: vibecrafted\n"
         f"next: layout-factory\n"
@@ -392,22 +392,22 @@ Szukaj `session_id: {SESSION}` albo `authored_by: grok`.
 
 ## Siatka
 
-Komórka TUI to nie piksel. Pełny mux na ściądze miał ~182 — operator nie ma takiego okna.
-Właściwa kratka makiety: **120×30**.
+Komórka TUI to nie piksel. Canva projektowa bierze **proporcje okna operatora w VERTICAL**, nie pełnego muxa 182.
 
-| | pełny mux | pomyłka | makieta |
+| | pełny mux | Twoja ściąga VERTICAL | makieta |
 |---|---|---|---|
-| szerokość | ~182 | 180, potem 130 wierszy „4:3” | **120** |
-| wysokość | ~40 | 130 | **30** |
+| szerokość | ~182 | ~126 | **120** |
+| wysokość | ~40 | ~30 w zrzucie, za płasko na 120 | **36** |
 
 ```
 wiersz   1     compact-bar
-wiersze  2–29  ciało   (rail {RAIL} + canvas {CANVAS})
-wiersz  30     status-bar
+wiersze  2–35  ciało   (rail {RAIL} + canvas {CANVAS})
+wiersz  36     status-bar
 ```
 
-Pasek talii na 120: `[‹2/4›] [Voc] [Nowy]`.
-Karta Nowy agent ma 6 wierszy — jak na Twoim pierwszym rysunku.
+120 zostaje. 36 daje powietrze jak pusta dziura shella na ściądze.
+Pasek talii: `[‹2/4›] [Voc] [Nowy]`. Karta Nowy agent: 6 wierszy.
+Nie kopiujemy Tab #6 / Tab #7 — tylko proporcje canvy.
 
 ## Korekty
 
@@ -551,7 +551,7 @@ html,body {{ margin:0; height:100%; background:var(--bg); color:var(--ink); }}
 .center {{ overflow:auto; padding:16px; }}
 .doc {{ display:none; }}
 .doc.is-active {{ display:block; }}
-pre {{ margin:0; font:12px/1.15 ui-monospace, Menlo, Consolas, monospace; white-space:pre; color:#d7d4cc; }}
+pre {{ margin:0 auto; width:120ch; font:13px/1.7 ui-monospace, "SF Mono", Menlo, Consolas, monospace; white-space:pre; color:#d7d4cc; }}
 .right {{ border-left:1px solid var(--line); padding:16px; font-size:13px; }}
 .right h2 {{ font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--mute); margin:0 0 8px; }}
 .right p {{ margin:0 0 10px; color:var(--mute); }}
@@ -562,7 +562,7 @@ pre {{ margin:0; font:12px/1.15 ui-monospace, Menlo, Consolas, monospace; white-
 <div class="app">
   <header class="top">
     <div class="brand">Vibecrafted. · Layout studio</div>
-    <small>120×30 komórek · analog CUT-1..n · seed Layout factory</small>
+    <small>120×36 · canva VERTICAL · analog CUT-1..n</small>
   </header>
   <nav class="left">{"".join(tabs)}</nav>
   <main class="center">{"".join(sections)}</main>
@@ -573,7 +573,7 @@ pre {{ margin:0; font:12px/1.15 ui-monospace, Menlo, Consolas, monospace; white-
     <p>session: {SESSION}</p>
     <p>date: {DATE}</p>
     <p>grid: {W}×{H}</p>
-    <p>Komórki, nie piksele. 120×30 — okno operatora, nie pełny mux 182.</p>
+    <p>120×36. Szerokość okna operatora, wysokość jak VERTICAL — nie placek 30.</p>
     <p>Layout-5 jest przygaszony w prawie — nie budujemy go teraz.</p>
   </aside>
   <footer class="stat">
