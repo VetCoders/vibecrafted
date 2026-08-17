@@ -1,0 +1,714 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>Agents workshop · Layout-1..n</title>
+<style>
+:root {
+  --bg:#101216; --ink:#e8e6e1; --mute:#8b8a84; --line:#2a2d33;
+  --accent:#c4b08a; --rail:#16181d; --hi:#1e2229;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+* { box-sizing:border-box; }
+html,body { margin:0; height:100%; background:var(--bg); color:var(--ink); }
+.app { display:grid; grid-template-columns:220px 1fr 240px; grid-template-rows:48px 1fr 28px; height:100%; }
+.top { grid-column:1/-1; display:flex; align-items:center; gap:16px; padding:0 16px; border-bottom:1px solid var(--line); }
+.brand { letter-spacing:.08em; font-size:13px; color:var(--accent); }
+.top small { color:var(--mute); }
+.left { background:var(--rail); border-right:1px solid var(--line); padding:12px 8px; overflow:auto; }
+.tab { display:flex; flex-direction:column; align-items:flex-start; width:100%; gap:2px; margin:0 0 4px; padding:8px 10px; background:transparent; color:var(--ink); border:1px solid transparent; border-radius:6px; cursor:pointer; text-align:left; }
+.tab span { color:var(--mute); font-size:12px; }
+.tab.is-active { background:var(--hi); border-color:var(--line); }
+.center { overflow:auto; padding:16px; }
+.doc { display:none; }
+.doc.is-active { display:block; }
+pre { margin:0; font:12px/1.15 ui-monospace, Menlo, Consolas, monospace; white-space:pre; color:#d7d4cc; }
+.right { border-left:1px solid var(--line); padding:16px; font-size:13px; }
+.right h2 { font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--mute); margin:0 0 8px; }
+.right p { margin:0 0 10px; color:var(--mute); }
+.stat { border-top:1px solid var(--line); grid-column:1/-1; display:flex; gap:24px; align-items:center; padding:0 16px; font-size:12px; color:var(--mute); }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">Vibecrafted. · Layout studio</div>
+    <small>182×130 · analog CUT-1..n · seed Layout factory</small>
+  </header>
+  <nav class="left"><button type="button" class="tab is-active" data-id="Layout-1">Layout-1<span>Warsztat</span></button><button type="button" class="tab" data-id="Layout-2">Layout-2<span>Nowy agent</span></button><button type="button" class="tab" data-id="Layout-3">Layout-3<span>Po launchu</span></button><button type="button" class="tab" data-id="Layout-4">Layout-4<span>Voc drzwi</span></button><button type="button" class="tab" data-id="Layout-5">Layout-5<span>Nowy dispatch (później)</span></button></nav>
+  <main class="center"><section class="doc is-active" id="Layout-1"><pre>  Vibecrafted.    |  L   ○ Start here    ◉ Agents Interactive    ○ shell    ○ voc                                                                               Composer  ·  Quick cmd
+SESSIONS 5                ┌ grok · vibecrafted ────────────────────────────────────────────────────────────────────────────────────────────── [‹] 2/4 [›]  [Voc Console] [New agent] ┐
+ ● Live 3                 │                                                                                                                                                          │
+01 ○ main                 │ 4.1.0 release · fix/4.1.0-patch-resume-no-implicit-native-session                                                                                        │
+02 ○ lbrx-services        │ No todo items.                                                                                                                                           │
+   · Shell                │                                                                                                                                                          │
+03 ○ w-c207-r155013       │ Maciej: floating panele, potem Ctrl+P i strzałki. hehe                                                                                                   │
+   · resume-grok          │                                                                                                                                                          │
+   · resume-codex         │ To nie jest sześć ekranów. To jeden talerz. Strzałki przewracają karty.                                                                                  │
+04 ◉ vibecrafted-release  │ Cały czas sesja 04 vibecrafted-release, tab Agents Interactive.                                                                                          │
+   · Start here           │ Host już umie: float, rename, PANE, strzałki, list-panes.                                                                                                │
+   ◉ Agents Interactive   │                                                                                                                                                          │
+   · shell                │ Agent switcher na Quick cmd to atrapa. Prawdziwe [‹][›] Groka to inna talia,                                                                             │
+   · voc                  │ wewnątrz tego TTY. voc Observe 8 live to trzecia talia — farma, nie ten tab.                                                                             │
+05 ○ vibecrafted-vc_      │                                                                                                                                                          │
+   · resume-grok          │ Maciej: brakowało jednego przycisku do designu: [New agent]                                                                                              │
+   · Shell                │                                                                                                                                                          │
+   · grok                 │ Pasek talii hosta:                                                                                                                                       │
+                          │ [‹][›] poprzednia / następna twarz tego taba                                                                                                             │
+                          │ [Voc Console] drzwi / oczy                                                                                                                               │
+                          │ [New agent] narodziny interaktywnego panelu                                                                                                              │
+                          │                                                                                                                                                          │
+                          │ Z Session Managera bierzemy rytuał karty, nie listę KDL                                                                                                  │
+                          │ (vibecrafted / host / dashboard / workflow / marbles).                                                                                                   │
+                          │                                                                                                                                                          │
+                          │ Trzy osie konfiguratora:                                                                                                                                 │
+                          │ agent agy claude codex grok junie                                                                                                                        │
+                          │ rytuał init resume operator partner                                                                                                                      │
+                          │ ścieżka gdzie się rodzi                                                                                                                                  │
+                          │                                                                                                                                                          │
+                          │ ↑/↓ wiersz. ←/→ chip. spacja zaznacz. enter odpal. esc anuluj.                                                                                           │
+                          │                                                                                                                                                          │
+                          │ [New agent] = tylko interaktywny TTY na tym tabie.                                                                                                       │
+                          │ Headless / runy idą później jako [New dispatch], albo z wnętrza już                                                                                      │
+                          │ żywego interaktywnego agenta, albo z Quick cmd — inny widok.                                                                                             │
+                          │                                                                                                                                                          │
+                          │ [resume] jest jawnym wyborem. Bez cichego native-attach.                                                                                                 │
+                          │                                                                                                                                                          │
+                          │ Za tydzień: Layout factory. Te rysunki są Layout-1..n — analog CUT-1..n.                                                                                 │
+                          │                                                                                                                                                          │
+                          │ Sciaga operatora: 182x40. Makieta jest wyzsza (130), zeby bylo widac                                                                                     │
+                          │ rozmowe i karte naraz. Zywe okno zostaje ~40 wierszy; to jest widok do recenzji.                                                                         │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │ ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+                          │ │ ❯                                                                                                                                                    │ │
+                          │ ╰─ Grok 4.6 · always-approve ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+                          │ Ctrl+\ dashboard   Ctrl+[ ] talia wewnątrz TTY   (nie mylić z hostowym [‹][›])                                                                           │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ LOCK   PANE   TAB   MOVE   SEARCH                                                                               Composer · Quick cmd   LIVE 3 | CPU  ·  | MEM  ·  | DISK  ·  | HEALTH</pre></section><section class="doc" id="Layout-2"><pre>  Vibecrafted.    |  L   ○ Start here    ◉ Agents Interactive    ○ shell    ○ voc                                                                               Composer  ·  Quick cmd
+SESSIONS 5                ┌ grok · vibecrafted ────────────────────────────────────────────────────────────────────────────────────────────── [‹] 2/4 [›]  [Voc Console] [New agent] ┐
+ ● Live 3                 │                                                                                                                                                          │
+01 ○ main                 │ 4.1.0 release · fix/4.1.0-patch-resume-no-implicit-native-session                                                                                        │
+02 ○ lbrx-services        │ No todo items.                                                                                                                                           │
+   · Shell                │                                                                                                                                                          │
+03 ○ w-c207-r155013       │ Maciej: floating panele, potem Ctrl+P i strzałki. hehe                                                                                                   │
+   · resume-grok          │                                                                                                                                                          │
+   · resume-codex         │ To nie jest sześć ekranów. To jeden talerz. Strzałki przewracają karty.                                                                                  │
+04 ◉ vibecrafted-release  │ Cały czas sesja 04 vibecrafted-release, tab Agents Interactive.                                                                                          │
+   · Start here           │ Host już umie: float, rename, PANE, strzałki, list-panes.                                                                                                │
+   ◉ Agents Interactive   │                                                                                                                                                          │
+   · shell                │ Agent switcher na Quick cmd to atrapa. Prawdziwe [‹][›] Groka to inna talia,                                                                             │
+   · voc                  │ wewnątrz tego TTY. voc Observe 8 live to trzecia talia — farma, nie ten tab.                                                                             │
+05 ○ vibecrafted-vc_      │                                                                                                                                                          │
+   · resume-grok          │ Maciej: brakowało jednego przycisku do designu: [New agent]                                                                                              │
+   · Shell                │                                                                                                                                                          │
+   · grok                 │ Pasek talii hosta:                                                                                                                                       │
+                          │ [‹][›] poprzednia / następna twarz tego taba                                                                                                             │
+                          │ [Voc Console] drzwi / oczy                                                                                                                               │
+                          │ [New agent] narodziny interaktywnego panelu                                                                                                              │
+                          │                                                                                                                                                          │
+                          │ Z Session Managera bierzemy rytuał karty, nie listę KDL                                                                                                  │
+                          │ (vibecrafted / host / dashboard / workflow / marbles).                                                                                                   │
+                          │                                                                                                                                                          │
+                          │ Trzy osie konfiguratora:                                                                                                                                 │
+                          │ agent agy claude codex grok junie                                                                                                                        │
+                          │                                                                                                                                                          │
+                          │                               ┌ ❯ Nowy agent ────────────────────────────────────────────────────────────────── [Anuluj] ┐                               │
+                          │                               │                                                                                          │                               │
+                          │                               │  ▸ agent                                                                                 │                               │
+                          │                               │    [ agy ]   [ claude ]   [ codex ]   « grok »   [ junie ]                               │                               │
+                          │                               │                                                                                          │                               │
+                          │                               │    rytuał                                                                                │                               │
+                          │                               │    [ init ]   « resume »   [ operator ]   [ partner ]                                    │                               │
+                          │                               │                                                                                          │                               │
+                          │                               │    ścieżka                                                                               │                               │
+                          │                               │    /Volumes/vc-workspace/vetcoders/vibecrafted-suite/vibecrafted                         │                               │
+                          │                               │                                                                                          │                               │
+                          │                               │  Enter otworzy interaktywny panel na tym tabie.                                          │                               │
+                          │                               │  Nie nowa sesja muxa. Nie headless. Nie farma voc.                                       │                               │
+                          │                               │                                                                                          │                               │
+                          │                               └─ ↑/↓ wiersz   ←/→ chip   spacja zaznacz   enter odpal   esc ─────────────────────────────┘                               │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │ ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+                          │ │ ❯                                                                                                                                                    │ │
+                          │ ╰─ Grok 4.6 · always-approve ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+                          │ Ctrl+\ dashboard   Ctrl+[ ] talia wewnątrz TTY   (nie mylić z hostowym [‹][›])                                                                           │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ LOCK   PANE   TAB   MOVE   SEARCH                                                                               Composer · Quick cmd   LIVE 3 | CPU  ·  | MEM  ·  | DISK  ·  | HEALTH</pre></section><section class="doc" id="Layout-3"><pre>  Vibecrafted.    |  L   ○ Start here    ◉ Agents Interactive    ○ shell    ○ voc                                                                               Composer  ·  Quick cmd
+SESSIONS 5                ┌ claude · resume · vibecrafted ─────────────────────────────────────────────────────────────────────────────────── [‹] 3/5 [›]  [Voc Console] [New agent] ┐
+ ● Live 3                 │                                                                                                                                                          │
+01 ○ main                 │ claude · resume · /Volumes/vc-workspace/vetcoders/vibecrafted-suite/vibecrafted                                                                          │
+02 ○ lbrx-services        │                                                                                                                                                          │
+   · Shell                │ Właśnie się urodził. Interaktywny TTY. Host nadał tytuł.                                                                                                 │
+03 ○ w-c207-r155013       │ Talia jest teraz 3/5. Ten panel jest na wierzchu.                                                                                                        │
+   · resume-grok          │                                                                                                                                                          │
+   · resume-codex         │ Poprzedni grok żyje jedno [‹] wstecz.                                                                                                                    │
+04 ◉ vibecrafted-release  │ Nie powstała nowa sesja vc-frame. Nie powstał Tab #7. Nie powstał resume-*.                                                                              │
+   · Start here           │                                                                                                                                                          │
+   ◉ Agents Interactive   │ Jeśli chcesz headless — to nie ten przycisk. To [New dispatch] (Layout-5)                                                                                │
+   · shell                │ albo dispatch z wnętrza tej sesji, albo Quick cmd.                                                                                                       │
+   · voc                  │                                                                                                                                                          │
+05 ○ vibecrafted-vc_      │                                                                                                                                                          │
+   · resume-grok          │                                                                                                                                                          │
+   · Shell                │                                                                                                                                                          │
+   · grok                 │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │ ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+                          │ │ ❯                                                                                                                                                    │ │
+                          │ ╰─ Claude · interactive pane ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+                          │ Ctrl+\ dashboard   Ctrl+[ ] talia wewnątrz TTY   (nie mylić z hostowym [‹][›])                                                                           │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ LOCK   PANE   TAB   MOVE   SEARCH                                                                               Composer · Quick cmd   LIVE 3 | CPU  ·  | MEM  ·  | DISK  ·  | HEALTH</pre></section><section class="doc" id="Layout-4"><pre>  Vibecrafted.    |  L   ○ Start here    ◉ Agents Interactive    ○ shell    ○ voc                                                                               Composer  ·  Quick cmd
+SESSIONS 5                ┌ grok · vibecrafted ────────────────────────────────────────────────────────────────────────────────────────────── [‹] 2/4 [›]  [Voc Console] [New agent] ┐
+ ● Live 3                 │                                                                                                                                                          │
+01 ○ main                 │ 4.1.0 release · fix/4.1.0-patch-resume-no-implicit-native-session                                                                                        │
+02 ○ lbrx-services        │ No todo items.                                                                                                                                           │
+   · Shell                │                                                                                                                                                          │
+03 ○ w-c207-r155013       │ Maciej: floating panele, potem Ctrl+P i strzałki. hehe                                                                                                   │
+   · resume-grok          │                                                                                                                                                          │
+   · resume-codex         │ To nie jest sześć ekranów. To jeden talerz. Strzałki przewracają karty.                                                                                  │
+04 ◉ vibecrafted-release  │ Cały czas sesja 04 vibecrafted-release, tab Agents Interactive.                                                                                          │
+   · Start here           │ Host już umie: float, rename, PANE, strzałki, list-panes.                                                                                                │
+   ◉ Agents Interactive   │                                                                                                                                                          │
+   · shell                │ Agent switcher na Quick cmd to atrapa. Prawdziwe [‹][›] Groka to inna talia,                                                                             │
+   · voc                  │ wewnątrz tego TTY. voc Observe 8 live to trzecia talia — farma, nie ten tab.                                                                             │
+05 ○ vibecrafted-vc_      │                                                                                                                                                          │
+   · resume-grok          │ Maciej: brakowało jednego przycisku do designu: [New agent]                                                                                              │
+   · Shell                │                                                                                                                                                          │
+   · grok                 │ Pasek talii hosta:                                                                                                                                       │
+                          │ [‹][›] poprzednia / następna twarz tego taba                                                                                                             │
+                          │ [Voc Console] drzwi / oczy                                                                                                                               │
+                          │ [New agent] narodziny interaktywnego panelu                                                                                                              │
+                          │                                                                                                                                                          │
+                          │ Z Session Managera bierzemy rytuał karty, nie listę KDL                                                                                                  │
+                          │                                                                                                                                                          │
+                          │     ┌ voc · ten tab · Agents Interactive ─────────────────────────── PIN ◉ ┐                                                                             │
+                          │     │  4 twarze na tym tabie · 0 wierszy farmy                             │                                                                             │
+                          │     │                                                                      │                                                                             │
+                          │     │  ● grok      vibecrafted      14m   na wierzchu                      │                                                                             │
+                          │     │  ○ claude    vibecrafted       0m   właśnie urodzony                 │                                                                             │
+                          │     │  ○ codex     vc-workspace      1h   float                            │                                                                             │
+                          │     │  ○ junie     ~                40m   float                            │                                                                             │
+                          │     │                                                                      │                                                                             │
+                          │     │  j/k wybierz    enter podnieś    n Nowy agent                        │                                                                             │
+                          │     │                                                                      │                                                                             │
+                          │     │  To nie jest Observe · 8 live.                                       │                                                                             │
+                          │     │  To talia, którą [‹][›] już przekłada.                               │                                                                             │
+                          │     └─ drzwi do talii tego taba ───────────────────────────────────────────┘                                                                             │
+                          │                                                                                                                                                          │
+                          │ Za tydzień: Layout factory. Te rysunki są Layout-1..n — analog CUT-1..n.                                                                                 │
+                          │                                                                                                                                                          │
+                          │ Sciaga operatora: 182x40. Makieta jest wyzsza (130), zeby bylo widac                                                                                     │
+                          │ rozmowe i karte naraz. Zywe okno zostaje ~40 wierszy; to jest widok do recenzji.                                                                         │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │ ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+                          │ │ ❯                                                                                                                                                    │ │
+                          │ ╰─ Grok 4.6 · always-approve ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+                          │ Ctrl+\ dashboard   Ctrl+[ ] talia wewnątrz TTY   (nie mylić z hostowym [‹][›])                                                                           │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ LOCK   PANE   TAB   MOVE   SEARCH                                                                               Composer · Quick cmd   LIVE 3 | CPU  ·  | MEM  ·  | DISK  ·  | HEALTH</pre></section><section class="doc" id="Layout-5"><pre>  Vibecrafted.    |  L   ○ Start here    ◉ Agents Interactive    ○ shell    ○ voc                                                                               Composer  ·  Quick cmd
+SESSIONS 5                ┌ grok · vibecrafted ────────────────────────────────────────────────────────────────────────────────────────────── [‹] 2/4 [›]  [Voc Console] [New agent] ┐
+ ● Live 3                 │                                                                                                                                                          │
+01 ○ main                 │ 4.1.0 release · fix/4.1.0-patch-resume-no-implicit-native-session                                                                                        │
+02 ○ lbrx-services        │ No todo items.                                                                                                                                           │
+   · Shell                │                                                                                                                                                          │
+03 ○ w-c207-r155013       │ Maciej: floating panele, potem Ctrl+P i strzałki. hehe                                                                                                   │
+   · resume-grok          │                                                                                                                                                          │
+   · resume-codex         │ To nie jest sześć ekranów. To jeden talerz. Strzałki przewracają karty.                                                                                  │
+04 ◉ vibecrafted-release  │ Cały czas sesja 04 vibecrafted-release, tab Agents Interactive.                                                                                          │
+   · Start here           │ Host już umie: float, rename, PANE, strzałki, list-panes.                                                                                                │
+   ◉ Agents Interactive   │                                                                                                                                                          │
+   · shell                │ Agent switcher na Quick cmd to atrapa. Prawdziwe [‹][›] Groka to inna talia,                                                                             │
+   · voc                  │ wewnątrz tego TTY. voc Observe 8 live to trzecia talia — farma, nie ten tab.                                                                             │
+05 ○ vibecrafted-vc_      │                                                                                                                                                          │
+   · resume-grok          │ Maciej: brakowało jednego przycisku do designu: [New agent]                                                                                              │
+   · Shell                │                                                                                                                                                          │
+   · grok                 │ Pasek talii hosta:                                                                                                                                       │
+                          │ [‹][›] poprzednia / następna twarz tego taba                                                                                                             │
+                          │ [Voc Console] drzwi / oczy                                                                                                                               │
+                          │ [New agent] narodziny interaktywnego panelu                                                                                                              │
+                          │                                                                                                                                                          │
+                          │ Z Session Managera bierzemy rytuał karty, nie listę KDL                                                                                                  │
+                          │ (vibecrafted / host / dashboard / workflow / marbles).                                                                                                   │
+                          │                                                                                                                                                          │
+                          │ Trzy osie konfiguratora:                                                                                                                                 │
+                          │ agent agy claude codex grok junie                                                                                                                        │
+                          │                                                                                                                                                          │
+                          │                               ┌ ❯ Nowy dispatch ─────────────────────────────────────────────────────────────── [Anuluj] ┐                               │
+                          │                               │                                                                                          │                               │
+                          │                               │  ▸ agent                                                                                 │                               │
+                          │                               │    [ agy ]   [ claude ]   [ codex ]   « grok »   [ junie ]                               │                               │
+                          │                               │                                                                                          │                               │
+                          │                               │    rytuał                                                                                │                               │
+                          │                               │    [ init ]   « resume »   [ operator ]   [ partner ]                                    │                               │
+                          │                               │                                                                                          │                               │
+                          │                               │    ścieżka                                                                               │                               │
+                          │                               │    /Volumes/vc-workspace/vetcoders/vibecrafted-suite/vibecrafted                         │                               │
+                          │                               │                                                                                          │                               │
+                          │                               │  Enter odpalą HEADLESS workera. Bez TTY. Widać go na serwerze / w voc.                   │                               │
+                          │                               │  Później: można go „położyć” na panel jako obserwację, nie jako twarz.                   │                               │
+                          │                               │                                                                                          │                               │
+                          │                               └─ ten sam chassis co Nowy agent · inne narodziny ─────────────────────────────────────────┘                               │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │ ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+                          │ │ ❯                                                                                                                                                    │ │
+                          │ ╰─ Grok 4.6 · always-approve ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+                          │ Ctrl+\ dashboard   Ctrl+[ ] talia wewnątrz TTY   (nie mylić z hostowym [‹][›])                                                                           │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          │                                                                                                                                                          │
+                          └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ LOCK   PANE   TAB   MOVE   SEARCH                                                                               Composer · Quick cmd   LIVE 3 | CPU  ·  | MEM  ·  | DISK  ·  | HEALTH</pre></section></main>
+  <aside class="right">
+    <h2>Inspector</h2>
+    <p>owner: grok</p>
+    <p>authored_by: grok &lt;agents@vetcoders.io&gt;</p>
+    <p>session: 01a00bfd-5efc-7bf0-883f-a5d096f5235d</p>
+    <p>date: 2026-08-17</p>
+    <p>grid: 182×130</p>
+    <p>Źródło: ściąga 182×40. Wysokość 130 jest do recenzji, nie do okna laptopa.</p>
+    <p>Layout-5 jest przygaszony w prawie — nie budujemy go teraz.</p>
+  </aside>
+  <footer class="stat">
+    <span>studio · jeden dokument</span>
+    <span>znaki/wiersz 182</span>
+    <span>wiersze 130</span>
+    <span>Layout-1..5</span>
+  </footer>
+</div>
+<script>
+const tabs=[...document.querySelectorAll('.tab')];
+const docs=[...document.querySelectorAll('.doc')];
+function show(id){
+  tabs.forEach(t=>t.classList.toggle('is-active', t.dataset.id===id));
+  docs.forEach(d=>d.classList.toggle('is-active', d.id===id));
+  history.replaceState(null,'','#'+id);
+}
+tabs.forEach(t=>t.addEventListener('click',()=>show(t.dataset.id)));
+if(location.hash) show(location.hash.slice(1));
+</script>
+</body>
+</html>
