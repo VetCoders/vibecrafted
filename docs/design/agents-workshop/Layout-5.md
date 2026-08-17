@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 kind: brief
 layout_id: Layout-5
 title: Nowy dispatch (później)
@@ -9,6 +9,7 @@ session_id: 01a00bfd-5efc-7bf0-883f-a5d096f5235d
 date: 2026-08-17
 grid: 120x36
 source_cheat: 120x36-operator-vertical
+studio_type: 12px/1.28
 scope: agents-workshop
 product: vibecrafted
 next: layout-factory

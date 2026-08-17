@@ -61,7 +61,7 @@ def wrap(text: str, width: int) -> list[str]:
 def frontmatter(*, layout_id: str, title: str, kind: str = "layout") -> str:
     return (
         "---\n"
-        f"status: draft\n"
+        f"status: accepted\n"
         f"kind: {kind}\n"
         f"layout_id: {layout_id}\n"
         f"title: {title}\n"
@@ -71,6 +71,7 @@ def frontmatter(*, layout_id: str, title: str, kind: str = "layout") -> str:
         f"date: {DATE}\n"
         f"grid: {W}x{H}\n"
         f"source_cheat: 120x36-operator-vertical\n"
+        f"studio_type: 12px/1.28\n"
         f"scope: agents-workshop\n"
         f"product: vibecrafted\n"
         f"next: layout-factory\n"
@@ -405,6 +406,9 @@ wiersze  2–35  ciało   (rail {RAIL} + canvas {CANVAS})
 wiersz  36     status-bar
 ```
 
+**LOCKED 2026-08-17 (operator: JEAH — teraz idealnie).**
+Studio: `12px / 1.28`. Nie wracamy do 1.7 ani do 130 wierszy.
+
 120 zostaje. 36 daje powietrze jak pusta dziura shella na ściądze.
 Pasek talii: `[‹2/4›] [Voc] [Nowy]`. Karta Nowy agent: 6 wierszy.
 Nie kopiujemy Tab #6 / Tab #7 — tylko proporcje canvy.
@@ -573,7 +577,7 @@ pre {{ margin:0 auto; width:120ch; font:12px/1.28 ui-monospace, "SF Mono", Menlo
     <p>session: {SESSION}</p>
     <p>date: {DATE}</p>
     <p>grid: {W}×{H}</p>
-    <p>120×36. Szerokość okna operatora, wysokość jak VERTICAL — nie placek 30.</p>
+    <p>LOCKED: 120×36 · 12px/1.28. Operator accepted 2026-08-17.</p>
     <p>Layout-5 jest przygaszony w prawie — nie budujemy go teraz.</p>
   </aside>
   <footer class="stat">

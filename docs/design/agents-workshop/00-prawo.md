@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 kind: design-doc
 layout_id: Layout-0
 title: Prawo siatki i dwóch drzwi
@@ -9,6 +9,7 @@ session_id: 01a00bfd-5efc-7bf0-883f-a5d096f5235d
 date: 2026-08-17
 grid: 120x36
 source_cheat: 120x36-operator-vertical
+studio_type: 12px/1.28
 scope: agents-workshop
 product: vibecrafted
 next: layout-factory
@@ -47,6 +48,9 @@ wiersz   1     compact-bar
 wiersze  2–35  ciało   (rail 20 + canvas 100)
 wiersz  36     status-bar
 ```
+
+**LOCKED 2026-08-17 (operator: JEAH — teraz idealnie).**
+Studio: `12px / 1.28`. Nie wracamy do 1.7 ani do 130 wierszy.
 
 120 zostaje. 36 daje powietrze jak pusta dziura shella na ściądze.
 Pasek talii: `[‹2/4›] [Voc] [Nowy]`. Karta Nowy agent: 6 wierszy.
