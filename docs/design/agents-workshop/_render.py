@@ -7,9 +7,9 @@ import html
 import json
 from pathlib import Path
 
-W, H = 180, 30
-RAIL = 26
-CANVAS = W - RAIL  # 154
+W, H = 120, 30
+RAIL = 20
+CANVAS = W - RAIL  # 100
 REPO = Path(__file__).resolve().parents[3]
 DOCS = Path(__file__).resolve().parent
 PLAN = (
@@ -70,7 +70,7 @@ def frontmatter(*, layout_id: str, title: str, kind: str = "layout") -> str:
         f"session_id: {SESSION}\n"
         f"date: {DATE}\n"
         f"grid: {W}x{H}\n"
-        f"source_cheat: 182x40-live / 180x30-cells\n"
+        f"source_cheat: 182x40-fullmux / 120x30-operator\n"
         f"scope: agents-workshop\n"
         f"product: vibecrafted\n"
         f"next: layout-factory\n"
@@ -111,14 +111,14 @@ class Frame:
 
 
 def compact_bar() -> str:
-    left = "  Vibecrafted.    |  L   ○ Start here    ◉ Agents Interactive    ○ shell    ○ voc"
-    right = "Composer  ·  Quick cmd"
+    left = " Vibecrafted. | L  ○ Start  ◉ Agents  ○ shell  ○ voc"
+    right = "Composer · cmd"
     return clip(lr(left, right, W), W)
 
 
 def status_bar() -> str:
-    left = " LOCK   PANE   TAB   MOVE   SEARCH"
-    right = "Composer · Quick cmd   LIVE 3 | CPU  ·  | MEM  ·  | DISK  ·  | HEALTH"
+    left = " LOCK  PANE  TAB  MOVE"
+    right = "LIVE 3 | HEALTH"
     return clip(lr(left, right, W), W)
 
 
@@ -132,14 +132,14 @@ def paint_rail(fr: Frame) -> None:
         "SESSIONS 5",
         " ● Live 3",
         "01 ○ main",
-        "02 ○ lbrx-services",
+        "02 ○ lbrx-svc",
         "   · Shell",
-        "03 ○ w-c207-r155013",
+        "03 ○ w-c207",
         "   · resume-grok",
         "   · resume-codex",
-        "04 ◉ vibecrafted-release",
+        "04 ◉ vc-release",
         "   · Start here",
-        "   ◉ Agents Interactive",
+        "   ◉ Agents",
         "   · shell",
         "   · voc",
         "05 ○ vibecrafted-vc_",
@@ -177,7 +177,7 @@ def grok_transcript() -> list[str]:
         "Maciej: floating, Ctrl+P, strzalki. hehe",
         "Jeden talerz. Host: float, rename, PANE, strzalki.",
         "",
-        "Pasek talii:  [‹][›]   [Voc Console]   [New agent]",
+        "Pasek talii:  [‹][›]  [Voc]  [Nowy]",
         "New agent = interaktywny TTY na tym tabie.",
         "Dispatch / headless = inne drzwi, pozniej.",
     ]
@@ -211,7 +211,7 @@ def workshop(switcher: str, title: str, transcript: list[str], model: str) -> Fr
 
 
 def box_new_agent(focus: str = "agent") -> list[str]:
-    inner_w = 104
+    inner_w = 88
     agents = ["agy", "claude", "codex", "grok", "junie"]
     flows = ["init", "resume", "operator", "partner"]
 
@@ -249,7 +249,7 @@ def box_new_agent(focus: str = "agent") -> list[str]:
 
 
 def box_new_dispatch() -> list[str]:
-    inner_w = 104
+    inner_w = 88
     rows_inner = [
         "  ▸ agent    [agy] [claude] [codex] «grok» [junie]",
         "    rytual   [init] «resume» [operator] [partner]",
@@ -299,8 +299,8 @@ def stamp(fr: Frame, box: list[str], x: int, y: int) -> None:
         fr.put(x, y + i, line)
 
 
-SWITCH_NOW = "[‹] 2/4 [›]  [Voc Console] [New agent]"
-SWITCH_AFTER = "[‹] 3/5 [›]  [Voc Console] [New agent]"
+SWITCH_NOW = "[‹2/4›] [Voc] [Nowy]"
+SWITCH_AFTER = "[‹3/5›] [Voc] [Nowy]"
 
 
 def layout_1() -> list[str]:
@@ -392,13 +392,13 @@ Szukaj `session_id: {SESSION}` albo `authored_by: grok`.
 
 ## Siatka
 
-Komórka TUI to nie piksel. 180×130 „żeby wyszło 4:3” to wieża ze 130 wierszy znaków.
-Właściwa kratka makiety: **180×30**.
+Komórka TUI to nie piksel. Pełny mux na ściądze miał ~182 — operator nie ma takiego okna.
+Właściwa kratka makiety: **120×30**.
 
-| | żywa ściąga | pomyłka (piksele) | makieta |
+| | pełny mux | pomyłka | makieta |
 |---|---|---|---|
-| szerokość | ~182 | 180 | **180** |
-| wysokość | ~40 | 130 (4:3 w px) | **30** |
+| szerokość | ~182 | 180, potem 130 wierszy „4:3” | **120** |
+| wysokość | ~40 | 130 | **30** |
 
 ```
 wiersz   1     compact-bar
@@ -406,7 +406,8 @@ wiersze  2–29  ciało   (rail {RAIL} + canvas {CANVAS})
 wiersz  30     status-bar
 ```
 
-Karta Nowy agent ma znowu 6 wierszy — jak na Twoim pierwszym rysunku.
+Pasek talii na 120: `[‹2/4›] [Voc] [Nowy]`.
+Karta Nowy agent ma 6 wierszy — jak na Twoim pierwszym rysunku.
 
 ## Korekty
 
@@ -561,7 +562,7 @@ pre {{ margin:0; font:12px/1.15 ui-monospace, Menlo, Consolas, monospace; white-
 <div class="app">
   <header class="top">
     <div class="brand">Vibecrafted. · Layout studio</div>
-    <small>180×30 komórek · analog CUT-1..n · seed Layout factory</small>
+    <small>120×30 komórek · analog CUT-1..n · seed Layout factory</small>
   </header>
   <nav class="left">{"".join(tabs)}</nav>
   <main class="center">{"".join(sections)}</main>
@@ -572,7 +573,7 @@ pre {{ margin:0; font:12px/1.15 ui-monospace, Menlo, Consolas, monospace; white-
     <p>session: {SESSION}</p>
     <p>date: {DATE}</p>
     <p>grid: {W}×{H}</p>
-    <p>Komórki, nie piksele. 180×30. Sciaga zywa byla ~182×40.</p>
+    <p>Komórki, nie piksele. 120×30 — okno operatora, nie pełny mux 182.</p>
     <p>Layout-5 jest przygaszony w prawie — nie budujemy go teraz.</p>
   </aside>
   <footer class="stat">

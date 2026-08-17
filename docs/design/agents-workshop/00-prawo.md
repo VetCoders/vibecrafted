@@ -7,8 +7,8 @@ owner: grok
 authored_by: grok <agents@vetcoders.io>
 session_id: 01a00bfd-5efc-7bf0-883f-a5d096f5235d
 date: 2026-08-17
-grid: 180x30
-source_cheat: 182x40-live / 180x30-cells
+grid: 120x30
+source_cheat: 182x40-fullmux / 120x30-operator
 scope: agents-workshop
 product: vibecrafted
 next: layout-factory
@@ -28,28 +28,29 @@ owner: grok
 authored_by: grok <agents@vetcoders.io>
 session_id: 01a00bfd-5efc-7bf0-883f-a5d096f5235d
 date: 2026-08-17
-grid: 180x30
+grid: 120x30
 ```
 
 Szukaj `session_id: 01a00bfd-5efc-7bf0-883f-a5d096f5235d` albo `authored_by: grok`.
 
 ## Siatka
 
-Komórka TUI to nie piksel. 180×130 „żeby wyszło 4:3” to wieża ze 130 wierszy znaków.
-Właściwa kratka makiety: **180×30**.
+Komórka TUI to nie piksel. Pełny mux na ściądze miał ~182 — operator nie ma takiego okna.
+Właściwa kratka makiety: **120×30**.
 
-|           | żywa ściąga | pomyłka (piksele) | makieta |
-| --------- | ----------- | ----------------- | ------- |
-| szerokość | ~182        | 180               | **180** |
-| wysokość  | ~40         | 130 (4:3 w px)    | **30**  |
+|           | pełny mux | pomyłka                      | makieta |
+| --------- | --------- | ---------------------------- | ------- |
+| szerokość | ~182      | 180, potem 130 wierszy „4:3” | **120** |
+| wysokość  | ~40       | 130                          | **30**  |
 
 ```
 wiersz   1     compact-bar
-wiersze  2–29  ciało   (rail 26 + canvas 154)
+wiersze  2–29  ciało   (rail 20 + canvas 100)
 wiersz  30     status-bar
 ```
 
-Karta Nowy agent ma znowu 6 wierszy — jak na Twoim pierwszym rysunku.
+Pasek talii na 120: `[‹2/4›] [Voc] [Nowy]`.
+Karta Nowy agent ma 6 wierszy — jak na Twoim pierwszym rysunku.
 
 ## Korekty
 
