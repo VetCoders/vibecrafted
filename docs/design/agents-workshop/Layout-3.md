@@ -7,8 +7,8 @@ owner: grok
 authored_by: grok <agents@vetcoders.io>
 session_id: 01a00bfd-5efc-7bf0-883f-a5d096f5235d
 date: 2026-08-17
-grid: 182x130
-source_cheat: 182x40
+grid: 180x30
+source_cheat: 182x40-live / 180x30-cells
 scope: agents-workshop
 product: vibecrafted
 next: layout-factory
@@ -19,136 +19,36 @@ next: layout-factory
 Enter z karty. Urodził się panel. Talia 3/5. Poprzedni grok jedno `[‹]` wstecz.
 
 ```
-0         1         2         3         4         5         6         7         8         9         0         1         2         3         4         5         6         7         8
-01234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901
-  Vibecrafted.    |  L   ○ Start here    ◉ Agents Interactive    ○ shell    ○ voc                                                                               Composer  ·  Quick cmd
-SESSIONS 5                ┌ claude · resume · vibecrafted ─────────────────────────────────────────────────────────────────────────────────── [‹] 3/5 [›]  [Voc Console] [New agent] ┐
- ● Live 3                 │                                                                                                                                                          │
-01 ○ main                 │ claude · resume · /Volumes/vc-workspace/vetcoders/vibecrafted-suite/vibecrafted                                                                          │
-02 ○ lbrx-services        │                                                                                                                                                          │
-   · Shell                │ Właśnie się urodził. Interaktywny TTY. Host nadał tytuł.                                                                                                 │
-03 ○ w-c207-r155013       │ Talia jest teraz 3/5. Ten panel jest na wierzchu.                                                                                                        │
-   · resume-grok          │                                                                                                                                                          │
-   · resume-codex         │ Poprzedni grok żyje jedno [‹] wstecz.                                                                                                                    │
-04 ◉ vibecrafted-release  │ Nie powstała nowa sesja vc-frame. Nie powstał Tab #7. Nie powstał resume-*.                                                                              │
-   · Start here           │                                                                                                                                                          │
-   ◉ Agents Interactive   │ Jeśli chcesz headless — to nie ten przycisk. To [New dispatch] (Layout-5)                                                                                │
-   · shell                │ albo dispatch z wnętrza tej sesji, albo Quick cmd.                                                                                                       │
-   · voc                  │                                                                                                                                                          │
-05 ○ vibecrafted-vc_      │                                                                                                                                                          │
-   · resume-grok          │                                                                                                                                                          │
-   · Shell                │                                                                                                                                                          │
-   · grok                 │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │ ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
-                          │ │ ❯                                                                                                                                                    │ │
-                          │ ╰─ Claude · interactive pane ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
-                          │ Ctrl+\ dashboard   Ctrl+[ ] talia wewnątrz TTY   (nie mylić z hostowym [‹][›])                                                                           │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          │                                                                                                                                                          │
-                          └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- LOCK   PANE   TAB   MOVE   SEARCH                                                                               Composer · Quick cmd   LIVE 3 | CPU  ·  | MEM  ·  | DISK  ·  | HEALTH
+0         1         2         3         4         5         6         7         8         9         0         1         2         3         4         5         6         7
+012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  Vibecrafted.    |  L   ○ Start here    ◉ Agents Interactive    ○ shell    ○ voc                                                                             Composer  ·  Quick cmd
+SESSIONS 5                ┌ claude · resume · vibecrafted ───────────────────────────────────────────────────────────────────────────────── [‹] 3/5 [›]  [Voc Console] [New agent] ┐
+ ● Live 3                 │ claude · resume · vibecrafted                                                                                                                          │
+01 ○ main                 │                                                                                                                                                        │
+02 ○ lbrx-services        │ Wlasnie sie urodzil. Interaktywny TTY. Talia 3/5.                                                                                                      │
+   · Shell                │ Poprzedni grok zyje jedno [‹] wstecz.                                                                                                                  │
+03 ○ w-c207-r155013       │ Nie powstala sesja muxa. Nie Tab #7. Nie resume-*.                                                                                                     │
+   · resume-grok          │ Headless to nie ten przycisk — to Layout-5 albo Quick cmd.                                                                                             │
+   · resume-codex         │                                                                                                                                                        │
+04 ◉ vibecrafted-release  │                                                                                                                                                        │
+   · Start here           │                                                                                                                                                        │
+   ◉ Agents Interactive   │                                                                                                                                                        │
+   · shell                │                                                                                                                                                        │
+   · voc                  │                                                                                                                                                        │
+05 ○ vibecrafted-vc_      │                                                                                                                                                        │
+   · resume-grok          │                                                                                                                                                        │
+   · Shell                │                                                                                                                                                        │
+   · grok                 │                                                                                                                                                        │
+                          │                                                                                                                                                        │
+                          │                                                                                                                                                        │
+                          │                                                                                                                                                        │
+                          │                                                                                                                                                        │
+                          │                                                                                                                                                        │
+                          │                                                                                                                                                        │
+                          │                                                                                                                                                        │
+                          │ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+                          │ │ ❯                                                                                                                                                  │ │
+                          │ ╰─ Claude · interactive pane ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+                          └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ LOCK   PANE   TAB   MOVE   SEARCH                                                                             Composer · Quick cmd   LIVE 3 | CPU  ·  | MEM  ·  | DISK  ·  | HEALTH
 ```

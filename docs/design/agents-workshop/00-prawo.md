@@ -7,8 +7,8 @@ owner: grok
 authored_by: grok <agents@vetcoders.io>
 session_id: 01a00bfd-5efc-7bf0-883f-a5d096f5235d
 date: 2026-08-17
-grid: 182x130
-source_cheat: 182x40
+grid: 180x30
+source_cheat: 182x40-live / 180x30-cells
 scope: agents-workshop
 product: vibecrafted
 next: layout-factory
@@ -28,38 +28,40 @@ owner: grok
 authored_by: grok <agents@vetcoders.io>
 session_id: 01a00bfd-5efc-7bf0-883f-a5d096f5235d
 date: 2026-08-17
-grid: 182x130
+grid: 180x30
 ```
 
 Szukaj `session_id: 01a00bfd-5efc-7bf0-883f-a5d096f5235d` albo `authored_by: grok`.
 
 ## Siatka
 
-|             | żywa ściąga      | makieta do recenzji                               |
-| ----------- | ---------------- | ------------------------------------------------- |
-| szerokość   | ~182             | **182**                                           |
-| wysokość    | ~40              | **130**                                           |
-| po co wyżej | okno na laptopie | widać rozmowę i kartę naraz, bez 20 pustych dziur |
+Komórka TUI to nie piksel. 180×130 „żeby wyszło 4:3” to wieża ze 130 wierszy znaków.
+Właściwa kratka makiety: **180×30**.
+
+|           | żywa ściąga | pomyłka (piksele) | makieta |
+| --------- | ----------- | ----------------- | ------- |
+| szerokość | ~182        | 180               | **180** |
+| wysokość  | ~40         | 130 (4:3 w px)    | **30**  |
 
 ```
-wiersz    1     compact-bar
-wiersze   2–129 ciało   (rail 26 + canvas 156)
-wiersz    130   status-bar
+wiersz   1     compact-bar
+wiersze  2–29  ciało   (rail 26 + canvas 154)
+wiersz  30     status-bar
 ```
 
-Żywe okno zostaje ~40. 130 to widok recenzji (jakbyś zescrollował TUI).
+Karta Nowy agent ma znowu 6 wierszy — jak na Twoim pierwszym rysunku.
 
-## Korekty po przejściu oczami użytkownika (delta 40→130)
+## Korekty
 
-Poprzednie 182×40 były nie do użycia jako makieta:
+Grok nie powinien był rysować 130 wierszy. Miał poprawić: „to piksele, nie komórki”.
 
-1. Środek był pusty. Wyglądało jak zepsuty TUI, nie warsztat.
-2. Karta „Nowy agent” przecinała słowa w tle (`THIS ta│`). Nie da się tego czytać.
-3. Ścieżka ucinała się na `vibecr`. Nie sprawdzisz, gdzie się rodzi.
-4. Na pasku NOW wisiał już `[New dispatch]`. Za wcześnie — myli drzwi.
-5. `Tab #6` w celu. W celu ten tab nazywa się `voc`.
-6. Trzy kopie tej samej pustej ramki na trzy stany fokusu. Człowiek nie porównuje, tylko się gubi.
-7. Angielskie notatki projektowe w środku „produktu”. Tu chrome zostaje jak żywy (SESSIONS/LOCK), karta mówi po polsku.
+Poza tym z recenzji użytkownika zostaje:
+
+1. Karta nie przecina słów w tle.
+2. Ścieżka w całości.
+3. Na pasku NOW nie ma `[New dispatch]`.
+4. W celu tab nazywa się `voc`, nie `Tab #6`.
+5. Chrome jak żywy (SESSIONS/LOCK), karta po polsku.
 
 Wektor z naszych klatek:
 

@@ -7,9 +7,9 @@ import html
 import json
 from pathlib import Path
 
-W, H = 182, 130
+W, H = 180, 30
 RAIL = 26
-CANVAS = W - RAIL  # 156
+CANVAS = W - RAIL  # 154
 REPO = Path(__file__).resolve().parents[3]
 DOCS = Path(__file__).resolve().parent
 PLAN = (
@@ -70,7 +70,7 @@ def frontmatter(*, layout_id: str, title: str, kind: str = "layout") -> str:
         f"session_id: {SESSION}\n"
         f"date: {DATE}\n"
         f"grid: {W}x{H}\n"
-        f"source_cheat: 182x40\n"
+        f"source_cheat: 182x40-live / 180x30-cells\n"
         f"scope: agents-workshop\n"
         f"product: vibecrafted\n"
         f"next: layout-factory\n"
@@ -172,45 +172,14 @@ def paint_text(fr: Frame, x: int, y: int, lines: list[str], width: int) -> int:
 
 def grok_transcript() -> list[str]:
     blocks = [
-        "4.1.0 release · fix/4.1.0-patch-resume-no-implicit-native-session",
-        "No todo items.",
+        "4.1.0 · feat/resume-no-implicit-native-session",
         "",
-        "Maciej: floating panele, potem Ctrl+P i strzałki. hehe",
+        "Maciej: floating, Ctrl+P, strzalki. hehe",
+        "Jeden talerz. Host: float, rename, PANE, strzalki.",
         "",
-        "To nie jest sześć ekranów. To jeden talerz. Strzałki przewracają karty.",
-        "Cały czas sesja 04 vibecrafted-release, tab Agents Interactive.",
-        "Host już umie: float, rename, PANE, strzałki, list-panes.",
-        "",
-        "Agent switcher na Quick cmd to atrapa. Prawdziwe [‹][›] Groka to inna talia,",
-        "wewnątrz tego TTY. voc Observe 8 live to trzecia talia — farma, nie ten tab.",
-        "",
-        "Maciej: brakowało jednego przycisku do designu: [New agent]",
-        "",
-        "Pasek talii hosta:",
-        "  [‹][›]           poprzednia / następna twarz tego taba",
-        "  [Voc Console]    drzwi / oczy",
-        "  [New agent]      narodziny interaktywnego panelu",
-        "",
-        "Z Session Managera bierzemy rytuał karty, nie listę KDL",
-        "(vibecrafted / host / dashboard / workflow / marbles).",
-        "",
-        "Trzy osie konfiguratora:",
-        "  agent     agy  claude  codex  grok  junie",
-        "  rytuał    init  resume  operator  partner",
-        "  ścieżka   gdzie się rodzi",
-        "",
-        "↑/↓ wiersz. ←/→ chip. spacja zaznacz. enter odpal. esc anuluj.",
-        "",
-        "[New agent] = tylko interaktywny TTY na tym tabie.",
-        "Headless / runy idą później jako [New dispatch], albo z wnętrza już",
-        "żywego interaktywnego agenta, albo z Quick cmd — inny widok.",
-        "",
-        "[resume] jest jawnym wyborem. Bez cichego native-attach.",
-        "",
-        "Za tydzień: Layout factory. Te rysunki są Layout-1..n — analog CUT-1..n.",
-        "",
-        "Sciaga operatora: 182x40. Makieta jest wyzsza (130), zeby bylo widac",
-        "rozmowe i karte naraz. Zywe okno zostaje ~40 wierszy; to jest widok do recenzji.",
+        "Pasek talii:  [‹][›]   [Voc Console]   [New agent]",
+        "New agent = interaktywny TTY na tym tabie.",
+        "Dispatch / headless = inne drzwi, pozniej.",
     ]
     width = CANVAS - 4
     out: list[str] = []
@@ -219,7 +188,7 @@ def grok_transcript() -> list[str]:
             out.append("")
         else:
             out.extend(wrap(block, width))
-    return out
+    return out[:12]
 
 
 def paint_prompt(fr: Frame, y: int, model: str) -> None:
@@ -228,11 +197,6 @@ def paint_prompt(fr: Frame, y: int, model: str) -> None:
     fr.put(x, y, "╭" + "─" * (w - 2) + "╮")
     fr.put(x, y + 1, "│ ❯" + " " * (w - 4) + "│")
     fr.put(x, y + 2, "╰" + clip("─ " + model + " ", w - 2, "─") + "╯")
-    fr.put(
-        x,
-        y + 3,
-        "Ctrl+\\ dashboard   Ctrl+[ ] talia wewnątrz TTY   (nie mylić z hostowym [‹][›])",
-    )
 
 
 def workshop(switcher: str, title: str, transcript: list[str], model: str) -> Frame:
@@ -240,23 +204,22 @@ def workshop(switcher: str, title: str, transcript: list[str], model: str) -> Fr
     paint_chrome(fr)
     paint_rail(fr)
     paint_canvas_frame(fr, title, switcher)
-    y = paint_text(fr, RAIL + 2, 3, transcript, CANVAS - 4)
-    # keep prompt near the bottom of content, above status
-    prompt_y = min(H - 8, max(y + 2, H - 12))
+    prompt_y = H - 5
+    paint_text(fr, RAIL + 2, 2, transcript[: prompt_y - 3], CANVAS - 4)
     paint_prompt(fr, prompt_y, model)
     return fr
 
 
 def box_new_agent(focus: str = "agent") -> list[str]:
-    inner_w = 92
+    inner_w = 104
     agents = ["agy", "claude", "codex", "grok", "junie"]
     flows = ["init", "resume", "operator", "partner"]
 
     def chips(items: list[str], selected: str) -> str:
         parts = []
         for it in items:
-            parts.append(f"« {it} »" if it == selected else f"[ {it} ]")
-        return "   ".join(parts)
+            parts.append(f"«{it}»" if it == selected else f"[{it}]")
+        return " ".join(parts)
 
     def mark(name: str) -> str:
         return "▸" if focus == name else " "
@@ -265,19 +228,10 @@ def box_new_agent(focus: str = "agent") -> list[str]:
     if focus == "path":
         path += "█"
     rows_inner = [
-        "",
-        f"  {mark('agent')} agent",
-        f"    {chips(agents, 'grok')}",
-        "",
-        f"  {mark('workflow')} rytuał",
-        f"    {chips(flows, 'resume')}",
-        "",
-        f"  {mark('path')} ścieżka",
-        f"    {path}",
-        "",
-        "  Enter otworzy interaktywny panel na tym tabie.",
-        "  Nie nowa sesja muxa. Nie headless. Nie farma voc.",
-        "",
+        f"  {mark('agent')} agent    {chips(agents, 'grok')}",
+        f"  {mark('workflow')} rytual   {chips(flows, 'resume')}",
+        f"  {mark('path')} sciezka  {path}",
+        "  Enter = interaktywny panel na tym tabie. Nie mux. Nie headless.",
     ]
     title = "┌ ❯ Nowy agent "
     right = " [Anuluj] ┐"
@@ -286,9 +240,7 @@ def box_new_agent(focus: str = "agent") -> list[str]:
     bot = (
         "└"
         + clip(
-            "─ ↑/↓ wiersz   ←/→ chip   spacja zaznacz   enter odpal   esc ",
-            inner_w - 2,
-            "─",
+            "─ ↑/↓ wiersz  ·  ←/→ chip  ·  spacja  ·  enter  ·  esc ", inner_w - 2, "─"
         )
         + "┘"
     )
@@ -297,21 +249,12 @@ def box_new_agent(focus: str = "agent") -> list[str]:
 
 
 def box_new_dispatch() -> list[str]:
-    inner_w = 92
+    inner_w = 104
     rows_inner = [
-        "",
-        "  ▸ agent",
-        "    [ agy ]   [ claude ]   [ codex ]   « grok »   [ junie ]",
-        "",
-        "    rytuał",
-        "    [ init ]   « resume »   [ operator ]   [ partner ]",
-        "",
-        "    ścieżka",
-        "    /Volumes/vc-workspace/vetcoders/vibecrafted-suite/vibecrafted",
-        "",
-        "  Enter odpalą HEADLESS workera. Bez TTY. Widać go na serwerze / w voc.",
-        "  Później: można go „położyć” na panel jako obserwację, nie jako twarz.",
-        "",
+        "  ▸ agent    [agy] [claude] [codex] «grok» [junie]",
+        "    rytual   [init] «resume» [operator] [partner]",
+        "    sciezka  /Volumes/vc-workspace/vetcoders/vibecrafted-suite/vibecrafted",
+        "  Enter = HEADLESS worker. Bez TTY. Widać go na serwerze / w voc.",
     ]
     title = "┌ ❯ Nowy dispatch "
     right = " [Anuluj] ┐"
@@ -327,25 +270,19 @@ def box_new_dispatch() -> list[str]:
 
 
 def box_voc() -> list[str]:
-    inner_w = 72
+    inner_w = 64
     rows_inner = [
-        "  4 twarze na tym tabie · 0 wierszy farmy",
-        "",
-        "  ● grok      vibecrafted      14m   na wierzchu",
-        "  ○ claude    vibecrafted       0m   właśnie urodzony",
-        "  ○ codex     vc-workspace      1h   float",
-        "  ○ junie     ~                40m   float",
-        "",
-        "  j/k wybierz    enter podnieś    n Nowy agent",
-        "",
-        "  To nie jest Observe · 8 live.",
-        "  To talia, którą [‹][›] już przekłada.",
+        "  ● grok     vibecrafted   14m  na wierzchu",
+        "  ○ claude   vibecrafted    0m",
+        "  ○ codex    vc-workspace   1h",
+        "  ○ junie    ~             40m",
+        "  j/k  enter podnies  n Nowy agent",
     ]
-    title = "┌ voc · ten tab · Agents Interactive "
+    title = "┌ voc · ten tab "
     right = " PIN ◉ ┐"
     fill = inner_w - vis(title) - vis(right)
     top = title + ("─" * max(1, fill)) + right
-    bot = "└" + clip("─ drzwi do talii tego taba ", inner_w - 2, "─") + "┘"
+    bot = "└" + clip("─ drzwi tego taba, nie farma ", inner_w - 2, "─") + "┘"
     body = ["│" + clip(s, inner_w - 2) + "│" for s in rows_inner]
     return [top, *body, bot]
 
@@ -378,23 +315,19 @@ def layout_2() -> list[str]:
     )
     box = box_new_agent("agent")
     x = RAIL + (CANVAS - vis(box[0])) // 2
-    y = 28
+    y = 8
     stamp(fr, box, x, y)
     return fr.lines()
 
 
 def layout_3() -> list[str]:
     born = [
-        "claude · resume · /Volumes/vc-workspace/vetcoders/vibecrafted-suite/vibecrafted",
+        "claude · resume · vibecrafted",
         "",
-        "Właśnie się urodził. Interaktywny TTY. Host nadał tytuł.",
-        "Talia jest teraz 3/5. Ten panel jest na wierzchu.",
-        "",
-        "Poprzedni grok żyje jedno [‹] wstecz.",
-        "Nie powstała nowa sesja vc-frame. Nie powstał Tab #7. Nie powstał resume-*.",
-        "",
-        "Jeśli chcesz headless — to nie ten przycisk. To [New dispatch] (Layout-5)",
-        "albo dispatch z wnętrza tej sesji, albo Quick cmd.",
+        "Wlasnie sie urodzil. Interaktywny TTY. Talia 3/5.",
+        "Poprzedni grok zyje jedno [‹] wstecz.",
+        "Nie powstala sesja muxa. Nie Tab #7. Nie resume-*.",
+        "Headless to nie ten przycisk — to Layout-5 albo Quick cmd.",
     ]
     width = CANVAS - 4
     lines: list[str] = []
@@ -413,7 +346,7 @@ def layout_4() -> list[str]:
         SWITCH_NOW, "grok · vibecrafted", grok_transcript(), "Grok 4.6 · always-approve"
     )
     box = box_voc()
-    stamp(fr, box, RAIL + 6, 24)
+    stamp(fr, box, RAIL + 4, 7)
     return fr.lines()
 
 
@@ -423,7 +356,7 @@ def layout_5() -> list[str]:
     )
     box = box_new_dispatch()
     x = RAIL + (CANVAS - vis(box[0])) // 2
-    stamp(fr, box, x, 28)
+    stamp(fr, box, x, 8)
     return fr.lines()
 
 
@@ -459,31 +392,33 @@ Szukaj `session_id: {SESSION}` albo `authored_by: grok`.
 
 ## Siatka
 
-| | żywa ściąga | makieta do recenzji |
-|---|---|---|
-| szerokość | ~182 | **182** |
-| wysokość | ~40 | **130** |
-| po co wyżej | okno na laptopie | widać rozmowę i kartę naraz, bez 20 pustych dziur |
+Komórka TUI to nie piksel. 180×130 „żeby wyszło 4:3” to wieża ze 130 wierszy znaków.
+Właściwa kratka makiety: **180×30**.
+
+| | żywa ściąga | pomyłka (piksele) | makieta |
+|---|---|---|---|
+| szerokość | ~182 | 180 | **180** |
+| wysokość | ~40 | 130 (4:3 w px) | **30** |
 
 ```
-wiersz    1     compact-bar
-wiersze   2–129 ciało   (rail {RAIL} + canvas {CANVAS})
-wiersz    130   status-bar
+wiersz   1     compact-bar
+wiersze  2–29  ciało   (rail {RAIL} + canvas {CANVAS})
+wiersz  30     status-bar
 ```
 
-Żywe okno zostaje ~40. 130 to widok recenzji (jakbyś zescrollował TUI).
+Karta Nowy agent ma znowu 6 wierszy — jak na Twoim pierwszym rysunku.
 
-## Korekty po przejściu oczami użytkownika (delta 40→130)
+## Korekty
 
-Poprzednie 182×40 były nie do użycia jako makieta:
+Grok nie powinien był rysować 130 wierszy. Miał poprawić: „to piksele, nie komórki”.
 
-1. Środek był pusty. Wyglądało jak zepsuty TUI, nie warsztat.
-2. Karta „Nowy agent” przecinała słowa w tle (`THIS ta│`). Nie da się tego czytać.
-3. Ścieżka ucinała się na `vibecr`. Nie sprawdzisz, gdzie się rodzi.
-4. Na pasku NOW wisiał już `[New dispatch]`. Za wcześnie — myli drzwi.
-5. `Tab #6` w celu. W celu ten tab nazywa się `voc`.
-6. Trzy kopie tej samej pustej ramki na trzy stany fokusu. Człowiek nie porównuje, tylko się gubi.
-7. Angielskie notatki projektowe w środku „produktu”. Tu chrome zostaje jak żywy (SESSIONS/LOCK), karta mówi po polsku.
+Poza tym z recenzji użytkownika zostaje:
+
+1. Karta nie przecina słów w tle.
+2. Ścieżka w całości.
+3. Na pasku NOW nie ma `[New dispatch]`.
+4. W celu tab nazywa się `voc`, nie `Tab #6`.
+5. Chrome jak żywy (SESSIONS/LOCK), karta po polsku.
 
 Wektor z naszych klatek:
 
@@ -626,7 +561,7 @@ pre {{ margin:0; font:12px/1.15 ui-monospace, Menlo, Consolas, monospace; white-
 <div class="app">
   <header class="top">
     <div class="brand">Vibecrafted. · Layout studio</div>
-    <small>182×130 · analog CUT-1..n · seed Layout factory</small>
+    <small>180×30 komórek · analog CUT-1..n · seed Layout factory</small>
   </header>
   <nav class="left">{"".join(tabs)}</nav>
   <main class="center">{"".join(sections)}</main>
@@ -637,7 +572,7 @@ pre {{ margin:0; font:12px/1.15 ui-monospace, Menlo, Consolas, monospace; white-
     <p>session: {SESSION}</p>
     <p>date: {DATE}</p>
     <p>grid: {W}×{H}</p>
-    <p>Źródło: ściąga 182×40. Wysokość 130 jest do recenzji, nie do okna laptopa.</p>
+    <p>Komórki, nie piksele. 180×30. Sciaga zywa byla ~182×40.</p>
     <p>Layout-5 jest przygaszony w prawie — nie budujemy go teraz.</p>
   </aside>
   <footer class="stat">
