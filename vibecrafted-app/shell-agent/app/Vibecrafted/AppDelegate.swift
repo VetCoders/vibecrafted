@@ -1,6 +1,9 @@
 import AppKit
 import CoreText
 import Darwin
+import os.log
+
+private let installLog = Logger(subsystem: "io.vetcoders.vibecrafted", category: "install")
 
 private struct CanonicalRuntimeInstall {
   let root: URL
@@ -34,6 +37,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   var mainWindow: MainWindowController?
   private var statusItem: NSStatusItem?
   private var terminalProcess: Process?
+  private var workspaceLaunchFailureReported = false
   let eventObserver = EventObserver()
 
   func showMainWindowIfNeeded() {
@@ -95,7 +99,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     do {
       install = try installCanonicalRuntime()
     } catch {
-      print("Cannot publish the canonical Vibecrafted runtime: \(error)")
+      reportWorkspaceLaunchFailure(
+        "Cannot publish the canonical Vibecrafted runtime: \(error.localizedDescription)")
       return
     }
 
@@ -106,17 +111,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       where !FileManager.default.isExecutableFile(
       atPath: required.path)
     {
-      print("Bundled product entry is missing or not executable: \(required.path)")
+      reportWorkspaceLaunchFailure(
+        "Bundled product entry is missing or not executable: \(required.path)")
       return
     }
     guard FileManager.default.fileExists(atPath: install.terminalConfig.path) else {
-      print("Canonical terminal config is missing: \(install.terminalConfig.path)")
+      reportWorkspaceLaunchFailure(
+        "Canonical terminal config is missing: \(install.terminalConfig.path)")
       return
     }
     do {
       try registerBundledFonts()
     } catch {
-      print("Cannot register the bundled terminal font: \(error)")
+      reportWorkspaceLaunchFailure(
+        "Cannot register the bundled terminal font: \(error.localizedDescription)")
       return
     }
 
@@ -127,7 +135,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     ]
     var environment = Dictionary(
       uniqueKeysWithValues: inherited.compactMap { key in host[key].map { (key, $0) } })
-    environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+    // The workspace terminal spawns agent CLIs (codex, gh, claude, loct) whose
+    // `#!/usr/bin/env` shebangs resolve against exactly this PATH. Amputating the
+    // caller's PATH down to the system set hides Homebrew, ~/.local/bin and
+    // ~/.cargo/bin, so those tools die with exit 127. Keep the host PATH and only
+    // give the signed generation priority over it.
+    environment["PATH"] = composedPath(
+      generation: install.root, inherited: host["PATH"])
     environment["PYTHONNOUSERSITE"] = "1"
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
     environment["XDG_CONFIG_HOME"] = install.configHome.path
@@ -150,7 +164,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       try process.run()
       terminalProcess = process
     } catch {
-      print("Failed to launch bundled vc-terminal: \(error)")
+      reportWorkspaceLaunchFailure(
+        "Failed to launch bundled vc-terminal: \(error.localizedDescription)")
     }
   }
 
@@ -315,7 +330,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       "export VIBECRAFTED_PYTHON=\(shellQuote(generation.appendingPathComponent("bin/python3").path))",
       "export VIBECRAFTED_VC_FRAME_BIN=\(shellQuote(frame.path))",
       "export VC_FRAME_CONFIG_DIR=\(shellQuote(frameConfig.path))",
-      "export PATH=\(shellQuote("\(generation.appendingPathComponent("bin").path):/usr/bin:/bin:/usr/sbin:/sbin"))",
+      // PATH is the one export that must compose instead of replace. A launcher
+      // that hard-codes the system set strips Homebrew, ~/.local/bin and
+      // ~/.cargo/bin from everything it spawns, so `#!/usr/bin/env node` CLIs
+      // exit 127. The generation still wins; the caller's PATH survives behind
+      // it, with the system set as the fallback when the caller has none.
+      "export PATH=\"\(shellDoubleQuoteBody(generation.appendingPathComponent("bin").path))"
+        + ":${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}\"",
     ]
     let runtimeEntries = try manager.contentsOfDirectory(
       at: bin, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])
@@ -353,22 +374,61 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     if try root.resourceValues(forKeys: Set(keys)).isSymbolicLink == true {
       throw NSError(
         domain: "io.vetcoders.vibecrafted.install", code: 3,
-        userInfo: [NSLocalizedDescriptionKey: "symlink is forbidden: \(root.path)"])
+        userInfo: [
+          NSLocalizedDescriptionKey:
+            "symlink is forbidden: \(root.standardizedFileURL.path)"
+        ])
     }
     guard let enumerator = FileManager.default.enumerator(
       at: root, includingPropertiesForKeys: keys, options: [], errorHandler: nil)
     else { return }
     for case let item as URL in enumerator {
       if try item.resourceValues(forKeys: Set(keys)).isSymbolicLink == true {
+        // The absolute path of the offending link is the only actionable part of
+        // this failure; it is what the operator has to delete or replace.
         throw NSError(
           domain: "io.vetcoders.vibecrafted.install", code: 3,
-          userInfo: [NSLocalizedDescriptionKey: "symlink is forbidden in runtime: \(item.path)"])
+          userInfo: [
+            NSLocalizedDescriptionKey:
+              "symlink is forbidden in runtime: \(item.standardizedFileURL.path)"
+          ])
       }
     }
   }
 
   private func shellQuote(_ value: String) -> String {
     "'\(value.replacingOccurrences(of: "'", with: "'\"'\"'"))'"
+  }
+
+  /// Escape `value` for use *inside* a double-quoted shell word, where parameter
+  /// expansion must stay live for the rest of the word.
+  private func shellDoubleQuoteBody(_ value: String) -> String {
+    value
+      .replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "$", with: "\\$")
+      .replacingOccurrences(of: "`", with: "\\`")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+  }
+
+  /// Signed generation bin first, then whatever PATH the caller already had;
+  /// the minimal system set only when the caller carried no PATH at all.
+  private func composedPath(generation: URL, inherited: String?) -> String {
+    let tail = (inherited ?? "").isEmpty ? "/usr/bin:/bin:/usr/sbin:/sbin" : inherited!
+    return "\(generation.appendingPathComponent("bin").path):\(tail)"
+  }
+
+  /// Surface a launch failure where the operator can actually see it: the unified
+  /// log for post-mortem, plus one modal so a broken install is never silent.
+  private func reportWorkspaceLaunchFailure(_ message: String) {
+    installLog.error("\(message, privacy: .public)")
+    guard !workspaceLaunchFailureReported else { return }
+    workspaceLaunchFailureReported = true
+    let alert = NSAlert()
+    alert.alertStyle = .critical
+    alert.messageText = "Vibecrafted cannot open its workspace terminal"
+    alert.informativeText = message
+    alert.addButton(withTitle: "OK")
+    alert.runModal()
   }
 
   private func tomlBasicString(_ value: String) -> String {
