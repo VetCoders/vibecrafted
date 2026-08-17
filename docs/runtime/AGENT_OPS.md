@@ -254,9 +254,11 @@ seat unless `VIBECRAFTED_WORKER_SESSION` is set.
 
 1. `VIBECRAFTED_WORKER_SESSION` if set — explicit override wins (any name,
    including one that matches the operator seat).
-2. Else `"<basename(--root)> workers"` (SPAWN_ROOT / VIBECRAFTED_ROOT / cwd)
-   — the per-project worker host (e.g. `vibecrafted workers`,
-   `vc-frame workers`), **always** suffixed. Bare `basename(--root)` is the
+2. Else `"<basename(--root)>-workers"` (SPAWN_ROOT / VIBECRAFTED_ROOT / cwd)
+   — the per-project worker host (e.g. `vibecrafted-workers`,
+   `vc-frame-workers`), **always** suffixed. The suffix is dash-joined so the
+   name stays a single token across argv, shell quoting and session-listing
+   matches (2026-08-17; it used to be space-joined). Bare `basename(--root)` is the
    operator's own interactive card in the rail and is never a worker target,
    so the dispatcher seat plays no part in host resolution.
 

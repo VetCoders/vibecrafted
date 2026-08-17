@@ -41,8 +41,12 @@ def test_two_explicit_workspaces_same_root_remain_distinct(
         workspace_id=b.workspace_id, display_label=b.display_label
     )
     assert host_a != host_b
-    assert host_a.endswith(" workers")
-    assert host_b.endswith(" workers")
+    assert host_a.endswith("-workers")
+    assert host_b.endswith("-workers")
+    # Single-token by contract: the name crosses argv, shell quoting and
+    # line-wise session-listing matches, and a space broke each of those.
+    assert " " not in host_a
+    assert " " not in host_b
 
 
 def test_same_basename_different_roots_remain_distinct(
@@ -117,7 +121,7 @@ def test_run_identity_fields_on_resolve(home: Path, tmp_path: Path) -> None:
         "worker_host_session",
     ):
         assert key in meta
-    assert meta["worker_host_session"].endswith(" workers")
+    assert meta["worker_host_session"].endswith("-workers")
     assert wc.short_workspace_token(created.workspace_id) in meta["worker_host_session"]
 
 
@@ -379,8 +383,8 @@ def test_worker_routing_workspace_bound_not_basename(
     host = workflow._effective_operator_session(
         root=str(root), run_id="r1", env=dict(os.environ)
     )
-    assert host != "vibecrafted workers"
-    assert host.endswith(" workers")
+    assert host != "vibecrafted-workers"
+    assert host.endswith("-workers")
     assert wc.short_workspace_token(ws.workspace_id) in host
     # Explicit override still wins.
     assert (

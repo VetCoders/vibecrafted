@@ -61,8 +61,8 @@ _vetcoders_in_vc_frame() {
   [[ -n "${VC_FRAME_PANE_ID:-}" ]] && [[ -n "${VC_FRAME_SESSION_NAME:-}" ]]
 }
 
-# Live (non-EXITED) vc-frame session names. One name per line. Multi-word hosts
-# keep spaces (e.g. "vibecrafted workers"); status tags are stripped.
+# Live (non-EXITED) vc-frame session names. One name per line. Host names are
+# single-token (e.g. "vibecrafted-workers"); status tags are stripped.
 _vetcoders_list_live_vc_frame_sessions() {
   local PATH="${PATH:-}"
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
@@ -264,7 +264,7 @@ try:
     from vibecrafted_core.workspace_catalog import resolve_worker_host_session
     print(resolve_worker_host_session(root=root, env=os.environ), end="")
 except Exception:
-    print(f"{Path(root).name or 'vibecrafted'} workers", end="")
+    print(f"{Path(root).name or 'vibecrafted'}-workers", end="")
 PY
     )" || resolved=""
   fi
@@ -276,7 +276,7 @@ PY
   local host=""
   host="$(basename "$root_dir")"
   [[ -n "$host" ]] || return 1
-  printf '%s workers\n' "$host"
+  printf '%s-workers\n' "$host"
 }
 
 _vetcoders_vc_frame_gc_script() {

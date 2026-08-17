@@ -83,8 +83,15 @@ Rules (shell and Python are semantically identical):
 
 1. `VIBECRAFTED_WORKER_SESSION` if set — explicit override.
 2. Else workspace-bound host:
-   `{sanitized_display_label}-{workspace_id_short8} workers`
-3. Emergency fallback only: `{basename(root)} workers` if the catalog cannot open.
+   `{sanitized_display_label}-{workspace_id_short8}-workers`
+3. Emergency fallback only: `{basename(root)}-workers` if the catalog cannot open.
+
+The separator is a dash, not a space (changed 2026-08-17). The host name crosses
+argv, shell quoting in the launchers and line-wise matching of vc-frame session
+listings; a space made every one of those a place the name could split. Nothing
+parses the name on whitespace, so the change is purely a narrowing. Host sessions
+created under the old spaced names are not renamed — they age out as EXITED and
+the next dispatch creates the dashed host.
 
 Two workspaces rooted in directories both named `vibecrafted` never share a
 worker host. The bare basename remains the human operator interactive card.
@@ -109,7 +116,7 @@ New runs stamp into `meta.json` / control-plane snapshots:
   "workspace_instance_id": "<uuid>",
   "build_id": { "...": "vibecrafted.build-id.v1" },
   "workspace_display_label": "vibecrafted",
-  "worker_host_session": "vibecrafted-a1b2c3d4 workers",
+  "worker_host_session": "vibecrafted-a1b2c3d4-workers",
   "worker_host_display": "vibecrafted [a1b2c3d4]"
 }
 ```
@@ -179,8 +186,10 @@ vc-frame resurrection.** Cut B must:
   unassigned in scoped F/X/N until re-settled with evidence.
 - Shell host resolution shells out to Python; pure-shell emergency fallback
   is basename-only (collision-prone) and must remain rare.
-- vc-frame session name length limits with multi-word hosts — already used
-  for `"… workers"`; short token keeps names bounded.
+- vc-frame session name length is bounded by the AF_UNIX `sun_path` cap (~104 B
+  on Darwin) minus the socket directory. The deck binds
+  `VC_FRAME_SOCKET_DIR=/tmp/vc-frame-<uid>` so the budget stays generous; the
+  short workspace token keeps names bounded on the other side.
 
 ## Python module
 

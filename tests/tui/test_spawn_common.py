@@ -3401,7 +3401,7 @@ def test_g7_worker_session_env_override(tmp_path: Path) -> None:
     sessions = _g7_session_args((state / "calls").read_text(encoding="utf-8"))
     assert "bar" in sessions
     assert "foo" not in sessions
-    assert "foo workers" not in sessions
+    assert "foo-workers" not in sessions
 
 
 def test_g7_seat_named_like_repo_uses_the_same_workers_host(tmp_path: Path) -> None:
