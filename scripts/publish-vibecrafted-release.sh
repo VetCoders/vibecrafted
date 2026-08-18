@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# Publish the one installable Vibecrafted artifact after a cold verification of
-# the exact bytes downloaded back from a draft GitHub Release.
+# Publish the installable Vibecrafted artifacts after a cold verification of the
+# exact bytes downloaded back from a draft GitHub Release.
+#
+# Two channels, one release, one commit:
+#   macOS desktop  -> the signed, notarized, stapled DMG
+#   every other OS -> the provenance-bound portable tarball install.sh consumes
+# Each channel is verified against the bytes GitHub hands back, never against
+# the bytes this machine still has in dist/. The asset allowlist below stays
+# exact: a release that grew an asset nobody named is a release nobody audited.
 set -euo pipefail
 
 REPO="${VIBECRAFTED_RELEASE_REPO:-vetcoders/vibecrafted}"
@@ -10,6 +17,8 @@ VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
 TAG="v$VERSION"
 RELEASE_OUTPUT="$DIST/release-output.json"
 RELEASE_SIGNATURE="$DIST/release-output.json.sig"
+PORTABLE_OUTPUT="$DIST/portable-output.json"
+DISTRIBUTION_MANIFEST="$ROOT/scripts/distribution_manifest.py"
 REPORT_DATE="$(date +%Y_%m%d)"
 REPORT_ROOT="${VIBECRAFTED_ARTIFACT_ROOT:-$HOME/.vibecrafted/artifacts}"
 REPORT_DIR="$REPORT_ROOT/vetcoders/vibecrafted/$REPORT_DATE/reports"
@@ -27,6 +36,7 @@ test "$(uname -s)" = "Darwin" || die "the notarized DMG publisher must run on ma
 test -n "${GH_TOKEN:-}" || die "GH_TOKEN must name an authenticated release publisher"
 test -s "$RELEASE_OUTPUT" || die "missing $RELEASE_OUTPUT"
 test -s "$RELEASE_SIGNATURE" || die "missing $RELEASE_SIGNATURE"
+test -s "$PORTABLE_OUTPUT" || die "missing $PORTABLE_OUTPUT; run make portable first"
 
 cd "$ROOT"
 test -z "$(git status --porcelain)" || die "source tree is dirty"
@@ -52,6 +62,22 @@ test -s "$DMG_CHECKSUM" || die "missing $DMG_CHECKSUM"
 xcrun stapler validate "$DMG"
 spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
 
+# The portable channel carries no Apple ticket, so its identity claim is the
+# closed source-provenance carrier: an allowlisted tree whose digest names one
+# commit. Bind that claim to the same HEAD the DMG names, or the release would
+# ship two channels built from two different truths.
+PORTABLE_NAME="$(uv run python3 -c 'import json; print(json.load(open("dist/portable-output.json"))["archive"]["path"])')"
+PORTABLE="$DIST/$PORTABLE_NAME"
+PORTABLE_CHECKSUM="$PORTABLE.sha256"
+test -s "$PORTABLE" || die "missing $PORTABLE; run make portable first"
+test -s "$PORTABLE_CHECKSUM" || die "missing $PORTABLE_CHECKSUM"
+test "$(uv run python3 -c 'import json; print(json.load(open("dist/portable-output.json"))["source_revisions"]["vibecrafted"])')" = "$HEAD_SHA" \
+  || die "portable-output does not name the exact root revision"
+(
+  cd "$DIST"
+  shasum -a 256 -c "$(basename "$PORTABLE_CHECKSUM")"
+)
+
 RUN_ID="$(gh run list --repo "$REPO" --workflow release.yml --commit "$HEAD_SHA" \
   --json databaseId,status,conclusion --jq 'map(select(.status == "completed" and .conclusion == "success"))[0].databaseId // empty')"
 test -n "$RUN_ID" || die "no successful Release source gate exists for $HEAD_SHA"
@@ -75,6 +101,8 @@ fi
 gh release upload "$TAG" --repo "$REPO" \
   "$DMG" \
   "$DMG_CHECKSUM" \
+  "$PORTABLE" \
+  "$PORTABLE_CHECKSUM" \
   "$RELEASE_OUTPUT#release-output.json" \
   "$RELEASE_SIGNATURE#release-output.json.sig" \
   --clobber
@@ -83,19 +111,25 @@ DOWNLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vibecrafted-published.XXXXXX")"
 trap 'rm -rf "$DOWNLOAD_DIR"' EXIT
 gh release download "$TAG" --repo "$REPO" --dir "$DOWNLOAD_DIR"
 
-EXPECTED_ASSETS="$DMG_NAME
-$DMG_NAME.sha256
-release-output.json
-release-output.json.sig"
+EXPECTED_ASSETS="$(printf '%s\n' \
+  "$DMG_NAME" \
+  "$DMG_NAME.sha256" \
+  "$PORTABLE_NAME" \
+  "$PORTABLE_NAME.sha256" \
+  "release-output.json" \
+  "release-output.json.sig" | LC_ALL=C sort)"
 ACTUAL_ASSETS="$(find "$DOWNLOAD_DIR" -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort)"
 test "$ACTUAL_ASSETS" = "$EXPECTED_ASSETS" || die "draft release contains unexpected assets"
 cmp "$DMG" "$DOWNLOAD_DIR/$DMG_NAME"
 cmp "$DMG_CHECKSUM" "$DOWNLOAD_DIR/$DMG_NAME.sha256"
+cmp "$PORTABLE" "$DOWNLOAD_DIR/$PORTABLE_NAME"
+cmp "$PORTABLE_CHECKSUM" "$DOWNLOAD_DIR/$PORTABLE_NAME.sha256"
 cmp "$RELEASE_OUTPUT" "$DOWNLOAD_DIR/release-output.json"
 cmp "$RELEASE_SIGNATURE" "$DOWNLOAD_DIR/release-output.json.sig"
 (
   cd "$DOWNLOAD_DIR"
   shasum -a 256 -c "$DMG_NAME.sha256"
+  shasum -a 256 -c "$PORTABLE_NAME.sha256"
 )
 
 uv run --project vibecrafted-core verify-vibecrafted-walkaround verify-release \
@@ -109,11 +143,31 @@ xcrun stapler validate "$DOWNLOAD_DIR/$DMG_NAME"
 spctl --assess --type open --context context:primary-signature --verbose=2 \
   "$DOWNLOAD_DIR/$DMG_NAME"
 
+# Walk around the portable channel the way a stranger on Linux will: unpack the
+# downloaded bytes into a fresh root and make the payload answer for its own
+# provenance and its own installer. A checksum only proves the bytes survived
+# the wire; this proves they are the distribution they claim to be.
+PORTABLE_UNPACK_DIR="$DOWNLOAD_DIR/portable-unpack"
+PORTABLE_ROOT_NAME="$(uv run python3 -c 'import json; print(json.load(open("dist/portable-output.json"))["archive"]["root_name"])')"
+mkdir -p "$PORTABLE_UNPACK_DIR"
+tar -xzf "$DOWNLOAD_DIR/$PORTABLE_NAME" -C "$PORTABLE_UNPACK_DIR"
+test -d "$PORTABLE_UNPACK_DIR/$PORTABLE_ROOT_NAME" \
+  || die "portable archive does not unpack into $PORTABLE_ROOT_NAME"
+uv run python3 "$DISTRIBUTION_MANIFEST" check \
+  --root "$PORTABLE_UNPACK_DIR/$PORTABLE_ROOT_NAME" \
+  --expected-owner-repo "$REPO" \
+  --expected-source-revision "$HEAD_SHA"
+bash "$PORTABLE_UNPACK_DIR/$PORTABLE_ROOT_NAME/install.sh" --help >/dev/null
+
 DMG_SHA="$(shasum -a 256 "$DOWNLOAD_DIR/$DMG_NAME" | awk '{print $1}')"
 DMG_SIZE="$(stat -f %z "$DOWNLOAD_DIR/$DMG_NAME")"
+PORTABLE_SHA="$(shasum -a 256 "$DOWNLOAD_DIR/$PORTABLE_NAME" | awk '{print $1}')"
+PORTABLE_SIZE="$(stat -f %z "$DOWNLOAD_DIR/$PORTABLE_NAME")"
+PORTABLE_TREE_SHA="$(uv run python3 -c 'import json; print(json.load(open("dist/portable-output.json"))["provenance"]["tree_sha256"])')"
 VC_FRAME_SHA="$(uv run python3 -c 'import json; print(json.load(open("dist/release-output.json"))["source_revisions"]["vc-frame"])')"
 VC_TERMINAL_SHA="$(uv run python3 -c 'import json; print(json.load(open("dist/release-output.json"))["source_revisions"]["vc-terminal"])')"
 DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/$DMG_NAME"
+PORTABLE_URL="https://github.com/$REPO/releases/download/$TAG/$PORTABLE_NAME"
 
 mkdir -p "$REPORT_DIR"
 umask 022
@@ -126,18 +180,22 @@ cat > "$REPORT" <<EOF
 - CodeQL: PASS; zero open alerts on \`main\` immediately before publication.
 - Signed release-output verification: PASS.
 - Apple notarization ticket, Gatekeeper assessment and staple validation: PASS on local and downloaded bytes.
+- Portable channel source-provenance validation against \`$HEAD_SHA\`: PASS on downloaded bytes.
 
 ## 2. Exposed surface inventory
 
 | Surface | Bind / endpoint | Proxy / TLS | Auth boundary | Secret materialization |
 | --- | --- | --- | --- | --- |
 | Vibecrafted.app desktop UI | local process | none | logged-in macOS user | app-owned runtime environment |
+| Portable tarball install (Linux / WSL2 / macOS CLI) | none; \`install.sh\` publishes into the user-owned runtime home | not applicable | invoking user | user-owned runtime home, no host config rewrites |
 | vc-server service | typed Vibecrafted settings; default loopback, operator may choose any host:port such as \`100.82.232.70:3025\` | operator-owned for non-loopback exposure | configured service policy | runtime service environment, never host config rewrites |
 | vc-frame web client | disabled unless explicitly configured | operator-owned | vc-frame auth boundary | runtime-only |
 
 ## 3. Deployment mode decision
 
-The shipped topology is one signed and notarized macOS desktop product. \`Vibecrafted.app\` owns app/DMG/install/update and carries the complete runtime. \`vc-terminal\` is a deterministic embedded terminal substrate and \`vc-frame\` is the embedded session interior. The app sources its own XDG/runtime environment at startup and does not overwrite user terminal or vc-frame configuration. Rollback is replacement with the prior notarized Vibecrafted.app; live tmux/vc-frame session processes remain separate runtime state.
+The shipped topology is one signed and notarized macOS desktop product plus one portable source distribution for every system Apple notarization cannot reach. \`Vibecrafted.app\` owns app/DMG/install/update and carries the complete runtime. \`vc-terminal\` is a deterministic embedded terminal substrate and \`vc-frame\` is the embedded session interior. The app sources its own XDG/runtime environment at startup and does not overwrite user terminal or vc-frame configuration. Rollback is replacement with the prior notarized Vibecrafted.app; live tmux/vc-frame session processes remain separate runtime state.
+
+The portable channel is not a second product: it is the same commit, projected through the allowlisted distribution writer, carrying a closed \`source-provenance.json\` whose distribution-tree digest names that commit. It installs through \`install.sh --archive-file\`, which refuses a payload whose provenance does not close. Rollback is re-running the installer from the prior release asset.
 
 Source tuple:
 
@@ -147,6 +205,8 @@ Source tuple:
 
 ## 4. Post-release install smoke
 
+### macOS desktop channel
+
 - Source: [$DOWNLOAD_URL]($DOWNLOAD_URL)
 - SHA-256: \`$DMG_SHA\`
 - Size: \`$DMG_SIZE\` bytes
@@ -155,13 +215,33 @@ Source tuple:
 - Mounted-DMG walk-around probes from downloaded bytes: PASS.
 - Stapler and Gatekeeper validation on downloaded bytes: PASS.
 
+### Portable channel (Linux / WSL2 / macOS CLI)
+
+- Source: [$PORTABLE_URL]($PORTABLE_URL)
+- SHA-256: \`$PORTABLE_SHA\`
+- Size: \`$PORTABLE_SIZE\` bytes
+- Distribution-tree digest: \`$PORTABLE_TREE_SHA\`
+- Downloaded tarball unpacked into a fresh root and validated against \`$HEAD_SHA\`: PASS.
+- Packed \`install.sh\` answers for itself from the downloaded bytes: PASS.
+
+Install from the published asset:
+
+\`\`\`bash
+curl -fsSLO $PORTABLE_URL
+curl -fsSLO $PORTABLE_URL.sha256
+shasum -a 256 -c $PORTABLE_NAME.sha256 || sha256sum -c $PORTABLE_NAME.sha256
+tar -xzf $PORTABLE_NAME
+bash $PORTABLE_ROOT_NAME/install.sh
+\`\`\`
+
 ## Sign-off
 
-PASS — the release has one canonically named installable artifact, \`$DMG_NAME\`, and no donor repo owns a competing app, installer or update channel.
+PASS — the release has exactly two canonically named installable artifacts built from one commit, \`$DMG_NAME\` for macOS desktop and \`$PORTABLE_NAME\` for every other system, and no donor repo owns a competing app, installer or update channel.
 EOF
 
 gh release edit "$TAG" --repo "$REPO" --notes-file "$REPORT" --draft=false --latest
 test "$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft)" = "false"
 
-printf 'Published %s\nReport: %s\nDMG: %s\nSHA-256: %s\n' \
-  "$DOWNLOAD_URL" "$REPORT" "$DMG_SIZE" "$DMG_SHA"
+printf 'Published %s\nReport: %s\nDMG: %s bytes / %s\nPortable: %s\n  %s bytes / %s\n' \
+  "$DOWNLOAD_URL" "$REPORT" "$DMG_SIZE" "$DMG_SHA" \
+  "$PORTABLE_URL" "$PORTABLE_SIZE" "$PORTABLE_SHA"

@@ -54,11 +54,23 @@ jobs:
       - name: Run installer and product tests
         run: make test
 
-      - name: Confirm macOS publication boundary
+      # The portable channel is the only artifact non-macOS users ever get, so
+      # the tag gate must prove it builds from the immutable tag source — not
+      # just that a script exists. It needs no signing identity and no notary
+      # account, and it self-verifies what it writes, so it is cheap to gate.
+      - name: Build the portable release channel
+        run: make portable
+
+      - name: Confirm publication boundary for both channels
         run: |
           set -euo pipefail
           test -x scripts/publish-vibecrafted-release.sh
+          test -x scripts/build-portable-release.sh
           command rg -n 'Vibecrafted_.*YYYYMMDD|DMG_NAME|\.dmg\.sha256' \
             scripts/build-vibecrafted-release.sh \
+            scripts/publish-vibecrafted-release.sh \
+            docs/RELEASE_KICKOFF.md
+          command rg -n 'PORTABLE_NAME|portable\.tar\.gz|portable-output\.json' \
+            scripts/build-portable-release.sh \
             scripts/publish-vibecrafted-release.sh \
             docs/RELEASE_KICKOFF.md
