@@ -45,10 +45,19 @@ test -z "$(git -C "$REPO_ROOT" status --porcelain)" \
 mkdir -p "$DIST_DIR"
 rm -f "$PORTABLE" "$PORTABLE_CHECKSUM" "$PORTABLE_OUTPUT"
 
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vibecrafted-portable.XXXXXX")"
+trap 'rm -rf "$WORK_DIR"' EXIT
+VERIFY_DIR="$WORK_DIR/verify"
+mkdir -p "$VERIFY_DIR"
+
+# The packer refuses to write into the tree it is packing — an archive that can
+# observe its own bytes is not a projection of a commit. Build outside, then let
+# the packer's own publisher move the candidate into dist/ under its rules.
 log "packing $PORTABLE_NAME from $ROOT_SHA"
 python3 "$MANIFEST" archive \
   --source "$REPO_ROOT" \
-  --output "$PORTABLE" \
+  --output "$WORK_DIR/$PORTABLE_NAME" \
+  --publish-output "$PORTABLE" \
   --root-name "$ARCHIVE_ROOT_NAME" \
   --owner-repo "$OWNER_REPO" \
   --source-revision "$ROOT_SHA" >/dev/null
@@ -56,8 +65,6 @@ python3 "$MANIFEST" archive \
 test -s "$PORTABLE" || die "the packer produced no archive at $PORTABLE"
 
 log "self-verifying the packed bytes"
-VERIFY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vibecrafted-portable-verify.XXXXXX")"
-trap 'rm -rf "$VERIFY_DIR"' EXIT
 tar -xzf "$PORTABLE" -C "$VERIFY_DIR"
 test -d "$VERIFY_DIR/$ARCHIVE_ROOT_NAME" \
   || die "archive does not unpack into a single $ARCHIVE_ROOT_NAME root"
