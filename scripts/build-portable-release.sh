@@ -83,11 +83,12 @@ python3 "$MANIFEST" check \
 
 # install.sh is the only supported consumer of this artifact. If the packed tree
 # cannot answer for itself, the tarball is not installable and must not ship.
-test -x "$VERIFY_DIR/$ARCHIVE_ROOT_NAME/install.sh" \
-  || die "packed payload has no executable install.sh"
+# The entrypoint is `bash install.sh`, not `./install.sh`: the packer canonicalises
+# modes and the repository file carries no executable bit, so do not test for one.
+test -f "$VERIFY_DIR/$ARCHIVE_ROOT_NAME/install.sh" \
+  || die "packed payload has no install.sh"
 bash -n "$VERIFY_DIR/$ARCHIVE_ROOT_NAME/install.sh"
-bash "$VERIFY_DIR/$ARCHIVE_ROOT_NAME/install.sh" --help >/dev/null 2>&1 \
-  || bash "$VERIFY_DIR/$ARCHIVE_ROOT_NAME/install.sh" -h >/dev/null 2>&1 \
+bash "$VERIFY_DIR/$ARCHIVE_ROOT_NAME/install.sh" --help >/dev/null \
   || die "packed install.sh cannot print its own usage"
 
 (
