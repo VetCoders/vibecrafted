@@ -239,7 +239,7 @@ fn print_help() {
     println!();
     println!("Options:");
     println!("  --view observe|full  Default observe: server-backed live board + AICX memory");
-    println!("  --server <url>       Vibecrafted Server origin (default: VC_SERVER_URL or http://100.82.232.70:3025)");
+    println!("  --server <url>       Vibecrafted Server origin (default: VC_SERVER_URL or http://127.0.0.1:3024)");
     println!("  --state-root <dir>   Control-plane state root under VIBECRAFTED_HOME");
     println!("  --deck <path>        Command deck binary or script to launch workflows");
     println!("  --root <path>        Workspace root passed through to launched workflows");

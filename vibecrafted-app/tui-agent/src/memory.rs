@@ -6,6 +6,28 @@
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+/// PATH for the `aicx` subprocess: the inherited entries minus anything that
+/// is an implicit current-directory lookup (empty segments, relative paths),
+/// with the system set as the fallback when nothing sane survives.
+fn sane_tool_path() -> String {
+    let inherited = std::env::var("PATH").unwrap_or_default();
+    let mut entries: Vec<&str> = inherited
+        .split(':')
+        .filter(|entry| !entry.is_empty() && entry.starts_with('/'))
+        .collect();
+    entries.dedup();
+    if entries.is_empty() {
+        return "/usr/local/bin:/usr/bin:/bin".to_string();
+    }
+    entries.join(":")
+}
+
+fn aicx() -> Command {
+    let mut command = Command::new("aicx");
+    command.env("PATH", sane_tool_path());
+    command
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MemoryState {
     pub project: String,
@@ -22,7 +44,7 @@ pub fn default_project(launch_root: &std::path::Path) -> String {
 }
 
 pub fn load_continuity(project: &str) -> MemoryState {
-    let output = Command::new("aicx")
+    let output = aicx()
         .args(["continuity", "show", "-p", project, "-H", "24"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -68,7 +90,7 @@ pub fn load_continuity(project: &str) -> MemoryState {
 }
 
 pub fn launch_wizard(project: &str) -> anyhow::Result<()> {
-    let status = Command::new("aicx")
+    let status = aicx()
         .args(["wizard", "--view", "search", "-p", project])
         .status()?;
     if !status.success() {

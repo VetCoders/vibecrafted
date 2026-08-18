@@ -272,7 +272,7 @@ fn mission_app(state: MissionControlState) -> App {
             launch_runtime: LaunchRuntime::Terminal,
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
-            server: "http://100.82.232.70:3025".into(),
+            server: "http://127.0.0.1:3024".into(),
             view: voc::observe::ConsoleView::Full,
         },
         state: ControlPlaneState::empty("/fixture/state"),

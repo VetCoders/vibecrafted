@@ -807,7 +807,7 @@ fn mux_health_deep_actions_surface_per_known_service() {
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
-            server: "http://100.82.232.70:3025".into(),
+            server: "http://127.0.0.1:3024".into(),
             view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
@@ -949,7 +949,7 @@ fn mux_status_lines_render_healthy_and_attention_headers() {
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
-            server: "http://100.82.232.70:3025".into(),
+            server: "http://127.0.0.1:3024".into(),
             view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
@@ -1133,7 +1133,7 @@ fn deep_controls_expose_attach_resume_and_artifacts() {
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
-            server: "http://100.82.232.70:3025".into(),
+            server: "http://127.0.0.1:3024".into(),
             view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
@@ -1222,7 +1222,7 @@ fn native_artifact_viewer_reads_files_and_clipboard_payload_prefers_resume_comma
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
-            server: "http://100.82.232.70:3025".into(),
+            server: "http://127.0.0.1:3024".into(),
             view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
@@ -1276,7 +1276,7 @@ fn empty_state_detail_lines_offer_human_quick_start() {
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
-            server: "http://100.82.232.70:3025".into(),
+            server: "http://127.0.0.1:3024".into(),
             view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
@@ -1327,7 +1327,7 @@ fn prompt_lines_include_human_kind_copy_and_command_preview() {
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
-            server: "http://100.82.232.70:3025".into(),
+            server: "http://127.0.0.1:3024".into(),
             view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
@@ -1379,7 +1379,7 @@ fn tab_navigation_wraps_and_dispatch_focus_tracks_selected_field() {
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
-            server: "http://100.82.232.70:3025".into(),
+            server: "http://127.0.0.1:3024".into(),
             view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
@@ -1461,7 +1461,7 @@ fn tab_labels_surface_monitor_dispatch_and_controls_context() {
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
-            server: "http://100.82.232.70:3025".into(),
+            server: "http://127.0.0.1:3024".into(),
             view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
@@ -1541,7 +1541,7 @@ async fn queue_scope_and_search_filter_the_visible_run_list() {
 
         terminal_binary: "vc-frame".into(),
         tick_rate: Duration::from_millis(250),
-        server: "http://100.82.232.70:3025".into(),
+        server: "http://127.0.0.1:3024".into(),
         view: voc::observe::ConsoleView::Full,
         no_verify_gate: false,
     })
@@ -1575,7 +1575,7 @@ fn changing_launch_kind_reorients_the_operator_into_dispatch() {
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
-            server: "http://100.82.232.70:3025".into(),
+            server: "http://127.0.0.1:3024".into(),
             view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
@@ -1980,7 +1980,7 @@ async fn mission_control_focus_wraps_across_seven_panels() {
         launch_runtime: LaunchRuntime::Terminal,
         terminal_binary: "vc-frame".into(),
         tick_rate: Duration::from_millis(250),
-        server: "http://100.82.232.70:3025".into(),
+        server: "http://127.0.0.1:3024".into(),
         view: voc::observe::ConsoleView::Full,
         no_verify_gate: false,
     })
@@ -2012,7 +2012,7 @@ async fn mission_queue_preselects_matching_deep_action_for_controls_handoff() {
         launch_runtime: LaunchRuntime::Terminal,
         terminal_binary: "vc-frame".into(),
         tick_rate: Duration::from_millis(250),
-        server: "http://100.82.232.70:3025".into(),
+        server: "http://127.0.0.1:3024".into(),
         view: voc::observe::ConsoleView::Full,
         no_verify_gate: false,
     })

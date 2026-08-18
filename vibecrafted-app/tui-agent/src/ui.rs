@@ -172,7 +172,7 @@ fn draw_observe(frame: &mut Frame, area: Rect, app: &App) {
     let mut body = Vec::new();
     if let Some(error) = &app.observe.error {
         body.push(Line::from(Span::styled(
-            format!("donor: {error}"),
+            format!("server error: {error}"),
             Style::default().fg(Color::Yellow),
         )));
         body.push(Line::from(""));
@@ -195,7 +195,10 @@ fn draw_observe(frame: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(Color::DarkGray),
             )));
         } else {
-            for line in app.observe.transcript.lines().rev().take(40).collect::<Vec<_>>().into_iter().rev() {
+            // Last 40 lines, in file order.
+            let lines: Vec<&str> = app.observe.transcript.lines().collect();
+            let tail = &lines[lines.len().saturating_sub(40)..];
+            for line in tail {
                 body.push(Line::from(line.to_string()));
             }
         }
@@ -1660,7 +1663,7 @@ mod tests {
                 launch_runtime: LaunchRuntime::Terminal,
                 terminal_binary: "vc-frame".into(),
                 tick_rate: Duration::from_millis(250),
-                server: "http://100.82.232.70:3025".into(),
+                server: "http://127.0.0.1:3024".into(),
                 view: crate::observe::ConsoleView::Full,
             },
             state: ControlPlaneState::empty("/tmp/state"),

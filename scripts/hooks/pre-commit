@@ -54,10 +54,10 @@ SEMGREP_ARGS=(scan --config auto --error --quiet --exclude-rule html.security.au
 # pysemgrep (jsonschema/rpds clash). Isolate the scanner.
 if command -v semgrep >/dev/null 2>&1; then
     git diff --cached --name-only --diff-filter=ACM -z | \
-      env -u PYTHONPATH -u PYTHONHOME xargs -0 semgrep "${SEMGREP_ARGS[@]}"
+      env -u PYTHONPATH -u PYTHONHOME xargs -0 semgrep "${SEMGREP_ARGS[@]}" --
 elif command -v uvx >/dev/null 2>&1; then
     git diff --cached --name-only --diff-filter=ACM -z | \
-      env -u PYTHONPATH -u PYTHONHOME xargs -0 uvx semgrep "${SEMGREP_ARGS[@]}"
+      env -u PYTHONPATH -u PYTHONHOME xargs -0 uvx semgrep "${SEMGREP_ARGS[@]}" --
 else
     echo "[warn] semgrep unavailable; skipping"
 fi

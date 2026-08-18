@@ -254,11 +254,16 @@ seat unless `VIBECRAFTED_WORKER_SESSION` is set.
 
 1. `VIBECRAFTED_WORKER_SESSION` if set — explicit override wins (any name,
    including one that matches the operator seat).
-2. Else `"<basename(--root)>-workers"` (SPAWN_ROOT / VIBECRAFTED_ROOT / cwd)
-   — the per-project worker host (e.g. `vibecrafted-workers`,
-   `vc-frame-workers`), **always** suffixed. The suffix is dash-joined so the
-   name stays a single token across argv, shell quoting and session-listing
-   matches (2026-08-17; it used to be space-joined). Bare `basename(--root)` is the
+2. Else the workspace-bound worker host `"{label}-{workspace_short8}-w"`
+   resolved through the workspace catalog (`workspace_catalog.py::
+worker_host_session_name`, `WORKER_HOST_SUFFIX = "-w"`); emergency
+   fallback `"<basename(--root)>-w"` only when the catalog cannot open
+   (SPAWN_ROOT / VIBECRAFTED_ROOT / cwd). **Always** suffixed. The suffix is a
+   short dash-joined token so the name stays one argv element across shell
+   quoting and session-listing matches AND fits the macOS `sockaddr_un`
+   budget (104 bytes; the older `{label}-{short} workers` form overflowed it —
+   `legacy_worker_host_session_name()` keeps that token for WES attach only).
+   See `docs/runtime/WORKSPACE_IDENTITY.md`. Bare `basename(--root)` is the
    operator's own interactive card in the rail and is never a worker target,
    so the dispatcher seat plays no part in host resolution.
 

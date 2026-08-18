@@ -121,7 +121,7 @@ that is a symlink or is owned by another user is refused, in which case vc-frame
 keeps its own default rather than accepting a hostile socket home.
 
 Worker host session names are single-token for the same reason
-(`{label}-{workspace_short}-workers`, see `docs/runtime/WORKSPACE_IDENTITY.md`).
+(`{label}-{workspace_short}-w`, see `docs/runtime/WORKSPACE_IDENTITY.md`).
 
 ### Install failures are visible
 
