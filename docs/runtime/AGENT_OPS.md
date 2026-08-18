@@ -255,8 +255,8 @@ seat unless `VIBECRAFTED_WORKER_SESSION` is set.
 1. `VIBECRAFTED_WORKER_SESSION` if set — explicit override wins (any name,
    including one that matches the operator seat).
 2. Else the workspace-bound worker host `"{label}-{workspace_short8}-w"`
-   resolved through the workspace catalog (`workspace_catalog.py::
-worker_host_session_name`, `WORKER_HOST_SUFFIX = "-w"`); emergency
+   resolved through the workspace catalog (`worker_host_session_name` in
+   `workspace_catalog.py`, `WORKER_HOST_SUFFIX = "-w"`); emergency
    fallback `"<basename(--root)>-w"` only when the catalog cannot open
    (SPAWN_ROOT / VIBECRAFTED_ROOT / cwd). **Always** suffixed. The suffix is a
    short dash-joined token so the name stays one argv element across shell
