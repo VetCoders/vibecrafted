@@ -45,7 +45,15 @@ test -z "$(git -C "$REPO_ROOT" status --porcelain)" \
 mkdir -p "$DIST_DIR"
 rm -f "$PORTABLE" "$PORTABLE_CHECKSUM" "$PORTABLE_OUTPUT"
 
-WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vibecrafted-portable.XXXXXX")"
+# The packer publishes the candidate with os.replace(), which cannot cross a
+# filesystem boundary — and on this project the checkout commonly lives on a
+# different volume than TMPDIR. Stage beside the repository instead: outside the
+# source root (the packer refuses to observe its own bytes) but on the same
+# device as dist/. Override for hosts where the parent is not writable.
+WORK_PARENT="${VIBECRAFTED_PORTABLE_WORKDIR:-$(dirname "$REPO_ROOT")}"
+test -w "$WORK_PARENT" \
+  || die "portable work parent is not writable: $WORK_PARENT (set VIBECRAFTED_PORTABLE_WORKDIR)"
+WORK_DIR="$(mktemp -d "$WORK_PARENT/.vibecrafted-portable.XXXXXX")"
 trap 'rm -rf "$WORK_DIR"' EXIT
 VERIFY_DIR="$WORK_DIR/verify"
 mkdir -p "$VERIFY_DIR"
