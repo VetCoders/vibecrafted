@@ -72,19 +72,22 @@ same immutable pack path and digest.
 - provider-specific summaries that fork repository truth;
 - replacing native provider resume when an exact resumable session exists.
 
-## Backlog for the next scaffold (not 4.1.1 scope)
+## Backlog for the next scaffold (not 4.1.1 scope) — scaffolded as ROADMAP_4.2.0
 
 Items surfaced by ground truth on 2026-08-18; each is a small scaffold cut,
 none is a release blocker.
 
-1. **`make release` must reap its snapshot worktree.** The release target
-   builds from a detached snapshot worktree under `$TMPDIR` (donor tree stays
-   untouched — see the dirty-donor rule). The tmp directory is removed, but
-   the `.git/worktrees/<name>` entry survives; `vc-git` then reports a
-   prunable ghost (observed: `snapshot2` from 2026-08-11 pointing at a
-   deleted `.tmpQUEtCY/snapshot`). Add `git worktree remove --force` on the
-   success path and `git worktree prune` in the trap, plus a contract test
-   that a release run leaves `git worktree list` at exactly one entry.
+1. **Dirty donors are a release feature, not an operator ritual.** `make release`
+   refuses dirty donors (`../vc-terminal`, `../vc-frame`); the operator hand-rolls
+   `git worktree add --detach` snapshots to get past it, and the ghost entry
+   `snapshot2` (2026-08-11, pointing at a deleted `$TMPDIR/.tmpQUEtCY/snapshot`)
+   was the residue — no script in either repo ever created a worktree
+   (`git log --all -S'worktree add' -- scripts Makefile` → docs only). Add
+   `--snapshot-donors` to `scripts/build-vibecrafted-release.sh`: create detached
+   worktrees at donor HEADs inside the build work dir, record the SHAs in the
+   receipt, reap with `git worktree remove --force` + `prune` in the trap, and a
+   contract test that a run leaves `git worktree list` at exactly one entry.
+   Superseded by ROADMAP_4.2.0 cut W1-b.
 2. **Symlink-free distribution payload as a gate, not a hope.** The 3.7.0
    tarball shipped 4 symlink entries (`vetcoders.zsh -> vetcoders.sh`,
    `docs/install.sh -> ../install.sh`, a stray `.antigravitycli/<uuid>.json`
