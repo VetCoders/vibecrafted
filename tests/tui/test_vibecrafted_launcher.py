@@ -3481,3 +3481,53 @@ def test_launcher_server_help_and_invalid_verb() -> None:
     )
     assert result_invalid.returncode != 0
     assert "Unknown server action: invalidaction" in result_invalid.stderr
+
+
+CANONICAL_DECK = REPO_ROOT / "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
+_SOCKET_DIR_GUARD = 'if [[ -z "${VC_FRAME_SOCKET_DIR:-}" ]]; then'
+
+
+def _socket_dir_stanza(deck: Path) -> str:
+    """The deck's vc-frame socket-dir block, located by its guard line."""
+    lines = deck.read_text(encoding="utf-8").splitlines()
+    start = next(i for i, line in enumerate(lines) if line == _SOCKET_DIR_GUARD)
+    end = next(i for i, line in enumerate(lines[start:], start) if line == "fi")
+    return "\n".join(lines[start : end + 1])
+
+
+@pytest.mark.parametrize(
+    "deck",
+    [
+        pytest.param(LAUNCHER, id="scripts/vibecrafted"),
+        pytest.param(CANONICAL_DECK, id="deck/vibecrafted"),
+    ],
+)
+def test_deck_binds_a_short_per_uid_vc_frame_socket_dir(deck: Path) -> None:
+    """Darwin caps AF_UNIX sun_path near 104 bytes and the macOS per-user $TMPDIR
+    already spends ~81 of them, so vc-frame computed a negative name budget and
+    refused any non-trivial session name. The deck is the single door every
+    vc-frame surface walks through, so the short socket home is bound there."""
+
+    stanza = _socket_dir_stanza(deck)
+    probe = f'{stanza}\nprintf "%s" "${{VC_FRAME_SOCKET_DIR:-UNSET}}"\n'
+
+    default = subprocess.run(
+        ["bash", "-c", probe],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={k: v for k, v in os.environ.items() if k != "VC_FRAME_SOCKET_DIR"},
+    ).stdout
+    override = subprocess.run(
+        ["bash", "-c", probe],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "VC_FRAME_SOCKET_DIR": "/tmp/operator-choice"},
+    ).stdout
+
+    assert default == f"/tmp/vc-frame-{os.getuid()}"
+    assert len(default) < 30, "socket home must leave room for a session name"
+    assert os.path.isdir(default)
+    assert os.stat(default).st_mode & 0o777 == 0o700
+    assert override == "/tmp/operator-choice", "explicit operator override wins"

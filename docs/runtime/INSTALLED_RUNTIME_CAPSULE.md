@@ -72,3 +72,65 @@ boundary, not a substitute for the release signature.
 The default installer does not source Vibecrafted helpers into the host shell.
 It may add only the guarded `~/.local/bin` path entry after explicit consent.
 The full helper profile belongs to the explicit `vc-start` environment.
+
+## Spawned-surface environment
+
+Every surface that spawns a process on the operator's behalf — the launchers
+`Vibecrafted.app` writes into `~/.local/bin`, the app's workspace terminal, and
+the launchd LaunchAgent for the server supervisor — publishes the same
+environment contract. It is stated here once because those three writers used to
+disagree.
+
+### PATH composes, it never replaces
+
+`PATH` is set as `<generation>/bin` followed by the PATH of whoever invoked the
+surface. The signed generation always wins; the caller's PATH survives behind
+it. Only when the caller carried no PATH at all does the minimal system set
+`/usr/bin:/bin:/usr/sbin:/sbin` stand in as the fallback.
+
+This is a hard requirement, not a convenience. Agent CLIs are installed by
+Homebrew, cargo and npm into `/opt/homebrew/bin`, `~/.cargo/bin` and
+`~/.local/bin`, and several of them start with `#!/usr/bin/env node`. A surface
+that froze PATH at the system set therefore killed them with
+`env: node: No such file or directory` (exit 127) — codex, gh, loct, aicx,
+semgrep and claude were all invisible to anything the product launched.
+
+| Surface                         | Where PATH is built                                                                                                                                                         |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.local/bin/<tool>` launchers | `AppDelegate.installCanonicalRuntime` emits `export PATH="<generation>/bin:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"` — double-quoted so the expansion stays live at run time |
+| App workspace terminal          | `AppDelegate.launchWorkspaceTerminal` composes the app process's own PATH                                                                                                   |
+| launchd service                 | `server_supervisor.render_launch_agent_plist` embeds the PATH of whoever ran `server service install`, prefixed with the generation named by `runtime_home/active.json`     |
+| Supervised children             | `server_supervisor._child_environment` keeps the canonical entries first as a floor and appends the inherited PATH                                                          |
+
+launchd is the strict case: a job receives nothing but the PATH written into its
+plist, so `server service install` is the moment that value is captured. Moving
+the installing shell's PATH after that requires a reinstall of the service.
+
+### vc-frame socket directory
+
+The deck defaults `VC_FRAME_SOCKET_DIR` to `/tmp/vc-frame-<uid>` (mode `0700`)
+whenever the operator has not set it. Darwin caps an AF_UNIX `sun_path` near 104
+bytes and the per-user `$TMPDIR` macOS hands out under `/var/folders/` already
+spends about 81 of them, which left vc-frame with a negative session-name budget
+and made it refuse any non-trivial name.
+
+The deck is the single owner of this default — it is the door every vc-frame
+surface walks through, so the value is not repeated in the launcher generator or
+in dispatch. An explicit `VC_FRAME_SOCKET_DIR` always wins, and a `/tmp` entry
+that is a symlink or is owned by another user is refused, in which case vc-frame
+keeps its own default rather than accepting a hostile socket home.
+
+Worker host session names are single-token for the same reason
+(`{label}-{workspace_short}-workers`, see `docs/runtime/WORKSPACE_IDENTITY.md`).
+
+### Install failures are visible
+
+`Vibecrafted.app` no longer fails silently when it cannot publish the canonical
+runtime. Each failure is written to the unified log (subsystem
+`io.vetcoders.vibecrafted`, category `install`) and raised once per launch as a
+modal naming the exact cause — including the full path of any forbidden symlink
+found beneath the generation. Read the log with:
+
+```bash
+log show --predicate 'subsystem == "io.vetcoders.vibecrafted"' --last 1h
+```

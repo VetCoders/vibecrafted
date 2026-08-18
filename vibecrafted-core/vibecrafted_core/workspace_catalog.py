@@ -688,15 +688,20 @@ def worker_host_session_name(
 ) -> str:
     """Workspace-bound worker host session name.
 
-    Display remains readable (``{label}-{short} workers``) while two workspaces
+    Display remains readable (``{label}-{short}-workers``) while two workspaces
     sharing the same root basename never collide.
+
+    The separator is a dash, not a space: the name is passed as a single argv
+    element to vc-frame, quoted through shell launchers and matched line-wise in
+    session listings, and a space made every one of those a place where the name
+    could be split. Nothing parses this name on whitespace.
     """
 
     label = (display_label or "workspace").strip() or "workspace"
     # Sanitize multi-word labels into a single shell-friendly token prefix.
     label = re.sub(r"\s+", "-", label)
     label = re.sub(r"[^A-Za-z0-9._-]+", "", label) or "workspace"
-    return f"{label}-{short_workspace_token(workspace_id)} workers"
+    return f"{label}-{short_workspace_token(workspace_id)}-workers"
 
 
 def worker_host_display_label(
@@ -1221,7 +1226,7 @@ def resolve_worker_host_session(
         # Fail open to basename host only for catastrophic catalog failure;
         # callers in tests that set VIBECRAFTED_HOME still get full behavior.
         base = Path(root or ".").name or "vibecrafted"
-        return f"{base} workers"
+        return f"{base}-workers"
 
 
 # ---------------------------------------------------------------------------

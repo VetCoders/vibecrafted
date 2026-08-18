@@ -56,6 +56,27 @@ if [[ -d "$crafted_agent_bin" ]]; then
   esac
 fi
 
+# Darwin caps an AF_UNIX sun_path at ~104 bytes, and the per-user $TMPDIR macOS
+# hands out (/var/folders/../T/) already eats ~81 of them. vc-frame derives its
+# session socket from that directory, so any session name longer than a couple
+# of characters computed a negative budget and the session simply refused to
+# start. Bind one short, private, per-uid socket directory here — the deck is the
+# single door every vc-frame surface walks through, so this stays one canon
+# instead of three. An explicit operator override always wins.
+if [[ -z "${VC_FRAME_SOCKET_DIR:-}" ]]; then
+  vc_frame_socket_dir="/tmp/vc-frame-$(id -u)"
+  # /tmp is world-writable, so refuse a squatted symlink or a directory we do not
+  # own rather than handing vc-frame a hostile socket home. Staying silent on
+  # failure is deliberate: vc-frame then keeps its own default.
+  if [[ ! -L "$vc_frame_socket_dir" ]] \
+    && mkdir -p "$vc_frame_socket_dir" 2>/dev/null \
+    && [[ -O "$vc_frame_socket_dir" && -d "$vc_frame_socket_dir" ]] \
+    && chmod 700 "$vc_frame_socket_dir" 2>/dev/null; then
+    export VC_FRAME_SOCKET_DIR="$vc_frame_socket_dir"
+  fi
+  unset vc_frame_socket_dir
+fi
+
 _bold='\033[1m'
 _dim='\033[2m'
 _copper='\033[38;5;173m'

@@ -322,7 +322,8 @@ def test_spawn_write_meta_schema_contract_pin(tmp_path: Path) -> None:
     assert isinstance(data["build_id"], dict)
     assert data["build_id"]["schema"] == "vibecrafted.build-id.v1"
     assert data["workspace_id"]
-    assert data["worker_host_session"].endswith(" workers")
+    assert data["worker_host_session"].endswith("-workers")
+    assert " " not in data["worker_host_session"]
 
     expected_keys = {
         "created_at",

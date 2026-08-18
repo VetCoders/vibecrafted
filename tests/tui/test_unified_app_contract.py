@@ -781,7 +781,13 @@ def test_native_app_bootstraps_and_launches_only_the_canonical_product_entry() -
     assert 'generation.appendingPathComponent("bin/vc-server-supervisor")' in delegate
     assert "rename(temporary.path, destination.path)" in delegate
     assert "assertNoSymlinks(below: generation)" in delegate
-    assert 'environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"' in delegate
+    # PATH composes: the signed generation wins, the caller's PATH survives behind
+    # it. A hard-coded system-only PATH strips Homebrew/~/.local/bin/~/.cargo/bin
+    # from every spawned agent CLI, so `#!/usr/bin/env` shebangs exit 127.
+    assert 'environment["PATH"] = composedPath(' in delegate
+    assert 'environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"' not in delegate
+    assert '"export PATH=\\"\\(shellDoubleQuoteBody(' in delegate
+    assert ':${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}\\""' in delegate
     assert "shell-agent" not in delegate
     assert 'name = "vc-start"' in cargo
     assert '"--noprofile"' in launcher
@@ -3043,12 +3049,12 @@ def test_terminal_policy_uses_operator_toml_and_primary_shell_chain() -> None:
     terminal = (REPO_ROOT / "config/vc-terminal/vibecrafted.toml").read_text(
         encoding="utf-8"
     )
-    dark = (
-        REPO_ROOT / "config/vc-terminal/themes/dark.toml"
-    ).read_text(encoding="utf-8")
-    light = (
-        REPO_ROOT / "config/vc-terminal/themes/light.toml"
-    ).read_text(encoding="utf-8")
+    dark = (REPO_ROOT / "config/vc-terminal/themes/dark.toml").read_text(
+        encoding="utf-8"
+    )
+    light = (REPO_ROOT / "config/vc-terminal/themes/light.toml").read_text(
+        encoding="utf-8"
+    )
     primary_shell = (REPO_ROOT / "config/alacritty/launch-primary-shell.zsh").read_text(
         encoding="utf-8"
     )

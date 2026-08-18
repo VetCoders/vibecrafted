@@ -663,7 +663,7 @@ def _vc_frame_session_active(vc_frame: str, session: str) -> bool:
             continue
         if "EXITED" in clean.upper():
             continue
-        # Strip trailing status tags so multi-word hosts (G7: "<repo> workers") match.
+        # Strip trailing status tags so a host line (G7: "<repo>-workers") matches.
         name = re.sub(r"\s+\[.*$", "", clean)
         name = re.sub(r"\s+\([^)]*\)$", "", name).rstrip()
         if name == session:

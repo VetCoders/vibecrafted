@@ -41,6 +41,7 @@ EX_CONFIG = 78
 _TOOLS_INSTALL_LEASE_ENV = "VIBECRAFTED_INSTALL_LEASE_FD"
 _TOOLS_INSTALL_LOCK_NAME = ".vibecrafted-install.lock"
 _HOST_PATTERN = re.compile(r"[A-Za-z0-9._:-]+")
+_MINIMAL_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 _PASSTHROUGH_ENVIRONMENT = (
     "LANG",
     "LC_ALL",
@@ -580,6 +581,49 @@ def _process_alive(pid: int) -> bool:
     return True
 
 
+def _active_generation_bin(runtime_home: Path) -> Path | None:
+    """`<generation>/bin` for the runtime generation the app published, read from
+    `runtime_home/active.json`; None when that receipt is missing, malformed, or
+    names a root outside `runtime_home`."""
+
+    encoded = _read_owned_bytes(runtime_home / "active.json")
+    if encoded is None:
+        return None
+    try:
+        payload = json.loads(encoded)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    runtime_root = payload.get("runtime_root")
+    if not isinstance(runtime_root, str) or not runtime_root:
+        return None
+    try:
+        generation = _absolute_path(Path(runtime_root))
+    except SupervisorError:
+        return None
+    if not generation.is_relative_to(runtime_home):
+        return None
+    return generation / "bin"
+
+
+def _service_path(paths: SupervisorPaths) -> str:
+    """PATH to embed in the LaunchAgent plist: the active generation's bin, then
+    the PATH of whoever ran `server service install`.
+
+    launchd hands a job only the PATH written into its plist. Freezing that at
+    the system set hid /opt/homebrew/bin, ~/.local/bin and ~/.cargo/bin from the
+    supervisor and everything it spawns, so agent CLIs with a
+    `#!/usr/bin/env node` shebang exited 127.
+    """
+
+    inherited = os.environ.get("PATH") or _MINIMAL_PATH
+    generation_bin = _active_generation_bin(paths.runtime_home)
+    if generation_bin is None:
+        return inherited
+    return f"{generation_bin}{os.pathsep}{inherited}"
+
+
 def _child_environment(paths: SupervisorPaths) -> dict[str, str]:
     """Build the sanitized environment for spawned launcher subprocesses: a
     passthrough allowlist plus fixed HOME/PATH/VIBECRAFTED_* overrides so the
@@ -591,16 +635,36 @@ def _child_environment(paths: SupervisorPaths) -> dict[str, str]:
     environment.update(
         {
             "HOME": str(paths.operator_home),
-            "PATH": (
-                f"{paths.operator_home}/.local/bin:"
-                "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-            ),
+            "PATH": _child_path(paths),
             "VIBECRAFTED_HOME": str(paths.home),
             "VIBECRAFTED_RUNTIME_HOME": str(paths.runtime_home),
             "VIBECRAFTED_SERVER_SUPERVISOR_CHILD": "1",
         }
     )
     return environment
+
+
+def _child_path(paths: SupervisorPaths) -> str:
+    """PATH for spawned launcher subprocesses.
+
+    The canonical entries stay first, so a degenerate inherited PATH can never
+    cost a child the product's own bins. What the supervisor inherited from
+    launchd is appended rather than dropped: that is where a Homebrew-, cargo-
+    or npm-installed agent CLI actually lives, and dropping it is what made
+    those tools unreachable from supervised processes.
+    """
+
+    ordered: list[str] = []
+    for entry in (
+        f"{paths.operator_home}/.local/bin",
+        "/usr/local/bin",
+        "/opt/homebrew/bin",
+        *_MINIMAL_PATH.split(os.pathsep),
+        *(os.environ.get("PATH") or "").split(os.pathsep),
+    ):
+        if entry and entry not in ordered:
+            ordered.append(entry)
+    return os.pathsep.join(ordered)
 
 
 def _read_owned_bytes(path: Path) -> bytes | None:
@@ -1440,7 +1504,7 @@ def render_launch_agent_plist(
         "StandardErrorPath": str(config.paths.stderr_log),
         "EnvironmentVariables": {
             "HOME": str(config.paths.operator_home),
-            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "PATH": _service_path(config.paths),
             "VIBECRAFTED_HOME": str(config.paths.home),
             "VIBECRAFTED_RUNTIME_HOME": str(config.paths.runtime_home),
             "VC_SERVER_PUBLIC_URL": config.public_url or config.endpoint,
@@ -1610,7 +1674,9 @@ def _launchctl(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
             key: value
             for key, value in {
                 "HOME": str(Path.home().resolve()),
-                "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                # /bin/launchctl is an absolute invocation and needs nothing
+                # else; this PATH stays minimal on purpose.
+                "PATH": _MINIMAL_PATH,
                 "LANG": os.environ.get("LANG"),
                 "LC_ALL": os.environ.get("LC_ALL"),
                 "LC_CTYPE": os.environ.get("LC_CTYPE"),

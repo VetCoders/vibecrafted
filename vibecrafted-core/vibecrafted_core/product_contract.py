@@ -3756,9 +3756,7 @@ def _self_test() -> int:
             )
         primary_shell = app / _LAUNCH_PRIMARY_SHELL
         primary_shell.parent.mkdir(parents=True, exist_ok=True)
-        primary_shell.write_text(
-            '#!/bin/zsh\nexec vc-start "$@"\n', encoding="utf-8"
-        )
+        primary_shell.write_text('#!/bin/zsh\nexec vc-start "$@"\n', encoding="utf-8")
         primary_shell.chmod(0o755)
         terminal_app = app / "Contents/Helpers/vc-terminal.app"
         terminal_icon = terminal_app / "Contents/Resources/alacritty.icns"

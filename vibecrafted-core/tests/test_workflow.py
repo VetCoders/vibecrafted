@@ -621,8 +621,9 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     from vibecrafted_core.workspace_catalog import resolve_worker_host_session
 
     worker_host = resolve_worker_host_session(root=str(tmp_path), env=dict(os.environ))
-    assert worker_host.endswith(" workers")
-    assert worker_host != f"{tmp_path.name} workers" or "-" in worker_host
+    assert worker_host.endswith("-workers")
+    assert " " not in worker_host
+    assert worker_host != f"{tmp_path.name}-workers"
     assert captured["command"][:5] == [
         str(vc_frame),
         "--session",
@@ -1000,8 +1001,8 @@ def test_effective_operator_session_g7_worker_host_routing(
     expected_foo = wc.worker_host_session_name(
         workspace_id=ws_foo.workspace_id, display_label="foo"
     )
-    assert expected != "vibecrafted workers"
-    assert expected_foo != "foo workers"
+    assert expected != "vibecrafted-workers"
+    assert expected_foo != "foo-workers"
 
     env_base = {"VIBECRAFTED_HOME": str(vib_home)}
 

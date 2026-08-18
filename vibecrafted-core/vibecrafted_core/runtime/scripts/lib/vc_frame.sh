@@ -35,7 +35,8 @@ spawn_session_is_live() {
   local sessions=""
   sessions="$("$bin" list-sessions 2>/dev/null || true)"
   [[ -n "$sessions" ]] || sessions="$("$bin" ls 2>/dev/null || true)"
-  # Match full session name (G7 may use multi-word hosts like "<repo> workers").
+  # Match the full session name. Host names are single-token ("<repo>-workers")
+  # but the listing itself is whitespace-formatted, so match whole lines anyway.
   # Strip trailing status tags: [Created], (current), EXITED markers.
   printf '%s\n' "$sessions" \
     | sed 's/\x1b\[[0-9;]*m//g' \
@@ -59,9 +60,9 @@ spawn_session_is_live() {
 # Rules (exact order):
 #   1. VIBECRAFTED_WORKER_SESSION if set — explicit override wins.
 #   2. Else workspace-bound host from the control-plane catalog
-#      ("{label}-{workspace_short} workers") via Python twin — two workspaces
+#      ("{label}-{workspace_short}-workers") via Python twin — two workspaces
 #      with the same root basename never share a host (Cut A, 2026-08-10).
-#   3. Emergency fallback: "<basename(root)> workers" only if Python catalog
+#   3. Emergency fallback: "<basename(root)>-workers" only if Python catalog
 #      resolution is unavailable.
 # 2026-08-09: the suffix used to be conditional on host == dispatcher seat.
 # That guarded only seat==repo, so dispatch from any other seat landed worker
@@ -99,7 +100,7 @@ try:
     from vibecrafted_core.workspace_catalog import resolve_worker_host_session
     print(resolve_worker_host_session(root=root, env=os.environ), end="")
 except Exception:
-    print(f"{Path(root).name or 'vibecrafted'} workers", end="")
+    print(f"{Path(root).name or 'vibecrafted'}-workers", end="")
 PY
     )" || resolved=""
   fi
@@ -111,7 +112,7 @@ PY
   local host=""
   host="$(basename "$repo_root")"
   [[ -n "$host" ]] || return 1
-  printf '%s workers\n' "$host"
+  printf '%s-workers\n' "$host"
 }
 
 spawn_in_target_vc_frame_session() {
