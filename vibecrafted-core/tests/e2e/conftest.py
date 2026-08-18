@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import os
 import socket
 import subprocess
@@ -29,10 +30,30 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _is_launcher_wrapper(candidate: Path) -> bool:
+    """True when the candidate is a generated shell launcher, not a real binary.
+
+    `make install` publishes `~/.local/bin/vc-server` as a wrapper that exports
+    the operator's own `VIBECRAFTED_HOME` before exec'ing the release binary.
+    Running that wrapper silently overrides the isolated `vc_home` this suite
+    builds, so the server reads the operator's real control plane and answers
+    404 for the run the test just wrote. That reads as a product failure when it
+    is a harness failure — refuse the wrapper instead.
+    """
+    try:
+        with candidate.open("rb") as handle:
+            return handle.read(2) == b"#!"
+    except OSError:
+        return True
+
+
 def resolve_server_binary() -> Path | None:
     for candidate in _SERVER_CANDIDATES:
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return candidate
+        if not (candidate.is_file() and os.access(candidate, os.X_OK)):
+            continue
+        if _is_launcher_wrapper(candidate):
+            continue
+        return candidate
     return None
 
 
@@ -41,8 +62,10 @@ def server_binary() -> Path:
     binary = resolve_server_binary()
     if binary is None:
         pytest.skip(
-            "vibecrafted-server binary missing — run: "
-            "cargo build --manifest-path vibecrafted-server/Cargo.toml --release"
+            "no real vibecrafted-server binary (launcher wrappers are refused: "
+            "they pin the operator's VIBECRAFTED_HOME and break test isolation) "
+            "— run: cargo build --manifest-path vibecrafted-server/Cargo.toml "
+            "--release"
         )
     return binary
 
@@ -114,17 +137,19 @@ def live_server(server_binary: Path, vc_home: Path, tmp_path: Path):
             log_handle.flush()
             body = log_path.read_text(encoding="utf-8", errors="replace")
             pytest.fail(f"server died before ready (exit={proc.returncode}):\n{body}")
+        # Speak HTTP to the loopback port directly. urllib would also resolve
+        # file:// and other schemes from a composed string, which is a finding
+        # this suite has no reason to carry for a readiness poll.
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=0.5)
         try:
-            import urllib.request
-
-            with urllib.request.urlopen(
-                f"{base}/api/control/state", timeout=0.5
-            ) as resp:
-                if resp.status == 200:
-                    ready = True
-                    break
-        except Exception:  # noqa: BLE001
+            conn.request("GET", "/api/control/state")
+            if conn.getresponse().status == 200:
+                ready = True
+                break
+        except OSError:
             time.sleep(0.1)
+        finally:
+            conn.close()
     if not ready:
         proc.kill()
         log_handle.flush()
