@@ -373,9 +373,12 @@ _vetcoders_wait_for_vc_frame_session() {
   local attempts="${2:-40}"
   local current=0
 
+  # Sleep first: a server socket never appears in the same instant the client
+  # is spawned, and a probe fired at t=0 races the client's own exit (a client
+  # that returns immediately must not be shadowed by a still-running `ls`).
   while (( current < attempts )); do
-    [[ "$(_vetcoders_vc_frame_session_state "$session_name")" == "live" ]] && return 0
     sleep 0.25
+    [[ "$(_vetcoders_vc_frame_session_state "$session_name")" == "live" ]] && return 0
     ((current+=1))
   done
 
@@ -416,13 +419,14 @@ _vetcoders_run_new_vc_frame_session() {
     --session "$session_name" --new-session-with-layout "$layout_file"
   local frame_rc=$?
 
-  if (( frame_rc != 0 )); then
-    kill "$attachment_recorder_pid" 2>/dev/null || true
-    wait "$attachment_recorder_pid" 2>/dev/null || true
-    return "$frame_rc"
-  fi
-
-  wait "$attachment_recorder_pid"
+  # The frame client's exit status is the launcher's exit status. The recorder
+  # only annotates WES: once the foreground client has returned, the session
+  # either went live while it ran (the recorder already finished) or never
+  # came up — polling `ls` for another ten seconds after the client is gone
+  # buys nothing and must not turn a clean client exit into 1.
+  kill "$attachment_recorder_pid" 2>/dev/null || true
+  wait "$attachment_recorder_pid" 2>/dev/null || true
+  return "$frame_rc"
 }
 
 _vetcoders_ensure_vc_frame_session() {
