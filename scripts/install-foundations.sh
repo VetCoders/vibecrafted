@@ -742,7 +742,7 @@ install_vc_frame_product_wrapper() {
   fi
 
   if (( CHECK_ONLY )); then
-    info "Would install product vc-frame entry wrapper -> $dest (real=$real; remove legacy=$legacy_bin)"
+    info "Would install product vc-frame entry wrapper -> $dest (symlink into vibecrafted-current/bin; real=$real; remove legacy=$legacy_bin)"
     return 0
   fi
 
@@ -751,9 +751,24 @@ install_vc_frame_product_wrapper() {
     install -m 0755 "$real" "$product_bin"
     real="$product_bin"
   fi
-  install -m 0755 "$wrapper_src" "$dest"
+
+  # PATH must be a symlink into vibecrafted-current so path-doctor and
+  # `vibecrafted update` see one owner. A copied wrapper in ~/.local/bin
+  # is a snapshot Claude/CLI keep running after the generation moves.
+  local tools_home current gen
+  tools_home="${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}"
+  current="$tools_home/vibecrafted-current"
+  if [[ -d "$current" ]]; then
+    gen="$(cd "$current" && pwd -P)"
+    mkdir -p "$gen/bin"
+    install -m 0755 "$wrapper_src" "$gen/bin/vc-frame"
+    ln -sfn "$current/bin/vc-frame" "$dest"
+    ok "product vc-frame entry installed: $dest -> $current/bin/vc-frame (real=$real)"
+  else
+    install -m 0755 "$wrapper_src" "$dest"
+    ok "product vc-frame entry installed: $dest (real=$real; no generation, copied)"
+  fi
   rm -f "$legacy_bin"
-  ok "product vc-frame entry installed: $dest (real=$real)"
 }
 
 
@@ -830,6 +845,13 @@ install_product_entry_into_current() {
     fi
   else
     warn "product entry deck source missing"
+  fi
+
+  local wrapper_src="$SOURCE_DIR/scripts/vc-frame-product-entry.sh"
+  if [[ -f "$wrapper_src" ]]; then
+    mkdir -p "$gen/bin"
+    install -m 0755 "$wrapper_src" "$gen/bin/vc-frame"
+    ok "product vc-frame wrapper synced: $gen/bin/vc-frame"
   fi
 }
 

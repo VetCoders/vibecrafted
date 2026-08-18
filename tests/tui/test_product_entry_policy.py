@@ -42,6 +42,7 @@ def test_wrapper_exists_executable() -> None:
     assert WRAPPER.stat().st_mode & stat.S_IXUSR
     text = WRAPPER.read_text(encoding="utf-8")
     assert "pin_product_config" in text
+    assert "pin_darwin_socket_dir" in text
     assert "is_product_session_name" in text
     assert "vc-frame.real" not in text
 
@@ -51,6 +52,7 @@ def test_installer_only_mentions_retired_sibling_for_one_way_cleanup() -> None:
     assert text.count("vc-frame.real") == 1
     assert 'legacy_bin="$LAUNCHER_PREFIX/vc-frame.real"' in text
     assert 'rm -f "$legacy_bin"' in text
+    assert 'ln -sfn "$current/bin/vc-frame" "$dest"' in text
 
 
 def test_wrapper_never_executes_retired_sibling_shadow(tmp_path: Path) -> None:
@@ -103,6 +105,15 @@ def test_product_entry_prepare_exists_in_shipped_dashboard() -> None:
     dispatch = DISPATCH.read_text(encoding="utf-8")
     assert "_vetcoders_product_entry_prepare" in dispatch
     assert "VIBECRAFTED_PRODUCT_ENTRY_PROBE" in dispatch
+    start = text.index("_vetcoders_product_entry_prepare() {")
+    end = text.index("\n}", start)
+    body = text[start:end]
+    assert body.index("_vetcoders_path_with_bundled_bin_priority") < body.index(
+        "_vetcoders_product_workspace_prepare"
+    )
+    assert body.index("_vetcoders_product_workspace_prepare") < body.index(
+        "_vetcoders_control_plane_eye_prepare"
+    )
 
 
 def test_shipped_deck_routes_workspace_resolution_to_core(tmp_path: Path) -> None:
@@ -267,6 +278,56 @@ def test_wrapper_pins_and_execs_when_frontier_config_present(tmp_path: Path) -> 
     assert "args=attach vibecrafted" in proc.stdout
 
 
+def test_wrapper_pins_darwin_socket_dir_when_unset(tmp_path: Path) -> None:
+    """Claude/CLI path: pin /tmp/vc-frame-$UID when neither socket env is set."""
+    home = tmp_path / "home"
+    xdg = tmp_path / "xdg"
+    bin_dir = tmp_path / "bin"
+    home.mkdir()
+    xdg.mkdir()
+    bin_dir.mkdir()
+    real = _write_fake_bin(
+        bin_dir,
+        "vc-frame-bin",
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env bash
+            printf 'VC_FRAME_SOCKET_DIR=%s\\n' "${VC_FRAME_SOCKET_DIR:-}"
+            printf 'ZELLIJ_SOCKET_DIR=%s\\n' "${ZELLIJ_SOCKET_DIR:-}"
+            exit 0
+            """
+        ),
+    )
+    wrapper = bin_dir / "vc-frame"
+    wrapper.write_text(WRAPPER.read_text(encoding="utf-8"), encoding="utf-8")
+    wrapper.chmod(0o755)
+    env = {
+        **{
+            k: v
+            for k, v in os.environ.items()
+            if not k.startswith("VC_FRAME") and k != "ZELLIJ_SOCKET_DIR"
+        },
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(xdg),
+        "VIBECRAFTED_VC_FRAME_BIN": str(real),
+        "USER": "test",
+    }
+    proc = subprocess.run(
+        [str(wrapper), "list-sessions"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        timeout=20,
+    )
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    if sys.platform == "darwin":
+        expected = f"/tmp/vc-frame-{os.getuid()}"
+        assert f"VC_FRAME_SOCKET_DIR={expected}" in proc.stdout
+        assert f"ZELLIJ_SOCKET_DIR={expected}" in proc.stdout
+
+
 def test_wrapper_allows_non_product_session_without_config(tmp_path: Path) -> None:
     """Non-product sessions may run bare without product config (polyversai etc.)."""
     home = tmp_path / "home"
@@ -386,6 +447,117 @@ def test_vc_start_probe_pins_product_config(tmp_path: Path) -> None:
     )
     assert "VIBECRAFTED_OPERATOR_SESSION=workspace-b1b163f8" in proc.stdout
     assert "should-not-run-in-probe" not in out
+
+
+def test_product_entry_reconciles_the_one_macos_server_service_owner(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    xdg = tmp_path / "xdg"
+    bin_dir = tmp_path / "bin"
+    capture = tmp_path / "server-calls"
+    frontier = xdg / "vetcoders/frontier/vc-frame"
+    (frontier / "layouts").mkdir(parents=True)
+    (frontier / "config.kdl").write_text("// product frontier\n", encoding="utf-8")
+    (frontier / "layouts/operator.kdl").write_text("layout {\n}\n", encoding="utf-8")
+    home.mkdir()
+    bin_dir.mkdir()
+
+    _write_fake_bin(bin_dir, "python3", "#!/usr/bin/env bash\nexit 1\n")
+    _write_fake_bin(bin_dir, "uname", "#!/usr/bin/env bash\necho Darwin\n")
+    _write_fake_bin(
+        bin_dir,
+        "vibecrafted",
+        textwrap.dedent(
+            f"""\
+            #!/usr/bin/env bash
+            printf '%s\\n' "$*" >> "{capture}"
+            if [[ "$*" == "workspace resolve --env" ]]; then exit 0; fi
+            if [[ "$*" == "server status" ]]; then exit 1; fi
+            if [[ "$*" == "server service reconcile" ]]; then exit 0; fi
+            exit 1
+            """
+        ),
+    )
+
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "HOME": str(home),
+        "XDG_CONFIG_HOME": str(xdg),
+        "VIBECRAFTED_ROOT": str(REPO),
+        "VIBECRAFTED_PRODUCT_ENTRY_PROBE": "1",
+        "USER": "test",
+    }
+    proc = subprocess.run(
+        ["bash", "-lc", f'source "{HELPER}"; vc-start'],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(REPO),
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    calls = capture.read_text(encoding="utf-8").splitlines()
+    assert "server status" in calls
+    assert "server service reconcile" in calls
+
+
+def test_product_entry_does_not_invent_a_non_macos_service_owner(
+    tmp_path: Path,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    capture = tmp_path / "server-calls"
+    bin_dir.mkdir()
+    _write_fake_bin(bin_dir, "uname", "#!/usr/bin/env bash\necho Linux\n")
+    _write_fake_bin(
+        bin_dir,
+        "vibecrafted",
+        f'#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "{capture}"\nexit 1\n',
+    )
+
+    proc = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{DASHBOARD}"; _vetcoders_control_plane_eye_prepare',
+        ],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"},
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert capture.read_text(encoding="utf-8").splitlines() == ["server status"]
+
+
+def test_product_entry_keeps_a_healthy_macos_server_untouched(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    capture = tmp_path / "server-calls"
+    bin_dir.mkdir()
+    _write_fake_bin(bin_dir, "uname", "#!/usr/bin/env bash\necho Darwin\n")
+    _write_fake_bin(
+        bin_dir,
+        "vibecrafted",
+        f'#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "{capture}"\nexit 0\n',
+    )
+
+    proc = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f'source "{DASHBOARD}"; _vetcoders_control_plane_eye_prepare',
+        ],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"},
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert capture.read_text(encoding="utf-8").splitlines() == ["server status"]
 
 
 def test_vc_start_probe_twice_is_stable(tmp_path: Path) -> None:

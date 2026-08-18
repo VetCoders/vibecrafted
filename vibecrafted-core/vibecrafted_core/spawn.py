@@ -13,6 +13,7 @@ import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from shutil import which
 from typing import Any
 
 from .agent_dispatch import extract_session_id, sandbox_supported
@@ -23,6 +24,7 @@ from .report_contract import (
     materialize_launcher_report_template,
     stamp_launcher_report_identity,
 )
+from .runtime_paths import agent_tool_search_path
 from .runtime_transcript import write_runtime_transcript_manifest
 from .settlement import BareMarkdownError, require_bound_markdown
 from .telemetry import estimate_cost_usd
@@ -264,6 +266,48 @@ def _stdin_command(agent: str) -> list[str]:
             "/dev/stdin",
         ]
     raise ValueError(f"unsupported agent: {agent}")
+
+
+def _resolve_agent_command(
+    agent: str,
+    command: Sequence[str],
+    environment: dict[str, str] | None = None,
+) -> list[str]:
+    """Pin a provider argv to the executable found on the canonical tool PATH.
+
+    Commands owned by another runtime (for example ``python -m`` supervisors or
+    test fixtures) pass through unchanged.  The agy stdin adapter is the one
+    provider command embedded in ``bash -c`` and is pinned inside that script.
+    """
+
+    resolved = list(command)
+    if not resolved:
+        raise ValueError("agent command must not be empty")
+    direct_provider = resolved[0] == agent
+    shell_provider = (
+        len(resolved) >= 3
+        and Path(resolved[0]).name == "bash"
+        and resolved[1] == "-c"
+        and re.match(rf"^{re.escape(agent)}(?=\s)", resolved[2]) is not None
+    )
+    if not direct_provider and not shell_provider:
+        return resolved
+    search_path = agent_tool_search_path(environment)
+    executable = which(agent, path=search_path)
+    if executable is None:
+        raise FileNotFoundError(
+            f"provider executable '{agent}' not found on canonical agent tool PATH"
+        )
+    if direct_provider:
+        resolved[0] = executable
+    else:
+        resolved[2] = re.sub(
+            rf"^{re.escape(agent)}(?=\s)",
+            shlex.quote(executable),
+            resolved[2],
+            count=1,
+        )
+    return resolved
 
 
 def _parse_launcher_assignment(path: Path, key: str) -> str:

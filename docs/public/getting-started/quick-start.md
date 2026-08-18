@@ -98,7 +98,7 @@ vibecrafted help --all      # full workflow reference
 | ----------------- | --------------------------------------------- |
 | `init [agent]`    | Orient an agent in this repo                  |
 | `<skill> <agent>` | Run a workflow with an agent                  |
-| `resume <agent>`  | Continue a previous session                   |
+| `resume <agent>`  | Continue a stopped run or a provider session  |
 | `status`          | Today's agent activity                        |
 | `doctor`          | Installation health — pass/fail               |
 | `receipt`         | Delivery/runtime receipt (source ↔ installed) |

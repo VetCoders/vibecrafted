@@ -35,8 +35,15 @@ if [[ "${1##*/}" == "vc-start" ]]; then
   vc_start="$1"
   shift
   /bin/zsh -lic '"$0" "$@"' "$vc_start" "$@"
+  vc_start_status=$?
   # vc-frame owns its own alternate-buffer lifecycle; clean sticky smcup.
   leave_alt_screen
+  if (( vc_start_status != 0 )); then
+    # A failed vc-frame launch no longer owns a usable PTY. Do not drop the
+    # user into a login shell on that broken frontend; let vc-terminal close
+    # cleanly so Vibecrafted.app can open a fresh window.
+    exit "$vc_start_status"
+  fi
 fi
 
 exec /bin/zsh -l

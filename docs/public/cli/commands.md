@@ -21,7 +21,8 @@ past runs. They launch no workflows themselves — that is the job of the
 | `vibecrafted receipt [--json]`       | Delivery/runtime receipt (source ↔ installed)       |
 | `vibecrafted settlements <action>`   | Read-only f/x/n ledger query                        |
 | `vibecrafted update`                 | Update to the latest release                        |
-| `vibecrafted resume <agent>`         | Continue a previous session                         |
+| `vibecrafted resume <agent>`         | Continue a stopped run or a provider session        |
+| `vibecrafted <agent> resume`         | Same surface: continue a stopped control-plane run  |
 | `vibecrafted resume-session <agent>` | Continue an exact provider session as a tracked run |
 | `vibecrafted version`                | Print version                                       |
 | `vibecrafted uninstall`              | Reverse the install                                 |
@@ -108,10 +109,29 @@ CLI executes. Verify afterwards with `vibecrafted version` and
 ## resume and resume-session
 
 ```bash
-vibecrafted resume claude --session <id> --prompt "Continue the fix"
+# After stop: continue the control-plane run (new tracked job; the old PGID is dead)
+vibecrafted resume claude --run-id work-260816-213657-08420
+vibecrafted claude resume --run-id work-260816-213657-08420 --prompt "continue"
+vibecrafted claude resume --last
+
+# Provider-native session (Claude/Codex UUID — never a work-* id, never VIBECRAFTED_SESSION_ID)
+vibecrafted resume claude --session <provider-uuid> --prompt "Continue the fix"
 ```
 
-`resume` continues a previous tracked session for an agent.
+`stop` kills the launcher process group. There is no same-process restart.
+`--run-id` starts a **new** tracked job that continues the stopped work: if
+the run recorded a provider session, that session is resumed natively;
+otherwise the original prompt is replayed as `resume-new-session`.
+
+`--session` takes the provider UUID only. `work-…` is a control-plane run.
+`01a00…` / `VIBECRAFTED_SESSION_ID` is the Vibecrafted runtime session, not
+Claude or Codex.
+
+Bare `vibecrafted resume <agent>` (optional `--root`) opens a **new**
+interactive session and attaches an AICX continuity pack. It never
+native-attaches the last same-agent candidate. `--root` is an AICX project
+filter, not a session picker. The catalog in the pack is evidence, not a
+swipe list.
 
 ```bash
 printf '%s' "continue safely" | vibecrafted resume-session codex \

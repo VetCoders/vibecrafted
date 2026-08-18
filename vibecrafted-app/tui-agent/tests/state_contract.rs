@@ -105,6 +105,7 @@ async fn operator_console_launch_uses_vc_frame_top_level_layout_flags() {
         terminal_binary: None,
         tick_ms: 250,
         no_verify_gate: true,
+        ..CliOptions::default()
     });
     assert_eq!(config.terminal_binary, Path::new("vc-frame"));
 
@@ -806,6 +807,8 @@ fn mux_health_deep_actions_surface_per_known_service() {
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
+            server: "http://100.82.232.70:3025".into(),
+            view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
         state: ControlPlaneState::empty("/tmp/state"),
@@ -833,6 +836,8 @@ fn mux_health_deep_actions_surface_per_known_service() {
         mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
+        observe: Default::default(),
+        memory: Default::default(),
     };
 
     // No mux summaries → only per-run actions. Existing surface preserved.
@@ -944,6 +949,8 @@ fn mux_status_lines_render_healthy_and_attention_headers() {
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
+            server: "http://100.82.232.70:3025".into(),
+            view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
         state: ControlPlaneState::empty("/tmp/state"),
@@ -971,6 +978,8 @@ fn mux_status_lines_render_healthy_and_attention_headers() {
         mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
+        observe: Default::default(),
+        memory: Default::default(),
     };
 
     // No mux services → empty render, never a misleading "0 healthy" header.
@@ -1124,6 +1133,8 @@ fn deep_controls_expose_attach_resume_and_artifacts() {
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
+            server: "http://100.82.232.70:3025".into(),
+            view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
         state: ControlPlaneState::empty("/tmp/state"),
@@ -1151,6 +1162,8 @@ fn deep_controls_expose_attach_resume_and_artifacts() {
         mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
+        observe: Default::default(),
+        memory: Default::default(),
     };
 
     let actions = app.deep_actions();
@@ -1209,6 +1222,8 @@ fn native_artifact_viewer_reads_files_and_clipboard_payload_prefers_resume_comma
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
+            server: "http://100.82.232.70:3025".into(),
+            view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
         state: ControlPlaneState::empty("/tmp/state"),
@@ -1236,6 +1251,8 @@ fn native_artifact_viewer_reads_files_and_clipboard_payload_prefers_resume_comma
         mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
+        observe: Default::default(),
+        memory: Default::default(),
     };
 
     assert_eq!(
@@ -1259,6 +1276,8 @@ fn empty_state_detail_lines_offer_human_quick_start() {
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
+            server: "http://100.82.232.70:3025".into(),
+            view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
         state: ControlPlaneState::empty("/tmp/state"),
@@ -1286,6 +1305,8 @@ fn empty_state_detail_lines_offer_human_quick_start() {
         mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
+        observe: Default::default(),
+        memory: Default::default(),
     };
 
     let lines = app.detail_lines();
@@ -1306,6 +1327,8 @@ fn prompt_lines_include_human_kind_copy_and_command_preview() {
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
+            server: "http://100.82.232.70:3025".into(),
+            view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
         state: ControlPlaneState::empty("/tmp/state"),
@@ -1332,6 +1355,8 @@ fn prompt_lines_include_human_kind_copy_and_command_preview() {
         mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
+        observe: Default::default(),
+        memory: Default::default(),
     };
 
     let lines = app.prompt_lines();
@@ -1354,6 +1379,8 @@ fn tab_navigation_wraps_and_dispatch_focus_tracks_selected_field() {
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
+            server: "http://100.82.232.70:3025".into(),
+            view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
         state: ControlPlaneState::empty("/tmp/state"),
@@ -1381,6 +1408,8 @@ fn tab_navigation_wraps_and_dispatch_focus_tracks_selected_field() {
         mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
+        observe: Default::default(),
+        memory: Default::default(),
     };
 
     app.previous_tab();
@@ -1432,6 +1461,8 @@ fn tab_labels_surface_monitor_dispatch_and_controls_context() {
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
+            server: "http://100.82.232.70:3025".into(),
+            view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
         state: ControlPlaneState::empty("/tmp/state"),
@@ -1458,6 +1489,8 @@ fn tab_labels_surface_monitor_dispatch_and_controls_context() {
         mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
+        observe: Default::default(),
+        memory: Default::default(),
     };
 
     let labels = app.tab_labels();
@@ -1508,6 +1541,8 @@ async fn queue_scope_and_search_filter_the_visible_run_list() {
 
         terminal_binary: "vc-frame".into(),
         tick_rate: Duration::from_millis(250),
+        server: "http://100.82.232.70:3025".into(),
+        view: voc::observe::ConsoleView::Full,
         no_verify_gate: false,
     })
     .unwrap();
@@ -1540,6 +1575,8 @@ fn changing_launch_kind_reorients_the_operator_into_dispatch() {
 
             terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
+            server: "http://100.82.232.70:3025".into(),
+            view: voc::observe::ConsoleView::Full,
             no_verify_gate: false,
         },
         state: ControlPlaneState::empty("/tmp/state"),
@@ -1567,6 +1604,8 @@ fn changing_launch_kind_reorients_the_operator_into_dispatch() {
         mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
+        observe: Default::default(),
+        memory: Default::default(),
     };
 
     app.set_launch_kind(LaunchKind::Review);
@@ -1941,6 +1980,8 @@ async fn mission_control_focus_wraps_across_seven_panels() {
         launch_runtime: LaunchRuntime::Terminal,
         terminal_binary: "vc-frame".into(),
         tick_rate: Duration::from_millis(250),
+        server: "http://100.82.232.70:3025".into(),
+        view: voc::observe::ConsoleView::Full,
         no_verify_gate: false,
     })
     .unwrap();
@@ -1971,6 +2012,8 @@ async fn mission_queue_preselects_matching_deep_action_for_controls_handoff() {
         launch_runtime: LaunchRuntime::Terminal,
         terminal_binary: "vc-frame".into(),
         tick_rate: Duration::from_millis(250),
+        server: "http://100.82.232.70:3025".into(),
+        view: voc::observe::ConsoleView::Full,
         no_verify_gate: false,
     })
     .unwrap();

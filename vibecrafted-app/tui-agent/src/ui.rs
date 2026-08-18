@@ -1,4 +1,5 @@
 use crate::app::{App, AppTab, LaunchFocus};
+use crate::observe::ConsoleView;
 use crate::mission_control::{
     ActionPriority, ActionQueueItem, ActionQueueKind, ActiveDispatch, AgentStatsRow, DataQuality,
     FailureEntry, FleetHealthSignal, FleetHealthStatus, SkillStatsRow, WaveSegment, WaveState,
@@ -32,6 +33,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         LaunchFocus::Search => draw_search_overlay(frame, app),
         LaunchFocus::Error => draw_error_overlay(frame, app),
         LaunchFocus::Artifact => draw_artifact_overlay(frame, app),
+        LaunchFocus::Memory => draw_memory_overlay(frame, app),
         _ => {}
     }
 }
@@ -42,16 +44,33 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Length(1), Constraint::Length(1)])
         .split(area);
 
-    let title = Line::from(vec![
-        Span::styled(
-            "Vibecrafted Operator Console",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  "),
-        Span::styled(app.status_summary(), Style::default().fg(Color::Gray)),
-    ]);
+    let title = if app.config.view == ConsoleView::Observe {
+        Line::from(vec![
+            Span::styled(
+                "voc",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("  {}  {}", app.observe.status.label(), app.observe.origin),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::raw("  "),
+            Span::styled(app.status_summary(), Style::default().fg(Color::Gray)),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled(
+                "Vibecrafted Operator Console",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(app.status_summary(), Style::default().fg(Color::Gray)),
+        ])
+    };
     frame.render_widget(Paragraph::new(title), rows[0]);
 
     let context = format!(
@@ -88,11 +107,149 @@ fn draw_tabs(frame: &mut Frame, area: Rect, app: &App) {
 
 fn draw_body(frame: &mut Frame, area: Rect, app: &App) {
     match app.active_tab() {
+        AppTab::Monitor if app.config.view == ConsoleView::Observe => {
+            draw_observe(frame, area, app);
+        }
         AppTab::Monitor => draw_monitor(frame, area, app),
         AppTab::Dispatch => draw_dispatch(frame, area, app),
         AppTab::Controls => draw_controls(frame, area, app),
         AppTab::MissionControl => draw_mission_control(frame, area, app),
     }
+}
+
+fn draw_observe(frame: &mut Frame, area: Rect, app: &App) {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+        .split(area);
+
+    let mut items = Vec::new();
+    if app.observe.runs.is_empty() {
+        items.push(ListItem::new(Line::from(Span::styled(
+            "no live workers on the server",
+            Style::default().fg(Color::DarkGray),
+        ))));
+    }
+    for (index, run) in app.observe.runs.iter().enumerate() {
+        let selected = index == app.observe.selected;
+        let glyph = if run.state == "stalled" || run.liveness.contains("dead") {
+            "○"
+        } else {
+            "●"
+        };
+        let style = if selected {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else if run.state == "stalled" {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        items.push(ListItem::new(Line::from(vec![
+            Span::styled(format!("{glyph} "), style),
+            Span::styled(run.list_line(), style),
+        ])));
+    }
+    let title = format!(
+        " Observe · {} live ",
+        app.observe
+            .runs
+            .iter()
+            .filter(|run| run.state == "active")
+            .count()
+    );
+    frame.render_widget(
+        List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(title, Style::default().fg(Color::White))),
+        ),
+        columns[0],
+    );
+
+    let mut body = Vec::new();
+    if let Some(error) = &app.observe.error {
+        body.push(Line::from(Span::styled(
+            format!("donor: {error}"),
+            Style::default().fg(Color::Yellow),
+        )));
+        body.push(Line::from(""));
+    }
+    if let Some(run) = app.observe.runs.get(app.observe.selected) {
+        body.push(Line::from(Span::styled(
+            run.title_line(),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )));
+        body.push(Line::from(Span::styled(
+            run.run_id.clone(),
+            Style::default().fg(Color::DarkGray),
+        )));
+        body.push(Line::from(""));
+        if app.observe.transcript.trim().is_empty() {
+            body.push(Line::from(Span::styled(
+                "human transcript pending",
+                Style::default().fg(Color::DarkGray),
+            )));
+        } else {
+            for line in app.observe.transcript.lines().rev().take(40).collect::<Vec<_>>().into_iter().rev() {
+                body.push(Line::from(line.to_string()));
+            }
+        }
+    } else {
+        body.push(Line::from(Span::styled(
+            "Select a worker. Transcripts come from the server, not a local pid scan.",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    frame.render_widget(
+        Paragraph::new(body)
+            .wrap(Wrap { trim: false })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(Span::styled(" Transcript ", Style::default().fg(Color::White))),
+            ),
+        columns[1],
+    );
+}
+
+fn draw_memory_overlay(frame: &mut Frame, app: &App) {
+    let area = centered_rect(80, 70, frame.area());
+    frame.render_widget(Clear, area);
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!("AICX · {}", app.memory.project),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "w opens aicx wizard   ·   Esc closes",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+    ];
+    if let Some(error) = &app.memory.error {
+        lines.push(Line::from(Span::styled(
+            error.clone(),
+            Style::default().fg(Color::Yellow),
+        )));
+    }
+    for line in &app.memory.lines {
+        lines.push(Line::from(line.clone()));
+    }
+    frame.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: true }).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Memory "),
+        ),
+        area,
+    );
 }
 
 fn draw_monitor(frame: &mut Frame, area: Rect, app: &App) {
@@ -501,7 +658,11 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
         rows[0],
     );
 
-    let shortcuts = "Global: q quit  r refresh  a cycle agent  v cycle runtime  y copy  Ctrl+L clear search  ? help";
+    let shortcuts = if app.config.view == ConsoleView::Observe {
+        "Observe: j/k select  m memory  w aicx wizard  r refresh  q quit"
+    } else {
+        "Global: q quit  r refresh  a cycle agent  v cycle runtime  y copy  Ctrl+L clear search  ? help"
+    };
     frame.render_widget(
         Paragraph::new(shortcuts).style(Style::default().fg(Color::DarkGray)),
         rows[1],
@@ -1499,6 +1660,8 @@ mod tests {
                 launch_runtime: LaunchRuntime::Terminal,
                 terminal_binary: "vc-frame".into(),
                 tick_rate: Duration::from_millis(250),
+                server: "http://100.82.232.70:3025".into(),
+                view: crate::observe::ConsoleView::Full,
             },
             state: ControlPlaneState::empty("/tmp/state"),
             runs: vec![
@@ -1527,6 +1690,8 @@ mod tests {
             mission_control: crate::mission_control::MissionControlState::default(),
             mission_focus: 0,
             mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
+            observe: Default::default(),
+            memory: Default::default(),
         }
     }
 

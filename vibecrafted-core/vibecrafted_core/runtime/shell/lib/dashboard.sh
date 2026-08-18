@@ -49,11 +49,41 @@ _vetcoders_product_workspace_prepare() {
   done <<< "$resolved"
 }
 
+_vetcoders_control_plane_eye_prepare() {
+  command -v vibecrafted >/dev/null 2>&1 || return 0
+  vibecrafted server status >/dev/null 2>&1 && return 0
+
+  # The macOS product owns a persistent LaunchAgent. Reconcile that one owner
+  # instead of starting a second foreground server with hard-coded defaults.
+  # Linux and Windows keep their existing non-mutating entry behavior until
+  # their platform service managers have an equivalent durable owner.
+  if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]; then
+    vibecrafted server service reconcile >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
 # Product lifecycle choke shared by shell `vc-start` and deck `cmd_start`.
 # Pins product config, projects Super/scripts when available, pokes control-plane
 # eye (best-effort). Never loads into ordinary PATH-only shells unless called.
 _vetcoders_product_entry_prepare() {
+  # Host CLIs (node/codex) must be on PATH before workspace resolve and the
+  # control-plane eye — AppDelegate/vc-start start with a closed allowlist.
+  if declare -F _vetcoders_path_with_bundled_bin_priority >/dev/null 2>&1; then
+    PATH="$(_vetcoders_path_with_bundled_bin_priority "${PATH:-}")"
+    export PATH
+  fi
   _vetcoders_product_workspace_prepare
+  if [[ -n "${VIBECRAFTED_WORKSPACE_ROOT:-}" && -d "$VIBECRAFTED_WORKSPACE_ROOT" ]]; then
+    cd "$VIBECRAFTED_WORKSPACE_ROOT" || true
+  fi
+
+  # Vibecrafted.app moved new frames to a short product-owned socket root.
+  # Preserve every physical session found in the old namespace as a WES
+  # attachment before the new visible workspace is opened.
+  if declare -F _vetcoders_import_legacy_vc_frame_sessions >/dev/null 2>&1; then
+    _vetcoders_import_legacy_vc_frame_sessions || return $?
+  fi
 
   # Normalize ambient context first so frontier resolution is stable.
   if declare -F _vetcoders_normalize_ambient_context >/dev/null 2>&1; then
@@ -84,10 +114,8 @@ _vetcoders_product_entry_prepare() {
       >/dev/null 2>&1 || true
   fi
 
-  # Control-plane eye — best effort; never block cockpit if server is down.
-  if command -v vibecrafted >/dev/null 2>&1; then
-    vibecrafted server status >/dev/null 2>&1 || true
-  fi
+  # Control-plane eye — best effort; never block cockpit if repair is unavailable.
+  _vetcoders_control_plane_eye_prepare
 
   export VIBECRAFTED_PRODUCT_ENTRY=1
   return 0

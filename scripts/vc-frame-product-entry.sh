@@ -40,6 +40,20 @@ resolve_real_bin() {
   return 1
 }
 
+pin_darwin_socket_dir() {
+  # Claude / CLI / any path that does not inherit AppDelegate must still land
+  # on the short macOS socket root. TMPDIR + contract_version_N already fills
+  # sockaddr_un (104) before a worker host name is appended.
+  case "$(uname -s 2>/dev/null || true)" in
+    Darwin)
+      if [[ -z "${VC_FRAME_SOCKET_DIR:-}" && -z "${ZELLIJ_SOCKET_DIR:-}" ]]; then
+        export VC_FRAME_SOCKET_DIR="/tmp/vc-frame-$(id -u)"
+        export ZELLIJ_SOCKET_DIR="$VC_FRAME_SOCKET_DIR"
+      fi
+      ;;
+  esac
+}
+
 pin_product_config() {
   local xdg="${XDG_CONFIG_HOME:-$HOME/.config}"
   local frontier="$xdg/vetcoders/frontier/vc-frame"
@@ -74,6 +88,7 @@ real="$(resolve_real_bin)" || {
 
 # Always prefer product config when available (closes bare-vs-vc-start chrome split).
 pin_product_config || true
+pin_darwin_socket_dir
 
 # If operator intentionally wants product cockpit, prefer vc-start when present.
 # Bare `vc-frame` with no args often creates an anonymous session — nudge.

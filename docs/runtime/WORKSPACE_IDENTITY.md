@@ -55,7 +55,7 @@ $VIBECRAFTED_HOME/control_plane/workspaces/
   catalog.json                 # vibecrafted.workspace-catalog.v1
   .catalog.lock
   instances/<uuid>.json        # vibecrafted.workspace-instance.v1
-  sessions/                    # reserved for session records
+  sessions/<uuid>.json        # vibecrafted.workspace-session.v1
   snapshot_manifests/<uuid>.json
   migration_report.json
 ```
@@ -70,6 +70,8 @@ vibecrafted workspace select   <workspace_id>
 vibecrafted workspace bury     <workspace_id>     # hide without deleting history
 vibecrafted workspace recover  <workspace_id> [--select]
 vibecrafted workspace materialize <workspace_id> [--root PATH]
+vibecrafted workspace session-attach --workspace-id UUID --session-id UUID \
+  --instance-id UUID --runtime vc-frame --runtime-session-id NAME --state live|dead|missing
 vibecrafted workspace migrate  [--dry-run]
 vibecrafted workspace settlement-counts <workspace_id>
 ```
@@ -77,21 +79,40 @@ vibecrafted workspace settlement-counts <workspace_id>
 `bury` detaches live instances. `recover` reactivates the logical workspace
 without pretending an incompatible live runtime can be attached.
 
+## WES runtime attachments
+
+A logical `vibecrafted_session_id` may own multiple physical runtime
+incarnations. They are append-preserved in
+`sessions/<vibecrafted_session_id>.json`; a dead `vc-frame` is evidence, not a
+process to resurrect or delete. A replacement is added as another attachment
+with `replaces_runtime_session_id`, while the dead attachment and its socket
+namespace remain visible to WES.
+
+On macOS, Vibecrafted.app opens new frames under the short product socket root
+`/tmp/vc-frame-$UID`. Before opening the new window it reads the former
+TMPDIR-based namespace and attaches every discovered live/dead session to WES.
+It never kills or rewrites those legacy physical sessions.
+
+Claude / CLI / any path that does not inherit AppDelegate must still land on
+that same root. `~/.local/bin/vc-frame` is a symlink into
+`vibecrafted-current/bin/vc-frame` (the product wrapper). A copied Mach-O or
+an old wrapper in `~/.local/bin` is how the previous `/tmp` fix stayed
+app-only. `vibecrafted doctor --json` exposes `authority.available` so host
+path-doctor can stop guessing from symlink shape alone.
+
 ## Worker host routing
 
 Rules (shell and Python are semantically identical):
 
 1. `VIBECRAFTED_WORKER_SESSION` if set — explicit override.
 2. Else workspace-bound host:
-   `{sanitized_display_label}-{workspace_id_short8}-workers`
-3. Emergency fallback only: `{basename(root)}-workers` if the catalog cannot open.
+   `{sanitized_display_label}-{workspace_id_short8}-w`
+3. Emergency fallback only: `{basename(root)}-w` if the catalog cannot open.
 
-The separator is a dash, not a space (changed 2026-08-17). The host name crosses
-argv, shell quoting in the launchers and line-wise matching of vc-frame session
-listings; a space made every one of those a place the name could split. Nothing
-parses the name on whitespace, so the change is purely a narrowing. Host sessions
-created under the old spaced names are not renamed — they age out as EXITED and
-the next dispatch creates the dashed host.
+The older `{label}-{short} workers` form (space in the session name) overflowed
+macOS `sockaddr_un` (104 bytes) on the default TMPDIR socket root. Claude / CLI
+paths that do not inherit AppDelegate must still use `/tmp/vc-frame-$UID`.
+`legacy_worker_host_session_name()` keeps the old token for WES attach.
 
 Two workspaces rooted in directories both named `vibecrafted` never share a
 worker host. The bare basename remains the human operator interactive card.
@@ -116,7 +137,7 @@ New runs stamp into `meta.json` / control-plane snapshots:
   "workspace_instance_id": "<uuid>",
   "build_id": { "...": "vibecrafted.build-id.v1" },
   "workspace_display_label": "vibecrafted",
-  "worker_host_session": "vibecrafted-a1b2c3d4-workers",
+  "worker_host_session": "vibecrafted-a1b2c3d4 workers",
   "worker_host_display": "vibecrafted [a1b2c3d4]"
 }
 ```
@@ -186,13 +207,12 @@ vc-frame resurrection.** Cut B must:
   unassigned in scoped F/X/N until re-settled with evidence.
 - Shell host resolution shells out to Python; pure-shell emergency fallback
   is basename-only (collision-prone) and must remain rare.
-- vc-frame session name length is bounded by the AF_UNIX `sun_path` cap (~104 B
-  on Darwin) minus the socket directory. The deck binds
-  `VC_FRAME_SOCKET_DIR=/tmp/vc-frame-<uid>` so the budget stays generous; the
-  short workspace token keeps names bounded on the other side.
+- vc-frame session name length limits with multi-word hosts — already used
+  for `"… workers"`; short token keeps names bounded.
 
 ## Python module
 
 `vibecrafted_core.workspace_catalog` — create/list/select/show/bury/recover,
+WES runtime attachments,
 `resolve_run_workspace_identity`, `resolve_worker_host_session`,
 `settlement_counts_for_workspace`, snapshot manifest helpers.

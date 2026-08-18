@@ -153,6 +153,35 @@ def _write_trimmed_launcher(script_path: Path) -> None:
     script_path.chmod(0o755)
 
 
+def test_python_resolver_skips_bash_product_launchers(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    launcher_copy = tmp_path / "vibecrafted-deck"
+    fake_python = fake_bin / "python3"
+    fake_bin.mkdir()
+    _write_trimmed_launcher(launcher_copy)
+
+    for name in ("vc-server-supervisor", "vibecrafted"):
+        wrapper = fake_bin / name
+        wrapper.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+        wrapper.chmod(0o755)
+    fake_python.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    fake_python.chmod(0o755)
+
+    env = os.environ.copy()
+    env.pop("VIBECRAFTED_PYTHON", None)
+    env["PATH"] = f"{fake_bin}:/usr/bin:/bin"
+    result = subprocess.run(
+        ["bash", "-c", f'source "{launcher_copy}"; _vibecrafted_python'],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout.strip()) == fake_python
+
+
 def _write_fake_command(bin_dir: Path, name: str, capture_file: Path) -> None:
     script_names = [name]
     if name == "vc-frame":
@@ -1342,6 +1371,88 @@ def test_installed_launcher_doctor_forwards_fix_flags(tmp_path: Path) -> None:
         f"{current_root / 'scripts' / 'vetcoders_install.py'} "
         "doctor --fix-rc --fix-launchers"
     ) in calls
+
+
+def test_installed_launcher_doctor_reconciles_server_service_then_rechecks(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    launcher = home / ".local" / "bin" / "vibecrafted"
+    current_root = (
+        home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
+    )
+    fake_bin = tmp_path / "bin"
+    python_capture = tmp_path / "python3-calls.txt"
+    service_capture = tmp_path / "service-calls.txt"
+
+    home.mkdir(parents=True)
+    fake_bin.mkdir()
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text(LAUNCHER.read_text(encoding="utf-8"), encoding="utf-8")
+    launcher.chmod(0o755)
+    (current_root / "scripts").mkdir(parents=True, exist_ok=True)
+    core_package = current_root / "vibecrafted-core" / "vibecrafted_core"
+    core_package.mkdir(parents=True, exist_ok=True)
+    # _dispatcher_core_dir deliberately requires the dispatcher entrypoint:
+    # make this an installed-runtime fixture, not a loose directory look-up.
+    (core_package / "dispatcher.py").write_text("\n", encoding="utf-8")
+    (current_root / "VERSION").write_text("0.0.0-test\n", encoding="utf-8")
+    fake_python = fake_bin / "python3"
+    fake_python.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'if [[ "${1:-}" == "-c" || "${1:-}" == "-" ]]; then exec /usr/bin/python3 "$@"; fi\n'
+        'printf "%s\\n" "$*" >> "$CAPTURE_FILE"\n',
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    fake_supervisor = fake_bin / "vc-server-supervisor"
+    fake_supervisor.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'printf "%s\\n" "$*" >> "$SERVICE_CAPTURE"\n',
+        encoding="utf-8",
+    )
+    fake_supervisor.chmod(0o755)
+    fake_service_launcher = fake_bin / "vibecrafted"
+    fake_service_launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_service_launcher.chmod(0o755)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:/bin:/usr/bin"
+    env["CAPTURE_FILE"] = str(python_capture)
+    env["SERVICE_CAPTURE"] = str(service_capture)
+
+    result = subprocess.run(
+        ["bash", str(launcher), "doctor", "--fix-server-service"],
+        check=False,
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    service_args = service_capture.read_text(encoding="utf-8")
+    assert service_args.startswith("service install ")
+    assert f"--launcher {fake_bin / 'vibecrafted'}" in service_args
+    assert f"--supervisor-bin {fake_bin / 'vc-server-supervisor'}" in service_args
+    assert "-m vibecrafted_core.cli doctor" in python_capture.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_doctor_help_documents_server_service_repair() -> None:
+    result = subprocess.run(
+        [str(LAUNCHER), "doctor", "--help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "vibecrafted doctor --fix-server-service" in result.stdout
 
 
 def test_installed_launcher_tui_uses_shared_state_and_voc_binary(

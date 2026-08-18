@@ -65,7 +65,7 @@ every provider — bare resume stays interactive.
 
 | Args                              | Mode                                                                                    |
 | --------------------------------- | --------------------------------------------------------------------------------------- |
-| bare                              | AICX 48h pack → native resume if same-agent session, else **new interactive** session   |
+| bare                              | AICX 48h pack → **new interactive** session. Never native attach. `--session` only.     |
 | `--session <id>`                  | **interactive** resume of that session                                                  |
 | `--session` + `--prompt`/`--file` | **non-interactive** continue (job)                                                      |
 | bare + `--prompt`/`--file`        | **non-interactive** fresh tracked job; never adopts an AICX-selected historical session |

@@ -32,7 +32,7 @@ BUILD_NUMBER="${BUILD_NUMBER:-$(date -u +%Y%m%d%H%M%S)}"
 MODE="release"
 SIGNING_IDENTITY=""
 TEMP_KEYCHAIN_PATH=""
-ORIGINAL_DEFAULT_KEYCHAIN=""
+SIGNING_KEYCHAIN_LABEL="vibecrafted-signing-$$"
 CODESIGN_KEYCHAIN_ARGS=()
 export MACOSX_DEPLOYMENT_TARGET=14.0
 # Release payloads must not remember the operator account, Cargo registry, or
@@ -51,15 +51,21 @@ log() { printf '\n==> %s\n' "$*"; }
 die() { printf 'FATAL: %s\n' "$*" >&2; exit 1; }
 require() { command -v "$1" >/dev/null 2>&1 || die "$1 is required"; }
 
+# The ephemeral signing keychain is owned by scripts/lib/keychain-session.sh,
+# which arms its own EXIT/INT/TERM/HUP traps and chains onto whatever this
+# script already had. See that file's header for the 2026-08-15 incident this
+# replaces: the block that used to live here restored the DEFAULT keychain and
+# deleted the temp keychain, but never put the search LIST back — it trusted
+# `delete-keychain` to unlist, which only holds while the keychain file still
+# exists. It also took the login session's default keychain, which is a
+# host-wide side effect for the entire duration of the release.
+# shellcheck source=/dev/null
+. "$REPO_ROOT/scripts/lib/keychain-session.sh"
+
 cleanup() {
-  if [[ -n "$ORIGINAL_DEFAULT_KEYCHAIN" ]]; then
-    security default-keychain -d user -s "$ORIGINAL_DEFAULT_KEYCHAIN" >/dev/null 2>&1 || true
-  fi
-  if [[ -n "$TEMP_KEYCHAIN_PATH" ]]; then
-    security delete-keychain "$TEMP_KEYCHAIN_PATH" >/dev/null 2>&1 || true
-  fi
+  keychain_session_end "$SIGNING_KEYCHAIN_LABEL" || true
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM HUP
 
 read_trimmed_file() {
   sed -e 's/[[:space:]]*$//' -e '/^$/d' "$1" | head -n1
@@ -69,20 +75,25 @@ prepare_signing_identity() {
   SIGNING_IDENTITY="$(read_trimmed_file "$SIGNING_IDENTITY_FILE")"
   [[ -n "$SIGNING_IDENTITY" ]] || die "signing identity is empty"
   if [[ -f "$CERT_P12" && -f "$CERT_PASSWORD_FILE" ]]; then
-    local cert_password temp_password existing_keychains
+    local cert_password temp_password
     cert_password="$(read_trimmed_file "$CERT_PASSWORD_FILE")"
     [[ -n "$cert_password" ]] || die "certificate password is empty"
-    temp_password="$(uuidgen)"
-    TEMP_KEYCHAIN_PATH="$DIST_DIR/Vibecrafted-signing.keychain-db"
-    rm -f "$TEMP_KEYCHAIN_PATH"
-    existing_keychains="$(security list-keychains -d user | tr -d '"' | tr '\n' ' ')"
-    ORIGINAL_DEFAULT_KEYCHAIN="$(security default-keychain -d user 2>/dev/null | tr -d ' "' || true)"
-    security create-keychain -p "$temp_password" "$TEMP_KEYCHAIN_PATH"
-    security set-keychain-settings -lut 21600 "$TEMP_KEYCHAIN_PATH"
-    security unlock-keychain -p "$temp_password" "$TEMP_KEYCHAIN_PATH"
-    # shellcheck disable=SC2086
-    security list-keychains -d user -s "$TEMP_KEYCHAIN_PATH" $existing_keychains >/dev/null
-    security default-keychain -d user -s "$TEMP_KEYCHAIN_PATH"
+
+    # The ephemeral keychain lives in its own per-process state directory and
+    # is always addressed explicitly. It is never registered in the user's
+    # global search list: doing so changes keychain lookup for Codescribe and
+    # every other application on the host while a release is running.
+    #
+    # It deliberately does NOT make this the login session's default keychain.
+    # Nothing below needs that: every call names the keychain explicitly. The
+    # old `security default-keychain -d user -s "$TEMP_KEYCHAIN_PATH"` is what
+    # made Codescribe (and everything else on the host) prompt for a uuidgen
+    # password for the whole length of the release.
+    KEYCHAIN_SESSION_REGISTER_SEARCH_LIST=0 \
+      keychain_session_begin "$SIGNING_KEYCHAIN_LABEL"
+    TEMP_KEYCHAIN_PATH="$KEYCHAIN_SESSION_PATH"
+    temp_password="$(cat "$(keychain_session_password_file)")"
+
     security import "$CERT_P12" -k "$TEMP_KEYCHAIN_PATH" -P "$cert_password" \
       -T /usr/bin/codesign >/dev/null
     security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
@@ -310,22 +321,14 @@ build_product() {
     'exec "$runtime_root/python/bin/python3.12" "$@"' \
     > "$runtime/bin/python3"
   chmod 0755 "$runtime/bin/python3"
-  for entrypoint_module in \
-    'vc-guardian:vibecrafted_core.guardian' \
-    'vc-server-supervisor:vibecrafted_core.server_supervisor' \
-    'verify-vibecrafted-walkaround:vibecrafted_core.walkaround_runner'; do
-    entrypoint="${entrypoint_module%%:*}"
-    module="${entrypoint_module#*:}"
-    # The wrapper must resolve BASH_SOURCE when it runs, not while this bundle is assembled.
-    # shellcheck disable=SC2016
-    printf '%s\n' \
-      '#!/bin/bash' \
-      'set -euo pipefail' \
-      'bin_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
-      "exec \"\$bin_dir/python3\" -m $module \"\$@\"" \
-      > "$runtime/bin/$entrypoint"
-    chmod 0755 "$runtime/bin/$entrypoint"
-  done
+  # pyproject.toml is the one public Python-command manifest. Preserve curated
+  # native/shell implementations already present in bin and fill every missing
+  # console script from that manifest so the app bootstrap cannot silently
+  # omit a shipped command such as vc-git.
+  "$REPO_ROOT/scripts/project-python" \
+    "$REPO_ROOT/scripts/render-python-entrypoint-launchers.py" \
+    --pyproject "$REPO_ROOT/vibecrafted-core/pyproject.toml" \
+    --bin-dir "$runtime/bin"
 
   if find "$APP" -type l -print -quit | grep -q .; then
     die "assembled app contains symlinks"

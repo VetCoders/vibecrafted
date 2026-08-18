@@ -8,6 +8,11 @@ from pathlib import Path
 import pytest
 from vibecrafted_core.capabilities import ProbeResult as CliProbe
 from vibecrafted_core.continuity import capabilities as continuity
+from vibecrafted_core.runtime_paths import (
+    agent_tool_search_path,
+    is_operator_home_root,
+    resolve_operator_launch_root,
+)
 
 ALL_AGENTS = ("claude", "codex", "gemini", "agy", "junie", "grok")
 VERDICTS = {
@@ -120,6 +125,70 @@ def _write_fake_cli(directory: Path, name: str, version: str, help_text: str) ->
     return script
 
 
+def test_agent_tool_search_path_matches_detached_allowlist(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    runtime_bin = tmp_path / "runtime-bin"
+    rogue_bin = tmp_path / "rogue-bin"
+    for directory in (home / ".local/bin", home / ".cargo/bin", runtime_bin, rogue_bin):
+        directory.mkdir(parents=True)
+
+    entries = agent_tool_search_path(
+        {
+            "HOME": str(home),
+            "PATH": str(rogue_bin),
+            "VIBECRAFTED_RUNTIME_BIN": str(runtime_bin),
+        }
+    ).split(os.pathsep)
+
+    assert entries[:3] == [
+        str(runtime_bin),
+        str(home / ".local/bin"),
+        str(home / ".cargo/bin"),
+    ]
+    assert str(rogue_bin) not in entries
+    assert len(entries) == len(set(entries))
+
+
+def test_resolve_operator_launch_root_uses_workspace_from_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "screenscribe"
+    home.mkdir()
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    resolved = resolve_operator_launch_root(
+        cwd=home,
+        env={"HOME": str(home), "VIBECRAFTED_WORKSPACE_ROOT": str(workspace)},
+    )
+    assert resolved == workspace.resolve()
+
+
+def test_resolve_operator_launch_root_keeps_an_explicit_git_tree(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "other"
+    workspace = tmp_path / "selected"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    workspace.mkdir()
+    resolved = resolve_operator_launch_root(
+        cwd=repo,
+        env={"VIBECRAFTED_WORKSPACE_ROOT": str(workspace)},
+    )
+    assert resolved == repo.resolve()
+
+
+def test_is_operator_home_root_matches_only_home(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    other = tmp_path / "repo"
+    home.mkdir()
+    other.mkdir()
+    env = {"HOME": str(home)}
+    assert is_operator_home_root(home, env=env)
+    assert not is_operator_home_root(other, env=env)
+
+
 def test_probe_confirms_fake_agy_contract(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -129,7 +198,7 @@ def test_probe_confirms_fake_agy_contract(
         "1.1.3",
         "--continue Continue\n--conversation Resume by ID\n--print Run once",
     )
-    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_BIN", str(tmp_path))
 
     result = continuity.probe("agy")
 
@@ -148,7 +217,7 @@ def test_probe_confirms_fake_junie_contract(
         "Junie version: 26.7.13 (2285.4)",
         "--resume Resume the last session\n--session-id=<text> Session id",
     )
-    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_BIN", str(tmp_path))
 
     result = continuity.probe("junie")
 
@@ -162,7 +231,7 @@ def test_probe_reports_unsupported_when_markers_missing(
 ) -> None:
     # An older junie without the resume surface: runs fine, contract absent.
     _write_fake_cli(tmp_path, "junie", "Junie version: 25.1.0", "--task only")
-    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_BIN", str(tmp_path))
 
     result = continuity.probe("junie")
 
@@ -174,7 +243,8 @@ def test_probe_reports_unsupported_when_markers_missing(
 def test_probe_failed_is_not_unsupported_when_cli_absent(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("PATH", str(tmp_path))  # empty dir: nothing installed
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_BIN", str(tmp_path))
+    monkeypatch.setattr(continuity, "agent_tool_search_path", lambda: str(tmp_path))
 
     result = continuity.probe("agy")
 
@@ -189,7 +259,7 @@ def test_probe_failed_when_cli_breaks(
     broken = tmp_path / "grok"
     broken.write_text("#!/bin/sh\necho boom >&2\nexit 1\n", encoding="utf-8")
     broken.chmod(0o755)
-    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_BIN", str(tmp_path))
 
     result = continuity.probe("grok")
 
@@ -201,7 +271,7 @@ def test_probe_failed_when_cli_breaks(
 def test_probe_gemini_is_evidence_only_and_executes_nothing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_BIN", str(tmp_path))
 
     def _never(cmd: Sequence[str]) -> CliProbe:  # pragma: no cover - guard
         pytest.fail(f"gemini probe must never execute, got {cmd}")
@@ -221,7 +291,7 @@ def test_probe_caches_until_refresh(
         "1.1.3",
         "--continue x\n--conversation y\n--print z",
     )
-    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME_BIN", str(tmp_path))
     calls: list[Sequence[str]] = []
     real_runner = continuity._default_runner(5.0)
 

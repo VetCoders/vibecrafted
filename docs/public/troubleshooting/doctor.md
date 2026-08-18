@@ -51,6 +51,7 @@ Doctor ships targeted repair flags for the most common launcher and shell-config
 vibecrafted doctor --fix-rc                 # repair old shell startup lines, restore helper/PATH hints
 vibecrafted doctor --fix-launchers          # refresh vibecrafted, vc-help, and vc-* wrappers, then verify
 vibecrafted doctor --fix-legacy-bootstrap   # neutralize retired bootstrap roots (comments out, never deletes)
+vibecrafted doctor --fix-server-service     # reconcile the LaunchAgent with the current signed launcher, then verify
 ```
 
 Each fix flag re-verifies after repairing, so a clean exit means the repair actually held.

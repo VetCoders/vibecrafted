@@ -190,10 +190,24 @@ and notarized `Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg` carrying matching
 builds of `vc-terminal`, `vc-frame`, `vc-start` and the complete runtime.
 Download it and its adjacent `.dmg.sha256` from the
 [latest release](https://github.com/vetcoders/vibecrafted/releases/latest),
-verify the checksum, then open the DMG. No published release carries a DMG yet
-— use the bootstrap until one does. The build path exists (`make release`) but
-has not been exercised since the runtime layout changed, so treat it as
-unproven rather than ready.
+verify the checksum, then open the DMG. The build path (`make release`) is
+exercised and produces a Developer ID signed, notarized and stapled artifact;
+until the release carrying it is published, use the bootstrap.
+
+**Every other system** (Linux, WSL2, or macOS without the desktop app): the
+same release carries `Vibecrafted_<version>-<YYYYMMDD>-<sha8>-portable.tar.gz`
+and its adjacent `.sha256`. It is not a convenience copy of the repository — it
+is an allowlisted projection of one exact commit, carrying a closed
+`source-provenance.json` whose distribution-tree digest names that commit. The
+installer refuses a payload whose provenance does not close:
+
+```bash
+tar -xzf Vibecrafted_<version>-<YYYYMMDD>-<sha8>-portable.tar.gz
+bash vibecrafted-<version>/install.sh
+```
+
+Unlike `curl | bash`, that pins you to a version instead of to whatever a
+branch happens to hold today.
 
 Every new or restored `workspace_id` enters through the bundled `vc-start`.
 Vibecrafted sources its own XDG/runtime environment and does not overwrite your

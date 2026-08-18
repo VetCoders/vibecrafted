@@ -21,7 +21,7 @@ CARGO_BUILD_ROOT ?= $(INSTALLER_CACHE_HOME)/vibecrafted/build/$(INSTALLER_HOST_T
 # in-tree cache is never read or written by install lanes.
 export PYTHONPYCACHEPREFIX ?= $(INSTALLER_CACHE_HOME)/vibecrafted/pycache-$(INSTALLER_HOST_TAG)
 
-.PHONY: help help-dev vibecrafted app dmg dmg-signed release-local notarize release publish-release gui-install wizard wizard-dev check test test-core test-skills test-install test-parity test-vc-frame test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test unified-product-contract-gate install install-auto install-all install-python-tools install-bundle-tools install-tools install-tools-held install-vendored-binaries install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build build-server-release server-check server-test install-server install-server-payload install-server-service server-smoke
+.PHONY: help help-dev vibecrafted app dmg dmg-signed release-local notarize release portable publish-release gui-install wizard wizard-dev check test test-core test-skills test-install test-parity test-vc-frame test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon test-keychain-session dispatch-test unified-product-contract-gate install install-auto install-all install-python-tools install-bundle-tools install-tools install-tools-held install-vendored-binaries install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build build-server-release server-check server-test install-server install-server-payload install-server-service server-smoke
 
 help:
 	@printf "\n"
@@ -34,7 +34,8 @@ help:
 	@printf "  make test         \033[2mRun the gates\033[0m\n"
 	@printf "  make check        \033[2mLint shell scripts\033[0m\n"
 	@printf "  make release      \033[2mBuild, sign, notarize the canonical versioned DMG\033[0m\n"
-	@printf "  make publish-release \033[2mCold-verify and publish that DMG\033[0m\n"
+	@printf "  make portable     \033[2mBuild the provenance-bound tarball for Linux/WSL2\033[0m\n"
+	@printf "  make publish-release \033[2mCold-verify and publish both channels\033[0m\n"
 	@printf "\n"
 	@printf "  \033[2mdev targets: make help-dev\033[0m\n"
 	@printf "\n"
@@ -47,10 +48,10 @@ help-dev:
 	@printf "            skills · helpers · setup-dev · wizard · wizard-dev · gui-install · dry-run · restore\n"
 	@printf "            migrate · migrate-dry · foundations · foundations-check · bundle · bundle-check\n"
 	@printf "  \033[1mtests\033[0m     test · test-core · test-skills · test-install · test-parity · test-vc-frame · test-iterm2-migrate\n"
-	@printf "            test-memex · test-aicx-sync · test-hammerspoon · dispatch-test · test-race-protection · check · semgrep\n"
+	@printf "            test-memex · test-aicx-sync · test-hammerspoon · test-keychain-session · dispatch-test · test-race-protection · check · semgrep\n"
 	@printf "  \033[1miterm2\033[0m    iterm-plugin · iterm-plugin-refresh · iterm-plugin-show · iterm-plugin-uninstall · iterm-plugin-migrate\n"
 	@printf "  \033[1mserver\033[0m    server · server-build · server-check · server-test · server-smoke\n"
-	@printf "  \033[1mrelease\033[0m   app · dmg · dmg-signed · release-local · notarize · release · publish-release\n"
+	@printf "  \033[1mrelease\033[0m   app · dmg · dmg-signed · release-local · notarize · release · portable · publish-release\n"
 	@printf "  \033[1mversion\033[0m   version · version-show · version-bump · bump-patch · bump-minor · bump-major\n"
 	@printf "  \033[1mhooks\033[0m     init-hooks · seed-commit-msg-hooks · commit-safe\n"
 	@printf "  \033[1mmisc\033[0m      doctor · list · update · uninstall · demo · demo-full · skill-new\n"
@@ -62,6 +63,7 @@ help-dev:
 vibecrafted: install
 
 RELEASE_SCRIPT := scripts/build-vibecrafted-release.sh
+PORTABLE_SCRIPT := scripts/build-portable-release.sh
 KEYS ?= $(HOME)/.keys
 
 app:
@@ -75,6 +77,11 @@ notarize:
 
 release:
 	@zsh -ic 'cd "$(CURDIR)" && KEYS="$(KEYS)" exec bash "$(RELEASE_SCRIPT)"'
+
+# The portable channel needs no signing identity and no notary account: it is a
+# provenance-bound source distribution, so it builds anywhere git and python3 do.
+portable:
+	@bash "$(PORTABLE_SCRIPT)"
 
 publish-release:
 	@zsh -ic 'cd "$(CURDIR)" && exec bash scripts/publish-vibecrafted-release.sh'
@@ -441,6 +448,8 @@ bundle:
 	$(PYTHON) scripts/distribution_manifest.py archive --source "$$source_root" --output "$$tmp_archive" --publish-output "$(BUNDLE_ARCHIVE)" --root-name "vibecrafted-$(BUNDLE_VERSION)"; \
 	trap - EXIT
 
+# Keep `-p` on extraction: bundle-check must preserve canonical archive modes
+# even when the operator runs with a restrictive umask such as 077.
 bundle-check:
 	@set -e; \
 	tmp_root="$${TMPDIR:-/tmp}"; \
@@ -452,7 +461,7 @@ bundle-check:
 	test -s "$$tmp_bundle" || { echo "Marketplace bundle generation produced an empty artifact."; exit 1; }; \
 	$(PYTHON) scripts/distribution_manifest.py archive --source "$(SOURCE)" --output "$$tmp_archive" --root-name "vibecrafted-$(BUNDLE_VERSION)"; \
 	mkdir -p "$$tmp_runtime/extracted"; \
-	tar -xzf "$$tmp_archive" -C "$$tmp_runtime/extracted"; \
+	tar -xzpf "$$tmp_archive" -C "$$tmp_runtime/extracted"; \
 	$(PYTHON) scripts/distribution_manifest.py check --root "$$tmp_runtime/extracted/vibecrafted-$(BUNDLE_VERSION)" --require-source-provenance; \
 	echo "Marketplace bundle and runtime payload are valid."
 
@@ -490,18 +499,25 @@ semgrep:
 		uvx semgrep scan --config auto --error --quiet --exclude-rule html.security.audit.missing-integrity.missing-integrity .; \
 	fi
 
-test:
+test: test-keychain-session
 	@if command -v uv >/dev/null 2>&1; then \
 		PYTHONPATH="$(SOURCE)" uv run --with pytest pytest tests/tui -q; \
 	else \
 		PYTHONPATH="$(SOURCE)" $(PYTHON) -m pytest tests/tui -q; \
 	fi
 
+test-keychain-session:
+	@bash scripts/tests/keychain-session-test.sh
+
 test-core:
 	@if command -v uv >/dev/null 2>&1; then \
-		uv run --project vibecrafted-core --with pytest python -m pytest vibecrafted-core/tests -q; \
+		test_tools_home=$$(mktemp -d "$${TMPDIR:-/tmp}/vibecrafted-test-core-tools.XXXXXX"); \
+		trap 'rm -rf "$$test_tools_home"' EXIT; \
+		VIBECRAFTED_TOOLS_HOME="$$test_tools_home" uv run --project vibecrafted-core --with pytest python -m pytest vibecrafted-core/tests -q; \
 	else \
-		PYTHONPATH="$(SOURCE)/vibecrafted-core" $(PYTHON) -m pytest vibecrafted-core/tests -q; \
+		test_tools_home=$$(mktemp -d "$${TMPDIR:-/tmp}/vibecrafted-test-core-tools.XXXXXX"); \
+		trap 'rm -rf "$$test_tools_home"' EXIT; \
+		VIBECRAFTED_TOOLS_HOME="$$test_tools_home" PYTHONPATH="$(SOURCE)/vibecrafted-core" $(PYTHON) -m pytest vibecrafted-core/tests -q; \
 	fi
 
 dispatch-test:

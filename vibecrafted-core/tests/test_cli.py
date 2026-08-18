@@ -116,6 +116,73 @@ def test_workflow_prompt_stdin_stays_out_of_argv_and_temp_files(
     assert spec.file == ""
 
 
+def test_review_from_home_uses_selected_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "repo"
+    home.mkdir()
+    workspace.mkdir()
+    (workspace / ".git").mkdir()
+    seen: dict[str, object] = {}
+
+    def fake_launch(spec, source_dir):
+        seen["root"] = spec.root
+        return {"accepted": True, "run_id": "revi-home-1"}
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.chdir(home)
+    monkeypatch.setattr(cli, "launch_workflow", fake_launch)
+
+    rc = cli.main(
+        [
+            "review",
+            "codex",
+            "--prompt",
+            "look",
+            "--runtime",
+            "headless",
+            "--json",
+        ]
+    )
+
+    assert rc == 0
+    assert Path(str(seen["root"])) == workspace.resolve()
+
+
+def test_review_from_home_without_workspace_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("VIBECRAFTED_WORKSPACE_ROOT", raising=False)
+    monkeypatch.chdir(home)
+
+    def fail_launch(_spec, _source_dir):
+        raise AssertionError("must not launch against $HOME")
+
+    monkeypatch.setattr(cli, "launch_workflow", fail_launch)
+    rc = cli.main(
+        [
+            "review",
+            "codex",
+            "--prompt",
+            "look",
+            "--runtime",
+            "headless",
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "refusing to launch against the home directory" in captured.err
+
+
 def test_resume_session_reads_prompt_from_stdin_and_prints_json(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

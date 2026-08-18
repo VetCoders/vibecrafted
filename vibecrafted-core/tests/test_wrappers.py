@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from vibecrafted_core import workflow, wrappers
+from vibecrafted_core import control_plane, workflow, wrappers
 
 
 def test_deck_path_resolves_packaged_command_deck() -> None:
@@ -290,3 +290,35 @@ def test_stop_main_terminal_noop_is_success(
 
     assert code == 0
     assert "already terminal state=completed; no-op" in capsys.readouterr().out
+
+
+def test_stop_main_accepts_last_for_agent(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        control_plane,
+        "sync_state",
+        lambda: {
+            "active_runs": [{"run_id": "work-260816-213657-08420", "agent": "claude"}],
+            "recent_runs": [],
+        },
+    )
+    monkeypatch.setattr(control_plane, "lookup_run", lambda run_id: {"run_id": run_id})
+    monkeypatch.setattr(
+        workflow,
+        "stop_run",
+        lambda run_id, *, reason, grace_seconds: {
+            "accepted": True,
+            "run_id": run_id,
+            "target": "launcher_pid",
+            "target_pid": 9,
+            "target_pgid": 9,
+            "already_dead": True,
+            "run": {"state": "stopped"},
+        },
+    )
+
+    code = wrappers.stop_main(["--agent", "claude", "--last", "--grace-seconds", "0"])
+
+    assert code == 0
+    assert "run_id=work-260816-213657-08420" in capsys.readouterr().out

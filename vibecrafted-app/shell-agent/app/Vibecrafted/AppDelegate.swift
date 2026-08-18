@@ -38,6 +38,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   private var statusItem: NSStatusItem?
   private var terminalProcess: Process?
   private var workspaceLaunchFailureReported = false
+  private var eyeReconcileProcess: Process?
   let eventObserver = EventObserver()
 
   func showMainWindowIfNeeded() {
@@ -79,11 +80,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     launchWorkspaceTerminal()
-    showMainWindowIfNeeded()
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    true
+    false
   }
 
   func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
@@ -152,6 +152,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     environment["VIBECRAFTED_PYTHON"] = install.root.appendingPathComponent("bin/python3").path
     environment["VIBECRAFTED_VC_FRAME_BIN"] = install.frame.path
     environment["VC_FRAME_CONFIG_DIR"] = install.frameConfig.path
+    // Keep Unix socket paths below macOS' 104-byte sockaddr_un limit. Preserve
+    // the former TMPDIR namespace for one-way import into WES during startup.
+    let socketRoot = "/tmp/vc-frame-\(getuid())"
+    environment["VC_FRAME_SOCKET_DIR"] = socketRoot
+    environment["ZELLIJ_SOCKET_DIR"] = socketRoot
+    if let temp = host["TMPDIR"]?.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
+      !temp.isEmpty
+    {
+      environment["VIBECRAFTED_LEGACY_VC_FRAME_SOCKET_DIR"] =
+        "/\(temp)/vc-frame-\(getuid())"
+    }
 
     let process = Process()
     process.executableURL = install.terminalHost
@@ -166,6 +177,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     } catch {
       reportWorkspaceLaunchFailure(
         "Failed to launch bundled vc-terminal: \(error.localizedDescription)")
+    }
+    reconcileControlPlaneEye(install: install, environment: environment)
+  }
+
+  private func reconcileControlPlaneEye(
+    install: CanonicalRuntimeInstall, environment: [String: String]
+  ) {
+    let deck = install.root.appendingPathComponent("bin/vibecrafted")
+    guard FileManager.default.isExecutableFile(atPath: deck.path) else { return }
+    let process = Process()
+    process.executableURL = deck
+    process.arguments = ["server", "service", "reconcile"]
+    process.environment = environment
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    do {
+      try process.run()
+      eyeReconcileProcess = process
+    } catch {
+      print("Cannot reconcile the control-plane eye: \(error)")
     }
   }
 
@@ -477,9 +508,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let menu = NSMenu()
     menu.addItem(
       withTitle: "Open Console", action: #selector(openConsoleFromStatusItem), keyEquivalent: "")
+    menu.addItem(
+      withTitle: "Open vc-terminal", action: #selector(openTerminalFromStatusItem),
+      keyEquivalent: "")
     menu.addItem(.separator())
     menu.addItem(
-      withTitle: "Quit Vibecrafted", action: #selector(NSApplication.terminate(_:)),
+      withTitle: "Quit", action: #selector(NSApplication.terminate(_:)),
       keyEquivalent: "q")
     item.menu = menu
     statusItem = item
@@ -492,6 +526,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         self.showMainWindowIfNeeded()
       }
     }
+  }
+
+  @objc private func openTerminalFromStatusItem() {
+    if let process = terminalProcess, process.isRunning {
+      NSRunningApplication(processIdentifier: process.processIdentifier)?.activate(options: [])
+      return
+    }
+    launchWorkspaceTerminal()
   }
 
   private func buildMainMenu() {
