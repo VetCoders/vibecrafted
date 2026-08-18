@@ -46,6 +46,63 @@ class _Finding:
     message: str
 
 
+def _vc_frame_launcher_findings(
+    which: Callable[[str], str | None] = shutil.which,
+) -> list[_Finding]:
+    """PATH ``vc-frame`` must be the product wrapper, not a raw Mach-O.
+
+    A copied binary or an old wrapper without the Darwin ``/tmp`` pin is how
+    Claude/CLI keep overflowing macOS sockaddr_un after the app was fixed.
+    """
+
+    resolved = which("vc-frame")
+    if not resolved:
+        return [
+            _Finding(
+                "warn",
+                "vc-frame:path",
+                "vc-frame not found on PATH — run `make install` or the foundations installer",
+            )
+        ]
+    path = Path(resolved)
+    try:
+        target = path.resolve()
+    except OSError:
+        target = path
+    try:
+        head = path.read_text(encoding="utf-8", errors="ignore")[:4096]
+    except OSError as exc:
+        return [_Finding("warn", "vc-frame:path", f"cannot read {path}: {exc}")]
+    if not head.lstrip().startswith("#!"):
+        return [
+            _Finding(
+                "fail",
+                "vc-frame:path",
+                f"vc-frame on PATH ({path}) is a raw binary, not the product "
+                "wrapper. Claude/CLI will use TMPDIR sockets and overflow "
+                "macOS sockaddr_un. Re-run the foundations installer.",
+            )
+        ]
+    if "pin_darwin_socket_dir" not in head:
+        return [
+            _Finding(
+                "fail",
+                "vc-frame:path",
+                f"vc-frame on PATH ({path}) is a wrapper without the Darwin "
+                "/tmp socket pin. Update scripts/vc-frame-product-entry.sh "
+                "and reinstall the product entry.",
+            )
+        ]
+    kind = "symlink" if path.is_symlink() else "file"
+    return [
+        _Finding(
+            "ok",
+            "vc-frame:path",
+            f"product wrapper on PATH ({kind} {path} -> {target})",
+        )
+    ]
+
+
 def _uv_tool_shim() -> Path:
     """Return the expected path of the uv-tool-installed `vibecrafted` shim."""
     data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
@@ -974,6 +1031,7 @@ def doctor_run(
         findings = list(installer.run_doctor(resolved_store, resolved_state))
         findings.extend(_packaged_asset_findings())
     findings.extend(_launcher_shim_findings())
+    findings.extend(_vc_frame_launcher_findings())
     findings.extend(_codex_mcp_config_findings())
     findings.extend(_server_supervision_findings())
     findings.extend(_vc_frame_delivery_findings())
@@ -986,11 +1044,19 @@ def doctor_summary(findings: Sequence[Any]) -> dict[str, Any]:
     oks = sum(1 for finding in findings if finding.level == "ok")
     warnings = sum(1 for finding in findings if finding.level == "warn")
     failures = sum(1 for finding in findings if finding.level == "fail")
+    healthy = failures == 0
     return {
         "ok": oks,
         "warnings": warnings,
         "failures": failures,
-        "healthy": failures == 0,
+        "healthy": healthy,
+        "authority": {
+            "available": True,
+            "healthy": healthy,
+            "ok_count": oks,
+            "failure_count": failures,
+            "warning_count": warnings,
+        },
         "findings": [
             {
                 "level": finding.level,

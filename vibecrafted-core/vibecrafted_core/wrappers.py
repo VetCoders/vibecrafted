@@ -654,16 +654,43 @@ def stop_main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Stop a Vibecrafted run by terminating its launcher process group."
     )
-    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--run-id", default="")
+    parser.add_argument("--last", action="store_true")
     parser.add_argument("--agent", choices=sorted(AGENTS))
     parser.add_argument("--reason", default="operator stop request")
     parser.add_argument("--grace-seconds", type=float, default=2.0)
     ns = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
 
+    from .control_plane import lookup_run, sync_state
     from .workflow import stop_run
 
+    run_id = str(ns.run_id or "").strip()
+    if not run_id:
+        if not ns.last:
+            parser.error("required: --run-id or --last")
+        snapshot = sync_state()
+        agent = str(ns.agent or "").strip()
+        for key in ("active_runs", "recent_runs"):
+            for run in snapshot.get(key) or []:
+                if agent and str(run.get("agent") or "") != agent:
+                    continue
+                run_id = str(run.get("run_id") or "").strip()
+                if run_id:
+                    break
+            if run_id:
+                break
+        if not run_id:
+            print(
+                "No run found for --last. Pass --run-id.",
+                file=sys.stderr,
+            )
+            return 1
+        if lookup_run(run_id) is None:
+            print(f"run_id={run_id} stop failed reason=run_not_found", file=sys.stderr)
+            return 1
+
     result = stop_run(
-        ns.run_id,
+        run_id,
         reason=ns.reason,
         grace_seconds=ns.grace_seconds,
     )
@@ -680,19 +707,19 @@ def stop_main(argv: Sequence[str] | None = None) -> int:
             else "TERM sent"
         )
         print(
-            f"run_id={ns.run_id} state={run.get('state', 'stopped')} "
+            f"run_id={run_id} state={run.get('state', 'stopped')} "
             f"target={target}:{target_pid}{group_suffix} {note}"
         )
         return 0
 
     if reason == "run_terminal":
         print(
-            f"run_id={ns.run_id} already terminal "
+            f"run_id={run_id} already terminal "
             f"state={run.get('state', 'unknown')}; no-op"
         )
         return 0
 
-    print(f"run_id={ns.run_id} stop failed reason={reason}", file=sys.stderr)
+    print(f"run_id={run_id} stop failed reason={reason}", file=sys.stderr)
     if result.get("error"):
         print(str(result["error"]), file=sys.stderr)
     return 1

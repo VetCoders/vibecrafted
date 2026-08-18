@@ -1,4 +1,5 @@
 use crate::launch::LaunchRuntime;
+use crate::observe::{self, ConsoleView};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -12,6 +13,8 @@ pub struct CliOptions {
     pub terminal_binary: Option<PathBuf>,
     pub tick_ms: u64,
     pub no_verify_gate: bool,
+    pub server: Option<String>,
+    pub view: ConsoleView,
 }
 
 impl Default for CliOptions {
@@ -24,6 +27,8 @@ impl Default for CliOptions {
             terminal_binary: None,
             tick_ms: 250,
             no_verify_gate: false,
+            server: None,
+            view: ConsoleView::Observe,
         }
     }
 }
@@ -37,6 +42,8 @@ pub struct AppConfig {
     pub terminal_binary: PathBuf,
     pub tick_rate: Duration,
     pub no_verify_gate: bool,
+    pub server: String,
+    pub view: ConsoleView,
 }
 
 pub fn parse_args() -> anyhow::Result<CliOptions> {
@@ -114,6 +121,24 @@ pub fn parse_args() -> anyhow::Result<CliOptions> {
             "--no-verify-gate" => {
                 options.no_verify_gate = true;
             }
+            "--server" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--server requires a value"))?;
+                options.server = Some(value);
+            }
+            _ if arg.starts_with("--server=") => {
+                options.server = Some(arg.trim_start_matches("--server=").to_string());
+            }
+            "--view" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--view requires a value"))?;
+                options.view = ConsoleView::parse(&value)?;
+            }
+            _ if arg.starts_with("--view=") => {
+                options.view = ConsoleView::parse(arg.trim_start_matches("--view="))?;
+            }
             _ => {
                 return Err(anyhow::anyhow!("unknown argument: {arg}"));
             }
@@ -136,6 +161,12 @@ pub fn build_config(options: CliOptions) -> AppConfig {
         command_deck,
         tick_rate: Duration::from_millis(options.tick_ms.max(50)),
         no_verify_gate: options.no_verify_gate,
+        server: observe::normalize_origin(
+            &options
+                .server
+                .unwrap_or_else(observe::default_server_origin),
+        ),
+        view: options.view,
     }
 }
 
@@ -203,10 +234,12 @@ fn print_help() {
     println!();
     println!("Usage:");
     println!(
-        "  voc [--state-root <dir>] [--deck <path>] [--root <path>] [--runtime <headless|terminal|visible>] [--tick-ms <ms>]"
+        "  voc [--view observe|full] [--server <url>] [--state-root <dir>] [--root <path>]"
     );
     println!();
     println!("Options:");
+    println!("  --view observe|full  Default observe: server-backed live board + AICX memory");
+    println!("  --server <url>       Vibecrafted Server origin (default: VC_SERVER_URL or http://100.82.232.70:3025)");
     println!("  --state-root <dir>   Control-plane state root under VIBECRAFTED_HOME");
     println!("  --deck <path>        Command deck binary or script to launch workflows");
     println!("  --root <path>        Workspace root passed through to launched workflows");

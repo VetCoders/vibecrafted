@@ -1,4 +1,4 @@
-# Cut 4.0.0 with a DMG attached
+# Cut 4.1.0 with both channels attached
 
 Operator sequence. This file does not change the security boundary:
 `.github/workflows/release.yml` stays `contents: read` and does not run
@@ -10,27 +10,31 @@ Positioning and product identity stay in
 commands.
 
 Live install truth for strangers is [INSTALL.md](INSTALL.md): bootstrap
-today; DMG when a release actually carries one. The build path exists and
-is contract-gated, but it has not been exercised since the hermetic
-runtime layout changed — treat the first 4.0.0 DMG as unproven until the
-walk-around below passes.
+today; DMG and portable tarball when a release actually carries them. Both
+build paths are contract-gated and both have been exercised locally — treat
+the first published 4.1.0 artifacts as proven only once the walk-arounds
+below pass on downloaded bytes.
 
 ## 0. What this cut must produce
 
-One GitHub Release `v4.0.0` whose assets are exactly:
+One GitHub Release `v4.1.0` whose assets are exactly:
 
-| Asset                                     | Proves                                     |
-| ----------------------------------------- | ------------------------------------------ |
-| `Vibecrafted_4.0.0-<YYYYMMDD>-<sha8>.dmg` | signed, notarized desktop product          |
-| that name plus `.dmg.sha256`              | checksum a stranger can `shasum -a 256 -c` |
-| `release-output.json`                     | bound source revisions + DMG path          |
-| `release-output.json.sig`                 | detached signature over that receipt       |
+| Asset                                                 | Proves                                           |
+| ----------------------------------------------------- | ------------------------------------------------ |
+| `Vibecrafted_4.1.0-<YYYYMMDD>-<sha8>.dmg`             | signed, notarized desktop product                |
+| that name plus `.dmg.sha256`                          | checksum a stranger can `shasum -a 256 -c`       |
+| `Vibecrafted_4.1.0-<YYYYMMDD>-<sha8>-portable.tar.gz` | installable product for Linux / WSL2 / macOS CLI |
+| that name plus `.sha256`                              | checksum a stranger can `sha256sum -c`           |
+| `release-output.json`                                 | bound source revisions + DMG path                |
+| `release-output.json.sig`                             | detached signature over that receipt             |
 
-`publish-release` refuses extra assets. Do not also upload the old
-source-tarball set onto this tag.
+Exactly six assets. `publish-release` refuses anything else — including the
+old source-tarball set. `portable-output.json` stays local: it is how the
+publisher resolves the tarball name and digests, not something a stranger
+needs.
 
-`VERSION` is already `4.0.0`. There is a local tag `v3.7.1` and no
-`v4.0.0`. Latest **published** GitHub Release is still `v3.5.0`.
+`VERSION` is already `4.1.0`. There are local `v3.7.1` and `v4.0.0` tags,
+but no `v4.1.0`. Latest **published** GitHub Release is still `v3.5.0`.
 
 ## 1. Signing material that must already exist
 
@@ -63,7 +67,7 @@ Also required on this Mac:
 
 ```bash
 # this repo
-test "$(tr -d '[:space:]' < VERSION)" = "4.0.0"
+test "$(tr -d '[:space:]' < VERSION)" = "4.1.0"
 git status --porcelain          # must be empty
 git rev-parse --abbrev-ref HEAD
 
@@ -100,20 +104,39 @@ Expected outputs under `dist/`:
 
 ```text
 Vibecrafted.app
-Vibecrafted_4.0.0-<YYYYMMDD>-<sha8>.dmg
-Vibecrafted_4.0.0-<YYYYMMDD>-<sha8>.dmg.sha256
+Vibecrafted_4.1.0-<YYYYMMDD>-<sha8>.dmg
+Vibecrafted_4.1.0-<YYYYMMDD>-<sha8>.dmg.sha256
 release-output.json
 release-output.json.sig
 ```
+
+Then build the portable channel from the same clean tree:
+
+```bash
+make portable
+```
+
+No signing identity, no notary account, no Xcode: `git` and `python3` are
+enough, which is why this channel can also be built on Linux. It adds:
+
+```text
+Vibecrafted_4.1.0-<YYYYMMDD>-<sha8>-portable.tar.gz
+Vibecrafted_4.1.0-<YYYYMMDD>-<sha8>-portable.tar.gz.sha256
+portable-output.json
+```
+
+The builder refuses a dirty tree, then unpacks what it just wrote, revalidates
+the payload against this exact HEAD, and makes the packed `install.sh` answer
+for itself. If any of that fails, no bytes are published.
 
 ## 4. Local verification (before any tag)
 
 ```bash
 cd dist
-shasum -a 256 -c Vibecrafted_4.0.0-*.dmg.sha256
-xcrun stapler validate Vibecrafted_4.0.0-*.dmg
+shasum -a 256 -c Vibecrafted_4.1.0-*.dmg.sha256
+xcrun stapler validate Vibecrafted_4.1.0-*.dmg
 spctl --assess --type open --context context:primary-signature --verbose=2 \
-  Vibecrafted_4.0.0-*.dmg
+  Vibecrafted_4.1.0-*.dmg
 
 uv run --project vibecrafted-core verify-vibecrafted-walkaround verify-release \
   --release-output dist/release-output.json \
@@ -122,7 +145,7 @@ uv run --project vibecrafted-core verify-vibecrafted-walkaround verify-release \
 uv run --project vibecrafted-core verify-vibecrafted-walkaround walkaround \
   --release-output dist/release-output.json \
   --signature dist/release-output.json.sig \
-  --output /tmp/vibecrafted-4.0.0-walkaround.json
+  --output dist/vibecrafted-4.1.0-walkaround.json
 ```
 
 | Command                      | What a pass proves                                       |
@@ -133,16 +156,31 @@ uv run --project vibecrafted-core verify-vibecrafted-walkaround walkaround \
 | `verify-release`             | the signed receipt names this tree and this DMG          |
 | `walkaround`                 | the mounted DMG is the product, not a sibling look-alike |
 
+Portable channel, same idea without an Apple ticket to lean on:
+
+```bash
+tar -xzf dist/Vibecrafted_4.1.0-*-portable.tar.gz -C "$(mktemp -d)"
+python3 scripts/distribution_manifest.py check \
+  --root <unpacked>/vibecrafted-4.1.0 \
+  --expected-owner-repo vetcoders/vibecrafted \
+  --expected-source-revision "$(git rev-parse HEAD)"
+```
+
+| Command                       | What a pass proves                                       |
+| ----------------------------- | -------------------------------------------------------- |
+| `sha256sum -c`                | the checksum file matches the bytes on disk              |
+| `distribution_manifest check` | the payload is the allowlisted projection of this commit |
+
 ## 5. Operator buttons — tag and source gate
 
 `publish-release` will not invent a tag and will not push one.
 
 ```bash
 # annotated tag at this exact HEAD (not a lightweight tag)
-git tag -a v4.0.0 -m "Vibecrafted 4.0.0"
+git tag -a v4.1.0 -m "Vibecrafted 4.1.0"
 
 # OPERATOR BUTTON — this worker does not push
-git push origin v4.0.0
+git push origin v4.1.0
 ```
 
 Wait for `.github/workflows/release.yml` (`Release source gate`) to go
@@ -175,14 +213,18 @@ GH_TOKEN=... make publish-release
 1. refuses a dirty tree, a missing/unpushed/non-annotated tag, or a tag
    that is not HEAD
 2. verifies the local signed receipt
-3. creates a **draft** release if needed
-4. uploads the four assets
-5. downloads them back into a temp dir and `cmp`s every byte
-6. re-runs `verify-release`, `walkaround`, `stapler`, and `spctl` on the
+3. verifies `portable-output.json` names this exact HEAD, and checks the
+   local tarball checksum
+4. creates a **draft** release if needed
+5. uploads the six assets
+6. downloads them back into a temp dir and `cmp`s every byte
+7. re-runs `verify-release`, `walkaround`, `stapler`, and `spctl` on the
    downloaded DMG
-7. writes the four-section release report under
-   `~/.vibecrafted/artifacts/vetcoders/vibecrafted/<YYYY_MMDD>/reports/`
-8. undrafts the release and marks it latest
+8. unpacks the downloaded tarball into a fresh root, revalidates its
+   source-provenance against HEAD, and runs the packed `install.sh`
+9. writes the four-section release report — now covering both channels —
+   under `~/.vibecrafted/artifacts/vetcoders/vibecrafted/<YYYY_MMDD>/reports/`
+10. undrafts the release and marks it latest
 
 What a pass proves: the bytes a stranger downloads are the bytes you
 notarized, and the mounted app matches the signed receipt.
@@ -190,12 +232,12 @@ notarized, and the mounted app matches the signed receipt.
 ## 7. Public confirmation
 
 ```bash
-gh release view v4.0.0 --json tagName,isDraft,isLatest,assets \
+gh release view v4.1.0 --json tagName,isDraft,isLatest,assets \
   --jq '{tag:.tagName,draft:.isDraft,latest:.isLatest,assets:[.assets[].name]}'
 ```
 
 Expected: `draft=false`, `latest=true`, four names, one of them matching
-`Vibecrafted_4.0.0-*.dmg`.
+`Vibecrafted_4.1.0-*.dmg`.
 
 Then update the staged Homebrew cask coordinates in
 `packaging/homebrew/Casks/vibecrafted-app.rb` (in the tap repo, after the
@@ -208,7 +250,7 @@ tap exists). See [packaging/homebrew/README.md](../packaging/homebrew/README.md)
 - `release.yml` red or still running
 - Open CodeQL alert on `main`
 - `spctl` or `stapler` fail on either the local or the downloaded DMG
-- Temptation to "just `gh release upload`" a source tarball onto `v4.0.0`
+- Temptation to "just `gh release upload`" a source tarball onto `v4.1.0`
   — `publish-release` will reject unexpected assets
 
 If you only need a local unsigned look, stop after `make dmg` and do not

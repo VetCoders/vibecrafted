@@ -3,6 +3,72 @@
 All notable changes to 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+### Changed
+
+- Bare `vibecrafted resume <agent>` (and `--root`) opens a new interactive
+  session plus an AICX continuity pack. It no longer native-attaches the last
+  same-agent AICX candidate. Native provider resume requires `--session <id>`.
+- Resume pack assembler lives in `aicx_session_chain` (CLI transport + MCP
+  session-chain contract). Catalog rows are evidence, not a Tinder picker.
+  Empty-with-`-p` is `empty_project`, not a silent scanned=0.
+
+## 4.1.0 — 2026-08-16
+
+> **One app, one real terminal.** `Vibecrafted.app` owns the macOS product
+> identity and lifecycle without flashing its unfinished control-centre window;
+> the signed nested `vc-terminal.app` is the first visible workspace and starts
+> the bundled, generation-bound `vc-start operator` flow.
+
+### Added
+
+- Tray-first macOS carrier (`LSUIElement`) with explicit `Open Console`,
+  `Open vc-terminal`, and `Quit Vibecrafted` actions; the native console remains
+  available on demand but never flashes during ordinary startup.
+- Signed nested `vc-terminal.app` and primary-shell receipt bind the visible
+  terminal to the exact runtime generation carried by the DMG.
+- `doctor --fix-server-service` repairs stale macOS server LaunchAgent state
+  through the same public CLI surface that diagnoses it.
+
+### Changed
+
+- Composer and Quick cmd remain clickable label-only actions in the top chrome;
+  their `⌘E` and `⇧⌘.` teaching lane is permanently rendered in the
+  bottom status bar across vc-frame modes.
+- The terminal theme control keeps one trailing column away from the borderless
+  window edge, and light mode changes both host and active vc-frame palettes.
+- Release identity moves coherently from 4.0.1 to 4.1.0 across Python packages,
+  Rust manifests, Cargo locks, runtime VERSION files, and the app bundle.
+
+### Fixed
+
+- The app no longer creates a native Mission Control window and then covers it
+  with vc-terminal at launch.
+- Runtime launch uses the app's embedded generation instead of an ambient PATH
+  lookup, preserving install and provenance truth.
+- Release signing uses a temporary keychain session, signs the nested helper
+  closure, and validates the immutable annotated-tag source contract.
+- The Ghostty/terminal palette and bundled vc-frame assets preserve readable
+  light-mode foregrounds instead of inheriting dark-mode text colors.
+- Product entry reconciles the one configured macOS server LaunchAgent when it
+  is unhealthy, so Live Runs reads the configured control-plane donor instead
+  of waiting forever while no server owns the port.
+- The DMG builder derives missing Python launchers from the package's canonical
+  `[project.scripts]` manifest. Public commands such as `vc-git` can no longer
+  be green in source yet absent from the installed app.
+- Mounted-DMG verification canonicalizes equivalent `/tmp` and `/private/tmp`
+  paths while still requiring the exact signed app and runtime generation.
+- AICX fallback resume uses the exact cross-organization `-p /repo` filter,
+  retaining history through organization renames without ambiguous bare-name
+  failures or an unsafe fallback that mixes unrelated projects into the pack.
+
+### Security
+
+- Semgrep, unified-product, package, installer, and mounted-artifact gates remain
+  fail closed; signing/notary credentials stay operator-owned under
+  `$HOME/.keys` and are never embedded in the product.
+
 ## 3.7.1 — 2026-08-14
 
 > **One Vibecrafted.** The first release whose installable boundary is exactly

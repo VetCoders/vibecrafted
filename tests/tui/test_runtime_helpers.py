@@ -480,6 +480,27 @@ def test_compact_session_name_is_zsh_compatible() -> None:
     assert "unrecognized modifier" not in result.stderr
 
 
+def test_recovery_session_name_fits_macos_default_socket_budget() -> None:
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                '_vetcoders_recovery_vc_frame_session_name "workspace-9082c14d"'
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "VIBECRAFTED_ROOT": str(REPO_ROOT)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert len(result.stdout.strip().encode("utf-8")) <= 20
+
+
 def test_vc_marbles_wrapper_routes_control_subcommands(tmp_path: Path) -> None:
     capture_file = tmp_path / "inspect-args.txt"
     result = _run_vetcoders_helper(

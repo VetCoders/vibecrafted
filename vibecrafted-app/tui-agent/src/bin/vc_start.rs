@@ -1,15 +1,62 @@
 //! Hermetic product entrypoint for the bundled Vibecrafted runtime.
 //!
 //! This executable deliberately does not read a login shell profile. It locates
-//! the runtime carried inside Vibecrafted.app, adds only that runtime bin plus
-//! the system path, sources the shipped shell facade, and enters `vc-start`.
+//! the runtime carried inside Vibecrafted.app, composes the host-agent PATH
+//! (generation bin first, then the known agent-CLI homes, then whatever PATH the
+//! caller already had — sanitized, never amputated), sources the shipped shell
+//! facade, and enters `vc-start`.
+//!
+//! PATH composes instead of replacing: AppDelegate hands this process a PATH
+//! that keeps the operator's Homebrew/npm/cargo/nvm entries behind the signed
+//! generation, and dropping that tail here is exactly what made
+//! `#!/usr/bin/env node` agent CLIs exit 127 from the app terminal.
 
 use std::env;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-const SYSTEM_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
+const SYSTEM_PATH_ENTRIES: &[&str] = &[
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+];
+
+fn host_agent_search_path(runtime_bin: &Path, home: Option<&Path>, inherited: Option<&str>) -> String {
+    let mut entries: Vec<String> = Vec::new();
+    let mut push = |path: PathBuf| {
+        if path.is_dir() {
+            let text = path.display().to_string();
+            if !entries.iter().any(|existing| existing == &text) {
+                entries.push(text);
+            }
+        }
+    };
+    push(runtime_bin.to_path_buf());
+    if let Some(home) = home {
+        push(home.join(".local/bin"));
+        push(home.join(".cargo/bin"));
+        push(home.join("tools/scripts"));
+    }
+    for entry in SYSTEM_PATH_ENTRIES {
+        push(PathBuf::from(entry));
+    }
+    // The caller's PATH survives behind the canon: that is where nvm, pnpm,
+    // pipx and hand-rolled ~/bin actually live. Only sane entries cross —
+    // empty segments and relative paths (`.`, `bin`) would turn a long-lived
+    // agent shell into an implicit-cwd lookup, so they are dropped, not kept.
+    for entry in inherited.unwrap_or("").split(':') {
+        if entry.is_empty() || !entry.starts_with('/') {
+            continue;
+        }
+        push(PathBuf::from(entry));
+    }
+    entries.join(":")
+}
 
 fn app_root_from_executable(executable: &Path) -> Option<PathBuf> {
     let root = executable.ancestors().nth(5)?;
@@ -75,7 +122,10 @@ fn run() -> Result<(), String> {
         return Err(format!("bundled vc-frame is missing: {}", frame.display()));
     }
 
-    let runtime_path = format!("{}:{SYSTEM_PATH}", runtime.join("bin").display());
+    let home = env::var_os("HOME").map(PathBuf::from);
+    let inherited_path = env::var("PATH").ok();
+    let runtime_path =
+        host_agent_search_path(&runtime.join("bin"), home.as_deref(), inherited_path.as_deref());
     let mut command = Command::new("/bin/bash");
     command
         .args([
@@ -126,6 +176,35 @@ mod tests {
             Some(PathBuf::from("/Applications/Vibecrafted.app"))
         );
         assert_eq!(app_root_from_executable(Path::new("/tmp/vc-start")), None);
+    }
+
+    #[test]
+    fn host_path_includes_system_bins_and_existing_home_dirs() {
+        let runtime = Path::new("/usr/bin");
+        let path = host_agent_search_path(runtime, Some(Path::new("/nonexistent-vc-home")), None);
+        assert!(path.split(':').any(|entry| entry == "/usr/bin"));
+        assert!(path.split(':').any(|entry| entry == "/bin"));
+        assert!(!path.contains("/nonexistent-vc-home"));
+        assert!(!path.contains("/attacker"));
+    }
+
+    #[test]
+    fn host_path_keeps_the_callers_tail_behind_the_canon_and_drops_unsafe_entries() {
+        // The caller's PATH (nvm, pnpm, ~/bin…) survives behind the canon: that
+        // tail is where the operator's agent CLIs actually live. Empty and
+        // relative segments are implicit-cwd lookups and never cross.
+        let runtime = Path::new("/usr/bin");
+        let inherited = format!(":{}::.:bin:/usr/bin:", "/tmp");
+        let path = host_agent_search_path(runtime, None, Some(&inherited));
+        let entries: Vec<&str> = path.split(':').collect();
+        assert!(entries.contains(&"/tmp"));
+        assert!(!entries.contains(&""));
+        assert!(!entries.contains(&"."));
+        assert!(!entries.contains(&"bin"));
+        assert_eq!(entries.iter().filter(|entry| **entry == "/usr/bin").count(), 1);
+        let canon_end = entries.iter().position(|entry| *entry == "/sbin").unwrap();
+        let tail = entries.iter().position(|entry| *entry == "/tmp").unwrap();
+        assert!(tail > canon_end, "inherited tail must follow the canon: {path}");
     }
 
     #[test]

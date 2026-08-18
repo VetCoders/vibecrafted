@@ -112,10 +112,45 @@ Check what a given release actually carries:
 gh release view --json assets -q '.assets[].name'
 ```
 
-No published release carries a DMG yet, so use the bootstrap channel above. The
-build path exists end to end and its shape is gated by contract tests, but it
-has not been exercised since the runtime layout changed — treat it as unproven
-rather than ready.
+The build path is exercised end to end and its shape is gated by contract
+tests: `make release` produces a Developer ID signed, notarized and stapled
+DMG with a signed `release-output.json`. Until the release carrying it is
+published, use the bootstrap channel above.
+
+## Portable channel — Linux, WSL2, macOS CLI
+
+Apple notarization cannot reach these systems, so the same release carries a
+second canonically named artifact:
+`Vibecrafted_<version>-<YYYYMMDD>-<sha8>-portable.tar.gz` plus its adjacent
+`.sha256`.
+
+```bash
+curl -fsSLO https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted_<version>-<YYYYMMDD>-<sha8>-portable.tar.gz
+curl -fsSLO https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted_<version>-<YYYYMMDD>-<sha8>-portable.tar.gz.sha256
+sha256sum -c Vibecrafted_<version>-<YYYYMMDD>-<sha8>-portable.tar.gz.sha256
+tar -xzf Vibecrafted_<version>-<YYYYMMDD>-<sha8>-portable.tar.gz
+bash vibecrafted-<version>/install.sh
+```
+
+What the tarball is, and what it is not:
+
+- It is an **allowlisted projection** of one exact commit, not a `git archive`
+  of a working tree. Development artifacts are excluded by construction, and
+  every required runtime path must be present or the packer refuses to write.
+- It carries a closed `source-provenance.json`: schema
+  `vibecrafted.source-provenance.v2`, a `vibecrafted.distribution-tree.v1`
+  digest over every entry, bound to the commit the release was cut from.
+  `install.sh` re-validates that carrier before it stages anything.
+- It is **not** a prebuilt-binary bundle. The Rust cockpit binaries (`voc`,
+  `vc-admin`, `vc-server`) are still compiled locally by `make install`, so a
+  Rust toolchain remains a prerequisite on these systems. See the prerequisites
+  section above.
+- On Windows this is the artifact you use _inside_ WSL2. There is no native
+  Windows build; `install.ps1` hands off to WSL by design.
+
+The checksum proves the bytes survived the wire. The provenance carrier proves
+they are the distribution they claim to be — that is the part `curl | bash`
+from a branch cannot give you.
 
 ### Runtime boundary
 

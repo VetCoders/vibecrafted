@@ -308,6 +308,34 @@ def test_launch_agent_carries_the_installing_path_and_active_generation(
     assert payload["EnvironmentVariables"]["PATH"] == "/opt/homebrew/bin:/usr/bin:/bin"
 
 
+def test_launch_agent_path_drops_empty_and_relative_segments(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The plist PATH is frozen for the life of the LaunchAgent. An empty
+    segment (leading/trailing ':' or '::') and relative entries ('.', 'bin')
+    are implicit current-directory lookups — they must not survive into a
+    long-lived launchd job, nor into supervised children."""
+
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    config = _config(tmp_path, launcher)
+    monkeypatch.setenv("PATH", ":/opt/homebrew/bin::.:bin:/usr/bin:/opt/homebrew/bin:")
+
+    payload = plistlib.loads(
+        supervisor.render_launch_agent_plist(
+            config, supervisor_binary=supervisor_binary
+        )
+    )
+    assert payload["EnvironmentVariables"]["PATH"] == "/opt/homebrew/bin:/usr/bin"
+
+    child = supervisor._child_environment(config.paths)["PATH"].split(os.pathsep)
+    assert "" not in child
+    assert "." not in child
+    assert "bin" not in child
+    assert child.count("/opt/homebrew/bin") == 1
+
+
 def test_child_environment_keeps_the_inherited_path_behind_canonical_bins(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

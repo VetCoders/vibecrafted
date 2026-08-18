@@ -56,6 +56,7 @@ mouse = { enabled = true, mods = "Command" }
 binding = { key = "O", mods = "Control|Shift" }
 regex = '(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file:|git://|ssh:|ftp://)[^\u0000-\u001F\u007F-\u009F<>"\s{-}\^⟨⟩`\\]+'
 
+
 # Polish diacritics on either Option key, while keeping Option as Alt/Meta.
 [[keyboard.bindings]]
 key = "A"
@@ -147,9 +148,9 @@ key = "Z"
 mods = "Alt|Shift"
 chars = "Ż"
 
-# Word jump on Option+Left/Right (zsh/bash backward-word / forward-word).
-# Without these bindings option_as_alt="Both" sends ESC[1;3D / ESC[1;3C,
-# which most shells do not bind and may leak literal ";3D" into the prompt.
+# Word-jump on Option+Left/Right (zsh/bash backward-word / forward-word).
+# Without these, option_as_alt="Both" sends ESC[1;3D / ESC[1;3C which most
+# shells don't bind by default, leaking literal ";3D" into the prompt.
 [[keyboard.bindings]]
 key = "Left"
 mods = "Alt"
@@ -160,9 +161,10 @@ key = "Right"
 mods = "Alt"
 chars = "\u001bf"
 
-# Command to vc-frame: the product switcher (key contract v3).
-# The host translates Command into kitty CSI-u with the Super modifier so
-# vc-frame receives it in every mode, including LOCK.
+# ─── Cmd → vc-frame: the product switcher (key-contract v3) ─────────────────
+# Host translates Cmd into kitty CSI-u with super bit so vc-frame sees Super+key
+# in EVERY mode including LOCK. Without these, Cmd+arrows/Cmd+E do nothing.
+# Source of truth: tools/alacritty/vc-frame.toml in the vc-frame repo.
 [[keyboard.bindings]]
 key = "Left"
 mods = "Command"
@@ -194,16 +196,16 @@ mods = "Command"
 chars = "\u001b[101;9u"
 
 [scrolling]
-# Retain enough output for long make/help dumps.
+# Keep enough output to actually browse after long make/help dumps.
 history = 50000
 multiplier = 3
 
 [mouse]
-hide_when_typing = true
-# Split the wheel by terminal buffer:
-#   ~Alt (primary shell) -> Alacritty scrollback
-#    Alt (TUI without mouse protocol) -> Up/Down keys
-# Shift always forces terminal scrollback and bypasses app mouse reporting.
+hide_when_typing = false
+# Split wheel by terminal buffer:
+#   ~Alt (primary / normal shell) → Alacritty scrollback
+#    Alt (TUI: Atuin, less, vim, … without mouse protocol) → Up/Down keys
+# Shift always forces terminal scrollback (bypasses app mouse reporting, e.g. Zellij).
 bindings = [
   { mouse = "WheelUp",   mode = "~Alt", action = "ScrollLineUp" },
   { mouse = "WheelDown", mode = "~Alt", action = "ScrollLineDown" },
@@ -215,7 +217,36 @@ bindings = [
   { mouse = "WheelDown", mods = "Shift", action = "ScrollLineDown" },
 ]
 
-# Composer: Shift+Enter inserts a newline.
+# Vibecrafted copper palette
+[colors.primary]
+background = "#0b0b12"
+foreground = "#e0def4"
+
+[colors.cursor]
+cursor = "#d4a574"
+text = "#1a1a2e"
+
+[colors.normal]
+black   = "#26233a"
+red     = "#eb6f92"
+green   = "#a6da95"
+yellow  = "#f6c177"
+blue    = "#7dc4e4"
+magenta = "#c4a7e7"
+cyan    = "#117f92"
+white   = "#e0def4"
+
+[colors.bright]
+black   = "#6e6a86"
+red     = "#eb6f92"
+green   = "#a6da95"
+yellow  = "#f6c177"
+blue    = "#7dc4e4"
+magenta = "#c4a7e7"
+cyan    = "#9ccfd8"
+white   = "#e0def4"
+
+# Composer: Shift+Enter inserts a new line.
 [[keyboard.bindings]]
 key = "Enter"
 mods = "Shift"

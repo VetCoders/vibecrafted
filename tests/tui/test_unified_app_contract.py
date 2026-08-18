@@ -757,6 +757,9 @@ def test_native_app_bootstraps_and_launches_only_the_canonical_product_entry() -
     delegate = (
         REPO_ROOT / "vibecrafted-app/shell-agent/app/Vibecrafted/AppDelegate.swift"
     ).read_text(encoding="utf-8")
+    info = (
+        REPO_ROOT / "vibecrafted-app/shell-agent/app/Vibecrafted/Info.plist"
+    ).read_text(encoding="utf-8")
     cargo = (REPO_ROOT / "vibecrafted-app/tui-agent/Cargo.toml").read_text(
         encoding="utf-8"
     )
@@ -764,7 +767,28 @@ def test_native_app_bootstraps_and_launches_only_the_canonical_product_entry() -
         encoding="utf-8"
     )
 
-    assert "launchWorkspaceTerminal()" in delegate
+    launch_handler = delegate[
+        delegate.index("func applicationDidFinishLaunching") : delegate.index(
+            "func applicationShouldTerminateAfterLastWindowClosed"
+        )
+    ]
+    assert "launchWorkspaceTerminal()" in launch_handler
+    assert "showMainWindowIfNeeded()" not in launch_handler
+    assert "\t<key>LSUIElement</key>\n\t<true/>" in info
+    assert 'withTitle: "Open Console"' in delegate
+    assert 'withTitle: "Open vc-terminal"' in delegate
+    assert 'withTitle: "Quit"' in delegate
+    assert "process.isRunning" in delegate
+    assert (
+        "NSRunningApplication(processIdentifier: process.processIdentifier)?.activate(options: [])"
+        in delegate
+    )
+    termination_handler = delegate[
+        delegate.index(
+            "func applicationShouldTerminateAfterLastWindowClosed"
+        ) : delegate.index("func applicationSupportsSecureRestorableState")
+    ]
+    assert "    false\n" in termination_handler
     assert "Contents/Helpers/vc-terminal.app/Contents/MacOS/alacritty" in delegate
     assert "config/alacritty/launch-primary-shell.zsh" in delegate
     assert 'appendingPathComponent("releases", isDirectory: true)' in delegate
@@ -788,12 +812,22 @@ def test_native_app_bootstraps_and_launches_only_the_canonical_product_entry() -
     assert 'environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"' not in delegate
     assert '"export PATH=\\"\\(shellDoubleQuoteBody(' in delegate
     assert ':${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}\\""' in delegate
+    assert '["server", "service", "reconcile"]' in delegate
     assert "shell-agent" not in delegate
     assert 'name = "vc-start"' in cargo
     assert '"--noprofile"' in launcher
     assert '"--norc"' in launcher
     assert 'source "$1"; shift; vc-start "$@"' in launcher
     assert 'Command::new("/bin/bash")' in launcher
+    assert "fn host_agent_search_path(" in launcher
+    assert '"/opt/homebrew/bin"' in launcher
+    # vc-start composes: the PATH AppDelegate hands it (generation first, the
+    # operator's Homebrew/npm/cargo/nvm tail behind) must survive the handoff,
+    # sanitized rather than amputated — a closed allowlist here re-created the
+    # exit-127 shebang failures the composed PATH fixed one process earlier.
+    assert 'let inherited_path = env::var("PATH").ok();' in launcher
+    assert "inherited_path.as_deref()" in launcher
+    assert "!entry.starts_with('/')" in launcher
 
 
 def test_tracked_product_source_contains_no_symlinks() -> None:
@@ -2148,6 +2182,18 @@ def test_walkaround_production_registry_covers_all_late_stage_probes() -> None:
     }
 
 
+def test_walkaround_sanitized_launch_requires_public_vc_git() -> None:
+    sanitized = next(
+        spec for spec in contract._probe_registry() if spec.name == "sanitized_launch"
+    )
+
+    assert sanitized.assertions == (
+        "closed_environment",
+        "launch_succeeds",
+        "vc_git_reachable",
+    )
+
+
 def test_walkaround_session_socket_stays_below_darwin_sun_path_limit() -> None:
     representative = (
         contract._WALKAROUND_TEMP_PARENT / "vc-wa-xxxxxxxx" / "tmp" / "s.sock"
@@ -2155,6 +2201,50 @@ def test_walkaround_session_socket_stays_below_darwin_sun_path_limit() -> None:
 
     assert contract._WALKAROUND_TEMP_PARENT == Path("/tmp")
     assert len(os.fsencode(representative)) < 104
+
+
+def test_walkaround_identity_accepts_only_canonical_parent_aliases(
+    tmp_path: Path,
+) -> None:
+    app = tmp_path / "Vibecrafted.app"
+    runtime_root = tmp_path / "runtime/releases/4.1.0+g12345678"
+    app.mkdir()
+    runtime_root.mkdir(parents=True)
+    alias = tmp_path / "alias"
+    alias.symlink_to(tmp_path, target_is_directory=True)
+
+    active = {
+        "app_root": str(alias / app.name),
+        "runtime_root": str(alias / runtime_root.relative_to(tmp_path)),
+        "schema": "vibecrafted.active-runtime.v1",
+        "version": "4.1.0+g12345678",
+    }
+
+    assert contract._active_runtime_identity_matches(
+        active,
+        app=app,
+        runtime_root=runtime_root,
+        version="4.1.0+g12345678",
+    )
+
+    assert not contract._active_runtime_identity_matches(
+        {**active, "app_root": str(tmp_path / "Different.app")},
+        app=app,
+        runtime_root=runtime_root,
+        version="4.1.0+g12345678",
+    )
+    assert not contract._active_runtime_identity_matches(
+        {**active, "unexpected": "field"},
+        app=app,
+        runtime_root=runtime_root,
+        version="4.1.0+g12345678",
+    )
+    assert not contract._active_runtime_identity_matches(
+        active,
+        app=app,
+        runtime_root=runtime_root,
+        version="4.1.0+gdifferent",
+    )
 
 
 def test_walkaround_scenario_provider_normalizes_only_contract_failures(
@@ -3084,6 +3174,35 @@ def test_terminal_policy_uses_operator_toml_and_primary_shell_chain() -> None:
     assert '"-e", install.primaryShell.path, install.start.path, "operator"' in delegate
     assert 'productConfig.appendingPathComponent("terminal-entry.toml")' in delegate
     assert 'productConfig.appendingPathComponent("terminal-theme.toml")' in delegate
+    assert 'let socketRoot = "/tmp/vc-frame-\\(getuid())"' in delegate
+    assert 'environment["VC_FRAME_SOCKET_DIR"] = socketRoot' in delegate
+    assert 'environment["ZELLIJ_SOCKET_DIR"] = socketRoot' in delegate
+    assert 'environment["VIBECRAFTED_LEGACY_VC_FRAME_SOCKET_DIR"]' in delegate
+
+
+def test_primary_shell_exits_instead_of_reusing_pty_after_vc_start_failure(
+    tmp_path: Path,
+) -> None:
+    failing_start = tmp_path / "vc-start"
+    failing_start.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
+    failing_start.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(REPO_ROOT / "config/alacritty/launch-primary-shell.zsh"),
+            str(failing_start),
+            "operator",
+        ],
+        cwd=REPO_ROOT,
+        env={**os.environ, "HOME": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert result.returncode == 7
 
 
 def test_manifest_producer_emits_an_app_accepted_by_the_runtime_verifier(

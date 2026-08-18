@@ -61,8 +61,8 @@ _vetcoders_in_vc_frame() {
   [[ -n "${VC_FRAME_PANE_ID:-}" ]] && [[ -n "${VC_FRAME_SESSION_NAME:-}" ]]
 }
 
-# Live (non-EXITED) vc-frame session names. One name per line. Host names are
-# single-token (e.g. "vibecrafted-workers"); status tags are stripped.
+# Live (non-EXITED) vc-frame session names. One name per line. Multi-word hosts
+# keep spaces (e.g. "vibecrafted workers"); status tags are stripped.
 _vetcoders_list_live_vc_frame_sessions() {
   local PATH="${PATH:-}"
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
@@ -226,6 +226,89 @@ _vetcoders_vc_frame_session_state() {
   printf 'missing\n'
 }
 
+_vetcoders_vc_frame_socket_dir() {
+  if [[ -n "${VC_FRAME_SOCKET_DIR:-}" ]]; then
+    printf '%s\n' "$VC_FRAME_SOCKET_DIR"
+  elif [[ -n "${ZELLIJ_SOCKET_DIR:-}" ]]; then
+    printf '%s\n' "$ZELLIJ_SOCKET_DIR"
+  elif [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]; then
+    # macOS sockaddr_un is 104 bytes. TMPDIR is /var/folders/.../T (~50)
+    # plus /vc-frame-$UID/contract_version_N already exhausts the budget
+    # before a workspace-bound session name is appended.
+    printf '/tmp/vc-frame-%s\n' "$(id -u)"
+  fi
+}
+
+_vetcoders_record_vc_frame_attachment() {
+  local state="$1"
+  local runtime_session_id="$2"
+  local replaces_runtime_session_id="${3:-}"
+  local socket_dir="${4:-}"
+
+  [[ -n "${VIBECRAFTED_WORKSPACE_ID:-}" ]] || return 0
+  [[ -n "${VIBECRAFTED_SESSION_ID:-}" ]] || return 0
+  [[ -n "${VIBECRAFTED_WORKSPACE_INSTANCE_ID:-}" ]] || return 0
+  command -v vibecrafted >/dev/null 2>&1 || return 0
+
+  [[ -n "$socket_dir" ]] || socket_dir="$(_vetcoders_vc_frame_socket_dir)"
+  local args=(
+    workspace session-attach
+    --workspace-id "$VIBECRAFTED_WORKSPACE_ID"
+    --session-id "$VIBECRAFTED_SESSION_ID"
+    --instance-id "$VIBECRAFTED_WORKSPACE_INSTANCE_ID"
+    --runtime vc-frame
+    --runtime-session-id "$runtime_session_id"
+    --state "$state"
+    --socket-dir "$socket_dir"
+  )
+  if [[ -n "$replaces_runtime_session_id" ]]; then
+    args+=(--replaces-runtime-session-id "$replaces_runtime_session_id")
+  fi
+  if ! vibecrafted "${args[@]}" >/dev/null; then
+    printf "Warning: could not attach vc-frame session '%s' to WES.\n" \
+      "$runtime_session_id" >&2
+    return 1
+  fi
+}
+
+_vetcoders_import_legacy_vc_frame_sessions() {
+  local legacy_socket_dir="${VIBECRAFTED_LEGACY_VC_FRAME_SOCKET_DIR:-}"
+  local current_socket_dir=""
+  local vc_frame_bin=""
+  local listing=""
+  local line candidate session_name state seen
+
+  [[ -n "$legacy_socket_dir" ]] || return 0
+  current_socket_dir="$(_vetcoders_vc_frame_socket_dir)"
+  [[ "$legacy_socket_dir" != "$current_socket_dir" ]] || return 0
+  vc_frame_bin="$(_vetcoders_vc_frame_bin)" || return 0
+  listing="$(
+    VC_FRAME_SOCKET_DIR="$legacy_socket_dir" \
+      ZELLIJ_SOCKET_DIR="$legacy_socket_dir" \
+      "$vc_frame_bin" ls 2>/dev/null | _vetcoders_strip_ansi || true
+  )"
+  seen=$'\n'
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    session_name="${line%% *}"
+    [[ -n "$session_name" ]] || continue
+    case "$seen" in
+      *$'\n'"$session_name"$'\n'*) continue ;;
+    esac
+    seen="${seen}${session_name}"$'\n'
+    state="dead"
+    while IFS= read -r candidate; do
+      [[ "$candidate" == "$session_name "* ]] || continue
+      if [[ "$candidate" != *"(EXITED"* ]]; then
+        state="live"
+        break
+      fi
+    done <<< "$listing"
+    _vetcoders_record_vc_frame_attachment \
+      "$state" "$session_name" "" "$legacy_socket_dir" || return $?
+  done <<< "$listing"
+}
+
 _vetcoders_operator_layout_file() {
   _vetcoders_frontier_file "vc-frame/layouts/operator.kdl"
 }
@@ -241,6 +324,8 @@ _vetcoders_operator_session_name() {
 # Worker host session: override → workspace-bound catalog host → basename
 # fallback. Cut A (2026-08-10): basename-only hosts collide across checkouts
 # with the same name; catalog workspace_id is the durable ownership key.
+# 2026-08-17: suffix is `-w` (no spaces). The older `{label}-{short} workers`
+# form overflowed macOS sockaddr_un on the default TMPDIR socket root.
 # The bare basename remains the human operator's interactive card and never
 # hosts a worker tab.
 _vetcoders_effective_worker_session() {
@@ -264,7 +349,7 @@ try:
     from vibecrafted_core.workspace_catalog import resolve_worker_host_session
     print(resolve_worker_host_session(root=root, env=os.environ), end="")
 except Exception:
-    print(f"{Path(root).name or 'vibecrafted'}-workers", end="")
+    print(f"{Path(root).name or 'vibecrafted'}-w", end="")
 PY
     )" || resolved=""
   fi
@@ -276,7 +361,7 @@ PY
   local host=""
   host="$(basename "$root_dir")"
   [[ -n "$host" ]] || return 1
-  printf '%s-workers\n' "$host"
+  printf '%s-w\n' "$host"
 }
 
 _vetcoders_vc_frame_gc_script() {
@@ -288,9 +373,12 @@ _vetcoders_wait_for_vc_frame_session() {
   local attempts="${2:-40}"
   local current=0
 
+  # Sleep first: a server socket never appears in the same instant the client
+  # is spawned, and a probe fired at t=0 races the client's own exit (a client
+  # that returns immediately must not be shadowed by a still-running `ls`).
   while (( current < attempts )); do
-    [[ "$(_vetcoders_vc_frame_session_state "$session_name")" == "live" ]] && return 0
     sleep 0.25
+    [[ "$(_vetcoders_vc_frame_session_state "$session_name")" == "live" ]] && return 0
     ((current+=1))
   done
 
@@ -301,7 +389,44 @@ _vetcoders_recovery_vc_frame_session_name() {
   local original="${1:-vibecrafted}"
   local suffix
   suffix="r$(date +%H%M%S)-$$"
-  _vetcoders_compact_session_name "${original}-${suffix}" "$suffix"
+  # Recovery also runs from CLI shells that do not have the app's short
+  # product socket root. Twenty bytes fit the default macOS TMPDIR budget.
+  _vetcoders_compact_session_name "${original}-${suffix}" "$suffix" 20
+}
+
+_vetcoders_run_new_vc_frame_session() {
+  local vc_frame_bin="$1"
+  local session_name="$2"
+  local layout_file="$3"
+  local replaces_runtime_session_id="${4:-}"
+  shift 4
+
+  # A foreground vc-frame client does not return until the operator detaches.
+  # Persist the intended physical incarnation first, then promote it to live as
+  # soon as the server socket appears. Otherwise the old ordering leaves WES
+  # unaware of the active session for the entire lifetime of the app window.
+  _vetcoders_record_vc_frame_attachment \
+    missing "$session_name" "$replaces_runtime_session_id" || return $?
+
+  (
+    _vetcoders_wait_for_vc_frame_session "$session_name" &&
+      _vetcoders_record_vc_frame_attachment \
+        live "$session_name" "$replaces_runtime_session_id"
+  ) &
+  local attachment_recorder_pid=$!
+
+  "$vc_frame_bin" "$@" \
+    --session "$session_name" --new-session-with-layout "$layout_file"
+  local frame_rc=$?
+
+  # The frame client's exit status is the launcher's exit status. The recorder
+  # only annotates WES: once the foreground client has returned, the session
+  # either went live while it ran (the recorder already finished) or never
+  # came up — polling `ls` for another ten seconds after the client is gone
+  # buys nothing and must not turn a clean client exit into 1.
+  kill "$attachment_recorder_pid" 2>/dev/null || true
+  wait "$attachment_recorder_pid" 2>/dev/null || true
+  return "$frame_rc"
 }
 
 _vetcoders_ensure_vc_frame_session() {
@@ -337,9 +462,15 @@ _vetcoders_ensure_vc_frame_session() {
   case "$(_vetcoders_vc_frame_session_state "$session_name")" in
     live)
       if (( inside_vc_frame )); then
-        "$vc_frame_bin" action switch-session "$session_name"
+        "$vc_frame_bin" action switch-session "$session_name" || return $?
       else
-        "$vc_frame_bin" "$@" attach "$session_name"
+        # The foreground attach blocks until the client detaches. WES must know
+        # about the live physical session before handing control to the client.
+        _vetcoders_record_vc_frame_attachment live "$session_name" || return $?
+        "$vc_frame_bin" "$@" attach "$session_name" || return $?
+      fi
+      if (( inside_vc_frame )); then
+        _vetcoders_record_vc_frame_attachment live "$session_name" || true
       fi
       export VIBECRAFTED_PREPARED_VC_FRAME_SESSION="$session_name"
       ;;
@@ -348,6 +479,9 @@ _vetcoders_ensure_vc_frame_session() {
       # the same name during launch: that destroys the operator's last scrollback
       # exactly when a dirty shutdown needs preservation most.
       local dead_session_name="$session_name"
+      # Preserve the old physical incarnation in WES before opening a new one.
+      # If durable attachment fails, do not silently split runtime from truth.
+      _vetcoders_record_vc_frame_attachment dead "$dead_session_name" || return $?
       session_name="$(_vetcoders_recovery_vc_frame_session_name "$dead_session_name")"
       printf "Session '%s' is dead; preserving it and creating '%s'.\n" \
         "$dead_session_name" "$session_name" >&2
@@ -363,11 +497,21 @@ _vetcoders_ensure_vc_frame_session() {
             sleep 0.25
             ((wait_dead+=1))
           done
+          if [[ "$(_vetcoders_vc_frame_session_state "$session_name")" != "live" ]]; then
+            kill "$bg_pid_dead" 2>/dev/null || true
+            wait "$bg_pid_dead" 2>/dev/null || true
+            return 1
+          fi
           kill "$bg_pid_dead" 2>/dev/null || true
           wait "$bg_pid_dead" 2>/dev/null || true
-          "$vc_frame_bin" action switch-session "$session_name"
+          "$vc_frame_bin" action switch-session "$session_name" || return $?
         else
-          "$vc_frame_bin" "$@" --session "$session_name" --new-session-with-layout "$layout_file"
+          _vetcoders_run_new_vc_frame_session \
+            "$vc_frame_bin" "$session_name" "$layout_file" "$dead_session_name" \
+            "$@" || return $?
+        fi
+        if (( inside_vc_frame )); then
+          _vetcoders_record_vc_frame_attachment live "$session_name" "$dead_session_name" || true
         fi
         export VIBECRAFTED_PREPARED_VC_FRAME_SESSION="$session_name"
       else
@@ -391,12 +535,21 @@ _vetcoders_ensure_vc_frame_session() {
             sleep 0.25
             ((wait_i+=1))
           done
+          if [[ "$(_vetcoders_vc_frame_session_state "$session_name")" != "live" ]]; then
+            kill "$bg_pid" 2>/dev/null || true
+            wait "$bg_pid" 2>/dev/null || true
+            return 1
+          fi
           # Kill the background client now that the session server is alive.
           kill "$bg_pid" 2>/dev/null || true
           wait "$bg_pid" 2>/dev/null || true
-          "$vc_frame_bin" action switch-session "$session_name"
+          "$vc_frame_bin" action switch-session "$session_name" || return $?
         else
-          "$vc_frame_bin" "$@" --session "$session_name" --new-session-with-layout "$layout_file"
+          _vetcoders_run_new_vc_frame_session \
+            "$vc_frame_bin" "$session_name" "$layout_file" "" "$@" || return $?
+        fi
+        if (( inside_vc_frame )); then
+          _vetcoders_record_vc_frame_attachment live "$session_name" || true
         fi
         export VIBECRAFTED_PREPARED_VC_FRAME_SESSION="$session_name"
       else

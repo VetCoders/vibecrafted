@@ -90,6 +90,23 @@ _vetcoders_bundled_bin_dirs() {
   [[ -d "$runtime_bin" ]] && printf '%s\n' "$runtime_bin"
 }
 
+# Host CLIs (node/codex/claude) live outside the hermetic system PATH.
+# Keep this list in lockstep with runtime_paths.agent_tool_search_path.
+_vetcoders_host_agent_bin_dirs() {
+  local home="${HOME:-}"
+  local dir
+  for dir in \
+    "${home:+$home/.local/bin}" \
+    "${home:+$home/.cargo/bin}" \
+    "${home:+$home/tools/scripts}" \
+    /opt/homebrew/bin \
+    /opt/homebrew/sbin \
+    /usr/local/bin
+  do
+    [[ -n "$dir" && -d "$dir" ]] && printf '%s\n' "$dir"
+  done
+}
+
 _vetcoders_path_with_bundled_bin_priority() {
   local current_path="${1:-}"
   local bundled_path=""
@@ -100,7 +117,7 @@ _vetcoders_path_with_bundled_bin_priority() {
       *":$dir:"*) ;;
       *) bundled_path="${bundled_path:+$bundled_path:}$dir" ;;
     esac
-  done < <(_vetcoders_bundled_bin_dirs)
+  done < <({ _vetcoders_bundled_bin_dirs; _vetcoders_host_agent_bin_dirs; })
   printf '%s\n' "${bundled_path:+$bundled_path${current_path:+:}}$current_path"
 }
 

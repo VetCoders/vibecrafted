@@ -2962,7 +2962,11 @@ def _probe_registry() -> tuple[ProbeSpec, ...]:
         )
     )
     for name, stage, assertions in (
-        ("sanitized_launch", "W2", ("closed_environment", "launch_succeeds")),
+        (
+            "sanitized_launch",
+            "W2",
+            ("closed_environment", "launch_succeeds", "vc_git_reachable"),
+        ),
         ("mission_control", "W2", ("mission_control_reachable",)),
         ("bundled_console", "W2", ("bundled_console_reachable",)),
         ("start_here", "W2", ("onboarding_reachable",)),
@@ -3149,6 +3153,36 @@ def _stop_scenario_session(pid: int, socket_path: Path) -> None:
         return
 
 
+def _active_runtime_identity_matches(
+    active: Mapping[str, Any],
+    *,
+    app: Path,
+    runtime_root: Path,
+    version: str,
+) -> bool:
+    """Match one exact identity while tolerating canonical parent aliases."""
+    expected_identity = {
+        "schema": "vibecrafted.active-runtime.v1",
+        "version": version,
+    }
+    if set(active) != {"app_root", "runtime_root", *expected_identity}:
+        return False
+    if any(active.get(key) != value for key, value in expected_identity.items()):
+        return False
+    if not isinstance(active.get("app_root"), str) or not isinstance(
+        active.get("runtime_root"), str
+    ):
+        return False
+    try:
+        return Path(active["app_root"]).resolve(strict=True) == app.resolve(
+            strict=True
+        ) and Path(active["runtime_root"]).resolve(strict=True) == runtime_root.resolve(
+            strict=True
+        )
+    except (OSError, RuntimeError):
+        return False
+
+
 @contextmanager
 def _walkaround_scenario(app: Path, dmg: Path):
     """Run one real, isolated install/update while a vc-frame server stays live."""
@@ -3244,12 +3278,12 @@ def _walkaround_scenario(app: Path, dmg: Path):
             current_active = active_path.read_bytes()
             active = _load_json_bytes(current_active, source=active_path)
             expected_root = runtime_home / "releases" / bundled_version
-            if active != {
-                "app_root": str(app.resolve()),
-                "runtime_root": str(expected_root),
-                "schema": "vibecrafted.active-runtime.v1",
-                "version": bundled_version,
-            }:
+            if not _active_runtime_identity_matches(
+                active,
+                app=app,
+                runtime_root=expected_root,
+                version=bundled_version,
+            ):
                 raise RuntimeError(
                     "outer app did not publish the exact bundled identity"
                 )
@@ -3284,10 +3318,15 @@ def _scenario_sanitized_launch(
     launcher = scenario.launchers / "vibecrafted"
     version = _scenario_command(scenario, [launcher, "version"]).stdout.strip()
     help_output = _scenario_command(scenario, [launcher, "--help"]).stdout
+    vc_git_help = _scenario_command(
+        scenario, [scenario.launchers / "vc-git", "--help"]
+    ).stdout
     if scenario.bundled_version.encode() not in version:
         raise RuntimeError("installed CLI version is not the bundled identity")
     if scenario.bundled_version.encode() not in help_output:
         raise RuntimeError("installed CLI help is not source-stamped")
+    if b"Show full Git context, including every worktree." not in vc_git_help:
+        raise RuntimeError("installed vc-git launcher is unavailable")
     for candidate in scenario.launchers.iterdir():
         if candidate.is_symlink() or not candidate.is_file():
             raise RuntimeError(
@@ -3301,6 +3340,7 @@ def _scenario_sanitized_launch(
     return {
         "closed_environment": "keys=" + ",".join(expected_keys),
         "launch_succeeds": version,
+        "vc_git_reachable": hashlib.sha256(vc_git_help).hexdigest(),
     }
 
 

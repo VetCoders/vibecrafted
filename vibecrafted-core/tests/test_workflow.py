@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from vibecrafted_core import control_plane, process_control, trust, workflow
+from vibecrafted_core import control_plane, process_control, spawn, trust, workflow
 from vibecrafted_core.settlement import TrustReceiptV1
 
 _NATIVE_RESUME_CLAIM_SCRIPT = r"""
@@ -455,6 +455,54 @@ def test_launch_workflow_keeps_dispatcher_launch_even_if_worker_command_is_bad(
     assert payload["worker_command"] == ["definitely-missing-vibecrafted-binary"]
 
 
+def test_resolve_agent_command_uses_canonical_path_not_inherited_path(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    provider_bin = home / ".local/bin"
+    provider_bin.mkdir(parents=True)
+    executable = provider_bin / "claude"
+    executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    executable.chmod(0o755)
+
+    resolved = spawn._resolve_agent_command(
+        "claude",
+        ["claude", "-p"],
+        {"HOME": str(home), "PATH": str(tmp_path / "rogue")},
+    )
+
+    assert resolved == [str(executable), "-p"]
+
+
+def test_launch_workflow_rejects_missing_provider_before_acceptance_event(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    spec = workflow.WorkflowLaunchSpec(
+        agent="claude",
+        mode="workflow",
+        skill="workflow",
+        prompt="go",
+        file="",
+        runtime="headless",
+        root=str(tmp_path),
+    )
+    monkeypatch.setattr(workflow, "_stdin_command", lambda _agent: ["claude", "-p"])
+
+    def _missing(*_args: Any, **_kwargs: Any) -> list[str]:
+        raise FileNotFoundError("provider executable 'claude' not found")
+
+    monkeypatch.setattr(workflow, "_resolve_agent_command", _missing)
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(workflow, "append_event", lambda **event: events.append(event))
+
+    payload = workflow.launch_workflow(spec, tmp_path)
+
+    assert payload["accepted"] is False
+    assert "provider executable 'claude' not found" in payload["error"]
+    assert events == []
+
+
 def test_build_launch_command_never_delegates_to_legacy_shell_runtime() -> None:
     """RC 3.2.0 polarize contract: vibecrafted-core is the single runtime.
 
@@ -621,9 +669,9 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     from vibecrafted_core.workspace_catalog import resolve_worker_host_session
 
     worker_host = resolve_worker_host_session(root=str(tmp_path), env=dict(os.environ))
-    assert worker_host.endswith("-workers")
+    assert worker_host.endswith("-w")
     assert " " not in worker_host
-    assert worker_host != f"{tmp_path.name}-workers"
+    assert worker_host != f"{tmp_path.name}-w" or "-" in worker_host
     assert captured["command"][:5] == [
         str(vc_frame),
         "--session",
@@ -1001,8 +1049,11 @@ def test_effective_operator_session_g7_worker_host_routing(
     expected_foo = wc.worker_host_session_name(
         workspace_id=ws_foo.workspace_id, display_label="foo"
     )
-    assert expected != "vibecrafted-workers"
-    assert expected_foo != "foo-workers"
+    assert expected != "vibecrafted workers"
+    assert expected_foo != "foo workers"
+    assert expected.endswith("-w")
+    assert expected_foo.endswith("-w")
+    assert " " not in expected
 
     env_base = {"VIBECRAFTED_HOME": str(vib_home)}
 

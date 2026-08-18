@@ -29,6 +29,7 @@ _vetcoders_contract_reset() {
   _vetcoders_contract_file_explicit=""
   _vetcoders_contract_task=""
   _vetcoders_contract_session=""
+  _vetcoders_contract_run_id=""
   _vetcoders_contract_count=""
   _vetcoders_contract_depth=""
   _vetcoders_contract_runtime=""
@@ -38,6 +39,8 @@ _vetcoders_contract_reset() {
   _vetcoders_contract_no_aicx=""
   _vetcoders_contract_no_context_corpus=""
   _vetcoders_contract_fork_session=""
+  _vetcoders_contract_last=""
+  _vetcoders_contract_help=""
 }
 
 _vetcoders_append_tail() {
@@ -89,6 +92,17 @@ _vetcoders_parse_contract() {
         shift
         [[ $# -gt 0 ]] || { echo "Missing value for --session" >&2; return 1; }
         _vetcoders_contract_session="$1"
+        ;;
+      --run-id)
+        shift
+        [[ $# -gt 0 ]] || { echo "Missing value for --run-id" >&2; return 1; }
+        _vetcoders_contract_run_id="$1"
+        ;;
+      --last)
+        _vetcoders_contract_last=1
+        ;;
+      -h|--help)
+        _vetcoders_contract_help=1
         ;;
       --count)
         shift

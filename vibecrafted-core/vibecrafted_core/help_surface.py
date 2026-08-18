@@ -391,7 +391,7 @@ Usage:
 Commands:
   init [agent]         Orient an agent in this repo
   <skill> <agent>      Run a workflow with an agent
-  resume <agent>       Continue a previous session
+  resume <agent>       Continue a stopped run (--run-id) or a provider session
   resume-session       Continue an exact provider session as a tracked run
   status               Today's agent activity
   doctor               Installation health — pass/fail

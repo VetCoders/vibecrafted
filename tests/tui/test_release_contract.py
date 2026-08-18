@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_PAGE = "https://github.com/vetcoders/vibecrafted/releases/latest"
 
 
-def test_public_install_surfaces_point_at_the_single_dmg() -> None:
+def test_public_install_surfaces_name_both_release_channels() -> None:
     surfaces = (
         "README.md",
         "docs/QUICK_START.md",
@@ -16,6 +19,11 @@ def test_public_install_surfaces_point_at_the_single_dmg() -> None:
         text = (REPO_ROOT / relative).read_text(encoding="utf-8")
         assert RELEASE_PAGE in text, f"{relative} must point to the unified release"
         assert "Vibecrafted_<version>-<YYYYMMDD>-<sha8>.dmg" in text
+        # A non-macOS reader must find a version-pinned artifact on the same
+        # page, not only a curl-pipe-bash line that tracks a moving branch.
+        assert "Vibecrafted_<version>-<YYYYMMDD>-<sha8>-portable.tar.gz" in text, (
+            f"{relative} must name the portable channel asset"
+        )
         assert "vc-frame/releases/latest/download/install.sh" not in text
 
 
@@ -71,13 +79,67 @@ def test_macos_publisher_cold_verifies_exact_uploaded_bytes() -> None:
     assert "--slurp --jq" not in publisher
     assert 'gh release edit "$TAG"' in publisher
 
-    expected_assets = publisher.split('EXPECTED_ASSETS="', 1)[1].split('"', 1)[0]
-    assert expected_assets.splitlines() == [
-        "$DMG_NAME",
-        "$DMG_NAME.sha256",
-        "release-output.json",
-        "release-output.json.sig",
-    ]
+    # The allowlist is enumerated, then sorted the way the downloaded listing is
+    # sorted. Keep it an exact list: a wildcard would let an unaudited asset ride.
+    allowlist = publisher.split('EXPECTED_ASSETS="$(printf ', 1)[1].split(
+        "| LC_ALL=C sort)", 1
+    )[0]
+    for entry in (
+        '"$DMG_NAME"',
+        '"$DMG_NAME.sha256"',
+        '"$PORTABLE_NAME"',
+        '"$PORTABLE_NAME.sha256"',
+        '"release-output.json"',
+        '"release-output.json.sig"',
+    ):
+        assert entry in allowlist
+    assert "LC_ALL=C sort" in publisher
+
+
+def test_macos_publisher_cold_verifies_the_portable_channel() -> None:
+    publisher = (REPO_ROOT / "scripts/publish-vibecrafted-release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    # Both channels must name the same commit, or the release ships two truths.
+    assert 'test -s "$PORTABLE_OUTPUT" || die' in publisher
+    assert '"portable-output does not name the exact root revision"' in publisher
+    assert 'cmp "$PORTABLE" "$DOWNLOAD_DIR/$PORTABLE_NAME"' in publisher
+    assert 'shasum -a 256 -c "$PORTABLE_NAME.sha256"' in publisher
+    # A checksum proves delivery; the provenance check proves identity.
+    assert 'tar -xzf "$DOWNLOAD_DIR/$PORTABLE_NAME"' in publisher
+    assert '"$DISTRIBUTION_MANIFEST" check' in publisher
+    assert '--expected-source-revision "$HEAD_SHA"' in publisher
+    assert (
+        'bash "$PORTABLE_UNPACK_DIR/$PORTABLE_ROOT_NAME/install.sh" --help' in publisher
+    )
+
+
+def test_portable_builder_binds_one_commit_and_proves_its_own_bytes() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    builder = (REPO_ROOT / "scripts/build-portable-release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "portable:" in makefile
+    assert "scripts/build-portable-release.sh" in makefile
+
+    assert (
+        'PORTABLE_NAME="Vibecrafted_${VERSION}-${RELEASE_DATE}-${ROOT_SHA:0:8}-portable.tar.gz"'
+        in builder
+    )
+    assert 'RELEASE_DATE="${VIBECRAFTED_RELEASE_DATE:-$(date -u +%Y%m%d)}"' in builder
+    assert 'die "source tree is dirty' in builder
+    # The builder must not be able to emit bytes it has not re-validated.
+    assert '"$MANIFEST" archive' in builder
+    assert '"$MANIFEST" check' in builder
+    assert '--expected-source-revision "$ROOT_SHA"' in builder
+    assert 'tar -xzf "$PORTABLE" -C "$VERIFY_DIR"' in builder
+    assert "io.vetcoders.vibecrafted.portable-output.v1" in builder
+    # No signing identity, no notary account: this channel must build on Linux.
+    assert "codesign" not in builder
+    assert "xcrun" not in builder
+    assert "KEYS" not in builder
 
 
 def test_builder_emits_the_canonical_versioned_dmg_and_checksum() -> None:
@@ -101,8 +163,62 @@ def test_builder_emits_the_canonical_versioned_dmg_and_checksum() -> None:
     assert "build-server-release" in builder
     assert 'install -m 0755 "$server_source" "$runtime/bin/vc-server"' in builder
     assert '"$runtime/server/site/"' in builder
-    assert "vc-server-supervisor:vibecrafted_core.server_supervisor" in builder
+    assert '"$REPO_ROOT/scripts/render-python-entrypoint-launchers.py"' in builder
+    assert '"$REPO_ROOT/vibecrafted-core/pyproject.toml"' in builder
     assert '"$runtime/runtime"' not in builder
+
+
+def test_release_entrypoint_renderer_uses_manifest_and_preserves_existing(
+    tmp_path: Path,
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        """
+[project]
+name = "entrypoint-fixture"
+version = "1.0.0"
+
+[project.scripts]
+demo-cli = "demo_module:main"
+native-cli = "demo_module:main"
+""".lstrip(),
+        encoding="utf-8",
+    )
+    module = tmp_path / "demo_module.py"
+    module.write_text(
+        "import json, sys\n"
+        "def main():\n"
+        "    print(json.dumps(sys.argv))\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "python3").symlink_to(sys.executable)
+    native = bin_dir / "native-cli"
+    native.write_text("native implementation\n", encoding="utf-8")
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts/render-python-entrypoint-launchers.py"),
+            "--pyproject",
+            str(pyproject),
+            "--bin-dir",
+            str(bin_dir),
+        ],
+        check=True,
+    )
+
+    assert native.read_text(encoding="utf-8") == "native implementation\n"
+    result = subprocess.run(
+        [str(bin_dir / "demo-cli"), "one"],
+        env={"PATH": "/usr/bin:/bin", "PYTHONPATH": str(tmp_path)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert json.loads(result.stdout) == ["demo-cli", "one"]
 
 
 def test_release_bundle_binds_the_vibecrafted_app_icon() -> None:

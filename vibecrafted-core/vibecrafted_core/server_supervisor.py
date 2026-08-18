@@ -617,11 +617,34 @@ def _service_path(paths: SupervisorPaths) -> str:
     `#!/usr/bin/env node` shebang exited 127.
     """
 
-    inherited = os.environ.get("PATH") or _MINIMAL_PATH
+    inherited = _sane_path_entries(os.environ.get("PATH")) or _MINIMAL_PATH.split(
+        os.pathsep
+    )
     generation_bin = _active_generation_bin(paths.runtime_home)
-    if generation_bin is None:
-        return inherited
-    return f"{generation_bin}{os.pathsep}{inherited}"
+    ordered: list[str] = []
+    for entry in (
+        [str(generation_bin)] if generation_bin is not None else []
+    ) + inherited:
+        if entry not in ordered:
+            ordered.append(entry)
+    return os.pathsep.join(ordered)
+
+
+def _sane_path_entries(value: str | None) -> list[str]:
+    """Only non-empty absolute entries survive into a long-lived job's PATH.
+
+    An empty segment (leading/trailing ``:`` or ``::``) and relative entries
+    (``.``, ``bin``) are implicit current-directory lookups; freezing them into
+    a launchd plist or a supervised child turns every later ``cwd`` into a
+    place unintended binaries can be picked up from."""
+
+    entries: list[str] = []
+    for entry in (value or "").split(os.pathsep):
+        if not entry or not entry.startswith("/"):
+            continue
+        if entry not in entries:
+            entries.append(entry)
+    return entries
 
 
 def _child_environment(paths: SupervisorPaths) -> dict[str, str]:
@@ -660,7 +683,7 @@ def _child_path(paths: SupervisorPaths) -> str:
         "/usr/local/bin",
         "/opt/homebrew/bin",
         *_MINIMAL_PATH.split(os.pathsep),
-        *(os.environ.get("PATH") or "").split(os.pathsep),
+        *_sane_path_entries(os.environ.get("PATH")),
     ):
         if entry and entry not in ordered:
             ordered.append(entry)

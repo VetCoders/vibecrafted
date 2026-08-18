@@ -299,7 +299,7 @@ _vetcoders_compact_session_name() {
   local preserved_tail="${2:-}"
   local max_len hash prefix_len prefix compact
 
-  max_len="$(_vetcoders_vc_frame_session_max_length)"
+  max_len="${3:-$(_vetcoders_vc_frame_session_max_length)}"
   if (( ${#full_name} <= max_len )); then
     printf '%s\n' "$full_name"
     return 0

@@ -18,18 +18,42 @@ theme_name() {
 
 publish_theme() {
     name=$1
+    previous=$(theme_name)
     source=${theme_dir}/${name}.toml
     test -f "$source" || {
         printf 'vc-theme: missing signed palette: %s\n' "$source" >&2
         exit 1
     }
+
+    # Switch the frame first. Publishing the host palette before vc-frame
+    # accepted the same mode briefly exposed light terminal paper behind dark
+    # plugin ink when session routing failed. Some terminal file watchers also
+    # missed the immediate rollback, leaving the product split until restart.
+    if test -n "${ZELLIJ_SESSION_NAME:-}"; then
+        if ! vc-frame --session "$ZELLIJ_SESSION_NAME" action "set-${name}-theme" >/dev/null; then
+            printf 'vc-theme: vc-frame rejected %s theme; host palette remains %s\n' \
+                "$name" "$previous" >&2
+            return 1
+        fi
+    fi
+
     umask 077
     mkdir -p "$product_dir"
     temporary=$(mktemp "${product_dir}/.terminal-theme.XXXXXX")
     trap 'rm -f -- "$temporary"' EXIT HUP INT TERM
-    cp "$source" "$temporary"
-    chmod 0600 "$temporary"
-    mv -f "$temporary" "$active_theme"
+    if ! cp "$source" "$temporary" || \
+        ! chmod 0600 "$temporary" || \
+        ! mv -f "$temporary" "$active_theme"; then
+        rm -f -- "$temporary"
+        trap - EXIT HUP INT TERM
+        if test -n "${ZELLIJ_SESSION_NAME:-}"; then
+            vc-frame --session "$ZELLIJ_SESSION_NAME" \
+                action "set-${previous}-theme" >/dev/null 2>&1 || true
+        fi
+        printf 'vc-theme: failed to publish %s host palette; vc-frame restored to %s\n' \
+            "$name" "$previous" >&2
+        return 1
+    fi
     trap - EXIT HUP INT TERM
     printf '%s\n' "$name"
 }

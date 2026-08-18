@@ -284,6 +284,10 @@ def test_bare_resume_keeps_aicx_continuity_in_operator_session(
     assert command.startswith(f"{agent} ")
     assert "AICX OVERLAY BODY" in command
     assert not command.startswith("tracked ")
+    assert "historical-codex-session" not in command
+    assert "--resume" not in command
+    assert "--conversation" not in command
+    assert "--session-id=" not in command
     if headless_flag:
         assert headless_flag not in command
 
@@ -533,8 +537,11 @@ def test_public_and_packaged_resume_help_describe_provider_neutral_contract() ->
         )
         assert "A bare resume stays interactive" in result.stdout
         assert "AICX pack is continuity transport" in result.stdout
-        assert "without --session skips historical candidates" in result.stdout
-        assert "starts a new tracked headless job" in result.stdout
+        assert (
+            "Explicit --prompt/--file without --session starts a new tracked"
+            in result.stdout
+        )
+        assert "does not adopt a historical session" in result.stdout
         assert "Codex always starts" not in result.stdout
         assert "native-resumes it with the pack as prompt" not in result.stdout
 
@@ -1255,10 +1262,8 @@ def test_worker_spawn_scripts_default_to_headless(
 def test_aicx_resume_fallback_skips_provider_pruned_candidates(
     tmp_path: Path, any_local_copy: bool
 ) -> None:
-    """A native-resume candidate is only valid while the provider still holds
-    the session locally. aicx retains extracts after Claude Code prunes its
-    session store, so an unvalidated candidate dies at launch with
-    "No conversation found with session ID" (observed in the field 2026-07-28).
+    """Bare resume must not native-attach, even when AICX still lists a
+    live same-agent row. Pruned local copies stay catalog evidence.
     """
     import datetime as dt
 
@@ -1336,19 +1341,20 @@ def test_aicx_resume_fallback_skips_provider_pruned_candidates(
     fields = dict(
         line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
     )
-    if any_local_copy:
-        assert fields.get("SESSION_ID") == "live-bbbb-2222"
-        assert fields.get("MODE") == "native_resume"
-    else:
-        assert fields.get("SESSION_ID") == ""
-        assert fields.get("MODE") == "new_session"
+    assert fields.get("SESSION_ID") == ""
+    assert fields.get("MODE") == "new_session"
     meta_files = list((home / ".vibecrafted" / "tmp").glob("*.meta.json"))
     assert meta_files, "fallback must persist its meta sidecar"
     meta = json.loads(meta_files[0].read_text(encoding="utf-8"))
-    assert any(
-        d.startswith("native_candidate_missing_local:gone-aaaa-1111")
-        for d in meta["degradations"]
-    ), meta["degradations"]
+    assert meta["mode"] == "new_session"
+    assert meta["session_id"] == ""
+    pack = next((home / ".vibecrafted" / "tmp").glob("resume-aicx-claude-*.md"))
+    text = pack.read_text(encoding="utf-8")
+    assert "prefer native resume" not in text.lower()
+    assert "recover previous session" not in text.lower()
+    assert "gone-aaaa-1111" in text
+    if any_local_copy:
+        assert "live-bbbb-2222" in text
 
 
 def test_aicx_resume_fallback_resolves_cargo_foundation_without_shell_path(
@@ -1372,7 +1378,8 @@ def test_aicx_resume_fallback_resolves_cargo_foundation_without_shell_path(
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
-    env["PATH"] = "/usr/bin:/bin"
+    python_dir = str(Path(sys.executable).resolve().parent)
+    env["PATH"] = f"{python_dir}:/usr/bin:/bin"
 
     result = subprocess.run(
         [
@@ -1394,3 +1401,67 @@ def test_aicx_resume_fallback_resolves_cargo_foundation_without_shell_path(
     assert result.returncode == 0, result.stderr
     assert "MODE=new_session" in result.stdout
     assert "aicx foundation not found" not in result.stderr
+
+
+def test_aicx_resume_fallback_uses_cross_org_exact_repo_filter(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    repo = tmp_path / "codescribe"
+    fake_bin = tmp_path / "bin"
+    calls = tmp_path / "aicx-calls"
+    for directory in (home, repo, fake_bin):
+        directory.mkdir()
+    _write_fake_command(
+        fake_bin / "aicx",
+        "#!/bin/bash\n"
+        f'printf \'%s\\n\' "$*" >> "{calls}"\n'
+        'if [[ "$1 $2" == "sessions list" ]]; then\n'
+        "  printf '[]\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [[ "$1" == "tail" ]]; then exit 1; fi\n'
+        'if [[ "$1" == "intents" ]]; then\n'
+        "  printf '# Intent Report\\n\\n_No records._\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        'if [[ "$1" == "overlay" ]]; then printf \'{}\\n\'; exit 0; fi\n'
+        "exit 1\n",
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                f'source "{SHELL_SH}"\n'
+                f"_vetcoders_aicx_resume_fallback grok {shlex.quote(str(repo))}"
+            ),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    invoked = calls.read_text(encoding="utf-8").splitlines()
+    continuity = [line for line in invoked if line.startswith("continuity ")]
+    tail = [line for line in invoked if line.startswith("tail ")]
+    intents = [line for line in invoked if line.startswith("intents ")]
+    assert continuity, invoked
+    assert any("-p /codescribe" in line for line in continuity)
+    assert len(tail) == 1
+    assert len(intents) == 1
+    assert tail[0].endswith("-p /codescribe")
+    assert intents[0].endswith("-p /codescribe")
+    pack = next((home / ".vibecrafted" / "tmp").glob("resume-aicx-grok-*.md"))
+    text = pack.read_text(encoding="utf-8")
+    assert "aicx_project_filter: `/codescribe`" in text
+    assert "prefer native resume" not in text.lower()

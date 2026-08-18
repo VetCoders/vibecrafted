@@ -25,6 +25,7 @@ historical evidence, but nothing may ever select or execute the gemini binary
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
@@ -33,6 +34,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..capabilities import ProbeResult as CliProbe
+from ..runtime_paths import agent_tool_search_path
 
 # Capability verdicts for the declarative table. ``unverified`` means the
 # surface exists in the installed CLI but the runtime has not proven the
@@ -351,12 +353,15 @@ def _default_runner(timeout: float) -> Runner:
     def run(cmd: Sequence[str]) -> CliProbe:
         """Execute one read-only CLI probe command and capture its result."""
         try:
+            environment = dict(os.environ)
+            environment["PATH"] = agent_tool_search_path(environment)
             completed = subprocess.run(
                 list(cmd),
                 capture_output=True,
                 text=True,
                 timeout=timeout,
                 check=False,
+                env=environment,
             )
         except FileNotFoundError:
             return CliProbe(ok=False, returncode=None, stderr="not found")
@@ -422,7 +427,7 @@ def probe(
         return result
 
     recipe = capability.probe_recipe
-    executable = shutil.which(recipe.cli)
+    executable = shutil.which(recipe.cli, path=agent_tool_search_path())
     if executable is None:
         result = ProbeResult(
             agent=agent,
