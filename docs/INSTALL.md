@@ -5,13 +5,14 @@ in what they give you and in how finished they are, so this page states both.
 
 ## Channel matrix
 
-| Channel                      | Platform             | What you get                                           | Status                                   |
-| ---------------------------- | -------------------- | ------------------------------------------------------ | ---------------------------------------- |
-| Signed `Vibecrafted.app` DMG | macOS 14+, arm64     | Full desktop product: terminal, frame, runtime, server | Build path complete; publication pending |
-| Bootstrap `install.sh`       | macOS, Linux, WSL2   | Command deck, runtime, control plane, skills           | Published; CI-gated                      |
-| Source checkout              | macOS, Linux, WSL2   | Everything above plus build, test and release targets  | Published                                |
-| Container                    | anywhere Docker runs | Isolated operator runtime                              | Published                                |
-| `install.ps1`                | Windows              | WSL2 detection and handoff — not a native install      | In repo; not yet served over HTTP        |
+| Channel                      | Platform             | What you get                                                        | Status                                   |
+| ---------------------------- | -------------------- | ------------------------------------------------------------------- | ---------------------------------------- |
+| Signed `Vibecrafted.app` DMG | macOS 14+, arm64     | Full desktop product: terminal, frame, runtime, server              | Build path complete; publication pending |
+| Portable tarball             | Linux, WSL2, macOS   | Command deck, runtime, control plane, skills — pinned to one commit | Build path complete; publication pending |
+| Bootstrap `install.sh`       | macOS, Linux, WSL2   | Command deck, runtime, control plane, skills                        | Published; CI-gated                      |
+| Source checkout              | macOS, Linux, WSL2   | Everything above plus build, test and release targets               | Published                                |
+| Container                    | anywhere Docker runs | Isolated operator runtime                                           | Published                                |
+| `install.ps1`                | Windows              | WSL2 detection and handoff — not a native install                   | In repo; not yet served over HTTP        |
 
 If you want one sentence: **on macOS and Linux use the bootstrap today; on
 Windows install WSL2 first and then use the same bootstrap.**
@@ -44,13 +45,54 @@ Check what a given release actually carries before you plan around it:
 gh release view --json assets -q '.assets[].name'
 ```
 
-> **Current status.** No published release carries a DMG yet — use the
-> bootstrap channel below. The build path exists end to end
+> **Current status.** The build path is exercised end to end
 > (`make release` → codesign → notarytool → `make publish-release`) and its
-> shape is gated by contract tests, but it has not been exercised since the
-> runtime layout changed, so treat it as unproven rather than ready.
+> shape is gated by contract tests; 4.1.0 produces a signed, notarized and
+> stapled DMG with a signed `release-output.json`. No _published_ release
+> carries it yet — until the v4.1.0 release goes out, use a channel below.
 > Maintainers building the DMG locally: see
 > [Build from source](#build-from-source-power-users).
+
+---
+
+## Every other system — the portable tarball
+
+Apple notarization is a macOS-only trust anchor. Linux and WSL2 get their own
+canonically named artifact on the same release, cut from the same commit:
+`Vibecrafted_<version>-<YYYYMMDD>-<sha8>-portable.tar.gz` plus `.sha256`.
+
+```bash
+curl -fsSLO https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted_<version>-<YYYYMMDD>-<sha8>-portable.tar.gz
+curl -fsSLO https://github.com/vetcoders/vibecrafted/releases/latest/download/Vibecrafted_<version>-<YYYYMMDD>-<sha8>-portable.tar.gz.sha256
+sha256sum -c Vibecrafted_<version>-<YYYYMMDD>-<sha8>-portable.tar.gz.sha256
+tar -xzf Vibecrafted_<version>-<YYYYMMDD>-<sha8>-portable.tar.gz
+bash vibecrafted-<version>/install.sh
+```
+
+Why this exists next to the bootstrap: `curl | bash` pins you to whatever a
+branch holds at the moment you run it. The tarball pins you to one commit and
+proves it. Its `source-provenance.json` carries a
+`vibecrafted.distribution-tree.v1` digest over every packed entry, bound to that
+commit, and `install.sh` re-validates the carrier before staging anything —
+which is also why `--archive-url` and `--archive-file` refuse an archive that
+does not carry one.
+
+Scope, stated plainly:
+
+- It is a **source distribution**, not a prebuilt-binary bundle. `voc`,
+  `vc-admin` and `vc-server` are compiled locally by `make install`, so the
+  Rust toolchain listed under the Linux prerequisites is still required.
+- Prebuilt per-architecture binaries are not part of this channel and are not
+  claimed to be.
+- On Windows this is what you install _inside_ WSL2. There is no native
+  Windows build; see the `install.ps1` section.
+
+Maintainers build it with `make portable`. It needs no signing identity and no
+notary account — only `git` and `python3` — so it builds on Linux too.
+
+> **Current status.** Build path complete and self-verifying (the builder
+> unpacks and re-validates what it just wrote before the bytes may leave the
+> machine). Publication lands with the v4.1.0 release.
 
 ### Runtime boundary
 

@@ -1,4 +1,4 @@
-# Cut 4.1.0 with a DMG attached
+# Cut 4.1.0 with both channels attached
 
 Operator sequence. This file does not change the security boundary:
 `.github/workflows/release.yml` stays `contents: read` and does not run
@@ -10,24 +10,28 @@ Positioning and product identity stay in
 commands.
 
 Live install truth for strangers is [INSTALL.md](INSTALL.md): bootstrap
-today; DMG when a release actually carries one. The build path exists and
-is contract-gated, but it has not been exercised since the hermetic
-runtime layout changed — treat the first 4.1.0 DMG as unproven until the
-walk-around below passes.
+today; DMG and portable tarball when a release actually carries them. Both
+build paths are contract-gated and both have been exercised locally — treat
+the first published 4.1.0 artifacts as proven only once the walk-arounds
+below pass on downloaded bytes.
 
 ## 0. What this cut must produce
 
 One GitHub Release `v4.1.0` whose assets are exactly:
 
-| Asset                                     | Proves                                     |
-| ----------------------------------------- | ------------------------------------------ |
-| `Vibecrafted_4.1.0-<YYYYMMDD>-<sha8>.dmg` | signed, notarized desktop product          |
-| that name plus `.dmg.sha256`              | checksum a stranger can `shasum -a 256 -c` |
-| `release-output.json`                     | bound source revisions + DMG path          |
-| `release-output.json.sig`                 | detached signature over that receipt       |
+| Asset                                                 | Proves                                           |
+| ----------------------------------------------------- | ------------------------------------------------ |
+| `Vibecrafted_4.1.0-<YYYYMMDD>-<sha8>.dmg`             | signed, notarized desktop product                |
+| that name plus `.dmg.sha256`                          | checksum a stranger can `shasum -a 256 -c`       |
+| `Vibecrafted_4.1.0-<YYYYMMDD>-<sha8>-portable.tar.gz` | installable product for Linux / WSL2 / macOS CLI |
+| that name plus `.sha256`                              | checksum a stranger can `sha256sum -c`           |
+| `release-output.json`                                 | bound source revisions + DMG path                |
+| `release-output.json.sig`                             | detached signature over that receipt             |
 
-`publish-release` refuses extra assets. Do not also upload the old
-source-tarball set onto this tag.
+Exactly six assets. `publish-release` refuses anything else — including the
+old source-tarball set. `portable-output.json` stays local: it is how the
+publisher resolves the tarball name and digests, not something a stranger
+needs.
 
 `VERSION` is already `4.1.0`. There are local `v3.7.1` and `v4.0.0` tags,
 but no `v4.1.0`. Latest **published** GitHub Release is still `v3.5.0`.
@@ -106,6 +110,25 @@ release-output.json
 release-output.json.sig
 ```
 
+Then build the portable channel from the same clean tree:
+
+```bash
+make portable
+```
+
+No signing identity, no notary account, no Xcode: `git` and `python3` are
+enough, which is why this channel can also be built on Linux. It adds:
+
+```text
+Vibecrafted_4.1.0-<YYYYMMDD>-<sha8>-portable.tar.gz
+Vibecrafted_4.1.0-<YYYYMMDD>-<sha8>-portable.tar.gz.sha256
+portable-output.json
+```
+
+The builder refuses a dirty tree, then unpacks what it just wrote, revalidates
+the payload against this exact HEAD, and makes the packed `install.sh` answer
+for itself. If any of that fails, no bytes are published.
+
 ## 4. Local verification (before any tag)
 
 ```bash
@@ -132,6 +155,21 @@ uv run --project vibecrafted-core verify-vibecrafted-walkaround walkaround \
 | `spctl --assess --type open` | Gatekeeper will open that DMG                            |
 | `verify-release`             | the signed receipt names this tree and this DMG          |
 | `walkaround`                 | the mounted DMG is the product, not a sibling look-alike |
+
+Portable channel, same idea without an Apple ticket to lean on:
+
+```bash
+tar -xzf dist/Vibecrafted_4.1.0-*-portable.tar.gz -C "$(mktemp -d)"
+python3 scripts/distribution_manifest.py check \
+  --root <unpacked>/vibecrafted-4.1.0 \
+  --expected-owner-repo vetcoders/vibecrafted \
+  --expected-source-revision "$(git rev-parse HEAD)"
+```
+
+| Command                       | What a pass proves                                       |
+| ----------------------------- | -------------------------------------------------------- |
+| `sha256sum -c`                | the checksum file matches the bytes on disk              |
+| `distribution_manifest check` | the payload is the allowlisted projection of this commit |
 
 ## 5. Operator buttons — tag and source gate
 
@@ -175,14 +213,18 @@ GH_TOKEN=... make publish-release
 1. refuses a dirty tree, a missing/unpushed/non-annotated tag, or a tag
    that is not HEAD
 2. verifies the local signed receipt
-3. creates a **draft** release if needed
-4. uploads the four assets
-5. downloads them back into a temp dir and `cmp`s every byte
-6. re-runs `verify-release`, `walkaround`, `stapler`, and `spctl` on the
+3. verifies `portable-output.json` names this exact HEAD, and checks the
+   local tarball checksum
+4. creates a **draft** release if needed
+5. uploads the six assets
+6. downloads them back into a temp dir and `cmp`s every byte
+7. re-runs `verify-release`, `walkaround`, `stapler`, and `spctl` on the
    downloaded DMG
-7. writes the four-section release report under
-   `~/.vibecrafted/artifacts/vetcoders/vibecrafted/<YYYY_MMDD>/reports/`
-8. undrafts the release and marks it latest
+8. unpacks the downloaded tarball into a fresh root, revalidates its
+   source-provenance against HEAD, and runs the packed `install.sh`
+9. writes the four-section release report — now covering both channels —
+   under `~/.vibecrafted/artifacts/vetcoders/vibecrafted/<YYYY_MMDD>/reports/`
+10. undrafts the release and marks it latest
 
 What a pass proves: the bytes a stranger downloads are the bytes you
 notarized, and the mounted app matches the signed receipt.
