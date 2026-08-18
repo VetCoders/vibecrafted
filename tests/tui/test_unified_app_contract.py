@@ -821,6 +821,13 @@ def test_native_app_bootstraps_and_launches_only_the_canonical_product_entry() -
     assert 'Command::new("/bin/bash")' in launcher
     assert "fn host_agent_search_path(" in launcher
     assert '"/opt/homebrew/bin"' in launcher
+    # vc-start composes: the PATH AppDelegate hands it (generation first, the
+    # operator's Homebrew/npm/cargo/nvm tail behind) must survive the handoff,
+    # sanitized rather than amputated — a closed allowlist here re-created the
+    # exit-127 shebang failures the composed PATH fixed one process earlier.
+    assert 'let inherited_path = env::var("PATH").ok();' in launcher
+    assert "inherited_path.as_deref()" in launcher
+    assert "!entry.starts_with('/')" in launcher
 
 
 def test_tracked_product_source_contains_no_symlinks() -> None:
