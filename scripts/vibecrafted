@@ -5133,6 +5133,17 @@ cmd_update() {
         channel_ref="$1"
         ;;
       --ref=*) channel_ref="${_u_arg#--ref=}" ;;
+      -h|--help)
+        # An unmatched flag used to fall through this case and run the update.
+        # `vibecrafted update --help` mutating the install is not a help screen.
+        cmd_help update
+        return 0
+        ;;
+      --*)
+        printf '%b✗%b update: unknown option %s\n' "$_red" "$_reset" "$_u_arg" >&2
+        printf '  Try: vibecrafted help update\n' >&2
+        return 2
+        ;;
     esac
     shift
   done
