@@ -537,8 +537,11 @@ def test_public_and_packaged_resume_help_describe_provider_neutral_contract() ->
         )
         assert "A bare resume stays interactive" in result.stdout
         assert "AICX pack is continuity transport" in result.stdout
-        assert "without --session skips historical candidates" in result.stdout
-        assert "starts a new tracked headless job" in result.stdout
+        assert (
+            "Explicit --prompt/--file without --session starts a new tracked"
+            in result.stdout
+        )
+        assert "does not adopt a historical session" in result.stdout
         assert "Codex always starts" not in result.stdout
         assert "native-resumes it with the pack as prompt" not in result.stdout
 
