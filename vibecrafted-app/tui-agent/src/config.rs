@@ -193,10 +193,26 @@ pub fn default_state_root() -> PathBuf {
 }
 
 pub fn default_command_deck() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_candidate = manifest_dir.join("../scripts/vibecrafted");
-    if repo_candidate.exists() {
-        return repo_candidate;
+    // The development convenience below is compiled out of release builds, and
+    // that is not tidiness. `env!("CARGO_MANIFEST_DIR")` is expanded by rustc
+    // into an opaque string literal, so `--remap-path-prefix` cannot reach it:
+    // MEASURED on the shipped Vibecrafted_4.1.0-20260817-237d2814.dmg, both
+    // Contents/MacOS/voc and Contents/MacOS/vc-mux-daemon carried the builder's
+    // checkout root through exactly this constant.
+    //
+    // The leak is the smaller half. On the build host that path EXISTS, so a
+    // release binary silently prefers the developer's living checkout over the
+    // deck bundled beside it — and the build host is the one machine where the
+    // shipped app gets walked around before it goes out. A verification that
+    // exercises a code path no customer can reach is worse than no
+    // verification.
+    #[cfg(debug_assertions)]
+    {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_candidate = manifest_dir.join("../scripts/vibecrafted");
+        if repo_candidate.exists() {
+            return repo_candidate;
+        }
     }
     PathBuf::from("vibecrafted")
 }
@@ -239,7 +255,7 @@ fn print_help() {
     println!();
     println!("Options:");
     println!("  --view observe|full  Default observe: server-backed live board + AICX memory");
-    println!("  --server <url>       Vibecrafted Server origin (default: VC_SERVER_URL or http://100.82.232.70:3025)");
+    println!("  --server <url>       Vibecrafted Server origin (default: VC_SERVER_URL or http://127.0.0.1:3024)");
     println!("  --state-root <dir>   Control-plane state root under VIBECRAFTED_HOME");
     println!("  --deck <path>        Command deck binary or script to launch workflows");
     println!("  --root <path>        Workspace root passed through to launched workflows");

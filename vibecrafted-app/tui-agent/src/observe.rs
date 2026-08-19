@@ -7,7 +7,11 @@
 use serde::Deserialize;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-pub const DEFAULT_SERVER: &str = "http://100.82.232.70:3025";
+/// Canonical product origin — the loopback bind vc-server and server_config
+/// default to (`127.0.0.1:3024`; 3025 is only the leptos reload port). A
+/// remote or tailnet server is an operator choice expressed through
+/// `VC_SERVER_URL` / `--server`, never a host address baked into the binary.
+pub const DEFAULT_SERVER: &str = "http://127.0.0.1:3024";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConsoleView {
@@ -37,17 +41,12 @@ pub struct ObserveState {
     pub transcript_run_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ObserveHealth {
     Live,
     Degraded,
+    #[default]
     Offline,
-}
-
-impl Default for ObserveHealth {
-    fn default() -> Self {
-        Self::Offline
-    }
 }
 
 impl ObserveHealth {
@@ -164,6 +163,10 @@ pub fn age_label(started_at: &str, now: SystemTime) -> String {
 
 pub fn parse_state_json(bytes: &[u8], now: SystemTime) -> anyhow::Result<Vec<ObserveRun>> {
     let envelope: StateEnvelope = serde_json::from_slice(bytes)?;
+    Ok(runs_from_envelope(envelope, now))
+}
+
+fn runs_from_envelope(envelope: StateEnvelope, now: SystemTime) -> Vec<ObserveRun> {
     let mut runs = Vec::new();
     for dto in envelope.active_runs.into_iter().chain(envelope.stalled_runs) {
         let run_id = dto.run_id.unwrap_or_default();
@@ -180,7 +183,7 @@ pub fn parse_state_json(bytes: &[u8], now: SystemTime) -> anyhow::Result<Vec<Obs
             liveness: dto.liveness,
         });
     }
-    Ok(runs)
+    runs
 }
 
 pub fn fetch_state(origin: &str) -> anyhow::Result<(String, Vec<ObserveRun>)> {
@@ -189,7 +192,7 @@ pub fn fetch_state(origin: &str) -> anyhow::Result<(String, Vec<ObserveRun>)> {
     let body = response.into_string()?;
     let envelope: StateEnvelope = serde_json::from_str(&body)?;
     let generated = envelope.generated_at.clone().unwrap_or_default();
-    let runs = parse_state_json(body.as_bytes(), SystemTime::now())?;
+    let runs = runs_from_envelope(envelope, SystemTime::now());
     Ok((generated, runs))
 }
 
@@ -247,7 +250,7 @@ mod tests {
             "state": "active",
             "agent": "grok",
             "skill": "workflow",
-            "root": "/Volumes/vc-workspace/vetcoders/vibecrafted-suite/vibecrafted",
+            "root": "/srv/vetcoders/vibecrafted",
             "started_at": "2026-08-16T19:59:03.642175+00:00",
             "liveness": "pid_alive"
           }],

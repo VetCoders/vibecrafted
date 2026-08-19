@@ -1,12 +1,30 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_PAGE = "https://github.com/vetcoders/vibecrafted/releases/latest"
+
+# Pinned so the Windows entry point cannot drift silently. Measured
+# 2026-08-18; both copies agreed at this digest. See
+# test_windows_entry_point_does_not_drift_between_its_two_copies for why a
+# constant is needed on top of the cross-repo comparison.
+INSTALL_PS1_SHA256 = "12c2ca5b95195a2fcee0f4987962fd35ec52dde85588c226f68bcab4680450b6"
+
+# Binaries a developer laptop always has and the GitHub macos-15 image does
+# not. Measured 2026-08-18 against actions/runner-images
+# `images/macos/macos-15-Readme.md`: zero occurrences of either, and zero of
+# shellcheck — which this same workflow independently confirms by having to
+# brew install it. Calling one of these from a `run:` line is fatal at the
+# step, with no fallback.
+ABSENT_FROM_MACOS_RUNNER_IMAGE = ("rg", "fd")
 
 
 def test_public_install_surfaces_name_both_release_channels() -> None:
@@ -52,6 +70,100 @@ def test_tag_workflow_is_a_read_only_source_gate() -> None:
     assert "gh release upload" not in workflow
     assert "install.sh" not in workflow
     assert "vibecrafted-framework.plugin" not in workflow
+
+
+def test_tag_gate_only_calls_tools_its_own_runner_provides() -> None:
+    """The gate may only shell out to binaries `macos-15` actually ships.
+
+    Every tag since v3.7.0 failed this workflow, and v4.0.0 failed after 7m43s
+    with `483 passed ... VCPC033: xcrun is required` — a green test suite killed
+    by a host tool the runner did not have. `54a98b23` moved the job to
+    `macos-15` to cure exactly that, but the final publication-boundary step was
+    still calling `rg`, which the GitHub macos-15 image does not ship either.
+    Measured 2026-08-18 against the published image manifest
+    (actions/runner-images `images/macos/macos-15-Readme.md`): zero occurrences
+    of ripgrep, and zero of shellcheck — which is independently corroborated by
+    this same workflow having to `brew install shellcheck` before it can lint.
+    shellcheck is checked separately at the bottom, because its absence
+    degrades a step rather than failing it.
+
+    That step arrived in ef700e52 and has never executed, because every tag
+    since died at an earlier step. So the tool gap could not be caught by
+    "the last release worked". It has to be caught here.
+
+    Scope: the workflow's own `run:` lines. A tool reached through a `make`
+    target is out of scope — those resolve at recipe level and several fall
+    back to `uvx`.
+    """
+    workflow = (REPO_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+    run_lines: list[str] = []
+    in_run = False
+    for raw in workflow.splitlines():
+        stripped = raw.strip()
+        if stripped.startswith("#"):
+            continue
+        if re.match(r"^-?\s*(run|name|uses|with):", stripped):
+            in_run = stripped.startswith(("run:", "- run:"))
+            if in_run:
+                run_lines.append(stripped.split("run:", 1)[1])
+            continue
+        if in_run and stripped:
+            run_lines.append(stripped)
+
+    assert run_lines, "no run: lines parsed out of the release workflow"
+
+    # Read the installs out of the run lines, never out of the raw file: a
+    # comment mentioning `brew install shellcheck` would otherwise satisfy the
+    # allowance below without a single package being installed. Measured while
+    # writing this test — the first draft passed for exactly that reason.
+    installed = {
+        match.group(1)
+        for line in run_lines
+        for match in re.finditer(r"brew install ([\w-]+)", line)
+    }
+
+    for tool in ABSENT_FROM_MACOS_RUNNER_IMAGE:
+        if tool in installed:
+            continue
+        pattern = re.compile(rf"(?:^|[|;&]|\bcommand\s+)\s*{tool}\b")
+        offenders = [line for line in run_lines if pattern.search(line)]
+        assert not offenders, (
+            f"release.yml calls `{tool}`, which the macos-15 runner image does "
+            f"not ship and this workflow does not brew install: {offenders}"
+        )
+
+    # shellcheck is the quieter half of the same gap. `make check` does not die
+    # without it — `scripts/check_shell.py` falls back to `bash -n`, so the
+    # release gate would keep reporting green while silently degrading from a
+    # linter to a syntax check. That is worse than a hard failure, because
+    # nobody would ever see it. The brew install is what keeps the step honest.
+    if any(line.strip() == "make check" for line in run_lines):
+        assert "shellcheck" in installed, (
+            "release.yml runs `make check` without brew installing shellcheck; "
+            "check_shell.py would silently degrade to a syntax-only fallback "
+            "on the macos-15 image"
+        )
+
+
+def test_publication_boundary_step_still_asserts_both_channel_names() -> None:
+    """The boundary step is the only thing pinning the six-asset shape.
+
+    Rewriting its matcher (rg -> grep) must not quietly drop what it matches:
+    one canonically named DMG and one portable tarball, each resolved by the
+    publisher from a build script and documented in the kickoff.
+    """
+    workflow = (REPO_ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+    assert "Vibecrafted_.*YYYYMMDD|DMG_NAME|\\.dmg\\.sha256" in workflow
+    assert "PORTABLE_NAME|portable\\.tar\\.gz|portable-output\\.json" in workflow
+    for target in (
+        "scripts/build-vibecrafted-release.sh",
+        "scripts/build-portable-release.sh",
+        "scripts/publish-vibecrafted-release.sh",
+        "docs/RELEASE_KICKOFF.md",
+    ):
+        assert target in workflow, f"boundary step stopped covering {target}"
 
 
 def test_macos_publisher_cold_verifies_exact_uploaded_bytes() -> None:
@@ -376,3 +488,280 @@ def test_vc_release_skill_locks_four_mandatory_report_sections() -> None:
         "## Sign-off",
     ):
         assert heading in template_text
+
+
+def test_dirty_donors_are_a_release_flag_with_a_reaper_not_a_manual_ritual() -> None:
+    """`--snapshot-donors` must build from detached worktrees and always reap.
+
+    Roadmap 4.2.0 D2. Before this flag the operator hand-rolled
+    `git worktree add --detach` into a temp dir; the dir disappeared first and
+    left a ghost registration in the donor for a week.
+    """
+
+    builder = (REPO_ROOT / "scripts/build-vibecrafted-release.sh").read_text(
+        encoding="utf-8"
+    )
+    library = (REPO_ROOT / "scripts/lib/donor-snapshot.sh").read_text(encoding="utf-8")
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert "--snapshot-donors) SNAPSHOT_DONORS=1 ;;" in builder
+    assert '. "$REPO_ROOT/scripts/lib/donor-snapshot.sh"' in builder
+    # The reaper runs from the same trap that ends the keychain session, so it
+    # fires on success, on error, and on Ctrl-C during a notarization wait.
+    assert "donor_snapshot_reap || true" in builder
+    assert "trap cleanup EXIT INT TERM HUP" in builder
+    assert "materialize_donor_snapshots" in builder
+    assert "VIBECRAFTED_RELEASE_FAIL_AFTER_SNAPSHOT" in builder
+
+    # Reaping goes through git; `rm -rf` alone is what creates ghosts.
+    assert "worktree add --detach" in library
+    assert "worktree remove --force" in library
+    assert "worktree prune" in library
+
+    # Without the flag the refusal is unchanged: a receipt must not be built
+    # from a tree that can move underneath it.
+    assert "$label is dirty; release receipts refuse moving source" in builder
+
+    assert "RELEASE_FLAGS ?=" in makefile
+    # The flags must reach the builder as argv WORDS. Splicing $(RELEASE_FLAGS)
+    # into the single-quoted `zsh -ic` argument handed the value to zsh as
+    # source: measured 2026-08-18, `RELEASE_FLAGS='--snapshot-donors
+    # $(touch /tmp/proof)'` created the file, because zsh evaluates command
+    # substitution while building the exec's argv. (A `;` lands after `exec`
+    # and never runs — the vector is narrower than it looks, and real.)
+    for flag in ("--app-only", "--no-notarize", "--notarize-only"):
+        assert f"{flag} $${{=VC_RELEASE_FLAGS}}" in makefile, flag
+    assert makefile.count("VC_RELEASE_FLAGS='$(RELEASE_FLAGS)'") == 4
+    # The only place $(RELEASE_FLAGS) may still be expanded is that leading
+    # environment assignment. Nothing after `zsh -ic` may name it, because
+    # everything after `zsh -ic` is source.
+    spliced = [
+        line.strip()
+        for line in makefile.splitlines()
+        if "$(RELEASE_SCRIPT)" in line
+        and "$(RELEASE_FLAGS)" in line.partition("zsh -ic")[2]
+    ]
+    assert not spliced, spliced
+
+
+def test_donor_remap_prefixes_are_resolved_never_concatenated() -> None:
+    """A `..` inside a --remap-path-prefix never matches; measured on 4.1.0.
+
+    In `Vibecrafted_4.1.0-20260817-237d2814.dmg` the strings `/usr/src/vc-frame`
+    and `/usr/src/vc-terminal` are absent from every shipped binary while the
+    living checkout path is present, because both donor prefixes were built as
+    `"$REPO_ROOT/../vc-frame"` and the compiler matches prefixes textually.
+    """
+
+    builder = (REPO_ROOT / "scripts/build-vibecrafted-release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "canonical_dir()" in builder
+    assert (
+        'TERMINAL_DONOR="$(canonical_dir "${VIBECRAFTED_TERMINAL_REPO:-$REPO_ROOT/../vc-terminal}")"'
+        in builder
+    )
+    assert (
+        'FRAME_DONOR="$(canonical_dir "${VIBECRAFTED_FRAME_REPO:-$REPO_ROOT/../vc-frame}")"'
+        in builder
+    )
+    assert '"$TERMINAL_DONOR=/usr/src/vc-terminal"' in builder
+    assert '"$FRAME_DONOR=/usr/src/vc-frame"' in builder
+
+
+def test_remaps_run_broadest_prefix_first() -> None:
+    """rustc applies the LAST matching --remap-path-prefix.
+
+    Measured 2026-08-18 with two overlapping prefixes: outer-then-inner reports
+    the inner mapping, inner-then-outer reports the outer one. So `$HOME` has to
+    come FIRST or it shadows every specific root on any host whose checkout
+    lives under it, and the donor snapshots — which sit under `$REPO_ROOT/build`
+    — have to come AFTER `$REPO_ROOT`.
+    """
+    builder = (REPO_ROOT / "scripts/build-vibecrafted-release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    order = [
+        '"$HOME=/usr/src/operator-home"',
+        '"$REPO_ROOT=/usr/src/vibecrafted"',
+        '"$TERMINAL_DONOR=/usr/src/vc-terminal"',
+        '"$FRAME_DONOR=/usr/src/vc-frame"',
+        '"$TERMINAL_REPO=/usr/src/vc-terminal"',
+        '"$FRAME_REPO=/usr/src/vc-frame"',
+    ]
+    positions = [builder.index(entry) for entry in order]
+    assert positions == sorted(positions), "remap order is no longer broadest-first"
+
+    # The snapshot pair is emitted only when it can differ from the donors.
+    snapshot_block = builder[
+        builder.index("PATH_REMAPS=(") : builder.index('RUSTFLAGS=""')
+    ]
+    assert "if (( SNAPSHOT_DONORS )); then" in snapshot_block
+
+
+def test_every_compiler_in_the_build_gets_a_prefix_map() -> None:
+    """RUSTFLAGS is one of four producers; the other three need their own.
+
+    Measured on the shipped 4.1.0 payload: cc-rs left 21 `$HOME` paths from
+    ring's C sources in Contents/MacOS/Vibecrafted, and xcodebuild left 51
+    checkout paths from Swift sources and DerivedData intermediates. Neither
+    reads RUSTFLAGS.
+    """
+    builder = (REPO_ROOT / "scripts/build-vibecrafted-release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "-ffile-prefix-map=$mapping" in builder
+    assert "export CFLAGS=" in builder
+    assert "export CXXFLAGS=" in builder
+    assert "-debug-prefix-map $mapping" in builder
+    assert "OTHER_SWIFT_FLAGS=" in builder
+    assert "OTHER_CFLAGS=" in builder
+
+
+def test_bundled_wasm_plugins_are_rebuilt_only_inside_a_snapshot() -> None:
+    """The blobs are git-tracked build output; a flag cannot reach them.
+
+    `make release-binary` builds `--no-plugins` and the binary embeds
+    zellij-utils/assets/plugins/*.wasm via include_bytes!. Measured 2026-08-18:
+    276 occurrences of `$HOME/.cargo/registry` across the 14 tracked blobs, 411
+    of which reached Contents/Helpers/vc-frame in the shipped DMG. Rebuilding
+    them under the release remaps drops both counts to zero — measured on all
+    fourteen inside a real snapshot worktree.
+
+    It must not happen against the living donor: that would rewrite tracked
+    files another agent may be mid-edit on.
+    """
+    builder = (REPO_ROOT / "scripts/build-vibecrafted-release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    rebuild_at = builder.index('make -C "$FRAME_REPO" plugins-assets')
+    guard_at = builder.rindex("if (( SNAPSHOT_DONORS )); then", 0, rebuild_at)
+    assert rebuild_at - guard_at < 400, "the plugin rebuild escaped its snapshot guard"
+
+    binary_at = builder.index('make -C "$FRAME_REPO" release-binary')
+    assert rebuild_at < binary_at, (
+        "plugins must be rebuilt before the binary embeds them"
+    )
+
+
+def test_the_clean_repo_allowance_is_exactly_the_regenerated_plugin_assets() -> None:
+    """Rebuilding into the snapshot makes it dirty; the allowance is narrow.
+
+    Measured on a real snapshot: `git status --porcelain` afterwards lists
+    exactly SHA256SUMS and the fourteen .wasm files under
+    zellij-utils/assets/plugins/, and nothing else. The receipt still binds the
+    donor HEAD, and those files are a deterministic function of it.
+    """
+    builder = (REPO_ROOT / "scripts/build-vibecrafted-release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'FRAME_DERIVED=("zellij-utils/assets/plugins/")' in builder
+    assert (
+        'require_clean_repo "$FRAME_REPO" vc-frame ${FRAME_DERIVED+"${FRAME_DERIVED[@]}"}'
+        in builder
+    )
+    # The pre-build assertion stays strict: a snapshot that is dirty on arrival
+    # is a refusal, not an allowance. Exactly one of the two frame assertions
+    # carries the allowance, and vc-terminal never gets one — nothing
+    # regenerates into it.
+    frame_calls = [
+        line.strip()
+        for line in builder.splitlines()
+        if 'require_clean_repo "$FRAME_REPO"' in line
+    ]
+    assert len(frame_calls) == 2, frame_calls
+    assert sum("FRAME_DERIVED" in line for line in frame_calls) == 1, frame_calls
+    assert not any(
+        "DERIVED" in line
+        for line in builder.splitlines()
+        if 'require_clean_repo "$TERMINAL_REPO"' in line
+    )
+
+
+def test_the_embedded_interpreter_forgets_where_it_was_seeded() -> None:
+    """Two leaks, one of which was also a broken script.
+
+    Measured on the 4.1.0 payload: 27 mentions of the ephemeral
+    `build/unified-release/python-seed.XXXXXX/` directory inside
+    `runtime/python/lib/python3.12/_sysconfigdata__darwin_darwin.py`, and a pip
+    console script at `runtime/python-site/bin/jsonschema` whose shebang points
+    at that same directory — a path no customer has, so the script could never
+    have run. python-site is on PYTHONPATH and never on PATH, so nothing
+    invoked it.
+    """
+    builder = (REPO_ROOT / "scripts/build-vibecrafted-release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'rm -rf "$runtime/python-site/bin"' in builder
+    assert "normalize_embedded_python_paths()" in builder
+    assert 'normalize_embedded_python_paths "$runtime" "$python_seed"' in builder
+
+
+def test_release_binaries_never_probe_the_machine_that_compiled_them() -> None:
+    """`env!("CARGO_MANIFEST_DIR")` is opaque to --remap-path-prefix.
+
+    Both call sites used the constant as a runtime filesystem probe, so the
+    shipped binary carried the builder's checkout AND behaved differently on
+    that one machine — the machine the release is walked around on.
+    """
+    config = (REPO_ROOT / "vibecrafted-app/tui-agent/src/config.rs").read_text(
+        encoding="utf-8"
+    )
+    tray = (REPO_ROOT / "vibecrafted-app/mux-agent/src/tray.rs").read_text(
+        encoding="utf-8"
+    )
+
+    for source, name in ((config, "config.rs"), (tray, "tray.rs")):
+        lines = source.splitlines()
+        call_sites = [
+            index
+            for index, line in enumerate(lines)
+            if 'env!("CARGO_MANIFEST_DIR")' in line
+            and not line.lstrip().startswith("//")
+        ]
+        assert call_sites, f"{name} no longer reads CARGO_MANIFEST_DIR at all"
+        for index in call_sites:
+            window = lines[max(0, index - 8) : index]
+            assert any("#[cfg(debug_assertions)]" in line for line in window), (
+                f"{name}:{index + 1} probes CARGO_MANIFEST_DIR outside a "
+                "debug-only guard"
+            )
+
+
+def test_windows_entry_point_does_not_drift_between_its_two_copies() -> None:
+    """`install.ps1` lives here and in vibecrafted-io; two copies means drift.
+
+    Roadmap 4.2.0 cut W1-c. The site copy is what a Windows user would fetch
+    over HTTPS, so the moment the two differ the served script is a lie about
+    this repository. Measured 2026-08-18: identical, and
+    `https://vibecrafted.io/install.ps1` still answers 404 — not because the
+    pipeline drops non-HTML assets (`/install.sh` answers 200) but because the
+    site repo's deploy branch has not received the commit that added it.
+    """
+
+    framework = REPO_ROOT / "install.ps1"
+    assert framework.is_file()
+    digest = hashlib.sha256(framework.read_bytes()).hexdigest()
+
+    # The cross-repo comparison below is opportunistic: it skips wherever
+    # vibecrafted-io is not checked out, which is everywhere except this
+    # laptop, so on its own it guards nothing in CI. The pin is what bites.
+    # Editing install.ps1 now forces a deliberate bump of this constant, and
+    # that bump is the reminder that the served copy has to move too.
+    assert digest == INSTALL_PS1_SHA256, (
+        "install.ps1 changed. Update the served copy in vibecrafted-io "
+        f"(site/public/install.ps1) and set INSTALL_PS1_SHA256 to {digest}"
+    )
+
+    served = REPO_ROOT.parent / "vibecrafted-io/site/public/install.ps1"
+    if not served.is_file():
+        pytest.skip("vibecrafted-io is not checked out beside this repository")
+    assert digest == hashlib.sha256(served.read_bytes()).hexdigest(), (
+        "install.ps1 drifted between the framework repo and the served site copy"
+    )

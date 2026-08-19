@@ -182,31 +182,44 @@ def __getattr__(name: str) -> Any:
     if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+    # Each branch imports its sibling BY MODULE PATH. The obvious spelling here
+    # is `from . import workflow`, and it is what this chain used to say — but
+    # `.` is the package barrel, i.e. this very file, so every static importer
+    # graph recorded `__init__.py -> __init__.py` and reported a structural
+    # self-cycle that has no load-order meaning. The absolute form names the
+    # module that actually owns the symbol. Runtime behaviour is unchanged:
+    # these imports still happen lazily, only when __getattr__ is reached.
+    #
+    # The spelling is `import vibecrafted_core.X`, not `import ... as X`: ruff's
+    # PLR0402 rewrites an alias that repeats the last component back into
+    # `from vibecrafted_core import X`, which is the barrel again and brings the
+    # self-cycle straight back. Measured after the first attempt: the formatter
+    # undid it in the pre-commit hook.
     module: Any
     if module_name == ".workflow":
-        from . import workflow
+        import vibecrafted_core.workflow
 
-        module = workflow
+        module = vibecrafted_core.workflow
     elif module_name == ".continuity":
-        from . import continuity
+        import vibecrafted_core.continuity
 
-        module = continuity
+        module = vibecrafted_core.continuity
     elif module_name == ".delivery":
-        from . import delivery
+        import vibecrafted_core.delivery
 
-        module = delivery
+        module = vibecrafted_core.delivery
     elif module_name == ".events":
-        from . import events
+        import vibecrafted_core.events
 
-        module = events
+        module = vibecrafted_core.events
     elif module_name == ".control_plane":
-        from . import control_plane
+        import vibecrafted_core.control_plane
 
-        module = control_plane
+        module = vibecrafted_core.control_plane
     elif module_name == ".settlement_ledger":
-        from . import settlement_ledger
+        import vibecrafted_core.settlement_ledger
 
-        module = settlement_ledger
+        module = vibecrafted_core.settlement_ledger
     else:  # pragma: no cover - _LAZY_EXPORTS is the whitelist.
         raise AttributeError(f"module {__name__!r} has no lazy module for {name!r}")
 

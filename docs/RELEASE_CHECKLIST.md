@@ -90,6 +90,70 @@ make semgrep
 What this proves: the version file, the donors, and the source gates agree
 before you spend an hour in notarization.
 
+### When a donor is dirty and you are not going to clean it
+
+The Living Tree keeps donors dirty on purpose, and the builder refuses a dirty
+donor because a receipt must not bind a SHA that could move mid-build. Do **not**
+hand-roll `git worktree add --detach` into a temp dir: that is where the ghost
+registration of 2026-08-11 came from. Use the flag instead:
+
+```bash
+make dmg RELEASE_FLAGS=--snapshot-donors
+# or directly:
+bash scripts/build-vibecrafted-release.sh --no-notarize --snapshot-donors
+```
+
+It creates a detached worktree at each donor's HEAD under
+`build/unified-release/donor-snapshots/`, builds from those, and reaps them from
+the same trap that ends the signing keychain — on success, on failure and on
+Ctrl-C. The donor's own working tree, index and stashes are never touched, and
+the receipt still binds the donor HEAD, because that is what the snapshot is.
+
+Two things to know before you use it: the snapshot starts from a **cold cargo
+target directory**, so the build is a full rebuild; and the check afterwards is
+that each donor is back to the worktree count it had _before_ the build, not
+that it has exactly one — donors legitimately carry other agents' worktrees.
+
+```bash
+git -C ../vc-frame worktree list      # same entries as before the build
+git -C ../vc-terminal worktree list
+```
+
+**Use it for anything you intend to ship.** `--snapshot-donors` is the only mode
+that rebuilds vc-frame's bundled WASM plugins. Those blobs are git-tracked build
+output: `make release-binary` builds `--no-plugins` and embeds them with
+`include_bytes!`, so without a rebuild the release ships whatever paths the
+machine that last ran `make plugins-assets` happened to have. Measured on the
+4.1.0 DMG that was 411 occurrences of the operator's home directory inside
+`Contents/Helpers/vc-frame` alone. The rebuild adds about a minute and the
+snapshot is the only tree we are entitled to regenerate into — doing it to the
+living donor would rewrite tracked files another agent may be mid-edit on.
+
+### The payload gate
+
+Before a signature is spent, the builder greps the assembled bundle for every
+path that exists only on this machine — your home directory, the checkout, both
+donors, the snapshots — and refuses to continue if it finds one. There is no
+allowlist, on purpose.
+
+If it fires, the message names each offending file and how many times. Read it
+as a real finding: `--remap-path-prefix` only covers rustc, and the payload has
+at least four other producers (cc-rs, Swift/xcodebuild, uv's CPython, pip
+console scripts). `scripts/payload_hygiene.py` explains each one.
+
+You can ask the same question of an artifact you already have, without a
+rebuild:
+
+```bash
+make payload-hygiene ARTIFACT=dist/Vibecrafted.app
+make payload-hygiene ARTIFACT=dist/Vibecrafted_4.1.0-20260817-237d2814.dmg
+make payload-hygiene ARTIFACT=dist/Vibecrafted_4.1.0-20260818-c52f1326-portable.tar.gz
+```
+
+A `.dmg` is attached read-only and detached again; a tarball is extracted into a
+temp directory that is removed on every exit path. The artifact is never written
+to.
+
 ## 3. Build, sign, notarize
 
 ```bash
@@ -97,8 +161,12 @@ make release
 ```
 
 This is `scripts/build-vibecrafted-release.sh` with `KEYS=$HOME/.keys`.
-It remaps `RUSTFLAGS` so panic/debug metadata never contain `$HOME` or
-the checkout path, and sets `MACOSX_DEPLOYMENT_TARGET=14.0`.
+It sets `MACOSX_DEPLOYMENT_TARGET=14.0` and hands every compiler in the build a
+prefix map so no debug metadata names this machine: `RUSTFLAGS` for rustc,
+`CFLAGS`/`CXXFLAGS` for the C sources cc-rs compiles, and `-debug-prefix-map`
+for Swift through xcodebuild. Order matters — rustc applies the **last** match,
+so the list runs broadest first. The payload gate above is what checks the
+result rather than assuming it.
 
 Expected outputs under `dist/`:
 
@@ -195,6 +263,39 @@ What this proves: VERSION matches the tag, the tag is annotated, Semgrep
 and the product-contract / core / installer gates passed on the immutable
 tag SHA. It does **not** build or upload a DMG. That is intentional.
 Do not add `contents: write` or `gh release create` to `release.yml`.
+
+### What this gate has actually done — read before you push the tag
+
+The source gate is not a formality with a green history. It has **failed on
+every tag since `v3.5.0`**, and the two repairs below have never been exercised
+by a real tag push.
+
+| Tag    | Date       | Result  | Died on                                              |
+| ------ | ---------- | ------- | ---------------------------------------------------- |
+| v3.5.0 | 2026-07-12 | success | —                                                    |
+| v3.7.0 | 2026-07-27 | failure | 1m42s                                                |
+| v3.7.1 | 2026-08-14 | failure | 12s                                                  |
+| v3.7.1 | 2026-08-14 | failure | 12s                                                  |
+| v4.0.0 | 2026-08-15 | failure | `VCPC033: xcrun is required`, after 483 tests passed |
+
+Both failures were the same class — a **host tool the runner did not have**,
+never a code defect:
+
+1. `v4.0.0` ran on a Linux runner while the product contract inspects a real
+   Mach-O fixture. Cured by `54a98b23` (`runs-on: macos-15`), which landed 86
+   minutes _after_ that tag failed and has not run since.
+2. The final `Confirm publication boundary` step called `rg`, which the
+   `macos-15` image does not ship either. It arrived in `ef700e52` (3.7.1) and
+   every tag since died before reaching it, so the gap was invisible to "the
+   last release worked". Cured in the 4.2.0 flight by moving those two literal
+   presence assertions to POSIX `grep`, and bound by
+   `tests/tui/test_release_contract.py::test_tag_gate_only_calls_tools_its_own_runner_provides`.
+
+Consequence for whoever pushes the next tag: **treat the first run as an
+experiment, not a formality.** Push `v4.1.0` at `27ad70e2` first — it is already
+merged and stable, `VERSION` and `CHANGELOG.md` both already call it released,
+and it has no tag at all — so the never-exercised path gets proven on a version
+that is safe to re-cut, before a new one depends on it.
 
 Also required: zero open CodeQL alerts on `main`.
 
