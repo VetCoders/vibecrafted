@@ -670,46 +670,66 @@ def _vc_frame_delivery_findings(
         )
         view_repair = "`vibecrafted update`"
 
-    channels: list[str] = []
-    for name in ("config.kdl", "layouts", "themes"):
-        path = view / name
-        ch = classify_view_path(path, store_current=store_cfg, checkout=checkout)
-        channels.append(ch)
-        if ch == "DANGLING":
+    # One config home: the view itself is ONE directory symlink; judge its
+    # shape as a whole instead of per-file link channels.
+    view_channel = classify_view_path(view, store_current=store_cfg, checkout=checkout)
+    if view_channel in {"store-current", "dev-checkout"}:
+        missing_names = [
+            name
+            for name in ("config.kdl", "layouts", "themes")
+            if not (view / name).exists()
+        ]
+        if missing_names:
             findings.append(
                 _Finding(
                     "fail",
                     "vc-frame:view",
-                    f"{path} is a dangling symlink — run {view_repair}",
-                )
-            )
-        elif ch == "STALE-FILE":
-            findings.append(
-                _Finding(
-                    "fail",
-                    "vc-frame:view",
-                    f"{path} is a regular file shadowing the store view — "
-                    f"run {view_repair} (backs up as .stale.* when wiring)",
-                )
-            )
-        elif ch == "missing":
-            findings.append(
-                _Finding(
-                    "warn",
-                    "vc-frame:view",
-                    f"{path} missing — run {view_repair}",
-                )
-            )
-        elif ch == "foreign":
-            findings.append(
-                _Finding(
-                    "warn",
-                    "vc-frame:view",
-                    f"{path} is user-managed (foreign) — not store/dev view",
+                    f"view symlink resolves but lacks {', '.join(missing_names)} — "
+                    f"run {view_repair}",
                 )
             )
         else:
-            findings.append(_Finding("ok", "vc-frame:view", f"{name}: {ch} -> {path}"))
+            findings.append(
+                _Finding(
+                    "ok",
+                    "vc-frame:view",
+                    f"single view symlink ({view_channel}) -> {view}",
+                )
+            )
+    elif view_channel == "DANGLING":
+        findings.append(
+            _Finding(
+                "fail",
+                "vc-frame:view",
+                f"{view} is a dangling symlink — run {view_repair}",
+            )
+        )
+    elif view_channel == "STALE-FILE":
+        findings.append(
+            _Finding(
+                "warn",
+                "vc-frame:view",
+                f"{view} is a legacy real dir (per-file link farm or operator "
+                f"copy) — run {view_repair} (collapses it to one symlink, "
+                "backing up real files)",
+            )
+        )
+    elif view_channel == "missing":
+        findings.append(
+            _Finding(
+                "warn",
+                "vc-frame:view",
+                f"{view} missing — run {view_repair}",
+            )
+        )
+    else:
+        findings.append(
+            _Finding(
+                "warn",
+                "vc-frame:view",
+                f"{view} is user-managed (foreign) — not store/dev view",
+            )
+        )
 
     # themes presence under view or source
     themes_dir = view / "themes"
@@ -830,97 +850,122 @@ def _vc_frame_delivery_findings(
             )
         )
 
-    # Operator scripts + Super/Cmd contract on both projections. The runtime
-    # pins VC_FRAME_CONFIG_DIR to frontier first; a STALE-FILE composer there
-    # shadows every install that only rewires ~/.config/vc-frame.
+    # One config home (2026-08-20): ~/.config/vc-frame is a single directory
+    # symlink at the package-owned generated tree under vibecrafted-current;
+    # the frontier twin is dissolved by delivery and only reported here.
     frontier_cfg = froot / "vc-frame"
-    for projection, label in (
-        (view, "view"),
-        (frontier_cfg, "frontier"),
-    ):
-        missing_scripts = [
-            name
-            for name in OPERATOR_SCRIPT_NAMES
-            if name != "auto-theme.sh" and not (projection / name).exists()
-        ]
-        stale_scripts = [
-            name
-            for name in OPERATOR_SCRIPT_NAMES
-            if (projection / name).is_file() and not (projection / name).is_symlink()
-        ]
-        if missing_scripts:
-            findings.append(
-                _Finding(
-                    "fail",
-                    f"vc-frame:operator-scripts:{label}",
-                    f"missing {', '.join(missing_scripts)} under {projection} — "
-                    f"{view_repair}",
-                )
+    if frontier_cfg.is_symlink() or frontier_cfg.exists():
+        findings.append(
+            _Finding(
+                "warn",
+                "vc-frame:frontier-twin",
+                f"legacy frontier twin still present at {frontier_cfg} — "
+                f"{view_repair} (dissolves it)",
             )
-        elif stale_scripts:
+        )
+    else:
+        findings.append(
+            _Finding(
+                "ok",
+                "vc-frame:frontier-twin",
+                "frontier twin dissolved (one config home)",
+            )
+        )
+
+    if view.is_dir() and not view.is_symlink():
+        findings.append(
+            _Finding(
+                "warn",
+                "vc-frame:view-shape",
+                f"{view} is a legacy per-file link farm — {view_repair} "
+                "(collapses it to one directory symlink)",
+            )
+        )
+    elif view.is_symlink() and (view / "config.kdl").is_file():
+        try:
+            target = view.readlink()
+        except OSError:
+            target = "?"
+        findings.append(
+            _Finding(
+                "ok",
+                "vc-frame:view-shape",
+                f"single view symlink -> {target}",
+            )
+        )
+    else:
+        findings.append(
+            _Finding(
+                "fail",
+                "vc-frame:view-shape",
+                f"{view} missing or dangling — {view_repair}",
+            )
+        )
+
+    missing_scripts = [
+        name
+        for name in OPERATOR_SCRIPT_NAMES
+        if name != "auto-theme.sh" and not (view / name).exists()
+    ]
+    if missing_scripts:
+        findings.append(
+            _Finding(
+                "fail",
+                "vc-frame:operator-scripts:view",
+                f"missing {', '.join(missing_scripts)} under {view} — {view_repair}",
+            )
+        )
+    else:
+        findings.append(
+            _Finding(
+                "ok",
+                "vc-frame:operator-scripts:view",
+                f"operator scripts present under {view}",
+            )
+        )
+
+    cfg = view / "config.kdl"
+    if cfg.is_file() or cfg.is_symlink():
+        try:
+            text = cfg.read_text(encoding="utf-8")
+        except OSError as exc:
             findings.append(
                 _Finding(
                     "fail",
-                    f"vc-frame:operator-scripts:{label}",
-                    f"STALE-FILE (not install-managed link) for "
-                    f"{', '.join(stale_scripts)} under {projection} — "
-                    f"{view_repair} (backs up and re-wires)",
+                    "vc-frame:key-contract:view",
+                    f"cannot read {cfg}: {exc}",
                 )
             )
         else:
-            findings.append(
-                _Finding(
-                    "ok",
-                    f"vc-frame:operator-scripts:{label}",
-                    f"operator scripts projected under {projection}",
-                )
-            )
-
-        cfg = projection / "config.kdl"
-        if cfg.is_file() or cfg.is_symlink():
-            try:
-                text = cfg.read_text(encoding="utf-8")
-            except OSError as exc:
+            kitty_on = "support_kitty_keyboard_protocol true" in text
+            has_super = 'bind "Super' in text
+            if not kitty_on:
                 findings.append(
                     _Finding(
                         "fail",
-                        f"vc-frame:key-contract:{label}",
-                        f"cannot read {cfg}: {exc}",
+                        "vc-frame:key-contract:view",
+                        f"{cfg} has support_kitty_keyboard_protocol off — "
+                        "Super/Cmd chords will never reach keybinds; "
+                        f"{view_repair}",
+                    )
+                )
+            elif not has_super:
+                findings.append(
+                    _Finding(
+                        "fail",
+                        "vc-frame:key-contract:view",
+                        f"{cfg} enables kitty protocol but binds no Super/* "
+                        f"chords — Cmd switcher/Composer are dead; {view_repair}",
                     )
                 )
             else:
-                kitty_on = (
-                    "support_kitty_keyboard_protocol true" in text
-                    or "support_kitty_keyboard_protocol true" in text
+                findings.append(
+                    _Finding(
+                        "ok",
+                        "vc-frame:key-contract:view",
+                        "kitty protocol on + Super/* binds present",
+                    )
                 )
-                has_super = 'bind "Super' in text or 'bind "Super' in text
-                if not kitty_on:
-                    findings.append(
-                        _Finding(
-                            "fail",
-                            f"vc-frame:key-contract:{label}",
-                            f"{cfg} has support_kitty_keyboard_protocol off — "
-                            "Super/Cmd chords will never reach keybinds; "
-                            f"{view_repair}",
-                        )
-                    )
-                elif not has_super:
-                    findings.append(
-                        _Finding(
-                            "fail",
-                            f"vc-frame:key-contract:{label}",
-                            f"{cfg} enables kitty protocol but binds no Super/* "
-                            f"chords — Cmd switcher/Composer are dead; {view_repair}",
-                        )
-                    )
-                else:
-                    findings.append(
-                        _Finding(
-                            "ok",
-                            f"vc-frame:key-contract:{label}",
-                            "kitty protocol on + Super/* binds present",
-                        )
-                    )
 
     if use_repo:
         findings.append(

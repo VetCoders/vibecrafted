@@ -1958,7 +1958,9 @@ def test_vc_frame_delivery_dev_checkout_does_not_require_runtime_generation(
     )
 
 
-def test_vc_frame_delivery_stale_file_fails_view(tmp_path, monkeypatch):
+def test_vc_frame_delivery_legacy_real_dir_view_warns(tmp_path, monkeypatch):
+    """One config home: a real-dir view is a legacy shape to collapse, not a
+    hard failure — doctor names the remediation instead of red-screening."""
     home = tmp_path / "home"
     home.mkdir()
     tools = home / ".local" / "share" / "vibecrafted" / "tools"
@@ -1969,11 +1971,13 @@ def test_vc_frame_delivery_stale_file_fails_view(tmp_path, monkeypatch):
     (view / "layouts").mkdir()
     (view / "themes").mkdir()
     findings = _vc_frame_delivery_findings(home=home, tools_home=tools)
-    fails = [
-        f for f in findings if f.component == "vc-frame:view" and f.level == "fail"
-    ]
-    assert fails
-    assert any("vibecrafted update" in f.message for f in fails)
+    view_findings = [f for f in findings if f.component == "vc-frame:view"]
+    assert view_findings
+    assert all(f.level != "ok" for f in view_findings)
+    warns = [f for f in view_findings if f.level == "warn"]
+    assert warns
+    assert any("legacy real dir" in f.message for f in warns)
+    assert any("vibecrafted update" in f.message for f in warns)
 
 
 def test_vc_frame_delivery_dangling_frontier_fails(tmp_path, monkeypatch):
