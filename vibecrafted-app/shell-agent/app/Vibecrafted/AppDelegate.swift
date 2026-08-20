@@ -318,9 +318,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let sourceFrameConfig = generation.appendingPathComponent(
       "vibecrafted-core/vibecrafted_core/config/vc-frame", isDirectory: true)
     let frameConfig = productConfig.appendingPathComponent("vc-frame", isDirectory: true)
-    if !manager.fileExists(atPath: frameConfig.path) {
-      try manager.copyItem(at: sourceFrameConfig, to: frameConfig)
+    // Config is package truth, not operator state: the copy-once projection
+    // froze old keybinds/operator scripts exactly like the shell layer below
+    // (one config home, 2026-08-20). Every install refreshes it in full.
+    if manager.fileExists(atPath: frameConfig.path) {
+      try manager.removeItem(at: frameConfig)
     }
+    try manager.copyItem(at: sourceFrameConfig, to: frameConfig)
     let sourceShell = generation.appendingPathComponent(
       "vibecrafted-core/vibecrafted_core/runtime/shell", isDirectory: true)
     let productShell = productConfig.appendingPathComponent("shell", isDirectory: true)

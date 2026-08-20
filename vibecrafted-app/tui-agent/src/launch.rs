@@ -358,6 +358,35 @@ fn resolved_vc_frame_config_dir(root: Option<&Path>) -> Option<PathBuf> {
     if let Some(explicit) = env::var_os("VC_FRAME_CONFIG_DIR").filter(|value| !value.is_empty()) {
         return Some(PathBuf::from(explicit));
     }
+    // One config home: the canonical ~/.config/vc-frame view, then the
+    // host-adapted generated tree under vibecrafted-current, then the repo
+    // checkout (dev) as the last resort.
+    if let Some(home) = env::var_os("HOME").filter(|value| !value.is_empty()) {
+        let home = PathBuf::from(home);
+        let xdg = env::var_os("XDG_CONFIG_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".config"));
+        let view = xdg.join("vc-frame");
+        if view.join("config.kdl").is_file() {
+            return Some(view);
+        }
+        let tools = env::var_os("VIBECRAFTED_TOOLS_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                env::var_os("XDG_DATA_HOME")
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| home.join(".local/share"))
+                    .join("vibecrafted/tools")
+            });
+        let generated = tools
+            .join("vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame");
+        if generated.join("config.kdl").is_file() {
+            return Some(generated);
+        }
+    }
     let root = root?;
     let repo_config_dir = root.join("config/vc-frame");
     repo_config_dir
