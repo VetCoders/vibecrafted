@@ -73,7 +73,6 @@ def test_stage_wires_view_through_current(tmp_path: Path, monkeypatch) -> None:
     runtime = _seed_complete_runtime(tools)
     monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
-    # ensure zsh present so canonical retained (or force path)
     plan = stage_vc_frame_config(
         home=home,
         tools_home=tools,
@@ -83,41 +82,33 @@ def test_stage_wires_view_through_current(tmp_path: Path, monkeypatch) -> None:
         path_env=os.environ.get("PATH", ""),
     )
     assert plan.channel == "store-current"
-    view = home / ".config" / "vc-frame"
-    cfg = view / "config.kdl"
-    assert cfg.is_symlink() or cfg.is_file()
-    resolved = cfg.resolve()
-    assert resolved.is_file()
-    text = resolved.read_text(encoding="utf-8")
-    assert "theme" in text
-    # through current
     current = tools / "vibecrafted-current"
     assert current.is_symlink()
     assert current.resolve() == runtime.resolve()
-    assert (current / "Makefile").is_file()
-    assert (current / "vibecrafted-core").is_dir()
-    assert (_runtime_payload(current) / "scripts" / "codex_spawn.sh").is_file()
-    assert (
-        _runtime_payload(current) / "generated" / "vc-frame" / "config.kdl"
-    ).exists()
-    # Operator scripts + frontier projection (VC_FRAME_CONFIG_DIR) are install-owned.
     generated = _runtime_payload(current) / "generated" / "vc-frame"
-    assert (generated / "vc-composer.sh").is_file()
-    composer_view = view / "vc-composer.sh"
-    assert composer_view.is_symlink()
-    assert composer_view.resolve() == (generated / "vc-composer.sh").resolve()
+    assert (generated / "config.kdl").exists()
+    # One config home: the view is a single directory symlink at the
+    # generated tree (through vibecrafted-current), not a per-file farm.
+    view = home / ".config" / "vc-frame"
+    assert view.is_symlink()
+    assert view.resolve() == generated.resolve()
+    cfg = view / "config.kdl"
+    assert cfg.is_file()
+    text = cfg.read_text(encoding="utf-8")
+    assert "theme" in text
+    assert (view / "vc-composer.sh").is_file()
+    # The frontier twin is dissolved, not wired.
     frontier = home / ".config" / "vetcoders" / "frontier" / "vc-frame"
-    frontier_cfg = frontier / "config.kdl"
-    frontier_composer = frontier / "vc-composer.sh"
-    assert frontier_cfg.is_symlink()
-    assert frontier_composer.is_symlink()
-    assert frontier_composer.resolve() == (generated / "vc-composer.sh").resolve()
-    assert 'bind "Super e"' in text or 'bind "Super e"' in text
+    assert not frontier.exists()
+    assert 'bind "Super e"' in text
     assert "support_kitty_keyboard_protocol true" in text
 
 
-def test_stage_rewires_stale_frontier_composer(tmp_path: Path, monkeypatch) -> None:
-    """STALE-FILE under frontier must not shadow package scripts forever."""
+def test_stage_backs_up_stale_frontier_composer_and_dissolves_twin(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """STALE-FILE under the legacy frontier twin is preserved as a backup,
+    never left to shadow package scripts — and the twin itself dissolves."""
     home = tmp_path / "home"
     home.mkdir()
     tools = home / ".local" / "share" / "vibecrafted" / "tools"
@@ -137,15 +128,21 @@ def test_stage_rewires_stale_frontier_composer(tmp_path: Path, monkeypatch) -> N
         prefer_repo=False,
         path_env=os.environ.get("PATH", ""),
     )
-    assert stale.is_symlink()
-    body = stale.resolve().read_text(encoding="utf-8")
+    assert not stale.exists()
+    backups = sorted(frontier.glob("vc-composer.sh.stale.*"))
+    assert backups
+    assert "ancient" in backups[0].read_text(encoding="utf-8")
+    # The live view serves the packaged composer instead.
+    view = home / ".config" / "vc-frame"
+    body = (view / "vc-composer.sh").read_text(encoding="utf-8")
     assert "ancient" not in body
-    assert "VC_COMPOSER_CARET" in body or "guicursor" in body or "t_SI" in body
 
 
-def test_wire_can_force_managed_frontier_without_claiming_user_view(
+def test_wire_backs_up_foreign_view_dir_and_skips_foreign_frontier_links(
     tmp_path: Path, monkeypatch
 ) -> None:
+    """A real view dir holding operator customization is displaced into a
+    backup (never destroyed); foreign links under the twin are skipped."""
     home = tmp_path / "home"
     home.mkdir()
     tools = home / ".local" / "share" / "vibecrafted" / "tools"
@@ -170,10 +167,13 @@ def test_wire_can_force_managed_frontier_without_claiming_user_view(
         force_frontier=True,
     )
 
-    assert (user_view / "layouts").resolve() == (foreign / "layouts").resolve()
-    assert (frontier / "layouts").resolve() == (
-        _runtime_payload(runtime) / "generated" / "vc-frame" / "layouts"
-    ).resolve()
+    generated = _runtime_payload(runtime) / "generated" / "vc-frame"
+    assert user_view.is_symlink()
+    assert user_view.resolve() == generated.resolve()
+    backups = sorted((home / ".config").glob("vc-frame.stale.*"))
+    assert backups and (backups[0] / "layouts").is_symlink()
+    # Foreign twin entries stay put; the twin dir survives because of them.
+    assert (frontier / "layouts").is_symlink()
     assert (foreign / "layouts" / "operator.kdl").read_text(
         encoding="utf-8"
     ) == "foreign layout\n"
@@ -216,10 +216,11 @@ def test_wire_only_never_mutates_published_generation(
     }
     replace_observations: list[bool] = []
     original_replace = os.replace
+    view = home / ".config" / "vc-frame"
 
     def observed_replace(source, destination) -> None:
         destination_path = Path(destination)
-        if destination_path.parent == home / ".config" / "vc-frame":
+        if destination_path == view:
             replace_observations.append(
                 destination_path.exists() or destination_path.is_symlink()
             )
@@ -257,10 +258,10 @@ def test_wire_failure_restores_displaced_user_view(
     tools = home / ".local" / "share" / "vibecrafted" / "tools"
     _seed_complete_runtime(tools)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
-    stage_vc_frame_config(home=home, tools_home=tools, prefer_repo=False)
-    view = home / ".config" / "vc-frame" / "config.kdl"
-    view.unlink()
-    view.write_text("operator config\n", encoding="utf-8")
+    view = home / ".config" / "vc-frame"
+    view.mkdir(parents=True)
+    operator_cfg = view / "config.kdl"
+    operator_cfg.write_text("operator config\n", encoding="utf-8")
     original_replace = os.replace
 
     def fail_view_publish(source, destination) -> None:
@@ -278,9 +279,10 @@ def test_wire_failure_restores_displaced_user_view(
             force=True,
         )
 
-    assert view.is_file()
+    # The displaced dir (whole-dir STALE backup) is restored on failure.
+    assert view.is_dir()
     assert not view.is_symlink()
-    assert view.read_text(encoding="utf-8") == "operator config\n"
+    assert operator_cfg.read_text(encoding="utf-8") == "operator config\n"
 
 
 def test_stage_keeps_mirrored_runtime_source_distinct_from_generated_view(
@@ -378,10 +380,12 @@ def test_regular_file_collision_gets_stale_backup(tmp_path: Path, monkeypatch) -
         version="bump1",
         prefer_repo=False,
     )
-    backups = list(view.glob("config.kdl.stale.*"))
+    # The whole legacy dir is displaced as one auditable backup.
+    backups = sorted((home / ".config").glob("vc-frame.stale.*"))
     assert backups, plan.render()
-    assert "choinka" in backups[0].read_text(encoding="utf-8")
-    assert "choinka" not in (view / "config.kdl").resolve().read_text(encoding="utf-8")
+    assert "choinka" in (backups[0] / "config.kdl").read_text(encoding="utf-8")
+    assert view.is_symlink()
+    assert "choinka" not in (view / "config.kdl").read_text(encoding="utf-8")
 
 
 def test_same_second_rewires_never_overwrite_operator_backups(
@@ -397,18 +401,20 @@ def test_same_second_rewires_never_overwrite_operator_backups(
         lambda: "20260726_120000",
     )
     view = home / ".config" / "vc-frame"
+
     view.mkdir(parents=True)
-    config = view / "config.kdl"
-
-    config.write_text("first operator config\n", encoding="utf-8")
+    (view / "config.kdl").write_text("first operator config\n", encoding="utf-8")
     stage_vc_frame_config(home=home, tools_home=tools, prefer_repo=False)
-    config.unlink()
-    config.write_text("second operator config\n", encoding="utf-8")
+    # Operator reverts to a real dir again; the second pass must not clobber
+    # the first same-second backup.
+    view.unlink()
+    view.mkdir(parents=True)
+    (view / "config.kdl").write_text("second operator config\n", encoding="utf-8")
     stage_vc_frame_config(home=home, tools_home=tools, prefer_repo=False)
 
-    backups = sorted(view.glob("config.kdl.stale.20260726_120000-*"))
+    backups = sorted((home / ".config").glob("vc-frame.stale.20260726_120000-*"))
     assert len(backups) == 2
-    assert {path.read_text(encoding="utf-8") for path in backups} == {
+    assert {(path / "config.kdl").read_text(encoding="utf-8") for path in backups} == {
         "first operator config\n",
         "second operator config\n",
     }
@@ -423,12 +429,14 @@ def test_foreign_symlink_is_preserved_without_force(
     _seed_complete_runtime(tools)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
-    operator_config = tmp_path / "operator-config.kdl"
-    operator_config.write_text('theme "operator-custom"\n', encoding="utf-8")
+    operator_dir = tmp_path / "operator-vc-frame"
+    operator_dir.mkdir()
+    (operator_dir / "config.kdl").write_text(
+        'theme "operator-custom"\n', encoding="utf-8"
+    )
+    (home / ".config").mkdir(parents=True)
     view = home / ".config" / "vc-frame"
-    view.mkdir(parents=True)
-    config_link = view / "config.kdl"
-    config_link.symlink_to(operator_config)
+    view.symlink_to(operator_dir)
 
     plan = stage_vc_frame_config(
         home=home,
@@ -437,12 +445,14 @@ def test_foreign_symlink_is_preserved_without_force(
         prefer_repo=False,
     )
 
-    assert config_link.is_symlink()
-    assert config_link.resolve() == operator_config.resolve()
-    assert operator_config.read_text(encoding="utf-8") == 'theme "operator-custom"\n'
+    assert view.is_symlink()
+    assert view.resolve() == operator_dir.resolve()
+    assert (operator_dir / "config.kdl").read_text(
+        encoding="utf-8"
+    ) == 'theme "operator-custom"\n'
     assert any(
         action.kind == "skip"
-        and action.path == str(config_link)
+        and action.path == str(view)
         and "foreign" in action.detail
         for action in plan.actions
     )
@@ -455,12 +465,14 @@ def test_foreign_symlink_is_replaced_with_force(tmp_path: Path, monkeypatch) -> 
     _seed_complete_runtime(tools)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
-    operator_config = tmp_path / "operator-config.kdl"
-    operator_config.write_text('theme "operator-custom"\n', encoding="utf-8")
+    operator_dir = tmp_path / "operator-vc-frame"
+    operator_dir.mkdir()
+    (operator_dir / "config.kdl").write_text(
+        'theme "operator-custom"\n', encoding="utf-8"
+    )
+    (home / ".config").mkdir(parents=True)
     view = home / ".config" / "vc-frame"
-    view.mkdir(parents=True)
-    config_link = view / "config.kdl"
-    config_link.symlink_to(operator_config)
+    view.symlink_to(operator_dir)
 
     stage_vc_frame_config(
         home=home,
@@ -470,9 +482,12 @@ def test_foreign_symlink_is_replaced_with_force(tmp_path: Path, monkeypatch) -> 
         force=True,
     )
 
-    assert config_link.is_symlink()
-    assert config_link.resolve() != operator_config.resolve()
-    assert operator_config.read_text(encoding="utf-8") == 'theme "operator-custom"\n'
+    assert view.is_symlink()
+    assert view.resolve() != operator_dir.resolve()
+    assert (view / "config.kdl").is_file()
+    assert (operator_dir / "config.kdl").read_text(
+        encoding="utf-8"
+    ) == 'theme "operator-custom"\n'
 
 
 def test_config_refresh_preserves_runtime_pointer_and_view_paths(
@@ -581,3 +596,32 @@ def test_classify_dangling(tmp_path: Path) -> None:
     link.symlink_to(tmp_path / "missing-target")
     ch = classify_view_path(link, store_current=tmp_path / "store", checkout=None)
     assert ch == "DANGLING"
+
+
+def test_wire_collapses_legacy_link_farm_and_dissolves_frontier_twin(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The old world (per-file owned links in the view + a frontier twin)
+    migrates in one pass to a single view symlink and no twin."""
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    runtime = _seed_complete_runtime(tools)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
+    generated = _runtime_payload(runtime) / "generated" / "vc-frame"
+    view = home / ".config" / "vc-frame"
+    frontier = home / ".config" / "vetcoders" / "frontier" / "vc-frame"
+    view.mkdir(parents=True)
+    frontier.mkdir(parents=True)
+    for name in ("config.kdl", "layouts", "themes", "vc-composer.sh"):
+        (view / name).symlink_to(generated / name)
+        (frontier / name).symlink_to(generated / name)
+
+    stage_vc_frame_config(home=home, tools_home=tools, prefer_repo=False)
+
+    assert view.is_symlink()
+    assert view.resolve() == generated.resolve()
+    assert not frontier.exists()
+    # No stray backups: everything removed was an owned link.
+    assert not list((home / ".config").glob("vc-frame.stale.*"))

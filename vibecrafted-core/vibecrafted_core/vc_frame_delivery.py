@@ -8,9 +8,12 @@ Delivery contract (plan vcframe-config-delivery):
   the published generation.
 - Ownership: config delivery never creates or flips the runtime-owned
   ``vibecrafted-current`` symlink.
-- Views (both must stay in lockstep — operator runtime pins frontier first):
-  1. ``$XDG_CONFIG_HOME/vc-frame/{config.kdl,layouts,themes,operator scripts}``
-  2. ``$XDG_CONFIG_HOME/vetcoders/frontier/vc-frame/…`` (``VC_FRAME_CONFIG_DIR``)
+- View (ONE config home, operator decision 2026-08-20 — the former dual
+  "lockstep" projections were redundancy dressed as a contract):
+  ``$XDG_CONFIG_HOME/vc-frame`` is a single directory symlink to the
+  package-owned ``runtime/generated/vc-frame`` under ``vibecrafted-current``.
+  The legacy frontier twin (``…/vetcoders/frontier/vc-frame``) is dissolved on
+  every delivery pass; resolvers pin the view (or the generated tree) directly.
 - Stage-time host adaptation: rewrite every shipped zsh entrypoint and select
   an available clipboard command.
 - Operator scripts (Composer / paste-stack / quick-cmd / …) are first-class
@@ -315,7 +318,8 @@ def plan_delivery(
     Re-materializes host-adapted config from the package source into the published
     generation's package-owned ``runtime/generated/vc-frame`` (never mutating
     the source itself or the ``vibecrafted-current`` owner symlink), then wires
-    both the legacy view and frontier projections to point at that generation.
+    the single view — ``$XDG_CONFIG_HOME/vc-frame`` as one directory symlink —
+    while dissolving the legacy frontier twin and any per-file link farm.
     """
     source = vc_frame_config_source()
     tools = tools_home if tools_home is not None else vibecrafted_tools_home()
@@ -391,75 +395,136 @@ def plan_delivery(
     checkout = source if use_repo else None
     # Ownership is the complete current runtime, while exact-target equality
     # decides whether an existing owned link is current or needs migration.
-    store_anchor = current
-    store_current = store_anchor if not use_repo else current
-    # Two projections: legacy view + frontier (the path VC_FRAME_CONFIG_DIR
-    # pins via _vetcoders_pin_vc_frame_config_dir). Wiring only the view left
-    # frontier as STALE-FILE forever — scripts/config never refreshed.
-    projection_roots = (
-        view_root,
+    store_current = current
+    # One config home (operator decision 2026-08-20): the frontier twin
+    # (~/.config/vetcoders/frontier/vc-frame) dissolves, and ~/.config/vc-frame
+    # collapses from a per-file symlink farm into ONE directory symlink at the
+    # package-owned generated tree. One canonical source, one view, no
+    # lockstep to police. force_frontier is honoured as force for dissolution
+    # so existing callers keep their meaning.
+    _dissolve_managed_tree(
         frontier_root(home) / "vc-frame",
+        dry_run=dry_run,
+        actions=plan.actions,
+        store_current=store_current,
+        checkout=checkout,
+        force=force or force_frontier,
     )
-    managed_frontier = frontier_root(home) / "vc-frame"
-    for projection in projection_roots:
-        _wire_projection(
-            projection,
-            base,
-            force=force or (force_frontier and projection == managed_frontier),
-            dry_run=dry_run,
-            actions=plan.actions,
-            store_current=store_current,
-            checkout=checkout,
-        )
+    _flatten_view_dir(
+        view_root,
+        dry_run=dry_run,
+        actions=plan.actions,
+        store_current=store_current,
+        checkout=checkout,
+    )
+    _wire_one(
+        view_root,
+        base,
+        force=force,
+        dry_run=dry_run,
+        actions=plan.actions,
+        store_current=store_current,
+        checkout=checkout,
+    )
     return plan
 
 
-def _wire_projection(
-    projection_root: Path,
-    base: Path,
+def _dissolve_managed_tree(
+    root: Path,
     *,
+    dry_run: bool,
+    actions: list[WireAction],
+    store_current: Path,
+    checkout: Path | None,
     force: bool,
+) -> None:
+    """Remove the legacy twin projection: owned links go, foreign entries stay.
+
+    STALE real files are backed up next to their path (same policy as
+    :func:`_wire_one`), and the twin directory itself is removed once empty.
+    """
+    if root.is_symlink():
+        channel = classify_view_path(
+            root, store_current=store_current, checkout=checkout
+        )
+        if channel in {"store-current", "dev-checkout", "DANGLING"} or force:
+            actions.append(
+                WireAction("remove", str(root), f"dissolve twin ({channel})")
+            )
+            if not dry_run:
+                root.unlink(missing_ok=True)
+        else:
+            actions.append(
+                WireAction("skip", str(root), "foreign twin symlink left in place")
+            )
+        return
+    if not root.is_dir():
+        return
+    for entry in sorted(root.iterdir()):
+        channel = classify_view_path(
+            entry, store_current=store_current, checkout=checkout
+        )
+        if channel in {"store-current", "dev-checkout", "DANGLING"}:
+            actions.append(
+                WireAction("remove", str(entry), f"dissolve twin ({channel})")
+            )
+            if not dry_run:
+                entry.unlink(missing_ok=True)
+        elif channel == "STALE-FILE":
+            backup = Path(
+                f"{entry}.stale.{_timestamp()}-{os.getpid()}-{os.urandom(4).hex()}"
+            )
+            actions.append(WireAction("backup", str(entry), f"-> {backup.name}"))
+            if not dry_run:
+                entry.rename(backup)
+        else:
+            actions.append(WireAction("skip", str(entry), f"left in place ({channel})"))
+    if dry_run:
+        actions.append(WireAction("note", str(root), "would remove twin dir if empty"))
+        return
+    try:
+        next(root.iterdir())
+    except StopIteration:
+        root.rmdir()
+        actions.append(WireAction("remove", str(root), "empty twin dir"))
+    except OSError:
+        pass
+
+
+def _flatten_view_dir(
+    view_root: Path,
+    *,
     dry_run: bool,
     actions: list[WireAction],
     store_current: Path,
     checkout: Path | None,
 ) -> None:
-    """Wire one config projection (view or frontier) from the staged base."""
-    for name in _CORE_VIEW_NAMES:
-        target = base / name
-        if not target.exists() and not dry_run:
-            continue
-        _wire_one(
-            projection_root / name,
-            target,
-            force=force,
-            dry_run=dry_run,
-            actions=actions,
-            store_current=store_current,
-            checkout=checkout,
+    """Drain owned per-file links from a legacy real-dir view.
+
+    After this pass an empty view dir is removed so :func:`_wire_one` can plant
+    the single directory symlink; a dir still holding real or foreign entries
+    is left for `_wire_one`'s STALE-FILE backup path (nothing is destroyed).
+    """
+    if view_root.is_symlink() or not view_root.is_dir():
+        return
+    for entry in sorted(view_root.iterdir()):
+        channel = classify_view_path(
+            entry, store_current=store_current, checkout=checkout
         )
-    for name in OPERATOR_SCRIPT_NAMES:
-        target = base / name
-        if not target.exists() and not dry_run:
-            # dry_run still records the intended link so plans stay auditable
-            if dry_run:
-                actions.append(
-                    WireAction(
-                        "note",
-                        str(projection_root / name),
-                        f"operator script absent from source base: {name}",
-                    )
-                )
-            continue
-        _wire_one(
-            projection_root / name,
-            target,
-            force=force,
-            dry_run=dry_run,
-            actions=actions,
-            store_current=store_current,
-            checkout=checkout,
-        )
+        if channel in {"store-current", "dev-checkout", "DANGLING"}:
+            actions.append(
+                WireAction("remove", str(entry), f"flatten view ({channel})")
+            )
+            if not dry_run:
+                entry.unlink(missing_ok=True)
+    if dry_run:
+        return
+    try:
+        next(view_root.iterdir())
+    except StopIteration:
+        view_root.rmdir()
+    except OSError:
+        pass
 
 
 def stage_vc_frame_config(
