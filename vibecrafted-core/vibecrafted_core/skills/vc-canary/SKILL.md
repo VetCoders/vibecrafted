@@ -88,8 +88,9 @@ vibecrafted canary claude --prompt 'Catalog this repo; agent pin default if unse
 3. **FLEET** — 1 agent = 1 scope. Hybrid: N≤8 native; N>8 external.
    Agent pin: user; else session defaults (claude Sonnet 5 / codex gpt-5.6-terra /
    grok-4.5). Await = **session wake** ([await-arming](../vc-dispatch/references/await-arming.md)).
-4. **SETTLE** — merge catalogs; `diff-audit` (**no auto-revert** — examine why,
-   ask operator); compile/lint via plugin; **one** commit.
+4. **SETTLE** — strict merge validates every catalog unit against the language
+   plugin resolved from its `file`; `diff-audit` (**no auto-revert** — examine
+   why, ask operator); compile/lint via plugin; **one** commit.
 5. **FINDINGS** — notes signals × `loct follow` / findings.json; only confirmed.
 6. **REPORT → DISCUSS → DECIDE** — no silent memex/aicx seed.
 
@@ -101,12 +102,21 @@ CLI="uv run --python 3.12 …/vc-canary/scripts/canary_cli.py"
 $CLI snapshot-path --root .
 $CLI repo-view --root .
 $CLI atlas --root . --refresh
-$CLI merge-catalog --root .
+$CLI merge-catalog --root . --strict
 $CLI diff-audit --root .
 $CLI coverage --root .
 ```
 
 All writes go under `./.loctree/` (atlas + canary). Status on stdout; data in files.
+
+## Catalog contract at settle
+
+`merge-catalog` loads every `plugins/*.py` contract, resolves the plugin from
+each unit's `file` glob, and by default rejects the first unit that is missing a
+plugin `REQUIRED_FIELDS` value, has a `kind` outside `KIND_ENUM`, or has no
+language plugin. It names the catalog file, unit index, source file, and plugin
+in the error, and writes no merged output on failure. `--no-strict` is an
+explicit compatibility escape hatch and prints a warning; it is never implicit.
 
 ## Dependencies
 
@@ -128,7 +138,7 @@ Prefer whichever launcher is live in the session, in order:
 - Fixed agent count instead of scopes from sense
 - `( await > file ) &` false-armed await
 - Auto-revert on bad canary diff
-- Codescribe-style catalog without `role` / `authority` (Rust plugin must enforce)
+- Using `--no-strict` without an operator-approved compatibility reason
 
 ## Verify before the handoff
 
