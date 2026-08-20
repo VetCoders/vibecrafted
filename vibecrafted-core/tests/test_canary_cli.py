@@ -116,3 +116,18 @@ def test_every_shipped_language_plugin_uses_the_rust_required_field_contract() -
         "typescript.py",
     }
     assert all(plugin.required_fields == expected for plugin in plugins.values())
+
+
+def test_merge_catalog_accepts_legacy_units_key_with_warning(tmp_path: Path) -> None:
+    catalogs = tmp_path / "catalogs"
+    catalogs.mkdir()
+    (catalogs / "legacy-scope.json").write_text(
+        json.dumps({"units": [_unit("src/lib.rs", "fn")]}), encoding="utf-8"
+    )
+
+    result = _run_merge(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "legacy top-level key 'units'" in result.stderr
+    merged = json.loads((tmp_path / "catalog.json").read_text(encoding="utf-8"))
+    assert merged["counts"]["units_cataloged"] == 1

@@ -716,6 +716,16 @@ def cmd_merge_catalog(args: argparse.Namespace) -> int:
         except (OSError, json.JSONDecodeError) as e:
             _die(f"bad catalog {p}: {e}")
         cat = data.get("catalog") if isinstance(data, dict) else data
+        if (
+            cat is None
+            and isinstance(data, dict)
+            and isinstance(data.get("units"), list)
+        ):
+            cat = data["units"]
+            print(
+                f"warning: {p.name} uses legacy top-level key 'units'; the contract key is 'catalog'",
+                file=sys.stderr,
+            )
         if not isinstance(cat, list):
             _die(f"catalog not a list in {p}")
         if args.strict:

@@ -6,7 +6,7 @@ flowchart TD
   B --> C{coverage pass?}
   C -->|no| D[STOP + loctree-fail hak]
   C -->|yes| E[SENSE: planes_hint + hubs → scopes.json]
-  E --> F[Fleet: 1 agent per scope]
+  E --> F[Fleet: 1 agent per scope / worktree per scope when parallel]
   F --> G[merge-catalog + diff-audit]
   G --> H{suspicious deletions?}
   H -->|yes| I[examine why + AskUser — no revert]

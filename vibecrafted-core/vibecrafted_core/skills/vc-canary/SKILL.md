@@ -84,14 +84,33 @@ vibecrafted canary claude --prompt 'Catalog this repo; agent pin default if unse
 2. **SENSE** — read `repo-atlas.json` + `planes_hint` + hubs; **you** write
    `./.loctree/canary/scopes.json` and one brief per scope
    (`scopes/<id>.brief.md`). N is **not fixed** — e.g. `core`, `macos`,
-   `Makefile`, `scripts`.
+   `Makefile`, `scripts`. **Scale-adaptive:** when one plane dwarfs the rest
+   (loctree-suite 2026-08-20: one crate held 73% of LOC), split it along its
+   own substructure into agent-honest budgets and declare what stays out as an
+   explicit deferred wave (`wave` field in `scopes.json`) — deferral is a
+   recorded decision, not an omission.
 3. **FLEET** — 1 agent = 1 scope. Hybrid: N≤8 native; N>8 external.
+   **Substrate is mechanics, not judgement:** N=1 → Living Tree; N>1 → Fleet
+   Worktrees (Living Tree Rule, Mode B) — one worktree per scope branched from
+   the integration base, the agent commits inside its own worktree, a
+   single-thread integrator merges scope branches sequentially. Never park a
+   parallel fleet in one shared checkout.
+   Native subagents inherit the **parent model** (agent model parity); the
+   session defaults below pin external workers only. Every scope gets its
+   **own scratchpad subdirectory**, named in the brief — flat shared tmp
+   filenames collided between parallel scopes (loctree-suite, 2026-08-20).
    Agent pin: user; else session defaults (claude Sonnet 5 / codex gpt-5.6-terra /
    grok-4.5). Await = **session wake** ([await-arming](../vc-dispatch/references/await-arming.md)).
 4. **SETTLE** — strict merge validates every catalog unit against the language
    plugin resolved from its `file`; `diff-audit` (**no auto-revert** — examine
-   why, ask operator); compile/lint via plugin; **one** commit.
-5. **FINDINGS** — notes signals × `loct follow` / findings.json; only confirmed.
+   why, ask operator); compile/lint via plugin; **one** commit (solo) or a
+   single-thread integration of scope branches with `diff-audit` re-run on the
+   integrated tree (fleet).
+5. **FINDINGS** — only after the fleet fully settles: fleet edits shift line
+   numbers and re-trigger incremental scans, so `loct follow` counts drift
+   mid-flight (observed 4→9 dead exports inside one wave). Pin the snapshot
+   fingerprint next to every quoted count. Then: notes signals × `loct follow`
+   / findings.json; only confirmed.
 6. **REPORT → DISCUSS → DECIDE** — no silent memex/aicx seed.
 
 ## Utility scripts
@@ -139,6 +158,11 @@ Prefer whichever launcher is live in the session, in order:
 - `( await > file ) &` false-armed await
 - Auto-revert on bad canary diff
 - Using `--no-strict` without an operator-approved compatibility reason
+- Parking a parallel fleet in one shared checkout (concurrency ⇒ worktrees)
+- Returning the catalog under any top-level key other than `catalog`
+- Flat shared scratchpad filenames across parallel scopes
+- Running FINDINGS while the fleet still edits (drifting `loct follow` counts)
+- Docstringing generated / SRI-pinned / vendored artifacts — catalog, never edit
 
 ## Verify before the handoff
 
