@@ -17,6 +17,10 @@ For every def/class/fn/struct/mod (language plugin rules) and each module file:
 4. NO logic/signature/import changes.
 5. Run compile/lint only on files you touched; fix only your own mess.
 
-Return JSON matching the catalog schema (role + authority REQUIRED for rust).
+Return JSON matching the catalog schema. `merge-catalog --strict` resolves a
+language plugin from every unit's `file` and enforces that plugin's
+`REQUIRED_FIELDS` and `KIND_ENUM`: `role` and `authority` are required for
+every supported language, not just Rust. A violation names the catalog file and
+unit and rejects the entire scope before any merged catalog is written.
 files_touched, notes (dead/twins/name-mismatch — honest, will be loct-cross-checked).
 ```

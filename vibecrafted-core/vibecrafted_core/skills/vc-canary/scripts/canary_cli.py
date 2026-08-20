@@ -19,6 +19,8 @@ short status line to stdout.
 from __future__ import annotations
 
 import argparse
+import fnmatch
+import importlib.util
 import json
 import os
 import subprocess
@@ -104,6 +106,132 @@ class CacheHit:
     analysis: Path | None
     manifest: Path | None
     mtime: float
+
+
+@dataclass(frozen=True)
+class LanguagePlugin:
+    """Validated catalog contract loaded from one vc-canary plugin file."""
+
+    name: str
+    globs: tuple[str, ...]
+    kind_enum: tuple[str, ...]
+    required_fields: tuple[str, ...]
+
+
+def load_language_plugins() -> tuple[LanguagePlugin, ...]:
+    """Load and validate every language contract shipped beside this CLI."""
+    plugins_dir = Path(__file__).resolve().parents[1] / "plugins"
+    if not plugins_dir.is_dir():
+        _die(f"canary language plugin directory missing: {plugins_dir}")
+
+    plugins: list[LanguagePlugin] = []
+    for plugin_path in sorted(plugins_dir.glob("*.py")):
+        if plugin_path.name.startswith("_"):
+            continue
+        module_name = f"_vc_canary_plugin_{plugin_path.stem}"
+        spec = importlib.util.spec_from_file_location(module_name, plugin_path)
+        if spec is None or spec.loader is None:
+            _die(f"cannot load language plugin: {plugin_path}")
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+        except Exception as e:  # noqa: BLE001 - surface plugin failures as catalog errors.
+            _die(f"cannot load language plugin {plugin_path.name}: {e}")
+
+        values = {
+            field: getattr(module, field, None)
+            for field in ("GLOBS", "KIND_ENUM", "REQUIRED_FIELDS")
+        }
+        invalid = [
+            field
+            for field, value in values.items()
+            if not isinstance(value, tuple)
+            or not value
+            or not all(isinstance(item, str) and item for item in value)
+        ]
+        if invalid:
+            _die(f"language plugin {plugin_path.name} has invalid {', '.join(invalid)}")
+        plugins.append(
+            LanguagePlugin(
+                name=plugin_path.name,
+                globs=values["GLOBS"],
+                kind_enum=values["KIND_ENUM"],
+                required_fields=values["REQUIRED_FIELDS"],
+            )
+        )
+
+    if not plugins:
+        _die(f"no language plugins found in {plugins_dir}")
+    return tuple(plugins)
+
+
+def plugin_for_file(
+    file_path: str, plugins: tuple[LanguagePlugin, ...]
+) -> LanguagePlugin | None:
+    """Resolve one plugin by the catalog unit's source filename."""
+    filename = Path(file_path).name
+    matches = [
+        plugin
+        for plugin in plugins
+        if any(fnmatch.fnmatch(filename, glob) for glob in plugin.globs)
+    ]
+    if len(matches) > 1:
+        _die(
+            f"ambiguous language plugins for catalog file {file_path!r}: "
+            f"{', '.join(plugin.name for plugin in matches)}"
+        )
+    return matches[0] if matches else None
+
+
+def validate_catalog_unit(
+    catalog_path: Path,
+    unit_index: int,
+    unit: Any,
+    plugins: tuple[LanguagePlugin, ...],
+) -> None:
+    """Fail closed on the first per-unit plugin contract violation."""
+    location = f"catalog {catalog_path} unit[{unit_index}]"
+    if not isinstance(unit, dict):
+        _die(f"{location}: unit must be an object")
+
+    raw_file = unit.get("file")
+    if not isinstance(raw_file, str) or not raw_file.strip():
+        _die(f"{location}: missing required field 'file'")
+    plugin = plugin_for_file(raw_file, plugins)
+    if plugin is None:
+        _die(
+            f"{location} file {raw_file!r}: no language plugin matches this file "
+            "(strict merge rejects unvalidated units)"
+        )
+
+    for field in plugin.required_fields:
+        value = unit.get(field)
+        if (
+            field not in unit
+            or value is None
+            or (isinstance(value, str) and not value.strip())
+        ):
+            _die(
+                f"{location} file {raw_file!r} plugin {plugin.name}: "
+                f"missing required field {field!r}"
+            )
+
+    kind = unit.get("kind")
+    if not isinstance(kind, str) or kind not in plugin.kind_enum:
+        _die(
+            f"{location} file {raw_file!r} plugin {plugin.name}: "
+            f"invalid kind {kind!r}; expected one of {', '.join(plugin.kind_enum)}"
+        )
+
+
+def validate_catalog(
+    catalog_path: Path,
+    catalog: list[Any],
+    plugins: tuple[LanguagePlugin, ...],
+) -> None:
+    """Validate every unit before merge output can be written."""
+    for unit_index, unit in enumerate(catalog):
+        validate_catalog_unit(catalog_path, unit_index, unit, plugins)
 
 
 def resolve_cache_pack(root: Path) -> CacheHit | None:
@@ -573,6 +701,12 @@ def cmd_merge_catalog(args: argparse.Namespace) -> int:
     out = Path(args.output or root / ".loctree" / "canary" / "catalog.json")
     if not src.is_dir():
         _die(f"catalogs dir missing: {src}")
+    plugins = load_language_plugins() if args.strict else ()
+    if not args.strict:
+        print(
+            "warning: merge-catalog contract validation disabled by --no-strict",
+            file=sys.stderr,
+        )
     catalogs = []
     units = 0
     added = 0
@@ -584,6 +718,8 @@ def cmd_merge_catalog(args: argparse.Namespace) -> int:
         cat = data.get("catalog") if isinstance(data, dict) else data
         if not isinstance(cat, list):
             _die(f"catalog not a list in {p}")
+        if args.strict:
+            validate_catalog(p, cat, plugins)
         catalogs.append(
             {
                 "chunk": p.stem,
@@ -743,6 +879,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mg.add_argument("--input-dir", default=None)
     mg.add_argument("--output", default=None)
+    strict_group = mg.add_mutually_exclusive_group()
+    strict_group.add_argument(
+        "--strict",
+        dest="strict",
+        action="store_true",
+        default=True,
+        help="Validate each catalog unit against its language plugin (default)",
+    )
+    strict_group.add_argument(
+        "--no-strict",
+        dest="strict",
+        action="store_false",
+        help="Explicitly bypass language-plugin validation",
+    )
     mg.set_defaults(func=cmd_merge_catalog)
 
     da = sub.add_parser(

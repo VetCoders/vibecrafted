@@ -1,0 +1,118 @@
+"""Executable contract tests for vc-canary catalog settlement."""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CLI = (
+    REPO_ROOT
+    / "vibecrafted-core/vibecrafted_core/skills/vc-canary/scripts/canary_cli.py"
+)
+
+
+def _cli_module():
+    spec = importlib.util.spec_from_file_location("test_canary_cli", CLI)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _unit(file_path: str, kind: str) -> dict[str, object]:
+    return {
+        "file": file_path,
+        "name": "entry",
+        "line": 1,
+        "kind": kind,
+        "role": "owns the demonstrated runtime behavior",
+        "docstring_added": False,
+        "authority": "repo_verified",
+    }
+
+
+def _run_merge(tmp_path: Path) -> subprocess.CompletedProcess[str]:
+    catalogs = tmp_path / "catalogs"
+    output = tmp_path / "catalog.json"
+    return subprocess.run(
+        [
+            sys.executable,
+            str(CLI),
+            "merge-catalog",
+            "--input-dir",
+            str(catalogs),
+            "--output",
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _write_catalog(tmp_path: Path, name: str, unit: object) -> None:
+    catalogs = tmp_path / "catalogs"
+    catalogs.mkdir()
+    (catalogs / name).write_text(json.dumps({"catalog": [unit]}), encoding="utf-8")
+
+
+def test_merge_catalog_rejects_missing_authority_with_catalog_and_unit(
+    tmp_path: Path,
+) -> None:
+    unit = _unit("src/lib.rs", "fn")
+    unit.pop("authority")
+    _write_catalog(tmp_path, "rust-scope.json", unit)
+
+    result = _run_merge(tmp_path)
+
+    assert result.returncode != 0
+    assert "rust-scope.json unit[0] file 'src/lib.rs' plugin rust.py" in result.stderr
+    assert "missing required field 'authority'" in result.stderr
+    assert not (tmp_path / "catalog.json").exists()
+
+
+def test_merge_catalog_accepts_complete_rust_unit(tmp_path: Path) -> None:
+    _write_catalog(tmp_path, "rust-scope.json", _unit("src/lib.rs", "fn"))
+
+    result = _run_merge(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    merged = json.loads((tmp_path / "catalog.json").read_text(encoding="utf-8"))
+    assert merged["counts"]["units_cataloged"] == 1
+
+
+def test_merge_catalog_uses_shell_plugin_not_an_unvalidated_fallback(
+    tmp_path: Path,
+) -> None:
+    _write_catalog(tmp_path, "shell-scope.json", _unit("scripts/demo.sh", "def"))
+
+    result = _run_merge(tmp_path)
+
+    assert result.returncode != 0
+    assert (
+        "shell-scope.json unit[0] file 'scripts/demo.sh' plugin shell.py"
+        in result.stderr
+    )
+    assert "invalid kind 'def'" in result.stderr
+
+
+def test_every_shipped_language_plugin_uses_the_rust_required_field_contract() -> None:
+    module = _cli_module()
+    plugins = {plugin.name: plugin for plugin in module.load_language_plugins()}
+    expected = plugins["rust.py"].required_fields
+
+    assert set(plugins) == {
+        "javascript.py",
+        "python.py",
+        "rust.py",
+        "shell.py",
+        "toml.py",
+        "typescript.py",
+    }
+    assert all(plugin.required_fields == expected for plugin in plugins.values())
