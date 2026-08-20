@@ -54,6 +54,66 @@ def _runtime_env(monkeypatch, tmp_path: Path, run_id: str) -> Path:
     return home
 
 
+def _child_result(report: Path, label: str) -> workflow_runtime.ChildResult:
+    return workflow_runtime.ChildResult(
+        label=label,
+        agent="codex",
+        run_id=f"parent-{label}",
+        agent_session_id=f"session-{label}",
+        agent_model="codex-model",
+        model_requested="",
+        model_override_supported=True,
+        model_override_skipped=False,
+        model_override_skip_reason="",
+        report=report,
+        transcript=report.with_suffix(".log"),
+        exit_code=0,
+        artifact_ok=True,
+        artifact_errors=(),
+    )
+
+
+def test_aggregate_child_report_fields_are_conservative(tmp_path: Path) -> None:
+    reports = [tmp_path / "l1.md", tmp_path / "l2.md"]
+    for report in reports:
+        report.write_text(
+            "---\n"
+            "run_id: child\n"
+            "agent: codex\n"
+            "skill: vc-polarize\n"
+            "status: completed\n"
+            "code_mutation: false\n"
+            "next_stage: dou\n"
+            "stage_completed: true\n"
+            "---\n"
+            "body\n",
+            encoding="utf-8",
+        )
+    results = tuple(
+        _child_result(report, f"L{index}")
+        for index, report in enumerate(reports, start=1)
+    )
+
+    assert workflow_runtime._aggregate_child_report_fields(results) == {
+        "code_mutation": "false",
+        "next_stage": "dou",
+        "stage_completed": "true",
+    }
+
+    reports[1].write_text(
+        reports[1]
+        .read_text(encoding="utf-8")
+        .replace("code_mutation: false", "code_mutation: true")
+        .replace("next_stage: dou", "next_stage: audit"),
+        encoding="utf-8",
+    )
+
+    assert workflow_runtime._aggregate_child_report_fields(results) == {
+        "code_mutation": "true",
+        "stage_completed": "true",
+    }
+
+
 def _write_finished_lane_meta(
     child_dir: Path, run_id: str, agent: str, completed_at: str
 ) -> None:
@@ -833,6 +893,7 @@ def test_research_runtime_tees_child_output(
 
 def test_marbles_runtime_supervises_loops(monkeypatch, tmp_path: Path) -> None:
     home = _runtime_env(monkeypatch, tmp_path, "marb-test")
+    monkeypatch.setenv("VIBECRAFTED_CLAIM_DIGEST", "0123456789abcdef")
 
     rc = workflow_runtime.main(
         [
@@ -853,6 +914,10 @@ def test_marbles_runtime_supervises_loops(monkeypatch, tmp_path: Path) -> None:
     assert rc == 0
     report = (home / "parent.md").read_text(encoding="utf-8")
     assert "vc-marbles supervised run" in report
+    assert "claim_status: completed" in report
+    assert "finalized: true" in report
+    assert "claim: All 2 supervised vc-marbles child runs completed" in report
+    assert "claim_digest: 0123456789abcdef" in report
     assert "marbles-L1" in report
     assert "marbles-L2" in report
     assert "agent_session_id: codex-session" in report

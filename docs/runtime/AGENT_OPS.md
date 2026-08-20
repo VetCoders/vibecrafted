@@ -369,7 +369,10 @@ three signals are the bar for done.
 - **Marbles parent runs have NO transcript.log** — the loop spawns children
   with their own transcripts under `reports/marbles/<run>-children/`. Watch
   children-dir growth or the report file; a parent-transcript stall check is
-  a false alarm (confirmed twice).
+  a false alarm (confirmed twice). The canonical await path therefore treats
+  that parent transcript as optional unless its caller explicitly sets
+  `require_transcript_output=True`; it must not turn an otherwise valid
+  aggregate report into `transcript_missing` by default.
 - Watchers live with the supervisor (main loop), never inside a subagent —
   that is Class 1 waiting to happen.
 - Budget every watcher, and on silent expiry verify liveness before declaring
