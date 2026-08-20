@@ -67,6 +67,10 @@ def _env(tmp_path: Path, *, crafted_home: Path | None = None) -> dict[str, str]:
             encoding="utf-8",
         )
         executable.chmod(0o755)
+    # Detached workers use the canonical allowlisted agent PATH, not arbitrary
+    # inherited PATH entries. Pin its first entry to this fixture so a local
+    # provider installation can never escape the test process.
+    env["VIBECRAFTED_RUNTIME_BIN"] = str(fake_bin)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     return env
 

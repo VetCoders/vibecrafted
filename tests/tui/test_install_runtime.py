@@ -85,6 +85,7 @@ def test_runtime_doctor_reports_active_wezterm(monkeypatch, tmp_path: Path) -> N
 def test_foundations_default_prefix_uses_xdg_local_share(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["HOME"] = str(tmp_path)
+    env["VIBECRAFTED_HOME"] = str(tmp_path / ".vibecrafted")
     env.pop("VIBECRAFTED_BIN", None)
     env.pop("VIBECRAFTED_RUNTIME_HOME", None)
     env.pop("XDG_DATA_HOME", None)

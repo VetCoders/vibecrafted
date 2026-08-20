@@ -484,6 +484,10 @@ def _expected_operator_session(run_id: str | None = None) -> str:
     return f"{base}-{run_id}" if run_id else base
 
 
+def _expected_resolved_operator_session() -> str:
+    return _expected_operator_session()[:24].rstrip("-._") or "vibecrafted"
+
+
 def _resolved_workspace_session(env: dict[str, str]) -> str:
     result = subprocess.run(
         ["bash", str(LAUNCHER), "workspace", "resolve", "--env"],
@@ -528,7 +532,7 @@ def test_init_claude_uses_interactive_tab_without_print_mode(
     env["VIBECRAFTED_OSASCRIPT_BIN"] = str(fake_bin / "osascript")
     env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["FAKE_VC_FRAME_SESSION"] = _expected_operator_session()
+    env["FAKE_VC_FRAME_SESSION"] = _expected_resolved_operator_session()
     # Sanitize real vc_frame env to prevent leaks from the host session.
     env.pop("VC_FRAME", None)
     env.pop("VC_FRAME_PANE_ID", None)
@@ -545,7 +549,8 @@ def test_init_claude_uses_interactive_tab_without_print_mode(
     # When vc_frame operator session exists, spawn routes directly through vc_frame
     # without opening a new terminal via osascript.
     assert (
-        f"VC_FRAME --session {_expected_operator_session()} action new-tab" in payload
+        f"VC_FRAME --session {_expected_resolved_operator_session()} action new-tab"
+        in payload
     )
 
     command_script = _spawned_command_script(payload)
@@ -576,7 +581,7 @@ def test_init_codex_uses_interactive_tab_without_exec_mode(tmp_path: Path) -> No
     env["VIBECRAFTED_OSASCRIPT_BIN"] = str(fake_bin / "osascript")
     env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["FAKE_VC_FRAME_SESSION"] = _expected_operator_session()
+    env["FAKE_VC_FRAME_SESSION"] = _expected_resolved_operator_session()
     # Sanitize real vc_frame env to prevent leaks from the host session.
     env.pop("VC_FRAME", None)
     env.pop("VC_FRAME_PANE_ID", None)
@@ -593,7 +598,8 @@ def test_init_codex_uses_interactive_tab_without_exec_mode(tmp_path: Path) -> No
     # When vc_frame operator session exists, spawn routes directly through vc_frame
     # without opening a new terminal via osascript.
     assert (
-        f"VC_FRAME --session {_expected_operator_session()} action new-tab" in payload
+        f"VC_FRAME --session {_expected_resolved_operator_session()} action new-tab"
+        in payload
     )
 
     command_script = _spawned_command_script(payload)
@@ -642,7 +648,7 @@ def test_init_fleet_agents_resolve_skill_init_helpers(
     env["VIBECRAFTED_OSASCRIPT_BIN"] = str(fake_bin / "osascript")
     env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["FAKE_VC_FRAME_SESSION"] = _expected_operator_session()
+    env["FAKE_VC_FRAME_SESSION"] = _expected_resolved_operator_session()
     env.pop("VC_FRAME", None)
     env.pop("VC_FRAME_PANE_ID", None)
     env.pop("VC_FRAME_SESSION_NAME", None)
@@ -666,7 +672,8 @@ def test_init_fleet_agents_resolve_skill_init_helpers(
 
     payload = capture_file.read_text(encoding="utf-8")
     assert (
-        f"VC_FRAME --session {_expected_operator_session()} action new-tab" in payload
+        f"VC_FRAME --session {_expected_resolved_operator_session()} action new-tab"
+        in payload
     )
 
     command_script = _spawned_command_script(payload)
@@ -1501,6 +1508,7 @@ def test_installed_launcher_tui_uses_shared_state_and_voc_binary(
 
     env = os.environ.copy()
     env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(installed_root)
     # Isolate PATH so a host ~/.local/bin/voc cannot steal resolution from the
     # local vibecrafted-app debug fixture. Keep /bin for bash/coreutils.
     env["PATH"] = f"{fake_bin}:/bin:/usr/bin"
@@ -2350,7 +2358,7 @@ def test_dashboard_subcommand_launches_repo_owned_vc_frame_layout(
     payload = capture_file.read_text(encoding="utf-8").splitlines()
     assert "--session" in payload
     # dashboard (default layout) uses the canonical operator session, no suffix.
-    assert _expected_operator_session() in payload
+    assert _expected_resolved_operator_session() in payload
     assert "--new-session-with-layout" in payload
     assert (
         str(

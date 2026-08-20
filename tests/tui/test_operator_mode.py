@@ -182,6 +182,10 @@ def _expected_operator_session(run_id: str | None = None) -> str:
     return f"{base}-{run_id}" if run_id else base
 
 
+def _expected_resolved_operator_session() -> str:
+    return _expected_operator_session()[:24].rstrip("-._") or "vibecrafted"
+
+
 def _resolved_workspace_session(env: dict[str, str]) -> str:
     result = subprocess.run(
         [
@@ -915,7 +919,7 @@ def test_explicit_terminal_marbles_from_operator_mode_spawns_fresh_tab(
     env["VC_FRAME"] = "operator"
     env["VIBECRAFTED_RUN_ID"] = "marb-014520"
     env["VIBECRAFTED_MARBLES_RUN_ID"] = "marb-014520"
-    expected_session = _expected_operator_session()
+    expected_session = _expected_resolved_operator_session()
     env["VC_FRAME_SESSION_NAME"] = expected_session
     subprocess.run(
         [
