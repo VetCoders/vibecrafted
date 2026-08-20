@@ -55,10 +55,22 @@ pin_darwin_socket_dir() {
 }
 
 pin_product_config() {
+  # One config home: ~/.config/vc-frame (a single dir symlink) is canonical,
+  # the generated tree under vibecrafted-current backs it, the frontier twin
+  # is honoured only as a legacy fallback.
   local xdg="${XDG_CONFIG_HOME:-$HOME/.config}"
-  local frontier="$xdg/vetcoders/frontier/vc-frame"
   local view="$xdg/vc-frame"
+  local generated="${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame"
+  local frontier="$xdg/vetcoders/frontier/vc-frame"
   if [[ -f "${VC_FRAME_CONFIG_DIR:-}/config.kdl" ]]; then
+    return 0
+  fi
+  if [[ -L "$view" && -f "$view/config.kdl" ]]; then
+    export VC_FRAME_CONFIG_DIR="$view"
+    return 0
+  fi
+  if [[ -f "$generated/config.kdl" ]]; then
+    export VC_FRAME_CONFIG_DIR="$generated"
     return 0
   fi
   if [[ -f "$frontier/config.kdl" ]]; then
@@ -66,6 +78,7 @@ pin_product_config() {
     return 0
   fi
   if [[ -f "$view/config.kdl" ]]; then
+    # legacy real-dir view: last resort until `vibecrafted update` collapses it
     export VC_FRAME_CONFIG_DIR="$view"
     return 0
   fi

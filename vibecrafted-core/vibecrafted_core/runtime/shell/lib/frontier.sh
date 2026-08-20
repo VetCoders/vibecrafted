@@ -77,7 +77,26 @@ _vetcoders_frontier_source_root() {
 
 _vetcoders_vc_frame_config_dir() {
   local vc_frame_config
+  # One config home: the ~/.config/vc-frame view symlink is canonical and the
+  # host-adapted generated tree under vibecrafted-current backs it. The
+  # frontier chain stays only as a legacy fallback — its candidates can hit
+  # the UN-adapted package source (config/vc-frame), never prefer it.
+  local xdg_config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+  local generated="${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame"
+  if [[ -L "$xdg_config_home/vc-frame" && -f "$xdg_config_home/vc-frame/config.kdl" ]]; then
+    printf '%s' "$xdg_config_home/vc-frame"
+    return 0
+  fi
+  if [[ -f "$generated/config.kdl" ]]; then
+    printf '%s' "$generated"
+    return 0
+  fi
   vc_frame_config="$(_vetcoders_frontier_file "vc-frame/config.kdl" 2>/dev/null || true)"
+  if [[ -z "$vc_frame_config" && -f "$xdg_config_home/vc-frame/config.kdl" ]]; then
+    # legacy real-dir view: last resort until `vibecrafted update` collapses it
+    printf '%s' "$xdg_config_home/vc-frame"
+    return 0
+  fi
   [[ -n "$vc_frame_config" ]] || return 1
   dirname "$vc_frame_config"
 }

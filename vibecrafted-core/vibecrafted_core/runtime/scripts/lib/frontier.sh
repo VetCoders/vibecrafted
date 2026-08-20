@@ -70,7 +70,20 @@ spawn_export_frontier_sidecars() {
   local xdg_config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
   starship_config="$(spawn_frontier_file "starship.toml" 2>/dev/null || true)"
   atuin_config="$(spawn_frontier_file "atuin/config.toml" 2>/dev/null || true)"
-  vc_frame_config="$(spawn_frontier_file "vc-frame/config.kdl" 2>/dev/null || true)"
+  # One config home: view symlink first, host-adapted generated tree second;
+  # the frontier chain is legacy-only (it can resolve the un-adapted source).
+  local vc_frame_generated="${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame"
+  if [[ -L "$xdg_config_home/vc-frame" && -f "$xdg_config_home/vc-frame/config.kdl" ]]; then
+    vc_frame_config="$xdg_config_home/vc-frame/config.kdl"
+  elif [[ -f "$vc_frame_generated/config.kdl" ]]; then
+    vc_frame_config="$vc_frame_generated/config.kdl"
+  else
+    vc_frame_config="$(spawn_frontier_file "vc-frame/config.kdl" 2>/dev/null || true)"
+    if [[ -z "$vc_frame_config" && -f "$xdg_config_home/vc-frame/config.kdl" ]]; then
+      # legacy real-dir view: last resort until `vibecrafted update` collapses it
+      vc_frame_config="$xdg_config_home/vc-frame/config.kdl"
+    fi
+  fi
 
   # Re-pin the active frontier assets every time so spawned sessions do not
   # inherit stale shell config from an unrelated install or repo.

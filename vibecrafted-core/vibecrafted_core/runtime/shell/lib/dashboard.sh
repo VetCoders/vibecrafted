@@ -98,12 +98,19 @@ _vetcoders_product_entry_prepare() {
   fi
 
   # Explicit product roots if pin still empty/stale (bare shells, partial installs).
+  # One config home: view first, generated second, frontier twin legacy-only.
   if [[ -z "${VC_FRAME_CONFIG_DIR:-}" || ! -f "${VC_FRAME_CONFIG_DIR%/}/config.kdl" ]]; then
-    local frontier="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier/vc-frame"
     local view="${XDG_CONFIG_HOME:-$HOME/.config}/vc-frame"
-    if [[ -f "$frontier/config.kdl" ]]; then
+    local generated="${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame"
+    local frontier="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier/vc-frame"
+    if [[ -L "$view" && -f "$view/config.kdl" ]]; then
+      export VC_FRAME_CONFIG_DIR="$view"
+    elif [[ -f "$generated/config.kdl" ]]; then
+      export VC_FRAME_CONFIG_DIR="$generated"
+    elif [[ -f "$frontier/config.kdl" ]]; then
       export VC_FRAME_CONFIG_DIR="$frontier"
     elif [[ -f "$view/config.kdl" ]]; then
+      # legacy real-dir view: last resort until `vibecrafted update` collapses it
       export VC_FRAME_CONFIG_DIR="$view"
     fi
   fi

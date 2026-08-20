@@ -192,13 +192,16 @@ binary_runs() {
   "$bin" --version >/dev/null 2>&1 || "$bin" --help >/dev/null 2>&1
 }
 
-# Live config dirs the product actually reads (frontier first — VC_FRAME_CONFIG_DIR).
+# Live config dirs the product actually reads (one config home: env pin, the
+# canonical ~/.config/vc-frame view, the generated tree, frontier legacy-last).
 _vcframe_config_roots() {
   local xdg="${XDG_CONFIG_HOME:-$HOME/.config}"
+  local generated="${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current/vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame"
   printf '%s\n' \
     "${VC_FRAME_CONFIG_DIR:-}" \
-    "$xdg/vetcoders/frontier/vc-frame" \
-    "$xdg/vc-frame"
+    "$xdg/vc-frame" \
+    "$generated" \
+    "$xdg/vetcoders/frontier/vc-frame"
 }
 
 # COCKPIT READY — hard product spine after binary is on PATH.
