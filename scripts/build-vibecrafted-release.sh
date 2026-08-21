@@ -405,7 +405,7 @@ build_product() {
   # script created and will reap, so it is ours to dirty.
   if (( SNAPSHOT_DONORS )); then
     log "Rebuilding vc-frame's bundled WASM plugins under the release remaps"
-    make -C "$FRAME_REPO" plugins-assets
+    CARGO_PROFILE_RELEASE_STRIP=false make -C "$FRAME_REPO" plugins-assets
   else
     log "NOTE: --snapshot-donors is off, so the tracked WASM plugin blobs ship"
     log "      as they are. If they name this host the payload gate refuses"
@@ -413,7 +413,9 @@ build_product() {
   fi
 
   log "Building vc-frame through its provenance-stable donor target"
-  make -C "$FRAME_REPO" release-binary
+  CARGO_PROFILE_RELEASE_STRIP=false \
+    VC_FRAME_SOURCE_MANIFEST_DIR=/usr/src/vc-frame/zellij-utils \
+    make -C "$FRAME_REPO" release-binary
   local frame_source="$FRAME_REPO/target/release/vc-frame"
   [[ -x "$frame_source" ]] || die "vc-frame release binary is missing"
   chmod 0755 "$frame_source"
@@ -489,6 +491,18 @@ build_product() {
   install -m 0755 "$start_source" "$runtime/bin/vc-start"
   install -m 0755 "$server_source" "$runtime/bin/vc-server"
   install -m 0755 "$server_source" "$runtime/bin/vibecrafted-server-web"
+
+  # Rust 1.95 applies profile `strip = true` while compiling host proc-macros,
+  # which makes crates such as include_dir and vte_generate_state_changes
+  # disappear before their dependants are compiled. Build vc-frame unstripped
+  # above, then strip the finished Mach-O products here. This also removes the
+  # linker object-file table that otherwise preserves the snapshot/DerivedData
+  # checkout path even when compiler source paths were prefix-mapped.
+  log "Stripping local object-file paths from final Mach-O products"
+  /usr/bin/strip -S \
+    "$APP/Contents/MacOS/Vibecrafted" \
+    "$terminal_app/Contents/MacOS/alacritty" \
+    "$APP/Contents/Helpers/vc-frame"
   install -m 0644 "$REPO_ROOT/config/vc-terminal/vibecrafted.toml" \
     "$resources/terminal/vibecrafted.toml"
   printf '%s\n' "$RUNTIME_VERSION" > "$runtime/VERSION"

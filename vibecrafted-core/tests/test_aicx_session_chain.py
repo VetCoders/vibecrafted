@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 from pathlib import Path
 
@@ -189,6 +190,7 @@ def test_resume_pack_never_selects_native_even_with_same_agent(
         context_file=tmp_path / "pack.md",
         meta_file=tmp_path / "pack.meta.json",
         chain=MemoryChain([live]),
+        now=dt.datetime(2026, 8, 17, 12, 0, tzinfo=dt.timezone.utc),
     )
     assert pack.mode == "new_session"
     assert pack.session_id == ""

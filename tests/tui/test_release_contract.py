@@ -734,6 +734,25 @@ def test_release_binaries_never_probe_the_machine_that_compiled_them() -> None:
             )
 
 
+def test_release_strips_linker_paths_and_pins_frame_source_identity() -> None:
+    """Final Mach-O bytes must not retain snapshot or DerivedData object paths."""
+    builder = (REPO_ROOT / "scripts/build-vibecrafted-release.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert (
+        'CARGO_PROFILE_RELEASE_STRIP=false make -C "$FRAME_REPO" plugins-assets'
+        in builder
+    )
+    assert "VC_FRAME_SOURCE_MANIFEST_DIR=/usr/src/vc-frame/zellij-utils" in builder
+    assert '"$APP/Contents/MacOS/Vibecrafted"' in builder
+    assert '"$terminal_app/Contents/MacOS/alacritty"' in builder
+    assert '"$APP/Contents/Helpers/vc-frame"' in builder
+    strip_at = builder.index("/usr/bin/strip -S")
+    hygiene_at = builder.index('assert_payload_is_anonymous "$APP"')
+    assert strip_at < hygiene_at
+
+
 def test_windows_entry_point_does_not_drift_between_its_two_copies() -> None:
     """`install.ps1` lives here and in vibecrafted-io; two copies means drift.
 
