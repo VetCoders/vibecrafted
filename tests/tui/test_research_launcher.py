@@ -67,6 +67,10 @@ def _env(tmp_path: Path, *, crafted_home: Path | None = None) -> dict[str, str]:
             encoding="utf-8",
         )
         executable.chmod(0o755)
+    # Provider resolution deliberately ignores arbitrary inherited PATH entries.
+    # Name this fixture directory as the canonical runtime bin so the test can
+    # never fall through to the operator's real Claude/Codex/Agy executables.
+    env["VIBECRAFTED_RUNTIME_BIN"] = str(fake_bin)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     return env
 

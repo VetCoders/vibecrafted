@@ -740,19 +740,21 @@ We ship.
 
 ## Verification Expectations
 
-| Scenario                  | Minimum Verification |
-| ------------------------- | -------------------- |
-| Small edits               |                      |
-| Behavior changes          |                      |
-| Release-impacting changes |                      |
+| Scenario                  | Minimum Verification                                                                                                                                                                                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Small edits               | `make check` (ruff · prettier · semgrep on changed files) + the nearest pytest module, run with `env -u PYTHONPATH` until the runtime stops exporting it (HAK-32)                                                                                                         |
+| Behavior changes          | focused test that fails without the change + `make unified-product-contract-gate` when `vibecrafted_core/` or `scripts/` are touched; Rust: `cargo clippy --workspace --all-features -- -D warnings` + `cargo test`                                                       |
+| Release-impacting changes | `scripts/build-portable-release.sh` from a clean commit (payload-hygiene gate) and one `make dmg RELEASE_FLAGS=--snapshot-donors`; then `gh run list --workflow "Release source gate" --limit 1` on the tag — the gate failed on every tag from v3.7.0 to v4.0.0 (HAK-30) |
 
 ### Known Slow Or Flaky Checks
 
--
+- `tests/tui/test_research_launcher.py` ×3 (settle timeouts) and `test_dashboard_subcommand_launches_repo_owned_vc_frame_layout` are pre-existing red on some hosts — confirm against a clean HEAD before attributing.
+- `tests/tui/*` and `vibecrafted-core/tests/*` must run as separate pytest invocations (conftest collision).
+- pytest can leak a real workspace into `~/.vibecrafted/control_plane` and export `VIBECRAFTED_WORKSPACE_ID` (HAK-31) — run with an isolated `VIBECRAFTED_HOME` until the fixture is default.
 
 ### Checks Requiring Secrets Or External Services
 
-- ***
+- DMG signing/notarization (Developer ID + notary credentials), `gh` for the release-gate probe, vibecrafted-io deploy — operator buttons, never run by workers. ***
 
 ## Safety Boundaries
 
