@@ -26,12 +26,12 @@
 
 Evidence gathered across the four CLI surfaces:
 
-| Surface                         | Finding                                                                                                                                                                                                                                  |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| install.sh + Makefile           | **7–8 coexisting visual languages.** install.sh prints plain text, Makefile prints 256-color ANSI. 17+ defensive/apologetic lines. **No end-of-install message at all** — the script `exec`s away silently.                              |
-| vetcoders_install.py (5810 LOC) | 8+ output styles, two parallel install narrations (verbose + compact), doctor prints 50–80 unsummarized finding lines, 15+ reassurance lines ("don't worry, a fallback exists").                                                         |
-| scripts/vibecrafted (2126 LOC)  | 26 top-level commands + 20 skills + 42 hidden `<agent> <mode>` combos + 10 aliases. Help is ~98 lines. 649 hand-written `printf` calls. `--verbose` is a shadow alias of `help --full`. Errors go sometimes to stdout, sometimes stderr. |
-| runtime (loop/cron/ship/doctor) | Python modules print **zero** styling — a different product than the bash layer. cron prints raw JSON to humans. No spinner anywhere; iTerm2 OSC progress exists (`iterm2_osc.py`) but is unused.                                        |
+| Surface                              | Finding                                                                                                                                                                                                     |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| install.sh + Makefile                | **7–8 coexisting visual languages.** install.sh prints plain text, Makefile prints 256-color ANSI. 17+ defensive/apologetic lines. **No end-of-install message at all** — the script `exec`s away silently. |
+| vetcoders_install.py (5810 LOC)      | 8+ output styles, two parallel install narrations (verbose + compact), doctor prints 50–80 unsummarized finding lines, 15+ reassurance lines ("don't worry, a fallback exists").                            |
+| scripts/vibecrafted (audit baseline) | The former surface exposed 42 hidden agent-first combinations alongside the skill-first grammar. The current deck rejects those combinations with a migration hint.                                         |
+| runtime (loop/cron/ship/doctor)      | Python modules print **zero** styling — a different product than the bash layer. cron prints raw JSON to humans. No spinner anywhere; iTerm2 OSC progress exists (`iterm2_osc.py`) but is unused.           |
 
 Identity vs drift:
 
@@ -69,7 +69,7 @@ The remaining 14 skills live in `help --all` and in `help <skill>`.
 | `gui`, `tui`, `dashboard` (+ ls/switch/attach/kill/gc) | Operator consoles — second visit, not first contact                  |
 | `loop`, `cron`, `ship`, `dispatch run`                 | Runtime/automation plumbing; humans meet them via docs, not the deck |
 | `telemetry smoke`                                      | Dev-only diagnostic                                                  |
-| `<agent> <mode>` (6 agents × 7 modes)                  | Power-user grammar that duplicates `<skill> <agent>`                 |
+| action-first workflow and lifecycle commands           | One public grammar: `<action> <agent>`                               |
 | `marbles <pause·stop·resume·session·inspect·delete>`   | Control plane, documented in `help marbles`                          |
 | `uninstall`, `version`                                 | Necessary, not promotional                                           |
 

@@ -18,17 +18,17 @@ flowchart TD
 
 ## Trasy
 
-| Wejście                                                                         | Argumenty                                        | Produkuje                                                        | Wyjście            |
-| ------------------------------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------- | ------------------ |
-| `vibecrafted agents`                                                            | brak                                             | wskazówki command-decka dla trybów agentów                       | `0` przy pomocy    |
-| `vibecrafted <agent> implement\|research\|review\|plan\|prompt\|observe\|await` | argumenty specyficzne dla trybu                  | launcher plus report, transcript i meta pod korzeniem artefaktów | `0` przy dispatchu |
-| `vibecrafted resume <agent> --session <id>`                                     | `--session`, opcjonalnie `--prompt` lub `--file` | wznowiona sesja agenta                                           | `0` przy dispatchu |
-| `vc-agents`                                                                     | tak samo jak `vibecrafted agents`                | wskazówki command-decka                                          | `0` przy pomocy    |
+| Wejście                                     | Argumenty                                        | Produkuje                                                        | Wyjście            |
+| ------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------- | ------------------ |
+| `vibecrafted agents`                        | brak                                             | wskazówki command-decka dla trybów agentów                       | `0` przy pomocy    |
+| `vibecrafted <akcja> <agent>`               | argumenty specyficzne dla trybu                  | launcher plus report, transcript i meta pod korzeniem artefaktów | `0` przy dispatchu |
+| `vibecrafted resume <agent> --session <id>` | `--session`, opcjonalnie `--prompt` lub `--file` | wznowiona sesja agenta                                           | `0` przy dispatchu |
+| `vc-agents`                                 | tak samo jak `vibecrafted agents`                | wskazówki command-decka                                          | `0` przy pomocy    |
 
 ### Krawędzie eskalacji
 
 - Potrzeba większego równoległego cięcia z `vc-partner`, `vc-workflow` lub `vc-ownership` -> użyj tutaj trybów agentów.
-- Istniejący run wymaga inspekcji -> `vibecrafted <agent> observe --last` lub `await --last`.
+- Istniejący run wymaga inspekcji -> `vibecrafted observe <agent> --last` lub `await --last`.
 
 ### Artefakty sesji
 

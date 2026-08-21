@@ -28,7 +28,7 @@ flowchart TD
 
 - Research skończony i zespół chce plan -> `vibecrafted scaffold <agent>`
 - Research skończony i ma ruszyć wykonanie -> `vibecrafted workflow <agent>` lub `implement` (ship WRITE); postawa na pierwszym miejscu -> `justdo`
-- Research potrzebuje jednego silnego ownera zamiast swarmu -> `vibecrafted <agent> research <plan.md>`
+- Research potrzebuje jednego silnego ownera zamiast swarmu -> `vibecrafted research <agent> <plan.md>`
 
 ### Artefakty sesji
 

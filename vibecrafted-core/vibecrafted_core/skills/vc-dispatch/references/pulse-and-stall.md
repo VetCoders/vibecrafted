@@ -20,7 +20,7 @@ vibecrafted ships the heartbeat — reach for it before hand-rolling timers:
 | per-dispatch auto-await pane   | `vibecrafted-await-watch.sh --meta <meta.json>` — tails transcript, watches meta status + size delta + process liveness, self-terminates (tunables: `VIBECRAFTED_AWAIT_IDLE_TIMEOUT`, `VIBECRAFTED_AWAIT_POLL`) |
 
 Canonical supervisor contract (see `docs/runtime/AGENT_OPS.md`): After
-dispatch, arm `vibecrafted <agent> await --run-id <id>` immediately,
+dispatch, arm `vibecrafted await <agent> --run-id <id>` immediately,
 supervisor-side. Control-plane JSON, report files, transcripts, panes, and
 scheduled wakeups are diagnostic only, not wake signals. Hedging await with
 ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
@@ -106,7 +106,7 @@ extra tick — the batch is the casualty.
 
 ## Await mechanics
 
-- Background the await (`vibecrafted <agent> await --run-id <id>`) and let
+- Background the await (`vibecrafted await <agent> --run-id <id>`) and let
   its completion wake you; the pulse tick is the fallback heartbeat.
 - Report files may appear under a `pending-report-*` name before the
   canonical one — search the reports dir by mtime, not by guessed filename.

@@ -185,7 +185,7 @@ vc-marbles gemini --count 4 --prompt "wykonaj ten plan: docs/plans/track-i.md"
 ```bash
 marbles_ctl.sh session --json        # All active as JSON
 vibecrafted status                   # Today's activity summary
-vibecrafted codex observe --last     # Last codex report
+vibecrafted observe codex --last     # Last codex report
 ```
 
 ### Convergence Flow

@@ -87,8 +87,8 @@ się na zewnętrznych workerów.
 ### Konkretne przykłady dispatchu
 
 ```bash
-vibecrafted codex implement /path/to/plan.md
-vibecrafted claude implement /path/to/plan.md
+vibecrafted implement codex /path/to/plan.md
+vibecrafted implement claude /path/to/plan.md
 vibecrafted gemini implement /path/to/plan.md
 ```
 
@@ -236,14 +236,14 @@ repo pozostają wewnętrznym silnikiem stojącym za tą ścieżką.
 
 ```bash
 PLAN="$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan-slug>.md"
-vibecrafted codex implement "$PLAN"
+vibecrafted implement codex "$PLAN"
 ```
 
 ### Claude
 
 ```bash
 PLAN="$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan>.md"
-vibecrafted claude implement "$PLAN"
+vibecrafted implement claude "$PLAN"
 ```
 
 ### Gemini
@@ -285,13 +285,13 @@ Użyj dedykowanego helpera runtime'u, aby poczekać na ukończenie metadanych i 
 finalne podsumowanie:
 
 ```bash
-vibecrafted codex await --run-id <run_id>
+vibecrafted await codex --run-id <run_id>
 ```
 
 Dla najnowszego runu danego agenta:
 
 ```bash
-vibecrafted codex await --last
+vibecrafted await codex --last
 ```
 
 Przy wielu zespawnowanych workerach przekaż ich ścieżki launchera lub metadanych wprost do
@@ -301,7 +301,7 @@ Jeśli twoje środowisko udostępnia helper obserwatora, użyj go do inspekcji n
 transkryptu lub do debugowania:
 
 ```bash
-vibecrafted codex observe --last
+vibecrafted observe codex --last
 ```
 
 Użyj odpowiedniego obserwatora agenta, gdy trzeba, ale nie polegaj na `observe` jako

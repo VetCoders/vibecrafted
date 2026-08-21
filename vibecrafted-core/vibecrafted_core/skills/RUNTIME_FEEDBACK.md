@@ -59,7 +59,7 @@ entries get a `Promoted:` line, not deletion.
 - **Evidence:** 2026-07-25 11:57 stream `resume/grok-20260725-115749.stream.jsonl`
   (404) vs 11:59 resume of `019f9894-c578-7800-8c5a-dd76f004dc8c` (worked).
 
-### `vibecrafted <agent> await --run-id …` (trusting the green)
+### `vibecrafted await <agent> --run-id …` (trusting the green)
 
 - **❌ Observed:** Await returned `completed / rc=0 / report_delivered` on an
   **untouched launcher template** — the launcher pre-seeds the report file at

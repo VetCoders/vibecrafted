@@ -62,8 +62,8 @@ _vetcoders_print_launch_receipt() {
     printf 'human:      %s\n' "${transcript%.log}.human.log"
   fi
   [[ -z "$launcher" ]] || printf 'launcher:   %s\n' "$launcher"
-  printf 'observe:    vibecrafted %s observe --run-id %s\n' "$tool" "$run_id"
-  printf 'await (ARM NOW, supervisor-side): vibecrafted %s await --run-id %s\n' "$tool" "$run_id"
+  printf 'observe:    vibecrafted observe %s --run-id %s\n' "$tool" "$run_id"
+  printf 'await (ARM NOW, supervisor-side): vibecrafted await %s --run-id %s\n' "$tool" "$run_id"
   printf '=====================================================================\n'
 }
 

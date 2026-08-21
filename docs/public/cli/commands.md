@@ -22,7 +22,6 @@ past runs. They launch no workflows themselves — that is the job of the
 | `vibecrafted settlements <action>`   | Read-only f/x/n ledger query                        |
 | `vibecrafted update`                 | Update to the latest release                        |
 | `vibecrafted resume <agent>`         | Continue a stopped run or a provider session        |
-| `vibecrafted <agent> resume`         | Same surface: continue a stopped control-plane run  |
 | `vibecrafted resume-session <agent>` | Continue an exact provider session as a tracked run |
 | `vibecrafted version`                | Print version                                       |
 | `vibecrafted uninstall`              | Reverse the install                                 |
@@ -124,8 +123,8 @@ CLI executes. Verify afterwards with `vibecrafted version` and
 ```bash
 # After stop: continue the control-plane run (new tracked job; the old PGID is dead)
 vibecrafted resume claude --run-id work-260816-213657-08420
-vibecrafted claude resume --run-id work-260816-213657-08420 --prompt "continue"
-vibecrafted claude resume --last
+vibecrafted resume claude --run-id work-260816-213657-08420 --prompt "continue"
+vibecrafted resume claude --last
 
 # Provider-native session (Claude/Codex UUID — never a work-* id, never VIBECRAFTED_SESSION_ID)
 vibecrafted resume claude --session <provider-uuid> --prompt "Continue the fix"

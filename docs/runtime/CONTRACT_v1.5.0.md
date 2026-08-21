@@ -527,7 +527,7 @@ vc-implement <agent>
 vc-justdo <agent>
 vibecrafted marbles <agent>
 vc-marbles <agent>
-vibecrafted <agent> implement <plan.md>
+vibecrafted implement <agent> <plan.md>
 <agent>-implement <plan.md>
 ```
 

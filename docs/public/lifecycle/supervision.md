@@ -97,7 +97,7 @@ earned by workers and which were pushed by an operator — and why.
 
 ## Supervision hygiene
 
-- Arm `vibecrafted <agent> await --run-id <id>` for the active stage run and
+- Arm `vibecrafted await <agent> --run-id <id>` for the active stage run and
   trust it; reconcile the three signals (await verdict, terminal run meta,
   worker pid) before declaring a stage done — see
   [Observe and await](/docs/observe-await/).

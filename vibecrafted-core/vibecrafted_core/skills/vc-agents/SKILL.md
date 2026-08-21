@@ -87,8 +87,8 @@ into external workers.
 ### Concrete dispatch examples
 
 ```bash
-vibecrafted codex implement /path/to/plan.md
-vibecrafted claude implement /path/to/plan.md
+vibecrafted implement codex /path/to/plan.md
+vibecrafted implement claude /path/to/plan.md
 vibecrafted gemini implement /path/to/plan.md
 ```
 
@@ -242,14 +242,14 @@ scripts remain the internal engine behind that path.
 
 ```bash
 PLAN="$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan-slug>.md"
-vibecrafted codex implement "$PLAN"
+vibecrafted implement codex "$PLAN"
 ```
 
 ### Claude
 
 ```bash
 PLAN="$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan>.md"
-vibecrafted claude implement "$PLAN"
+vibecrafted implement claude "$PLAN"
 ```
 
 ### Gemini
@@ -286,7 +286,7 @@ agent is technically running.
 ## Observation
 
 Canonical supervisor contract (see `docs/runtime/AGENT_OPS.md`): After
-dispatch, arm `vibecrafted <agent> await --run-id <id>` immediately,
+dispatch, arm `vibecrafted await <agent> --run-id <id>` immediately,
 supervisor-side. Control-plane JSON, report files, transcripts, panes, and
 scheduled wakeups are diagnostic only, not wake signals. Hedging await with
 ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
@@ -302,13 +302,13 @@ Observe progress through durable artifacts in
 dedicated runtime helper own waiting and final summary:
 
 ```bash
-vibecrafted codex await --run-id <run_id>
+vibecrafted await codex --run-id <run_id>
 ```
 
 For the most recent run of a given agent:
 
 ```bash
-vibecrafted codex await --last
+vibecrafted await codex --last
 ```
 
 For multiple spawned workers, pass their launcher or metadata paths directly to
@@ -318,7 +318,7 @@ If your environment exposes the observer helper, use it for transcript-level
 inspection or debugging:
 
 ```bash
-vibecrafted codex observe --last
+vibecrafted observe codex --last
 ```
 
 Use the equivalent agent observer when needed, but do not rely on `observe` as

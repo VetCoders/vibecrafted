@@ -432,7 +432,7 @@ _vetcoders_resume_agent() {
     echo "Resume a provider session or a stopped control-plane run." >&2
     echo "  vibecrafted resume ${tool} --session <provider-uuid>" >&2
     echo "  vibecrafted resume ${tool} --run-id <work-...>" >&2
-    echo "  vibecrafted ${tool} resume --run-id <work-...> | --last" >&2
+    echo "  vibecrafted resume ${tool} --run-id <work-...> | --last" >&2
     return 0
   fi
   if [[ -n "${_vetcoders_contract_run_id:-}" || -n "${_vetcoders_contract_last:-}" ]]; then
@@ -454,7 +454,7 @@ _vetcoders_resume_agent() {
   if [[ -n "${_vetcoders_contract_session:-}" ]] && _vetcoders_looks_like_run_id "$_vetcoders_contract_session"; then
     echo "That is a control-plane run id, not a provider session: ${_vetcoders_contract_session}" >&2
     echo "  Use: vibecrafted resume ${tool} --run-id ${_vetcoders_contract_session}" >&2
-    echo "  Or:  vibecrafted ${tool} resume --run-id ${_vetcoders_contract_session}" >&2
+    echo "  Or:  vibecrafted resume ${tool} --run-id ${_vetcoders_contract_session}" >&2
     return 1
   fi
   # --fork-session maps onto claude's verified `--resume … --fork-session`

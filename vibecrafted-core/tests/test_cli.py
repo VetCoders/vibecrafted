@@ -635,10 +635,10 @@ def test_root_cli_prints_full_launch_receipt(monkeypatch, capsys) -> None:
     assert "report:     /home/.vibecrafted/artifacts/report.md" in out
     assert "transcript: /home/.vibecrafted/artifacts/report.transcript.log" in out
     assert (
-        "observe:    vibecrafted codex observe --run-id impl-260613-145127-33000" in out
+        "observe:    vibecrafted observe codex --run-id impl-260613-145127-33000" in out
     )
     assert (
-        "await (ARM NOW, supervisor-side): vibecrafted codex await --run-id impl-260613-145127-33000"
+        "await (ARM NOW, supervisor-side): vibecrafted await codex --run-id impl-260613-145127-33000"
         in out
     )
 

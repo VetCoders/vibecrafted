@@ -24,7 +24,7 @@ flowchart TD
 | `vc-marbles <agent>`                                                | tak samo                                                                    | tak samo                                                               | `0` przy launchu           |
 | `vibecrafted marbles pause\|stop\|resume\|session\|inspect\|delete` | argumenty sterujące                                                         | akcje sterujące runtime'em marbles                                     | `0` przy udanym sterowaniu |
 
-Po dispatchu od razu uzbrój `vibecrafted <agent> await --run-id <id>` po stronie
+Po dispatchu od razu uzbrój `vibecrafted await <agent> --run-id <id>` po stronie
 supervisora. JSON control plane'u, pliki raportów, transkrypty, pane'y i
 zaplanowane wybudzenia są wyłącznie diagnostyczne — to nie są sygnały wybudzenia.
 Hedge'owanie awaita doraźnymi pollerami/watcherami to naruszenie Class 3; napraw

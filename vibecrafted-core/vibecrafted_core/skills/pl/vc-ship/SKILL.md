@@ -156,7 +156,7 @@ Etapy READ nie mogą pisać po źródłach (naruszenie jest trasowane jako
    run_id (`life-ship-…`), wczytany atlas kontekstu, etap 1 przyjęty.
 3. **Uzbrój await natychmiast, po stronie nadzorcy** (nigdy wewnątrz subagenta —
    patrz `docs/runtime/AGENT_OPS.md`): po dispatchu uzbrój
-   `vibecrafted <agent> await --run-id <id>` natychmiast, po stronie nadzorcy.
+   `vibecrafted await <agent> --run-id <id>` natychmiast, po stronie nadzorcy.
    JSON control plane'u, pliki raportów, transcripty, pane'y i zaplanowane
    pobudki są wyłącznie diagnostyczne, nie są sygnałem wybudzenia.
    Asekurowanie awaita doraźnymi pollerami/watcherami to naruszenie klasy 3;

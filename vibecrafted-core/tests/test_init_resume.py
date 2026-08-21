@@ -82,7 +82,7 @@ def test_operator_resumable_run_carries_its_exact_command(
     _stub_listing(monkeypatch, [_row(root=str(tmp_path), run_id=run_id)])
     block = init_resume.init_resume_block(tmp_path)
     assert run_id in block
-    assert f"vibecrafted claude resume --run-id {run_id}" in block
+    assert f"vibecrafted resume claude --run-id {run_id}" in block
 
 
 def test_guardian_owned_run_is_reported_but_never_hand_resumed(

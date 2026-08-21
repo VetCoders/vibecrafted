@@ -109,7 +109,7 @@ pinu traktuj jako smell do rozwiązania przed startem.
 3. **Spanko**: czekaj przez artefakty, nigdy przez gapienie się w pane. Użyj
    dedykowanej komendy jako standardowej pętli dyspozytora. Kanoniczny kontrakt
    supervisora (zobacz `docs/runtime/AGENT_OPS.md`): po dispatchu uzbrój
-   `vibecrafted <agent> await --run-id <id>` natychmiast, po stronie supervisora.
+   `vibecrafted await <agent> --run-id <id>` natychmiast, po stronie supervisora.
    JSON control-plane, pliki raportów, transkrypty, karty terminala i
    zaplanowane wybudzenia są wyłącznie diagnostyczne, nie są sygnałem
    wybudzenia. Hedge'owanie await ad-hoc pollerami/watcherami to naruszenie

@@ -43,8 +43,7 @@ contract:
 
    The launcher spawns a headless worker, records the run in the control
    plane, and writes a report plus transcript and metadata sidecars under
-   `~/.vibecrafted/artifacts/<org>/<repo>/<date>/`. Agent-mode grammar
-   (`vibecrafted <agent> implement …`) also exists for power users.
+   `~/.vibecrafted/artifacts/<org>/<repo>/<date>/`.
 
 2. **Interactive slash command.** Inside an agent session, `/vc-<skill>`
    (for example `/vc-review`) loads the same contract and executes it in

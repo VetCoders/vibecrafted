@@ -97,7 +97,7 @@ Consequences:
   `--runtime terminal` compatibility path.
 
 ```bash
-vibecrafted <agent> await --run-id <run_id>   # canonical wait for a worker
+vibecrafted await <agent> --run-id <run_id>   # canonical wait for a worker
 vibecrafted settlements inspect <run_id>      # settled truth afterwards
 ```
 

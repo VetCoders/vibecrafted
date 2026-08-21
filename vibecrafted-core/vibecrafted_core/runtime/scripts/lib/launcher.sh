@@ -352,8 +352,8 @@ spawn_launch() {
             printf -- '----------------------------------------------------------------\n' >&2
           fi
           printf 'Agent is still running headless. Continue to observe it:\n' >&2
-          printf '  vibecrafted %s observe --run-id %s\n' "$_vc_agent" "$_vc_run_id" >&2
-          printf '  vibecrafted %s await   --run-id %s\n' "$_vc_agent" "$_vc_run_id" >&2
+          printf '  vibecrafted observe %s --run-id %s\n' "$_vc_agent" "$_vc_run_id" >&2
+          printf '  vibecrafted await   %s --run-id %s\n' "$_vc_agent" "$_vc_run_id" >&2
           return 0
         fi
       fi

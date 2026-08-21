@@ -777,10 +777,6 @@ cmd_agent_help() {
   printf '  vibecrafted stop %s --run-id <id>\n' "$agent"
   printf '  vibecrafted resume %s --last\n' "$agent"
   printf '\n'
-  printf '%bCompatibility grammar:%b\n' "$_bold" "$_reset"
-  printf '  vibecrafted %s <mode> [args]   Legacy agent-first calls still work.\n' "$agent"
-  printf '  Do not use this form in onboarding or generated instructions.\n'
-  printf '\n'
 }
 
 cmd_start_help() {
@@ -982,9 +978,6 @@ cmd_resume_help() {
   printf '  vibecrafted resume codex --session abc123 --prompt "Continue from the failing test"\n'
   printf '  vibecrafted resume grok\n'
   printf '  vibecrafted resume codex --prompt "pick up where the fleet left off"\n'
-  printf '\n'
-  printf '%bCompatibility grammar:%b\n' "$_bold" "$_reset"
-  printf '  vibecrafted <agent> resume ... remains accepted for older scripts.\n'
   printf '\n'
   _print_skill_specific_flags "resume"
   printf '\n'
@@ -4300,7 +4293,6 @@ cmd_help_full() {
   printf '  %bvibecrafted await <agent>%b     --last      Wait for metadata completion\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted stop <agent>%b      --last      Stop the tracked launcher process group\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted resume <agent>%b    --last      Continue as a new tracked job\n' "$_cyan" "$_reset"
-  printf '  %bLegacy agent-first mode grammar remains compatibility-only.%b\n' "$_dim" "$_reset"
   printf '\n'
   printf '%b=== RESEARCH (launcher) ===%b\n' "$_bold" "$_reset"
   printf '\n'
@@ -5255,7 +5247,6 @@ cmd_agents() {
   printf '%bVibecrafted agent helpers%b\n' "$_bold" "$_reset"
   printf '  Use %bvibecrafted <skill> <agent>%b for workflows and %bvibecrafted init <agent>%b to orient.\n' "$_cyan" "$_reset" "$_cyan" "$_reset"
   printf '  Example: vibecrafted implement codex .vibecrafted/plans/my-plan.md\n'
-  printf '  Legacy vibecrafted <agent> <mode> remains compatibility-only.\n'
   printf '\n'
 }
 
@@ -5334,9 +5325,6 @@ cmd_lifecycle_help() {
   fi
   printf '  vibecrafted %s %s %s\n' "$verb" "$agent" "$flags"
   printf '\n'
-  printf '%bCompatibility grammar:%b\n' "$_bold" "$_reset"
-  printf '  vibecrafted <agent> %s %s remains accepted for older scripts.\n' "$verb" "$flags"
-  printf '\n'
 }
 
 cmd_lifecycle_command() {
@@ -5391,11 +5379,11 @@ run_mode() {
     esac
     printf '%b⚒%b  %b%s %s%b\n\n' "$_copper" "$_reset" "$_bold" "$agent" "$mode" "$_reset"
     case "$mode" in
-      implement) printf '  Execute a plan file with the agent.\n  Usage: vibecrafted %s implement <plan.md>\n' "$agent" ;;
-      research)  printf '  Research a topic using the agent.\n  Usage: vibecrafted %s research <plan.md>\n' "$agent" ;;
-      review)    printf '  Review a bounded PR, branch, commit range, or artifact pack.\n  Usage: vibecrafted %s review <plan.md>\n' "$agent" ;;
-      plan)      printf '  Generate an implementation plan.\n  Usage: vibecrafted %s plan <plan.md>\n' "$agent" ;;
-      prompt)    printf '  Free-form prompt with plan context.\n  Usage: vibecrafted %s prompt <plan.md>\n' "$agent" ;;
+      implement) printf '  Execute a plan file with the agent.\n  Usage: vibecrafted implement %s <plan.md>\n' "$agent" ;;
+      research)  printf '  Research a topic using the agent.\n  Usage: vibecrafted research %s <plan.md>\n' "$agent" ;;
+      review)    printf '  Review a bounded PR, branch, commit range, or artifact pack.\n  Usage: vibecrafted review %s <plan.md>\n' "$agent" ;;
+      plan)      printf '  Generate an implementation plan.\n  Usage: vibecrafted plan %s <plan.md>\n' "$agent" ;;
+      prompt)    printf '  Free-form prompt with plan context.\n  Usage: vibecrafted prompt %s <plan.md>\n' "$agent" ;;
       resume)    cmd_resume_help; return 0 ;;
     esac
     printf '\n'
@@ -5637,21 +5625,17 @@ main() {
     agents) cmd_agents "$@" ;;
     swarm) cmd_swarm "$@" ;;
     claude|codex|gemini|agy|junie|grok)
-      local mode="${1:-}"
-      if _is_help_flag "$mode"; then
-        cmd_agent_help "$cmd"
-        return 0
+      local action="${1:-<action>}"
+      printf '%b✗%b Agent-first grammar was removed: vibecrafted %s %s\n' "$_red" "$_reset" "$cmd" "$action" >&2
+      if [[ "$action" == "<action>" ]] || _is_help_flag "$action"; then
+        printf '  Use: vibecrafted help %s\n' "$cmd" >&2
+      else
+        printf '  Use: vibecrafted %s %s' "$action" "$cmd" >&2
+        [[ "$#" -gt 1 ]] && printf ' %s' "${*:2}" >&2
+        printf '\n' >&2
       fi
-      [[ -n "$mode" ]] || {
-        cmd_agent_help "$cmd" >&2
-        return 1
-      }
-      shift || true
-      _has_mode "$mode" || {
-        printf '%b✗%b Unknown mode: %s\n' "$_red" "$_reset" "$mode" >&2
-        return 1
-      }
-      run_mode "$cmd" "$mode" "$@"
+      printf '  Agent names belong at the end of public commands.\n' >&2
+      return 2
       ;;
     implement) run_skill "implement" "$@" ;;
     audit|canary|decorate|delegate|dou|followup|guard|hydrate|intents|justdo|marbles|ownership|partner|polarize|prune|release|research|review|scaffold|trust|workflow)

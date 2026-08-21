@@ -61,8 +61,8 @@ Compatibility aliases may be mentioned once, never taught as the primary path:
 Agent-mode grammar also exists and is intentionally power-user material:
 
 ```bash
-vibecrafted codex implement .vibecrafted/plans/my-plan.md
-vibecrafted claude observe --last
+vibecrafted implement codex .vibecrafted/plans/my-plan.md
+vibecrafted observe claude --last
 ```
 
 Keep it in `help --all`, runtime docs, or `vc-agents` docs. Do not make it the

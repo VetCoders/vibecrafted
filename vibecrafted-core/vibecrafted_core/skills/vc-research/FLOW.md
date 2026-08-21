@@ -28,7 +28,7 @@ flowchart TD
 
 - Research is complete and the team wants a plan -> `vibecrafted scaffold <agent>`
 - Research is complete and execution should start -> `vibecrafted workflow <agent>` or `implement` (ship WRITE); posture-first -> `justdo`
-- Research needs one strong owner instead of a swarm -> `vibecrafted <agent> research <plan.md>`
+- Research needs one strong owner instead of a swarm -> `vibecrafted research <agent> <plan.md>`
 
 ### Session artifacts
 

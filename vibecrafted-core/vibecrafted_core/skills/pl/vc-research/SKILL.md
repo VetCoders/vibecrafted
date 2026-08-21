@@ -226,8 +226,8 @@ vc-research-await --last     # newest swarm
 Do inspekcji na poziomie transkryptu, gdy swarm jest w trakcie:
 
 ```bash
-vibecrafted claude observe --last
-vibecrafted codex observe --last
+vibecrafted observe claude --last
+vibecrafted observe codex --last
 vibecrafted gemini observe --last
 ```
 

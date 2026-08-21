@@ -1070,7 +1070,7 @@ def _write_live_viewer_script(
 ) -> Path:
     """Write the read-only viewer command for one run's LIVE tab.
 
-    ``vibecrafted <agent> observe`` is a one-shot status print, so it renders
+    ``vibecrafted observe <agent>`` is a one-shot status print, so it renders
     the header and the follow is ``tail -F`` over the supervisor's humanized
     transcript. The raw transcript remains a byte-exact machine contract and
     must never be projected directly into a terminal. ``set -e`` is deliberately
@@ -4115,7 +4115,7 @@ def operator_continue_run(
             target,
             "still_running",
             detail="worker process is still alive; observe or stop first",
-            hint=f"vibecrafted {agent} observe --run-id {target}",
+            hint=f"vibecrafted observe {agent} --run-id {target}",
             run=parent,
         )
     if state in OPERATOR_DONE_STATES and not _manual_stop_or_cancel(parent):
@@ -4123,7 +4123,7 @@ def operator_continue_run(
             target,
             "already_complete",
             detail=f"state={state} — observe the report instead of launching a twin",
-            hint=f"vibecrafted {agent} observe --run-id {target}",
+            hint=f"vibecrafted observe {agent} --run-id {target}",
             run=parent,
         )
     if (
@@ -4137,7 +4137,7 @@ def operator_continue_run(
             target,
             "not_continuable",
             detail=f"state={state}",
-            hint=f"vibecrafted {agent} observe --run-id {target}",
+            hint=f"vibecrafted observe {agent} --run-id {target}",
             run=parent,
         )
 

@@ -571,11 +571,11 @@ def test_skill_dispatch_prints_launch_receipt(tmp_path: Path) -> None:
     assert "report:     " + str(report) in result.stdout
     assert "transcript: " + str(transcript) in result.stdout
     assert (
-        "observe:    vibecrafted claude observe --run-id prun-010203-44444"
+        "observe:    vibecrafted observe claude --run-id prun-010203-44444"
         in result.stdout
     )
     assert (
-        "await (ARM NOW, supervisor-side): vibecrafted claude await --run-id prun-010203-44444"
+        "await (ARM NOW, supervisor-side): vibecrafted await claude --run-id prun-010203-44444"
         in result.stdout
     )
 

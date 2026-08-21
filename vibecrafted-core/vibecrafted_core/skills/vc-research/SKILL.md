@@ -268,9 +268,9 @@ vc-research-await --last     # newest swarm
 For transcript-level inspection while the swarm is running:
 
 ```bash
-vibecrafted claude observe --last
-vibecrafted codex observe --last
-vibecrafted agy observe --last
+vibecrafted observe claude --last
+vibecrafted observe codex --last
+vibecrafted observe agy --last
 ```
 
 Do not treat manual `observe --last` calls as sufficient observability. Workflow state goes through launch metadata, the await helper, and durable report paths by default.
