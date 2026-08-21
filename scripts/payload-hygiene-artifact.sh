@@ -16,7 +16,7 @@
 # directory that is removed the same way. Nothing is ever written to the
 # artifact itself.
 #
-# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 set -euo pipefail
 
 die() { printf 'FATAL: %s\n' "$*" >&2; exit 1; }

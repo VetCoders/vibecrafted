@@ -17,7 +17,7 @@
 # files offended, across five unrelated producers. See payload_hygiene.py for
 # the breakdown and why no single compiler flag closes it.
 #
-# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 
 # Directories every macOS or Linux box has. An ancestor walk must stop here: a
 # payload that mentions `/Users` or `/Volumes` says nothing about who built it,

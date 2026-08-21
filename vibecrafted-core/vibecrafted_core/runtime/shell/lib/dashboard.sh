@@ -33,10 +33,39 @@ _vetcoders_dashboard_session_name() {
   printf '%s\n' "$base_session"
 }
 
+_vetcoders_product_core_cli() {
+  local source_file="${BASH_SOURCE[0]}" core_dir product_root python_bin python_dir checkout_python project_python embedded_python
+  if [[ -n "${VIBECRAFTED_PRODUCT_CORE_CLI:-}" ]]; then
+    "$VIBECRAFTED_PRODUCT_CORE_CLI" "$@"
+    return $?
+  fi
+  core_dir="${VIBECRAFTED_CORE_DIR:-$(cd "$(dirname "$source_file")/../../../.." && pwd)}"
+  product_root="$(cd "$core_dir/.." && pwd)"
+  checkout_python="$product_root/.venv/bin/python3"
+  project_python="$product_root/scripts/project-python"
+  embedded_python="$product_root/bin/python3"
+  if [[ -n "${VIBECRAFTED_PYTHON:-}" && -x "$VIBECRAFTED_PYTHON" ]]; then
+    python_bin="$VIBECRAFTED_PYTHON"
+  elif [[ -x "$checkout_python" ]]; then
+    python_bin="$checkout_python"
+  elif [[ -x "$embedded_python" ]]; then
+    python_bin="$embedded_python"
+  elif [[ -x "$project_python" ]]; then
+    python_bin="$project_python"
+  else
+    python_bin="python3"
+  fi
+  python_dir=""
+  [[ "$python_bin" == */* ]] && python_dir="$(dirname "$python_bin")"
+  [[ -f "$core_dir/vibecrafted_core/cli.py" ]] || return 1
+  PATH="${python_dir:+$python_dir:}${PATH:-}" \
+    PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" \
+    "$python_bin" -m vibecrafted_core.cli "$@"
+}
+
 _vetcoders_product_workspace_prepare() {
-  command -v vibecrafted >/dev/null 2>&1 || return 0
   local line key value resolved
-  resolved="$(vibecrafted workspace resolve --env 2>/dev/null || true)"
+  resolved="$(_vetcoders_product_core_cli workspace resolve --env 2>/dev/null || true)"
   [[ -n "$resolved" ]] || return 0
   while IFS= read -r line; do
     key="${line%%=*}"
@@ -50,15 +79,14 @@ _vetcoders_product_workspace_prepare() {
 }
 
 _vetcoders_control_plane_eye_prepare() {
-  command -v vibecrafted >/dev/null 2>&1 || return 0
-  vibecrafted server status >/dev/null 2>&1 && return 0
+  _vetcoders_product_core_cli server status >/dev/null 2>&1 && return 0
 
   # The macOS product owns a persistent LaunchAgent. Reconcile that one owner
   # instead of starting a second foreground server with hard-coded defaults.
   # Linux and Windows keep their existing non-mutating entry behavior until
   # their platform service managers have an equivalent durable owner.
   if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]; then
-    vibecrafted server service reconcile >/dev/null 2>&1 || true
+    _vetcoders_product_core_cli server service reconcile >/dev/null 2>&1 || true
   fi
   return 0
 }

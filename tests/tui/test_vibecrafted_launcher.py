@@ -2245,11 +2245,13 @@ def test_agent_subcommand_help_lists_modes() -> None:
         text=True,
     )
 
-    assert "Plan-based helper modes for codex." in result.stdout
-    assert "implement <plan.md>" in result.stdout
-    assert "observe   --last" in result.stdout
-    assert "await     --last" in result.stdout
-    assert "stop      --run-id|--last" in result.stdout
+    assert "Canonical commands for codex. Actions come first" in result.stdout
+    assert "vibecrafted init codex" in result.stdout
+    assert "implement codex <plan.md>" in result.stdout
+    assert "observe   codex --last" in result.stdout
+    assert "await     codex --last" in result.stdout
+    assert "stop      codex --run-id|--last" in result.stdout
+    assert "Legacy agent-first calls still work" in result.stdout
 
 
 def test_agent_stop_mode_routes_to_core_cli_help() -> None:
@@ -2262,8 +2264,24 @@ def test_agent_stop_mode_routes_to_core_cli_help() -> None:
     )
 
     assert "Stop a run by launcher process group." in result.stdout
-    assert "Usage: vibecrafted codex stop --run-id <id>" in result.stdout
+    assert "vibecrafted stop codex --last|--run-id <id>" in result.stdout
     assert "Unknown mode: stop" not in result.stderr
+
+
+@pytest.mark.parametrize("verb", ["observe", "await", "stop"])
+def test_action_first_lifecycle_help_is_canonical(verb: str) -> None:
+    result = subprocess.run(
+        [str(LAUNCHER), verb, "codex", "--help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert f"vibecrafted {verb} codex --last|--run-id <id>" in result.stdout
+    assert f"vibecrafted <agent> {verb}" in result.stdout
+    assert "remains accepted for older scripts" in result.stdout
+    assert "Unknown" not in result.stderr
 
 
 def test_swarm_alias_routes_to_research_help() -> None:
@@ -2289,8 +2307,8 @@ def test_swarm_lifecycle_help_uses_existing_core_route() -> None:
         text=True,
     )
 
-    assert "Check the last agent report or transcript." in result.stdout
-    assert "Usage: vibecrafted swarm observe --last" in result.stdout
+    assert "Check an agent report or transcript." in result.stdout
+    assert "vibecrafted swarm observe --last" in result.stdout
 
 
 def test_canary_launcher_has_canonical_help() -> None:
@@ -2336,6 +2354,10 @@ def test_dashboard_subcommand_launches_repo_owned_vc_frame_layout(
     env.pop("VC_FRAME", None)
     env.pop("VC_FRAME_PANE_ID", None)
     env.pop("VC_FRAME_SESSION_NAME", None)
+    env.pop("VIBECRAFTED_WORKSPACE_ID", None)
+    env.pop("VIBECRAFTED_SESSION_ID", None)
+    env.pop("VIBECRAFTED_WORKSPACE_INSTANCE_ID", None)
+    env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     subprocess.run(
         ["bash", str(LAUNCHER), "dashboard"],
@@ -2388,6 +2410,10 @@ def test_start_subcommand_launches_operator_entrypoint_layout(tmp_path: Path) ->
     env.pop("VC_FRAME", None)
     env.pop("VC_FRAME_PANE_ID", None)
     env.pop("VC_FRAME_SESSION_NAME", None)
+    env.pop("VIBECRAFTED_WORKSPACE_ID", None)
+    env.pop("VIBECRAFTED_SESSION_ID", None)
+    env.pop("VIBECRAFTED_WORKSPACE_INSTANCE_ID", None)
+    env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     expected_session = _resolved_workspace_session(env)
 

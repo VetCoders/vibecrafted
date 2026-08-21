@@ -248,7 +248,6 @@ _vetcoders_record_vc_frame_attachment() {
   [[ -n "${VIBECRAFTED_WORKSPACE_ID:-}" ]] || return 0
   [[ -n "${VIBECRAFTED_SESSION_ID:-}" ]] || return 0
   [[ -n "${VIBECRAFTED_WORKSPACE_INSTANCE_ID:-}" ]] || return 0
-  command -v vibecrafted >/dev/null 2>&1 || return 0
 
   [[ -n "$socket_dir" ]] || socket_dir="$(_vetcoders_vc_frame_socket_dir)"
   local args=(
@@ -264,7 +263,15 @@ _vetcoders_record_vc_frame_attachment() {
   if [[ -n "$replaces_runtime_session_id" ]]; then
     args+=(--replaces-runtime-session-id "$replaces_runtime_session_id")
   fi
-  if ! vibecrafted "${args[@]}" >/dev/null; then
+  local attach_status=0
+  if declare -F _vetcoders_product_core_cli >/dev/null 2>&1; then
+    _vetcoders_product_core_cli "${args[@]}" >/dev/null || attach_status=$?
+  elif command -v vibecrafted >/dev/null 2>&1; then
+    vibecrafted "${args[@]}" >/dev/null || attach_status=$?
+  else
+    return 0
+  fi
+  if [[ "$attach_status" -ne 0 ]]; then
     printf "Warning: could not attach vc-frame session '%s' to WES.\n" \
       "$runtime_session_id" >&2
     return 1

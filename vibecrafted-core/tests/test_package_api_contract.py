@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -63,15 +64,15 @@ def test_version_matches_distribution_metadata() -> None:
         installed_version = None
     if installed_version is not None:
         assert installed_version == expected
-    # Runtime resolve may lift a bare tree VERSION to staged/git +gSHA —
-    # that is the product fix for Homebrew editable PATH shadows. Never
-    # allow a silent bare X.Y.Z when a stamp exists.
+    # Runtime resolution deliberately prefers a stamped staged install over a
+    # bare living-tree version. During a version bump that staged generation
+    # can still be the previous release; it must remain explicit, never masquerade
+    # as the new bare X.Y.Z.
     resolved = vibecrafted_core.__version__
     bare = expected.split("+", 1)[0]
-    assert resolved == expected or (
-        resolved.startswith(bare)
-        and ("+g" in resolved or resolved.endswith("+UNSTAMPED"))
-    )
+    assert vibecrafted_core.version_is_stamped(resolved)
+    if not resolved.startswith(bare):
+        assert resolved == vibecrafted_core.read_staged_tools_version()
 
 
 def test_version_falls_back_to_installed_metadata(monkeypatch) -> None:
@@ -106,6 +107,7 @@ def test_version_is_stamped_helper() -> None:
 
 def test_version_bump_updates_every_declared_projection(tmp_path: Path) -> None:
     version_file = tmp_path / "VERSION"
+    plugin_manifest = tmp_path / "plugin.json"
     pyprojects = (
         tmp_path / "vibecrafted-core" / "pyproject.toml",
         tmp_path / "vibecrafted-mcp" / "pyproject.toml",
@@ -126,6 +128,10 @@ def test_version_bump_updates_every_declared_projection(tmp_path: Path) -> None:
         tmp_path / "vibecrafted-app" / "Cargo.lock": ("control-core",),
     }
     version_file.write_text("1.4.1\n", encoding="utf-8")
+    plugin_manifest.write_text(
+        json.dumps({"name": "vibecrafted", "version": "1.4.1"}, indent=2) + "\n",
+        encoding="utf-8",
+    )
     for pyproject in pyprojects:
         pyproject.parent.mkdir(parents=True)
         pyproject.write_text(
@@ -168,6 +174,7 @@ def test_version_bump_updates_every_declared_projection(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert version_file.read_text(encoding="utf-8") == "1.5.0\n"
+    assert json.loads(plugin_manifest.read_text(encoding="utf-8"))["version"] == "1.5.0"
     for pyproject in pyprojects:
         assert (
             tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]

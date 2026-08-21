@@ -497,7 +497,8 @@ _run_core_help() {
   core_dir="$(_core_module_dir 2>/dev/null || true)"
   [[ -n "$core_dir" ]] || return 1
   python_bin="$(_vibecrafted_python)"
-  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" \
+  VIBECRAFTED_HELP_VERSION="$(_version)" \
+    PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" \
     "$python_bin" -m vibecrafted_core.cli help "$@"
 }
 
@@ -751,31 +752,34 @@ cmd_agent_help() {
   printf '\n'
   printf '%b⚒%b  %b%s%b\n' "$_copper" "$_reset" "$_bold" "$agent" "$_reset"
   printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
-  printf '  Plan-based helper modes for %s.\n' "$agent"
+  printf '  Canonical commands for %s. Actions come first; the agent comes last.\n' "$agent"
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
-  printf '  vibecrafted %s <implement|research|review|plan|prompt|observe|await|stop|resume> [args]\n' "$agent"
+  printf '  vibecrafted init %s\n' "$agent"
+  printf '  vibecrafted <skill> %s [args]\n' "$agent"
+  printf '  vibecrafted <observe|await|stop|resume> %s [args]\n' "$agent"
   printf '\n'
-  printf '%bModes:%b\n' "$_bold" "$_reset"
-  printf '  implement <plan.md>            Execute a plan file\n'
-  printf '  research  <plan.md>            Research a topic or plan file\n'
-  printf '  review    <plan.md>            Review a bounded PR, branch, commit range, or artifact pack\n'
-  printf '  plan      <plan.md>            Generate an implementation plan\n'
-  printf '  prompt    <plan.md>            Free-form prompt with plan context\n'
-  printf '  observe   --last|--run-id      Check the last report or transcript\n'
-  printf '  await     --last|--run-id      Wait for metadata completion + summary\n'
-  printf '  stop      --run-id|--last      TERM the launcher process group and mark stopped\n'
-  printf '  resume    --run-id|--last      Continue a stopped run as a new tracked job\n'
+  printf '%bCanonical workflows:%b\n' "$_bold" "$_reset"
+  printf '  implement %s <plan.md>         Execute a plan file\n' "$agent"
+  printf '  research  %s <plan.md>         Research a topic or plan file\n' "$agent"
+  printf '  review    %s <plan.md>         Review a bounded PR, branch, commit range, or artifact pack\n' "$agent"
+  printf '  observe   %s --last|--run-id   Check the last report or transcript\n' "$agent"
+  printf '  await     %s --last|--run-id   Wait for metadata completion + summary\n' "$agent"
+  printf '  stop      %s --run-id|--last   TERM the launcher process group and mark stopped\n' "$agent"
+  printf '  resume    %s --run-id|--last   Continue a stopped run as a new tracked job\n' "$agent"
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
-  printf '  vibecrafted %s implement .vibecrafted/plans/my-plan.md\n' "$agent"
-  printf '  vibecrafted %s research .vibecrafted/plans/my-plan.md\n' "$agent"
-  printf '  vibecrafted %s observe --last\n' "$agent"
-  printf '  vibecrafted %s await --last\n' "$agent"
-  printf '  vibecrafted %s stop --run-id <id>\n' "$agent"
-  printf '  vibecrafted %s stop --last\n' "$agent"
-  printf '  vibecrafted %s resume --run-id <id>\n' "$agent"
-  printf '  vibecrafted %s resume --last\n' "$agent"
+  printf '  vibecrafted init %s\n' "$agent"
+  printf '  vibecrafted implement %s .vibecrafted/plans/my-plan.md\n' "$agent"
+  printf '  vibecrafted research %s .vibecrafted/plans/my-plan.md\n' "$agent"
+  printf '  vibecrafted observe %s --last\n' "$agent"
+  printf '  vibecrafted await %s --last\n' "$agent"
+  printf '  vibecrafted stop %s --run-id <id>\n' "$agent"
+  printf '  vibecrafted resume %s --last\n' "$agent"
+  printf '\n'
+  printf '%bCompatibility grammar:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted %s <mode> [args]   Legacy agent-first calls still work.\n' "$agent"
+  printf '  Do not use this form in onboarding or generated instructions.\n'
   printf '\n'
 }
 
@@ -950,7 +954,6 @@ cmd_resume_help() {
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted resume <claude|codex|agy|junie|grok> --run-id <work-...> [flags]\n'
-  printf '  vibecrafted <agent> resume --run-id <work-...> | --last [flags]\n'
   printf '  vibecrafted resume <claude|codex|agy|junie|grok> --session <provider-uuid> [flags]\n'
   printf '  vibecrafted resume <claude|codex|agy|junie|grok> [flags]\n'
   printf '\n'
@@ -973,12 +976,15 @@ cmd_resume_help() {
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted resume claude --run-id work-260816-213657-08420\n'
-  printf '  vibecrafted claude resume --run-id work-260816-213657-08420 --prompt "continue"\n'
-  printf '  vibecrafted claude resume --last\n'
+  printf '  vibecrafted resume claude --run-id work-260816-213657-08420 --prompt "continue"\n'
+  printf '  vibecrafted resume claude --last\n'
   printf '  vibecrafted resume claude --session abc123\n'
   printf '  vibecrafted resume codex --session abc123 --prompt "Continue from the failing test"\n'
   printf '  vibecrafted resume grok\n'
   printf '  vibecrafted resume codex --prompt "pick up where the fleet left off"\n'
+  printf '\n'
+  printf '%bCompatibility grammar:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted <agent> resume ... remains accepted for older scripts.\n'
   printf '\n'
   _print_skill_specific_flags "resume"
   printf '\n'
@@ -4191,6 +4197,10 @@ cmd_help() {
       cmd_resume_help
       return
       ;;
+    observe|await|stop)
+      cmd_lifecycle_help "$topic"
+      return
+      ;;
     agents)
       cmd_agents
       return
@@ -4227,6 +4237,9 @@ cmd_help() {
   printf '  %binit%b [agent]         Orient an agent in this repo\n' "$_cyan" "$_reset"
   printf '  %b<skill> <agent>%b      Run a workflow with an agent\n' "$_cyan" "$_reset"
   printf '  %bresume%b <agent>       Continue a stopped run or a provider session\n' "$_cyan" "$_reset"
+  printf '  %bobserve%b <agent>      Check a run report or transcript\n' "$_cyan" "$_reset"
+  printf '  %bawait%b <agent>        Wait for a run to settle\n' "$_cyan" "$_reset"
+  printf '  %bstop%b <agent>         Stop a tracked launcher process group\n' "$_cyan" "$_reset"
   printf '  %bstatus%b               Today'"'"'s agent activity\n' "$_cyan" "$_reset"
   printf '  %bdoctor%b               Installation health — pass/fail\n' "$_cyan" "$_reset"
   printf '  %breceipt%b              Delivery/runtime receipt (source ↔ installed)\n' "$_cyan" "$_reset"
@@ -4278,14 +4291,16 @@ cmd_help_full() {
   _print_ship_path
   printf '  Dashboard is optional. The plain-language guide lives at %b%s/START_HERE.md%b.\n' "$_cyan" "$crafted_home" "$_reset"
   printf '\n'
-  printf '%b=== MODES (per agent) ===%b\n' "$_bold" "$_reset"
+  printf '%b=== WORKFLOWS + LIFECYCLE (action first) ===%b\n' "$_bold" "$_reset"
   printf '\n'
-  printf '  %bvibecrafted <agent> implement%b <plan.md>   Execute a plan file\n' "$_cyan" "$_reset"
-  printf '  %bvibecrafted <agent> research%b  <plan.md>   Single-agent research mode\n' "$_cyan" "$_reset"
-  printf '  %bvibecrafted <agent> review%b    <plan.md>   Review bounded code artifacts\n' "$_cyan" "$_reset"
-  printf '  %bvibecrafted <agent> plan%b      <plan.md>   Generate an implementation plan\n' "$_cyan" "$_reset"
-  printf '  %bvibecrafted <agent> prompt%b    <plan.md>   Free-form prompt with context\n' "$_cyan" "$_reset"
-  printf '  %bvibecrafted <agent> observe%b   --last      Check last agent report/transcript\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted implement <agent>%b <plan.md>   Execute a plan file\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted research <agent>%b  <plan.md>   Single-agent research mode\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted review <agent>%b    <plan.md>   Review bounded code artifacts\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted observe <agent>%b   --last      Check last agent report/transcript\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted await <agent>%b     --last      Wait for metadata completion\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted stop <agent>%b      --last      Stop the tracked launcher process group\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted resume <agent>%b    --last      Continue as a new tracked job\n' "$_cyan" "$_reset"
+  printf '  %bLegacy agent-first mode grammar remains compatibility-only.%b\n' "$_dim" "$_reset"
   printf '\n'
   printf '%b=== RESEARCH (launcher) ===%b\n' "$_bold" "$_reset"
   printf '\n'
@@ -4365,10 +4380,10 @@ cmd_help_full() {
   printf '\n'
   printf '%b=== INFRASTRUCTURE ===%b\n' "$_bold" "$_reset"
   printf '\n'
-  printf '  vibecrafted codex implement .vibecrafted/plans/my-plan.md\n'
-  printf '  vibecrafted claude research .vibecrafted/plans/my-plan.md\n'
-  printf '  vibecrafted agy review .vibecrafted/plans/my-plan.md   # (gemini deprecated)\n'
-  printf '  vibecrafted codex observe --last\n'
+  printf '  vibecrafted implement codex .vibecrafted/plans/my-plan.md\n'
+  printf '  vibecrafted research claude .vibecrafted/plans/my-plan.md\n'
+  printf '  vibecrafted review agy .vibecrafted/plans/my-plan.md   # (gemini deprecated)\n'
+  printf '  vibecrafted observe codex --last\n'
   printf '  vibecrafted resume claude --session <id> --prompt "Continue the fix"\n'
   printf '\n'
   printf '%b=== EXAMPLES ===%b\n' "$_bold" "$_reset"
@@ -5238,8 +5253,9 @@ cmd_update() {
 cmd_agents() {
   printf '\n'
   printf '%bVibecrafted agent helpers%b\n' "$_bold" "$_reset"
-  printf '  Use %bvibecrafted <agent> implement|research|review|plan|resume%b for plan-based helper flows.\n' "$_cyan" "$_reset"
-  printf '  Example: vibecrafted codex implement .vibecrafted/plans/my-plan.md\n'
+  printf '  Use %bvibecrafted <skill> <agent>%b for workflows and %bvibecrafted init <agent>%b to orient.\n' "$_cyan" "$_reset" "$_cyan" "$_reset"
+  printf '  Example: vibecrafted implement codex .vibecrafted/plans/my-plan.md\n'
+  printf '  Legacy vibecrafted <agent> <mode> remains compatibility-only.\n'
   printf '\n'
 }
 
@@ -5295,6 +5311,61 @@ cmd_lifecycle() {
   PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" "$(_vibecrafted_python)" -m vibecrafted_core.cli "$agent" "$verb" "$@"
 }
 
+cmd_lifecycle_help() {
+  local verb="$1"
+  local agent="${2:-<claude|codex|agy|junie|grok>}"
+  local description=""
+  local flags="--last|--run-id <id>"
+  case "$verb" in
+    observe) description="Check an agent report or transcript." ;;
+    await) description="Wait for an agent run to settle through metadata." ;;
+    stop) description="Stop a run by launcher process group." ;;
+  esac
+  printf '\n'
+  printf '%b⚒%b  %b%s%b\n' "$_copper" "$_reset" "$_bold" "$verb" "$_reset"
+  printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
+  printf '  %s\n' "$description"
+  printf '\n'
+  printf '%bUsage:%b\n' "$_bold" "$_reset"
+  if [[ "$agent" == "swarm" ]]; then
+    printf '  vibecrafted swarm %s %s\n' "$verb" "$flags"
+    printf '\n'
+    return 0
+  fi
+  printf '  vibecrafted %s %s %s\n' "$verb" "$agent" "$flags"
+  printf '\n'
+  printf '%bCompatibility grammar:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted <agent> %s %s remains accepted for older scripts.\n' "$verb" "$flags"
+  printf '\n'
+}
+
+cmd_lifecycle_command() {
+  local verb="$1"
+  local agent="${2:-}"
+  shift 2 || true
+  if [[ -z "$agent" ]] || _is_help_flag "$agent"; then
+    cmd_lifecycle_help "$verb"
+    [[ -n "$agent" ]] && return 0
+    return 1
+  fi
+  if [[ "$agent" == "gemini" ]]; then
+    printf '%b✗ gemini CLI is deprecated.%b Use agy (Google Antigravity CLI) instead.\n' "$_red" "$_reset" >&2
+    return 1
+  fi
+  _has_agent "$agent" || {
+    printf '%b✗%b Unknown agent: %s\n' "$_red" "$_reset" "$agent" >&2
+    return 1
+  }
+  local arg
+  for arg in "$@"; do
+    if _is_help_flag "$arg"; then
+      cmd_lifecycle_help "$verb" "$agent"
+      return 0
+    fi
+  done
+  cmd_lifecycle "$agent" "$verb" "$@"
+}
+
 # Back-compat thin wrapper; prefer cmd_lifecycle.
 cmd_stop() {
   cmd_lifecycle "$1" stop "${@:2}"
@@ -5312,6 +5383,12 @@ run_mode() {
     fi
   done
   if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    case "$mode" in
+      observe|await|stop)
+        cmd_lifecycle_help "$mode" "$agent"
+        return 0
+        ;;
+    esac
     printf '%b⚒%b  %b%s %s%b\n\n' "$_copper" "$_reset" "$_bold" "$agent" "$mode" "$_reset"
     case "$mode" in
       implement) printf '  Execute a plan file with the agent.\n  Usage: vibecrafted %s implement <plan.md>\n' "$agent" ;;
@@ -5319,10 +5396,7 @@ run_mode() {
       review)    printf '  Review a bounded PR, branch, commit range, or artifact pack.\n  Usage: vibecrafted %s review <plan.md>\n' "$agent" ;;
       plan)      printf '  Generate an implementation plan.\n  Usage: vibecrafted %s plan <plan.md>\n' "$agent" ;;
       prompt)    printf '  Free-form prompt with plan context.\n  Usage: vibecrafted %s prompt <plan.md>\n' "$agent" ;;
-      observe)   printf '  Check the last agent report or transcript.\n  Usage: vibecrafted %s observe --last|--run-id <id>\n' "$agent" ;;
-      await)     printf '  Wait for the last agent run to finish via metadata.\n  Usage: vibecrafted %s await --last|--run-id <id>\n' "$agent" ;;
-      stop)      printf '  Stop a run by launcher process group.\n  Usage: vibecrafted %s stop --run-id <id>|--last\n' "$agent" ;;
-      resume)    printf '  Continue a stopped control-plane run as a new tracked job.\n  Usage: vibecrafted %s resume --run-id <id>|--last\n' "$agent" ;;
+      resume)    cmd_resume_help; return 0 ;;
     esac
     printf '\n'
     return 0
@@ -5542,6 +5616,7 @@ main() {
     start) cmd_start "$@" ;;
     init) cmd_init "$@" ;;
     resume) cmd_resume "$@" ;;
+    observe|await|stop) cmd_lifecycle_command "$cmd" "$@" ;;
     gui) cmd_gui "$@" ;;
     server) cmd_server "$@" ;;
     tui) cmd_tui "$@" ;;
