@@ -1424,8 +1424,13 @@ def await_launch_truth(
         "transcript": _path_exists(transcript_path),
         "meta": _path_exists(meta_path),
     }
+    required_paths = {"meta"}
+    if require_report:
+        required_paths.add("report")
+    if require_transcript_output:
+        required_paths.add("transcript")
     path_errors = [
-        f"{name}_missing" for name, exists in paths_exist.items() if not exists
+        f"{name}_missing" for name in sorted(required_paths) if not paths_exist[name]
     ]
 
     return {

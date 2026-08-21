@@ -51,6 +51,7 @@ def _run_helper(
 
     env = os.environ.copy()
     env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
     env["CAPTURE_FILE"] = str(capture_file)
     env["VETCODERS_SPAWN_RUNTIME"] = "headless"
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
@@ -95,6 +96,7 @@ def _run_prompt_capture(
 
     env = os.environ.copy()
     env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
     env["CAPTURE_FILE"] = str(capture_file)
     env["VETCODERS_SPAWN_RUNTIME"] = "headless"
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)

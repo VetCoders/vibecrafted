@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .model_overrides import _with_model_override
 from .package_resources import package_root
+from .report_contract import CLAIM_DIGEST_ENV, parse_report_path, parse_report_text
 from .research_config import (
     SUPPORTED_RESEARCH_AGENTS,
     ResearchAgentSelection,
@@ -68,6 +69,54 @@ def _parent_report_path() -> Path:
 
 def _parent_meta_path() -> Path:
     return Path(os.environ["VIBECRAFTED_META_PATH"]).expanduser()
+
+
+def _parent_launcher_fields() -> dict[str, str]:
+    """Return machine-owned fields from the launcher's pre-seeded report shell."""
+    try:
+        text = _parent_report_path().read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    fields, _body, has_frontmatter = parse_report_text(text)
+    return fields if has_frontmatter else {}
+
+
+def _aggregate_child_report_fields(
+    results: Sequence[ChildResult],
+) -> dict[str, str]:
+    """Project only unanimous/explicit child claims onto the parent stage report.
+
+    ``code_mutation`` is conservative: any explicit true wins, all children
+    must explicitly report false before the aggregate may report false.
+    Other lifecycle steering/provenance fields are copied only on consensus.
+    """
+    parsed = [parse_report_path(result.report).fields for result in results]
+    if not parsed:
+        return {}
+
+    projected: dict[str, str] = {}
+    mutation_values = [
+        fields.get("code_mutation", "").strip().lower() for fields in parsed
+    ]
+    if any(value in {"1", "true", "yes", "on"} for value in mutation_values):
+        projected["code_mutation"] = "true"
+    elif mutation_values and all(
+        value in {"0", "false", "no", "off"} for value in mutation_values
+    ):
+        projected["code_mutation"] = "false"
+
+    for key in (
+        "changed_files_reported",
+        "commit",
+        "launch_accepted",
+        "next_agent",
+        "next_stage",
+        "stage_completed",
+    ):
+        values = [fields.get(key, "").strip() for fields in parsed]
+        if values and all(values) and len(set(values)) == 1:
+            projected[key] = values[0]
+    return projected
 
 
 def _child_dir() -> Path:
@@ -1102,16 +1151,50 @@ def _write_parent_report(
     cost = receipt.get("cost_usd")
     report = _parent_report_path()
     report.parent.mkdir(parents=True, exist_ok=True)
+    launcher_fields = _parent_launcher_fields()
+    child_claims = _aggregate_child_report_fields(accounting_results)
+    claim_status = (
+        "completed"
+        if status == "completed"
+        else ("partial" if status == "partial_success" else "failed")
+    )
+    finalized = status == "completed"
+    claim_digest = str(
+        os.environ.get(CLAIM_DIGEST_ENV) or launcher_fields.get("claim_digest") or ""
+    ).strip()
+    agent = str(launcher_fields.get("agent") or "").strip()
+    if not agent:
+        child_agents = {item.agent for item in accounting_results if item.agent}
+        agent = next(iter(child_agents)) if len(child_agents) == 1 else "supervisor"
     lines = [
         "---",
-        f"status: {status}",
-        f"skill: vc-{kind}",
         f"run_id: {_parent_run_id()}",
-        f"session_id: {receipt.get('session_id') or 'aggregated'}",
-        f"root: {root}",
-        f"tokens_input: {receipt['tokens_input']}",
-        f"tokens_cached_input: {receipt['tokens_cached_input']}",
+        f"agent: {agent}",
+        f"skill: vc-{kind}",
+        f"status: {status}",
+        f"claim_status: {claim_status}",
+        f"finalized: {str(finalized).lower()}",
     ]
+    if finalized:
+        lines.append(
+            "claim: "
+            f"All {len(accounting_results)} supervised vc-{kind} child runs "
+            "completed with valid artifacts."
+        )
+    lines.append(
+        f"session_id: {receipt.get('session_id') or 'aggregated'}",
+    )
+    if claim_digest:
+        lines.append(f"claim_digest: {claim_digest}")
+    for key, value in child_claims.items():
+        lines.append(f"{key}: {value}")
+    lines.extend(
+        [
+            f"root: {root}",
+            f"tokens_input: {receipt['tokens_input']}",
+            f"tokens_cached_input: {receipt['tokens_cached_input']}",
+        ]
+    )
     if receipt.get("tokens_cache_write") is not None:
         lines.append(f"tokens_cache_write: {receipt['tokens_cache_write']}")
     if receipt.get("model_requested"):

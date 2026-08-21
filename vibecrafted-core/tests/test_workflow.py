@@ -1372,6 +1372,66 @@ def test_launch_workflow_artifact_paths_are_terminal_truth(
     assert truth["dou_index"] == 3
 
 
+def test_await_launch_truth_allows_optional_missing_transcript(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = tmp_path / "report.md"
+    meta = tmp_path / "meta.json"
+    transcript = tmp_path / "missing-transcript.log"
+    report.write_text(
+        "---\n"
+        "run_id: aggregate-1\n"
+        "agent: codex\n"
+        "skill: vc-marbles\n"
+        "status: completed\n"
+        "claim_status: completed\n"
+        "finalized: true\n"
+        "claim: supervised aggregate completed\n"
+        "---\n"
+        "body\n",
+        encoding="utf-8",
+    )
+    meta.write_text('{"run_id": "aggregate-1"}\n', encoding="utf-8")
+    monkeypatch.setattr(
+        workflow,
+        "await_run",
+        lambda *_args, **_kwargs: {
+            "found": True,
+            "completed": True,
+            "timed_out": False,
+            "worker_alive": False,
+            "reason": "report_delivered",
+            "run": {
+                "state": "active",
+                "liveness": "unknown",
+                "exit_code": 0,
+            },
+        },
+    )
+    monkeypatch.setattr(workflow, "_write_terminal_meta", lambda **_kwargs: {})
+
+    launch = {
+        "run_id": "aggregate-1",
+        "report": str(report),
+        "transcript": str(transcript),
+        "meta": str(meta),
+    }
+    optional = workflow.await_launch_truth(
+        launch,
+        require_transcript_output=False,
+    )
+    required = workflow.await_launch_truth(
+        launch,
+        require_transcript_output=True,
+    )
+
+    assert optional["paths_exist"]["transcript"] is False
+    assert optional["artifact_ok"] is True
+    assert "transcript_missing" not in optional["artifact_errors"]
+    assert required["artifact_ok"] is False
+    assert "transcript_missing" in required["artifact_errors"]
+
+
 def test_report_requested_next_stage_reads_report_frontmatter(
     tmp_path: Path,
 ) -> None:

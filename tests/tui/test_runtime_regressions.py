@@ -223,6 +223,17 @@ def _probe_codex_resume_contract(
     return result, command, aicx_capture.exists()
 
 
+def _assert_pointer_prompt(
+    command: str,
+    input_file: Path,
+    *,
+    forbidden_payload: str,
+) -> None:
+    assert f"Primary input file: {input_file.resolve()}" in command
+    assert "Read that file in full before acting" in command
+    assert forbidden_payload not in command
+
+
 def test_bare_codex_resume_uses_aicx_pack_in_fresh_interactive_session(
     tmp_path: Path,
 ) -> None:
@@ -231,7 +242,11 @@ def test_bare_codex_resume_uses_aicx_pack_in_fresh_interactive_session(
     assert result.returncode == 0, result.stderr
     assert aicx_called
     assert command.startswith("codex ")
-    assert "AICX OVERLAY BODY" in command
+    _assert_pointer_prompt(
+        command,
+        tmp_path / "aicx-context.md",
+        forbidden_payload="AICX OVERLAY BODY",
+    )
     assert "codex exec" not in command
     assert "codex resume" not in command
     assert "historical-codex-session" not in command
@@ -282,7 +297,11 @@ def test_bare_resume_keeps_aicx_continuity_in_operator_session(
     assert result.returncode == 0, result.stderr
     assert aicx_called
     assert command.startswith(f"{agent} ")
-    assert "AICX OVERLAY BODY" in command
+    _assert_pointer_prompt(
+        command,
+        tmp_path / "aicx-context.md",
+        forbidden_payload="AICX OVERLAY BODY",
+    )
     assert not command.startswith("tracked ")
     assert "historical-codex-session" not in command
     assert "--resume" not in command
@@ -343,7 +362,11 @@ def test_codex_explicit_prompt_and_file_are_fresh_noninteractive_runs(
     assert file_command.startswith(
         "codex exec --dangerously-bypass-approvals-and-sandbox "
     )
-    assert "FILE INPUT" in file_command
+    _assert_pointer_prompt(
+        file_command,
+        input_file,
+        forbidden_payload="FILE INPUT",
+    )
 
 
 def test_codex_session_with_explicit_file_is_noninteractive_continuation(
@@ -361,7 +384,11 @@ def test_codex_session_with_explicit_file_is_noninteractive_continuation(
     assert not aicx_called
     assert command.startswith("codex exec --dangerously-bypass-approvals-and-sandbox ")
     assert "resume sess-file-123" in command
-    assert "SESSION FILE INPUT" in command
+    _assert_pointer_prompt(
+        command,
+        input_file,
+        forbidden_payload="SESSION FILE INPUT",
+    )
 
 
 def test_codex_positional_resume_compatibility_preserves_mode_contract(
@@ -631,7 +658,8 @@ def test_resume_terminal_runtime_routes_headless_codex_into_worker_session(
         "new-tab",
         "--name",
     ]
-    assert "resume-codex" in new_tab_call
+    assert "codex" in new_tab_call
+    assert "resume-codex" not in new_tab_call
     command_script = Path(new_tab_call[-1])
     command_body = command_script.read_text(encoding="utf-8")
     # Explicit --prompt means "continue the job": the visible tab must host the
