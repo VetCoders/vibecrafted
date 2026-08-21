@@ -459,7 +459,7 @@ env -u VIBECRAFTED_RUN_ID -u VIBECRAFTED_OPERATOR_SESSION \
   -u VC_FRAME -u VC_FRAME_PANE_ID -u VC_FRAME_SESSION_NAME \
   -u ZELLIJ -u ZELLIJ_PANE_ID -u ZELLIJ_SESSION_NAME \
   HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" \
-  "$home_dir/.local/bin/vibecrafted" codex await \
+  "$home_dir/.local/bin/vibecrafted" await codex \
     --run-id "$resume_run_id" --timeout 20 --interval 0.1 --status-interval 20
 require_file "$resume_capture"
 require_file "$resume_prompt_capture"
