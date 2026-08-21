@@ -171,6 +171,11 @@ prompt = "canonical dispatch report prompt"
         return FakeProc(command)
 
     monkeypatch.setattr(workflow.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        workflow,
+        "_resolve_agent_command",
+        lambda _agent, command, _env: list(command),
+    )
     # Hermetic: an ambient vc-frame on the host would turn the launcher's
     # liveness probe (added in 3d794af) into a real `list-sessions` subprocess
     # routed through fake_popen, which carries no env kwarg. Keep the probe

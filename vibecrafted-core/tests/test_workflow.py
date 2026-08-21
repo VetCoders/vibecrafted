@@ -644,6 +644,11 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
         lambda _agent: ["codex", "exec"],
     )
     monkeypatch.setattr(
+        workflow,
+        "_resolve_agent_command",
+        lambda _agent, command, _env: list(command),
+    )
+    monkeypatch.setattr(
         workflow.shutil,
         "which",
         lambda name: str(vc_frame) if name == "vc-frame" else None,
@@ -921,6 +926,11 @@ def test_terminal_runtime_resurrects_missing_host_session(
     )
     monkeypatch.setattr(workflow, "_stdin_command", lambda _agent: ["codex", "exec"])
     monkeypatch.setattr(
+        workflow,
+        "_resolve_agent_command",
+        lambda _agent, command, _env: list(command),
+    )
+    monkeypatch.setattr(
         workflow.shutil,
         "which",
         lambda name: str(vc_frame) if name == "vc-frame" else None,
@@ -963,6 +973,11 @@ def test_terminal_runtime_host_double_fail_marks_failed_with_last_error(
         root=str(tmp_path),
     )
     monkeypatch.setattr(workflow, "_stdin_command", lambda _agent: ["codex", "exec"])
+    monkeypatch.setattr(
+        workflow,
+        "_resolve_agent_command",
+        lambda _agent, command, _env: list(command),
+    )
     monkeypatch.setattr(
         workflow.shutil,
         "which",

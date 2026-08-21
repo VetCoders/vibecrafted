@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 4.2.1 — 2026-08-21
+
+### Fixed
+
+- macOS release builds now compile `vc-frame` reliably with Rust 1.95, pin its
+  release provenance to a stable source identity, and strip linker object paths
+  before payload hygiene and signing.
+- The full source gate no longer depends on the wall clock or on provider
+  executables installed on the hosted runner.
+
 ## 4.2.0 — 2026-08-21
 
 > **4.2.0 scope — measured truths, finished seams.** Release integrity from the
