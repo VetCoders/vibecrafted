@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """CLI: bump VERSION and mirror the new semver into every packaged declaration
-(vibecrafted-core/vibecrafted-mcp pyproject.toml + packaged VERSION files +
-the server crates' Cargo.toml [package] versions)."""
+(plugin.json, vibecrafted-core/vibecrafted-mcp pyproject.toml, packaged VERSION
+files, and the server crates' Cargo.toml [package] versions)."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -38,6 +39,7 @@ CARGO_LOCK_PACKAGES = {
     ),
     Path("vibecrafted-app/Cargo.lock"): ("control-core",),
 }
+PLUGIN_MANIFEST_RELATIVE = Path("plugin.json")
 
 
 def _parse_version(value: str) -> tuple[int, int, int]:
@@ -227,6 +229,11 @@ def update_version_declarations(version_file: Path, requested: str) -> tuple[str
                 for path, text in pyproject_texts.items()
             }
         )
+        plugin_path = version_file.parent / PLUGIN_MANIFEST_RELATIVE
+        plugin_payload: dict[str, object] | None = None
+        if plugin_path.exists():
+            plugin_payload = json.loads(plugin_path.read_text(encoding="utf-8"))
+            declared[plugin_path] = str(plugin_payload.get("version", ""))
         declared.update(
             {
                 path: _table_version(text, "package")
@@ -258,6 +265,9 @@ def update_version_declarations(version_file: Path, requested: str) -> tuple[str
             }
         )
         updates.update({path: next_version + "\n" for path in packaged_versions})
+        if plugin_payload is not None:
+            plugin_payload["version"] = next_version
+            updates[plugin_path] = json.dumps(plugin_payload, indent=2) + "\n"
         for relative, package_names in CARGO_LOCK_PACKAGES.items():
             lock_path = version_file.parent / relative
             if not lock_path.exists():

@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## 4.2.0 — 2026-08-21
+
 > **4.2.0 scope — measured truths, finished seams.** Release integrity from the
 > donor snapshot through to the payload a stranger downloads, and one identity
 > order shared by every surface that reads a run.
@@ -33,6 +35,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Public CLI guidance now uses one canonical grammar: action first, agent last
+  (`vibecrafted init codex`, `vibecrafted implement codex`,
+  `vibecrafted stop codex`). Agent-first mode calls remain accepted only as a
+  compatibility surface and are labelled as such instead of being taught to
+  first-time users.
+- The standalone brand spelling is `Vetcoders`; repository and URL identity
+  remains lowercase `vetcoders/<repo>`.
 - Bare `vibecrafted resume <agent>` (and `--root`) opens a new interactive
   session plus an AICX continuity pack. It no longer native-attaches the last
   same-agent AICX candidate. Native provider resume requires `--session <id>`.
@@ -63,6 +72,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The direct Python lifecycle test now owns an isolated `VIBECRAFTED_HOME` and
+  clears inherited workspace/session identity before writing metadata. Test
+  runs can no longer register `test_write_meta*` sessions in the operator's
+  live workspace rail.
+- The repository `loop` launcher now derives `PYTHONPATH` from its actual
+  package root. It no longer depends on an ambient installed core when invoked
+  from a different working directory.
+- Product entry resolves workspace identity and server ownership through the
+  core shipped beside the active deck, never through an older `vibecrafted`
+  found earlier on `PATH`; vc-frame session attachment follows the same owner.
 - The delivery proof kernel could not run its own verification subject. The
   executor scrubs the environment to `_SAFE_ENV_KEYS` — correctly dropping
   `PYTHONPATH` — while the subject was declared as a `-m` module invocation
@@ -89,6 +108,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   it break are now capable of failing — including the keychain regression suite,
   which ran every child without `set -e`, the exact condition its target bug
   requires.
+
+### Known gaps
+
+- Workspace Cut B remains deferred: workspace selection, workspace-scoped
+  F/X/N projections, and build-isolated vc-frame runtime are not part of 4.2.0.
+- Runtime generations integrity-pin the complete shipped tree, and each skill
+  may declare its own semantic version, but 4.2.0 does not yet publish a
+  queryable framework → launcher → skill id/version/checksum compatibility
+  manifest. That contract belongs in the packer, install receipt, and doctor as
+  one system rather than as release-note-only metadata.
 
 ### Security
 

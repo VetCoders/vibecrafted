@@ -114,6 +114,13 @@ def test_product_entry_prepare_exists_in_shipped_dashboard() -> None:
     assert body.index("_vetcoders_product_workspace_prepare") < body.index(
         "_vetcoders_control_plane_eye_prepare"
     )
+    assert "vibecrafted workspace resolve" not in text
+    assert "vibecrafted server status" not in text
+    assert "_vetcoders_product_core_cli workspace resolve --env" in text
+    vc_frame = (
+        REPO / "vibecrafted-core/vibecrafted_core/runtime/shell/lib/vc_frame.sh"
+    ).read_text(encoding="utf-8")
+    assert '_vetcoders_product_core_cli "${args[@]}"' in vc_frame
 
 
 def test_shipped_deck_routes_workspace_resolution_to_core(tmp_path: Path) -> None:
@@ -414,6 +421,7 @@ def test_vc_start_probe_pins_product_config(tmp_path: Path) -> None:
         "HOME": str(home),
         "XDG_CONFIG_HOME": str(xdg),
         "VIBECRAFTED_ROOT": str(REPO),
+        "VIBECRAFTED_PRODUCT_CORE_CLI": str(bin_dir / "vibecrafted"),
         "VIBECRAFTED_PRODUCT_ENTRY_PROBE": "1",
         "USER": "test",
     }
@@ -486,6 +494,7 @@ def test_product_entry_reconciles_the_one_macos_server_service_owner(
         "HOME": str(home),
         "XDG_CONFIG_HOME": str(xdg),
         "VIBECRAFTED_ROOT": str(REPO),
+        "VIBECRAFTED_PRODUCT_CORE_CLI": str(bin_dir / "vibecrafted"),
         "VIBECRAFTED_PRODUCT_ENTRY_PROBE": "1",
         "USER": "test",
     }
@@ -525,7 +534,11 @@ def test_product_entry_does_not_invent_a_non_macos_service_owner(
         ],
         capture_output=True,
         text=True,
-        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"},
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "VIBECRAFTED_PRODUCT_CORE_CLI": str(bin_dir / "vibecrafted"),
+        },
         check=False,
     )
 
@@ -552,7 +565,11 @@ def test_product_entry_keeps_a_healthy_macos_server_untouched(tmp_path: Path) ->
         ],
         capture_output=True,
         text=True,
-        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"},
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "VIBECRAFTED_PRODUCT_CORE_CLI": str(bin_dir / "vibecrafted"),
+        },
         check=False,
     )
 

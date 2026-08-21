@@ -231,6 +231,7 @@ def test_vc_start_launches_operator_entrypoint_layout(tmp_path: Path) -> None:
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["CAPTURE_FILE"] = str(capture_file)
     env["SESSION_STATE_FILE"] = str(session_state_file)
@@ -294,6 +295,7 @@ def test_vc_start_with_stale_frame_env_creates_session_foreground(
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["CAPTURE_FILE"] = str(capture_file)
     env["SESSION_STATE_FILE"] = str(session_state_file)
@@ -1252,6 +1254,7 @@ def test_legacy_frame_namespace_is_attached_to_wes_before_new_window(
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["CAPTURE_FILE"] = str(frame_capture)
     env["WES_CAPTURE_FILE"] = str(wes_capture)
+    env["VIBECRAFTED_PRODUCT_CORE_CLI"] = str(vibecrafted)
     env["SESSION_STATE_FILE"] = str(session_state_file)
     env["FAKE_VC_FRAME_SESSION"] = "workspace-deadbeef"
     env["FAKE_VC_FRAME_DUPLICATE"] = "1"
@@ -1344,6 +1347,7 @@ raise SystemExit(0)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["EVENTS_FILE"] = str(events_file)
+    env["VIBECRAFTED_PRODUCT_CORE_CLI"] = str(vibecrafted)
     env["SESSION_STATE_FILE"] = str(session_state_file)
     env["RELEASE_FILE"] = str(release_file)
     env["FAKE_VC_FRAME_SESSION"] = "workspace-deadbeef"

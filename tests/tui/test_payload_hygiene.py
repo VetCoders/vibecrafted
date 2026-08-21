@@ -8,7 +8,7 @@ WASM, cc-rs debug info, Swift/xcodebuild intermediates, a uv-seeded CPython's
 `_sysconfigdata`, and a pip console-script shebang). `--remap-path-prefix`
 reaches exactly one of them.
 
-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 """
 
 from __future__ import annotations

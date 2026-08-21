@@ -419,8 +419,10 @@ grok), `df9b6337` and the scaffold records `cf20aa4e` `833f770e` `63e5e8d3`
   `README.md` and `docs/RELEASE_CHECKLIST.md` both enumerate the DMG assets. The
   measurement was of the **deployed site**, which is three months stale and lives
   in `vibecrafted-io`. The gap is a deploy, not a docs gap — same button as W1-c.
-- **P2-10, the brand half, is declined.** The audit called `"Vetcoders"` a
-  drift from the canonical `VetCoders`. In this repository `Vetcoders` is the
+- **P2-10, the brand half, is resolved by operator decision.** The audit called
+  `"Vetcoders"` a drift from `"VetCoders"`; the canonical standalone brand is
+  `Vetcoders`, while repository identity and URLs remain lowercase
+  `vetcoders/<repo>`. In this repository `Vetcoders` is the
   prevailing form at 272 occurrences against 6, it is hardcoded in
   `build_marketplace_bundle.plugin_manifest`, and it matches the `vetcoders`
   org slug. A 272-site rename is a branding decision for the operator, not a

@@ -1180,6 +1180,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     # every installed entrypoint teaches the same contract.  ``help --all``
     # deliberately stays with the deck: it is the long operational reference.
     from . import __version__
+
+    help_version = os.environ.get("VIBECRAFTED_HELP_VERSION", "").strip() or __version__
     from .help_surface import (
         has_workflow_help,
         render_resume_session_help,
@@ -1188,11 +1190,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     if not raw_args or raw_args[0] in {"-h", "--help"}:
-        print(render_root_help(__version__), end="")
+        print(render_root_help(help_version), end="")
         return 0
     if raw_args[0] == "help":
         if len(raw_args) == 1:
-            print(render_root_help(__version__), end="")
+            print(render_root_help(help_version), end="")
             return 0
         topic = raw_args[1].removeprefix("vc-")
         if topic == "resume-session":

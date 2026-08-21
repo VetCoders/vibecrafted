@@ -356,8 +356,20 @@ def test_spawn_write_meta_schema_contract_pin(tmp_path: Path) -> None:
     assert set(data.keys()) == expected_keys
 
 
-def test_write_meta_python_direct(tmp_path: Path) -> None:
+def test_write_meta_python_direct(tmp_path: Path, monkeypatch) -> None:
     import sys
+
+    vibecrafted_home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(vibecrafted_home))
+    for name in (
+        "VC_FRAME_SESSION_NAME",
+        "VIBECRAFTED_OPERATOR_SESSION",
+        "VIBECRAFTED_WORKSPACE_ID",
+        "VIBECRAFTED_SESSION_ID",
+        "VIBECRAFTED_WORKSPACE_INSTANCE_ID",
+        "VIBECRAFTED_BUILD_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
     package_root = REPO_ROOT / "vibecrafted-core"
     if str(package_root) not in sys.path:
@@ -404,6 +416,7 @@ def test_write_meta_python_direct(tmp_path: Path) -> None:
     assert data["model"] == "gpt-4"
     assert isinstance(data["created_at"], str)
     assert isinstance(data["updated_at"], str)
+    assert os.environ["VIBECRAFTED_HOME"] == str(vibecrafted_home)
 
 
 def test_triage_run_is_the_last_step_of_a_generated_launcher() -> None:

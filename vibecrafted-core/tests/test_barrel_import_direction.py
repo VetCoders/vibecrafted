@@ -14,7 +14,7 @@ self-cycle (structural 1, health back to 78) without anyone typing a character.
 So the guard has to be a test. This one is host-independent, needs no loctree
 binary, and fails on exactly the spelling the formatter produces.
 
-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 """
 
 from __future__ import annotations

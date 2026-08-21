@@ -66,9 +66,9 @@ def test_command_deck_accepts_agy_junie_and_grok_help() -> None:
             capture_output=True,
             text=True,
         )
-        assert f"Plan-based helper modes for {agent}." in result.stdout
-        assert "implement <plan.md>" in result.stdout
-        assert "await     --last" in result.stdout
+        assert f"Canonical commands for {agent}. Actions come first" in result.stdout
+        assert f"implement {agent} <plan.md>" in result.stdout
+        assert f"await     {agent} --last" in result.stdout
 
 
 def test_agy_spawn_dry_run_uses_antigravity_print_contract(tmp_path: Path) -> None:
