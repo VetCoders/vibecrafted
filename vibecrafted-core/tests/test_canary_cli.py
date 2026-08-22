@@ -196,3 +196,19 @@ def test_merge_catalog_rejects_file_with_surrounding_whitespace(
     assert result.returncode != 0
     assert "surrounding whitespace" in result.stderr
     assert not (tmp_path / "catalog.json").exists()
+
+
+def test_failed_rerun_removes_previous_settled_output(tmp_path: Path) -> None:
+    (tmp_path / "catalog.json").write_text(
+        json.dumps({"counts": {"units_cataloged": 99}}), encoding="utf-8"
+    )
+    unit = _unit("src/lib.rs", "fn")
+    unit.pop("authority")
+    _write_catalog(tmp_path, "rust-scope.json", unit)
+
+    result = _run_merge(tmp_path)
+
+    assert result.returncode != 0
+    assert not (tmp_path / "catalog.json").exists(), (
+        "failed merge must not leave a settled-looking artifact behind"
+    )

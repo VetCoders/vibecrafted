@@ -736,6 +736,10 @@ def cmd_merge_catalog(args: argparse.Namespace) -> int:
     out = Path(args.output or root / ".loctree" / "canary" / "catalog.json")
     if not src.is_dir():
         _die(f"catalogs dir missing: {src}")
+    # A rerun must never leave yesterday's settled-looking output behind a
+    # failed merge: drop any existing artifact before validation so failure
+    # states are unambiguous (output exists ⇔ this merge succeeded).
+    out.unlink(missing_ok=True)
     plugins = load_language_plugins() if args.strict else ()
     if not args.strict:
         print(
