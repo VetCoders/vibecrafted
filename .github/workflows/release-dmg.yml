@@ -99,7 +99,7 @@ jobs:
       - name: Install build tools
         run: |
           set -euo pipefail
-          brew install xcodegen shellcheck
+          brew install xcodegen shellcheck protobuf
           # macos-15 images ship rustup; donors pin their toolchain via rust-toolchain.toml
           rustup --version
           rustup default stable
