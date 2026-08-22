@@ -48,7 +48,7 @@ workflow.
 
 - **Wejście**: briefy + tracker wyprodukowane upstream (vc-scaffold / nadrzędny
   workflow) — ALBO, w **szybkiej fali** (zob. niżej), napisane przez dispatchera
-  w sesji z żywych findings. Oddawaj kontrolę do scaffolda tylko wtedy, gdy
+  w sesji z żywych ustaleń. Oddawaj kontrolę do scaffolda tylko wtedy, gdy
   robota jest naprawdę nieukształtowana; operator zarządzający falę na
   dowodach, które już trzymasz, to nie ten przypadek.
 - **Wyczuwanie kontekstu**: ten skill nie niesie kanonicznego szablonu promptu.
@@ -140,10 +140,10 @@ pinu traktuj jako smell do rozwiązania przed startem.
 
 ## Szybka fala (blitz) — natychmiastowy dispatch na rozkaz operatora
 
-Gdy operator wskazuje N zweryfikowanych findings i zarządza falę („dispatchuj
-falę na te pakiety", „blitzkrieg, nie partyzantka"), dispatcher JEST autorem
+Gdy operator wskazuje N zweryfikowanych ustaleń i zarządza falę („dispatchuj
+falę na te pakiety”, „blitzkrieg, nie partyzantka”), dispatcher JEST autorem
 briefów. Nie kieruj przez vc-scaffold, nie buduj DRIVERA, nie odpytuj rundami —
-findings z dowodami są planem.
+ustalenia z dowodami są planem.
 
 Kształt (polowo sprawdzony, loctree-suite findings-wave-2, 2026-08-22):
 
@@ -182,7 +182,7 @@ nigdy nie merguje trunka; dispatcher jest jednowątkowym integratorem.
 Skitranie równoległej floty w jednym współdzielonym checkoucie po takim
 rozkazie to powtórka porażki substratu kanarka z 2026-08-20 — nie rób tego.
 
-Strach, że „dirty tree = konflikty", to inwersja obserwowanej rzeczywistości
+Strach, że „dirty tree = konflikty”, to inwersja obserwowanej rzeczywistości
 DLA TORU LIVING TREE:
 merge hell rodzi się w NIEZARZĄDZANEJ izolacji — worktree bez verifierów i bez
 integratora, gdzie niezależne wizje workerów rozjeżdżają się i muszą zostać

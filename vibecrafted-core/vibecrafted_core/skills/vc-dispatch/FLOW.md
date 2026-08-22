@@ -12,7 +12,7 @@ It does not become the worker.
 flowchart TD
     A[Operator plan, tracker, or baton] --> B[Declare dispatcher posture]
     A2[Fast wave: operator orders dispatch on live findings] --> B2[Dispatcher authors lean briefs in-session]
-    B2 --> E
+    B2 --> C
     B --> C[Canonical Orientation Gate: vc-init + Loctree map]
     C --> D[Read briefs, tracker, journal, and cited files]
     D --> E[Reverse-check worker prompts]

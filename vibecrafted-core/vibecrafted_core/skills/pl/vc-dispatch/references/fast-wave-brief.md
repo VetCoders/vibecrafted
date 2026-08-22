@@ -21,17 +21,17 @@ Loctree-first · Gałąź/commity/raport.
 - **`export CARGO_TARGET_DIR="$PWD/target"`** w każdym briefie rustowym —
   współdzielony target dir cicho podmienia binarki między równoległymi worktree.
 - **Licz WSZYSTKIE linie `test result:`** — `cargo test … | tail -1` mierzy
-  ostatnią binarkę, nie tę z twoim testem (fałszywe „ok. 0 passed").
+  ostatnią binarkę, nie tę z twoim testem (fałszywe „ok. 0 passed”).
 - **`PYTHONPATH=` przed każdą bramką semgrep** — Homebrew semgrep umiera pod
   overlayem python-site Vibecrafted.
 - **Lista do-not-touch**: wymień pliki należące do wiszących siostrzanych
   gałęzi (niescalonych fal) i do siostrzanych cięć TEJ fali. Współdzielone
-  huby dostają przydziały regionów („locki ~200–300 są w2-b; trzymaj się z dala").
+  huby dostają przydziały regionów („locki ~200–300 są w2-b; trzymaj się z dala”).
 - **Pliki-huby tylko addytywnie**: na pliku o wysokim fan-in (`types.rs`,
   84 importerów) żądaj nowych pól z serde-default, zero rename'ów, zero zmian
   sygnatur.
 - **Klauzula idempotencji**: „przy ponownym uruchomieniu na drzewie, gdzie to
-  już wylądowało, zweryfikuj i zatrzymaj się" — refire to najtańszy prymityw
+  już wylądowało, zweryfikuj i zatrzymaj się” — refire to najtańszy prymityw
   konwergencji i nie może dublować roboty.
 - **≥2 nietrywialne nowe testy** w akceptacji; bramka łapiąca 0 testów jest
   trywialnie zielona.
@@ -46,7 +46,7 @@ Loctree-first · Gałąź/commity/raport.
 ```
 git -C <główny-checkout> worktree add \
   ~/.vibecrafted/worktrees/<org>/<repo>/<RRRR_MMDD>/<slug> \
-  -b <agent>/workflow/<slug> origin/<gałąź-baseline>
+  -b <agent>/workflow/<slug> <baseline-sha>
 cd ~/.vibecrafted/worktrees/<org>/<repo>/<RRRR_MMDD>/<slug>
 ```
 

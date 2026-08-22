@@ -2,7 +2,7 @@
 
 A fast-wave (blitz) brief is authored by the dispatcher in-session. It is lean,
 not thin: every item below earned its place by burning a real wave. Include
-each one that applies, verbatim-spirit.
+each one that applies, verbatim in spirit.
 
 ## Skeleton (all sections, in order)
 
@@ -46,7 +46,7 @@ Loctree-first · Branch/commits/report.
 ```
 git -C <main-checkout> worktree add \
   ~/.vibecrafted/worktrees/<org>/<repo>/<YYYY_MMDD>/<slug> \
-  -b <agent>/workflow/<slug> origin/<baseline-branch>
+  -b <agent>/workflow/<slug> <baseline-sha>
 cd ~/.vibecrafted/worktrees/<org>/<repo>/<YYYY_MMDD>/<slug>
 ```
 
