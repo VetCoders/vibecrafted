@@ -237,10 +237,10 @@ def test_agent_resume_cli_rejects_session_flag_used_as_run(capsys) -> None:
     assert "--run-id" in err
 
 
-def test_deck_accepts_agent_resume_mode() -> None:
+def test_deck_accepts_action_first_resume_mode() -> None:
     deck = deck_path()
     result = subprocess.run(
-        ["bash", str(deck), "claude", "resume", "--help"],
+        ["bash", str(deck), "resume", "claude", "--help"],
         check=False,
         capture_output=True,
         text=True,
