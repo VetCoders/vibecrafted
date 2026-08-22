@@ -364,3 +364,27 @@ def test_action_first_lifecycle_still_rejects_a_real_unknown_agent(
     result = _deck_lifecycle_gate("definitely-not-an-agent", tmp_path)
     assert "Unknown agent" in (result.stdout + result.stderr)
     assert result.returncode != 0
+
+
+def test_lifecycle_help_teaches_the_grammar_it_was_invoked_with(
+    tmp_path: Path,
+) -> None:
+    """`vibecrafted observe <agent> --help` must not answer in the other grammar.
+
+    swarm had a special case printing `vibecrafted swarm observe ...` — dead
+    code while action-first could not reach the lifecycle for swarm at all, and
+    a contradiction the moment it could. A help page that teaches a different
+    command than the one just invoked teaches the reader off the surface they
+    are standing on.
+    """
+    from vibecrafted_core.workflow import SUPPORTED_AGENTS
+
+    for agent in sorted(SUPPORTED_AGENTS):
+        result = _deck_lifecycle_gate(agent, tmp_path / f"help-{agent}")
+        output = result.stdout + result.stderr
+        assert f"vibecrafted observe {agent}" in output, (
+            f"help for {agent} does not teach the action-first form: {output!r}"
+        )
+        assert f"vibecrafted {agent} observe" not in output, (
+            f"help for {agent} still teaches the agent-first form"
+        )

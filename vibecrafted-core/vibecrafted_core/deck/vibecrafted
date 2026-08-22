@@ -5318,11 +5318,12 @@ cmd_lifecycle_help() {
   printf '  %s\n' "$description"
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
-  if [[ "$agent" == "swarm" ]]; then
-    printf '  vibecrafted swarm %s %s\n' "$verb" "$flags"
-    printf '\n'
-    return 0
-  fi
+  # No swarm special case: it used to print the agent-first form because
+  # action-first `observe swarm` did not reach the lifecycle at all. It does
+  # now, so swarm is taught exactly what every other agent is taught — a help
+  # page that answers `vibecrafted observe swarm --help` with a different
+  # grammar than the one just invoked teaches the reader out of the surface
+  # they are standing on.
   printf '  vibecrafted %s %s %s\n' "$verb" "$agent" "$flags"
   printf '\n'
 }
