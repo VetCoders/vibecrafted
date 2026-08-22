@@ -9,7 +9,7 @@ Czytaj razem z [`SKILL.md`](SKILL.md), [`GUIDE.md`](GUIDE.md), [`DISPATCH.md`](D
 
 ## Doktryna
 
-Po dispatchu uzbrój `vibecrafted <agent> await --run-id <id>` natychmiast,
+Po dispatchu uzbrój `vibecrafted await <agent> --run-id <id>` natychmiast,
 po stronie supervisora. JSON control-plane, pliki raportów, transkrypty, karty
 terminala i zaplanowane wybudzenia są wyłącznie diagnostyczne, nie są sygnałem
 wybudzenia. Hedge'owanie await ad-hoc pollerami/watcherami to naruszenie
@@ -29,7 +29,7 @@ await.
 Dla trybu operatora przekłada się to na:
 
 - **Sygnał podstawowy**: foreground/supervisor-side
-  `vibecrafted <agent> await --run-id <id>`, albo komenda framework loop, która
+  `vibecrafted await <agent> --run-id <id>`, albo komenda framework loop, która
   deleguje do tego await.
 - **Sygnał diagnostyczny**: payload `<task-notification>`, ścieżka raportu,
   JSON control-plane, transcript, opcjonalna karta-viewer albo zaplanowany heartbeat.
@@ -65,7 +65,7 @@ autoryzuje ten krok.
 2. Potwierdź start (~30s po odpaleniu):
           → sprawdź, że tracker zadania żyje
           → potwierdź stan control-plane i pid workera
-          → arm: vibecrafted claude await --run-id impl-181153-86836
+          → arm: vibecrafted await claude --run-id impl-181153-86836
           → napisz do operatora „Fala B-1 odpalona, canonical await armed"
 
 3. Zaplanuj zapasowy heartbeat:
@@ -78,7 +78,7 @@ autoryzuje ten krok.
           → nie polluj, nie tailuj logów, nie czytaj /tmp/.../tasks/*.output
 
 5. Await wraca:
-          → vibecrafted <agent> await wychodzi z prawdą settlement/report
+          → vibecrafted await <agent> wychodzi z prawdą settlement/report
           → potwierdź martwy worker pid i terminalny stan run meta; jeśli raport był
             obiecany, potwierdź obecność raportu
           → przeczytaj plik raportu workera (NIE plik /tmp output —
@@ -211,7 +211,7 @@ W razie wątpliwości:
 
 1. Uruchom normalnie, bez override'u runtime.
 2. Natychmiast uzbrój supervisor-side
-   `vibecrafted <agent> await --run-id <id>`.
+   `vibecrafted await <agent> --run-id <id>`.
 3. Obserwuj receipt, stan control-plane, transkrypt i raport; opcjonalnie
    wyświetl te powierzchnie w vc-frame.
 

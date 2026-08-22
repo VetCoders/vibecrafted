@@ -48,7 +48,7 @@ To proceed:
   - Local terminal:        run `vibecrafted init <agent>` directly
   - SSH:                   add `-t`, e.g. `ssh -t user@host vibecrafted init claude`
   - Inside another agent:  vc-frame cannot start from a piped subprocess.
-                           Use `vibecrafted <agent> <mode>` (no vc-frame wrapper)
+                           Use `vibecrafted <action> <agent>` (no vc-frame wrapper)
                            or run vc-init in a separate user-attached shell.
 
 EOF

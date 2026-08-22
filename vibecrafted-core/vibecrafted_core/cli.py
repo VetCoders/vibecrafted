@@ -526,9 +526,9 @@ def _print_launch_receipt(payload: dict[str, Any]) -> None:
     print(f"control:    {_field(payload, 'control')}")
     print(f"report:     {_field(payload, 'report')}")
     print(f"transcript: {_field(payload, 'transcript')}")
-    print(f"observe:    vibecrafted {agent} observe --run-id {run_id}")
+    print(f"observe:    vibecrafted observe {agent} --run-id {run_id}")
     print(
-        f"await (ARM NOW, supervisor-side): vibecrafted {agent} await --run-id {run_id}"
+        f"await (ARM NOW, supervisor-side): vibecrafted await {agent} --run-id {run_id}"
     )
     print("=====================================================================")
 
@@ -633,8 +633,8 @@ def _print_resume_session_receipt(payload: dict[str, Any]) -> None:
     print(f"status:             {_field(payload, 'status', 'launching')}")
     print(f"control:            {_field(payload, 'control')}")
     print(f"transcript:         {_field(payload, 'transcript')}")
-    print(f"observe:            vibecrafted {agent} observe --run-id {run_id}")
-    print(f"await:              vibecrafted {agent} await --run-id {run_id}")
+    print(f"observe:            vibecrafted observe {agent} --run-id {run_id}")
+    print(f"await:              vibecrafted await {agent} --run-id {run_id}")
     print("===============================================================")
 
 
@@ -832,8 +832,8 @@ def _print_identity_mixup(kind: str, token: str) -> None:
 
 
 def _agent_resume(agent: str, argv: Sequence[str]) -> int:
-    """``vibecrafted <agent> resume``: continue a stopped control-plane run."""
-    parser = argparse.ArgumentParser(prog=f"vibecrafted {agent} resume")
+    """``vibecrafted resume <agent>``: continue a stopped control-plane run."""
+    parser = argparse.ArgumentParser(prog=f"vibecrafted resume {agent}")
     parser.add_argument("--run-id", default="")
     parser.add_argument("--last", action="store_true")
     parser.add_argument("--session", default="")
@@ -855,7 +855,7 @@ def _agent_resume(agent: str, argv: Sequence[str]) -> int:
             _print_identity_mixup("run_id" if kind == "run_id" else kind, session)
             if kind == "run_id" or looks_like_control_plane_run_id(session):
                 print(
-                    f"  Hint: vibecrafted {agent} resume --run-id {session}",
+                    f"  Hint: vibecrafted resume {agent} --run-id {session}",
                     file=sys.stderr,
                 )
             return 2
@@ -868,7 +868,7 @@ def _agent_resume(agent: str, argv: Sequence[str]) -> int:
             file=sys.stderr,
         )
         print(
-            f"Stopped-run resume: vibecrafted {agent} resume --run-id <work-...>",
+            f"Stopped-run resume: vibecrafted resume {agent} --run-id <work-...>",
             file=sys.stderr,
         )
         return 2
@@ -893,7 +893,7 @@ def _agent_resume(agent: str, argv: Sequence[str]) -> int:
             file=sys.stderr,
         )
         print(
-            f"  vibecrafted {agent} resume --run-id <work-...>",
+            f"  vibecrafted resume {agent} --run-id <work-...>",
             file=sys.stderr,
         )
         print(
@@ -930,8 +930,8 @@ def _agent_resume(agent: str, argv: Sequence[str]) -> int:
         print(f"root:               {result.get('root') or ''}")
         if result.get("agent_session_id"):
             print(f"agent_session_id:   {result.get('agent_session_id')}")
-        print(f"observe:            vibecrafted {agent} observe --run-id {child}")
-        print(f"await:              vibecrafted {agent} await --run-id {child}")
+        print(f"observe:            vibecrafted observe {agent} --run-id {child}")
+        print(f"await:              vibecrafted await {agent} --run-id {child}")
         print("=========================================================")
         _watch_launch_startup(result)
     else:
@@ -947,8 +947,8 @@ def _agent_resume(agent: str, argv: Sequence[str]) -> int:
 
 
 def _agent_observe(agent: str, argv: Sequence[str]) -> int:
-    """``vibecrafted <agent> observe`` verb: print/emit one run's current status."""
-    parser = argparse.ArgumentParser(prog=f"vibecrafted {agent} observe")
+    """``vibecrafted observe <agent>`` verb: print/emit one run's current status."""
+    parser = argparse.ArgumentParser(prog=f"vibecrafted observe {agent}")
     parser.add_argument("--run-id", default="")
     parser.add_argument("--last", action="store_true")
     parser.add_argument("--json", action="store_true")
@@ -1012,14 +1012,14 @@ def _observe_resolved(run_id: str, *, json_output: bool) -> int:
 
 
 def _agent_await(agent: str, argv: Sequence[str]) -> int:
-    """``vibecrafted <agent> await`` verb: block on control_plane.await_run and
+    """``vibecrafted await <agent>`` verb: block on control_plane.await_run and
     print/emit the terminal outcome. Never implement a private polling loop here."""
     # ONE await loop lives in control_plane.await_run — this verb must never
     # grow a private wall-clock loop again. The old inline loop here treated
     # --timeout as an absolute deadline and abandoned demonstrably-working
     # runs at 300s, which taught supervising agents to distrust await and
     # hedge with manual sleep/ps monitors.
-    parser = argparse.ArgumentParser(prog=f"vibecrafted {agent} await")
+    parser = argparse.ArgumentParser(prog=f"vibecrafted await {agent}")
     parser.add_argument("--run-id", default="")
     parser.add_argument("--last", action="store_true")
     parser.add_argument(

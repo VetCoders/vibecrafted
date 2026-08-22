@@ -57,10 +57,10 @@ def _dry_run_launcher(tmp_path: Path, agent: str) -> Path:
     return launcher
 
 
-def test_command_deck_accepts_agy_junie_and_grok_help() -> None:
+def test_command_deck_exposes_agy_junie_and_grok_help_topics() -> None:
     for agent in ("agy", "junie", "grok"):
         result = subprocess.run(
-            [str(LAUNCHER), agent, "--help"],
+            [str(LAUNCHER), "help", agent],
             check=True,
             cwd=REPO_ROOT,
             capture_output=True,

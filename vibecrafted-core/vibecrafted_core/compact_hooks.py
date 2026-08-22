@@ -437,7 +437,7 @@ def fallback(
                 "- run: aicx intents -p <project> --limit 20 --emit markdown",
                 "- fallback: aicx search --no-semantic -p <project> 'recent intent agent claims verified outcomes unresolved human decisions'",
                 "- run: vibecrafted loop status",
-                "- for active workers: use vibecrafted <agent> await --run-id <id> and vibecrafted <agent> observe --run-id <id>; do not hand-roll sleep/ps/stat probes",
+                "- for active workers: use vibecrafted await <agent> --run-id <id> and vibecrafted observe <agent> --run-id <id>; do not hand-roll sleep/ps/stat probes",
                 "",
                 "Do not treat the lossy compact summary as full temporal truth.",
             ]
@@ -522,7 +522,7 @@ def postcompact(stdin: str, output_format: str | None = None) -> int:
                     "",
                     "Context discipline after compaction:",
                     "- Keep continuity through AICX, not lossy compact memory.",
-                    "- Dispatcher continuity: use vibecrafted <agent> await --run-id <id> and vibecrafted <agent> observe --run-id <id>; never replace them with manual sleep/ps/stat/git probes.",
+                    "- Dispatcher continuity: use vibecrafted await <agent> --run-id <id> and vibecrafted observe <agent> --run-id <id>; never replace them with manual sleep/ps/stat/git probes.",
                     f"- Full raw extract remains available: {extract}",
                     f"- Cursor: raw lines {previous_count}..{current_count} for project {project_dir or '<unknown>'}.",
                 ]
@@ -549,7 +549,7 @@ def postcompact(stdin: str, output_format: str | None = None) -> int:
             "Context discipline after compaction:",
             "- LOOP is the foundation: run or inspect vibecrafted loop status before claiming continuity.",
             "- Loctree + AICX are the constant context: refresh with loct context --full --markdown and aicx intents/search when earlier turns matter.",
-            "- Dispatcher continuity: use vibecrafted <agent> await --run-id <id> and vibecrafted <agent> observe --run-id <id>; never replace them with manual sleep/ps/stat/git probes.",
+            "- Dispatcher continuity: use vibecrafted await <agent> --run-id <id> and vibecrafted observe <agent> --run-id <id>; never replace them with manual sleep/ps/stat/git probes.",
             f"- Delta cursor: raw lines {previous_count}..{current_count} for project {project_dir or '<unknown>'}.",
             f"- Delta recall chunks: {chunk_dir}/chunk-000 through {last_chunk} ({len(chunks)} chunks, skill-stripped + deduped, {reduction_pct}% smaller).",
             f"- Full raw extract: {extract}",

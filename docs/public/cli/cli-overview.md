@@ -61,22 +61,21 @@ Every skill launcher accepts the same flag contract:
 `--verbose` is a global option for detailed output. Model overrides exist for
 claude (`--model`) and codex (`-m`); other agents run their defaults.
 
-## Agent-first modes
+## Action-first agent modes
 
-The launcher grammar also works agent-first, for executing a prepared plan
-file directly:
+The same action-first grammar executes prepared plan files directly:
 
 ```bash
-vibecrafted <agent> implement <plan.md>   # execute a plan file
-vibecrafted <agent> research  <plan.md>   # single-agent research mode
-vibecrafted <agent> review    <plan.md>   # review bounded code artifacts
-vibecrafted <agent> plan      <plan.md>   # generate an implementation plan
-vibecrafted <agent> prompt    <plan.md>   # free-form prompt with context
-vibecrafted <agent> observe   --last      # check last agent report/transcript
+vibecrafted implement <agent> <plan.md>   # execute a plan file
+vibecrafted research <agent>  <plan.md>   # single-agent research mode
+vibecrafted review <agent>    <plan.md>   # review bounded code artifacts
+vibecrafted plan <agent>      <plan.md>   # generate an implementation plan
+vibecrafted prompt <agent>    <plan.md>   # free-form prompt with context
+vibecrafted observe <agent>   --last      # check last agent report/transcript
 ```
 
-Both shapes run through the same engine and produce the same run records.
-Prefer the skill-first shape in scripts and documentation.
+All actions run through the same engine and produce the same run records.
+Agent-first commands are rejected with a migration hint.
 
 ## `vc-<skill>` shortcuts
 

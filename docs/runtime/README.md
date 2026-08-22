@@ -50,8 +50,8 @@ vibecrafted workflow claude --prompt "Plan and implement the fix"
 vibecrafted implement codex --prompt "Ship the bounded change"
 ```
 
-Agent-mode grammar exists for power users and fleet lanes, but it is not the
-first-reader surface.
+Agent names always come last in the public grammar. Agent-first commands are
+rejected with an action-first migration hint.
 
 ## External Fleet
 

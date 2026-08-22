@@ -64,7 +64,7 @@ zastąpione dostają linię `Promoted:`, nie kasowanie.
   (404) vs resume o 11:59 sesji `019f9894-c578-7800-8c5a-dd76f004dc8c`
   (zadziałał).
 
-### `vibecrafted <agent> await --run-id …` (zaufanie zielonemu)
+### `vibecrafted await <agent> --run-id …` (zaufanie zielonemu)
 
 - **❌ Zaobserwowane:** Await zwrócił `completed / rc=0 / report_delivered` na
   **nietkniętym szablonie launchera** — launcher zasiewa plik raportu przy
@@ -236,7 +236,7 @@ zastąpione dostają linię `Promoted:`, nie kasowanie.
   `vibecrafted workflow …`, a potem **przeczytaj linię `root:` z receiptu
   launchu, zanim odejdziesz** — jest drukowana właśnie po to, żeby supervisor
   złapał to w pierwszej sekundzie. Zły root złapany wcześnie jest tani:
-  `vibecrafted <agent> stop --run-id <id>` i redispatch bije każdy ratunek w
+  `vibecrafted stop <agent> --run-id <id>` i redispatch bije każdy ratunek w
   locie.
 - **Evidence:** 2026-07-25 — run `work-260725-235036-48000` (root
   `vetcoders/vibecrafted`, spec `vc-frame-freshness-identity.md`) zatrzymany po

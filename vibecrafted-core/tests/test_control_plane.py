@@ -2626,7 +2626,7 @@ def test_lock_busy_message_names_install_doctor_sync(
 def test_await_status_with_run_id_is_lockless_during_board_sync(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`vibecrafted <agent> await --run-id` must survive a concurrent full sync."""
+    """`vibecrafted await <agent> --run-id` must survive a concurrent full sync."""
     home = tmp_path / ".vibecrafted"
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
     monkeypatch.setenv("VIBECRAFTED_SYNC_LOCK_TIMEOUT_S", "0.2")

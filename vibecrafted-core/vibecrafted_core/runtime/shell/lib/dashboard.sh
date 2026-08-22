@@ -254,7 +254,7 @@ _vetcoders_launch_dashboard() {
     echo "vc-frame is not installed — the visual dashboard needs it." >&2
     echo "Everything else works without it. Run agents headless:" >&2
     echo "    vibecrafted workflow <agent> -p \"your task\"" >&2
-    echo "    vibecrafted <agent> observe --run-id <id>" >&2
+    echo "    vibecrafted observe <agent> --run-id <id>" >&2
     echo "To get the dashboard, install vc-frame and re-run: vc-start" >&2
     return 1
   }

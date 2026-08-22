@@ -2236,9 +2236,9 @@ def test_vc_loop_wrapper_routes_to_loop_command(tmp_path: Path) -> None:
     assert "Interactive Agent-Operator continuation" in result.stdout
 
 
-def test_agent_subcommand_help_lists_modes() -> None:
+def test_agent_help_topic_lists_canonical_action_first_commands() -> None:
     result = subprocess.run(
-        [str(LAUNCHER), "codex", "--help"],
+        [str(LAUNCHER), "help", "codex"],
         check=True,
         cwd=REPO_ROOT,
         capture_output=True,
@@ -2251,21 +2251,21 @@ def test_agent_subcommand_help_lists_modes() -> None:
     assert "observe   codex --last" in result.stdout
     assert "await     codex --last" in result.stdout
     assert "stop      codex --run-id|--last" in result.stdout
-    assert "Legacy agent-first calls still work" in result.stdout
+    assert "agent-first" not in result.stdout.lower()
 
 
-def test_agent_stop_mode_routes_to_core_cli_help() -> None:
+def test_agent_first_mode_is_rejected_with_action_first_migration() -> None:
     result = subprocess.run(
         [str(LAUNCHER), "codex", "stop", "--help"],
-        check=True,
+        check=False,
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
     )
 
-    assert "Stop a run by launcher process group." in result.stdout
-    assert "vibecrafted stop codex --last|--run-id <id>" in result.stdout
-    assert "Unknown mode: stop" not in result.stderr
+    assert result.returncode == 2
+    assert "Agent-first grammar was removed" in result.stderr
+    assert "Use: vibecrafted stop codex --help" in result.stderr
 
 
 @pytest.mark.parametrize("verb", ["observe", "await", "stop"])
@@ -2279,8 +2279,7 @@ def test_action_first_lifecycle_help_is_canonical(verb: str) -> None:
     )
 
     assert f"vibecrafted {verb} codex --last|--run-id <id>" in result.stdout
-    assert f"vibecrafted <agent> {verb}" in result.stdout
-    assert "remains accepted for older scripts" in result.stdout
+    assert "agent-first" not in result.stdout.lower()
     assert "Unknown" not in result.stderr
 
 

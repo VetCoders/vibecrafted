@@ -142,6 +142,6 @@ if [[ "${VIBECRAFTED_SUPPRESS_REPORT_HINT:-0}" != "1" ]]; then
     printf 'Agent launched.\n'
     bash "$SCRIPT_DIR/await.sh" agy --describe "$SPAWN_LAUNCHER" 2>/dev/null || true
     printf '\nAwait:\n\n'
-    printf 'vibecrafted agy await --run-id %s\n' "$SPAWN_RUN_ID"
+    printf 'vibecrafted await agy --run-id %s\n' "$SPAWN_RUN_ID"
   fi
 fi

@@ -9,7 +9,7 @@ Read alongside [`SKILL.md`](SKILL.md), [`GUIDE.md`](GUIDE.md), [`DISPATCH.md`](D
 
 ## The doctrine
 
-After dispatch, arm `vibecrafted <agent> await --run-id <id>` immediately,
+After dispatch, arm `vibecrafted await <agent> --run-id <id>` immediately,
 supervisor-side. Control-plane JSON, report files, transcripts, panes, and
 scheduled wakeups are diagnostic only, not wake signals. Hedging await with
 ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
@@ -29,7 +29,7 @@ substitutes for arming await.
 For operator mode that translates into:
 
 - **Primary signal**: the foreground/supervisor-side
-  `vibecrafted <agent> await --run-id <id>` command, or the framework loop
+  `vibecrafted await <agent> --run-id <id>` command, or the framework loop
   command that delegates to it.
 - **Diagnostic signal**: the `<task-notification>` payload, report path,
   control-plane JSON, transcript, optional viewer pane, or scheduled heartbeat.
@@ -65,7 +65,7 @@ authorizes that step.
 2. Confirm start (~30s after fire):
           → check task tracker is alive
           → confirm control-plane state and worker pid
-          → arm: vibecrafted claude await --run-id impl-181153-86836
+          → arm: vibecrafted await claude --run-id impl-181153-86836
           → write "Wave B-1 fired, canonical await armed" to operator
 
 3. Schedule fallback heartbeat:
@@ -78,7 +78,7 @@ authorizes that step.
           → do not poll, do not tail logs, do not read /tmp/.../tasks/*.output
 
 5. Await returns:
-          → vibecrafted <agent> await exits with settlement/report truth
+          → vibecrafted await <agent> exits with settlement/report truth
           → confirm worker pid dead and terminal-state run meta; if report promised,
             confirm the report exists
           → read the worker's report file (NOT the /tmp output file —
@@ -209,7 +209,7 @@ Terminal attachment is never inferred from TTY presence or a live repo session.
 When in doubt:
 
 1. Launch normally, without a runtime override.
-2. Arm supervisor-side `vibecrafted <agent> await --run-id <id>` immediately.
+2. Arm supervisor-side `vibecrafted await <agent> --run-id <id>` immediately.
 3. Observe through the receipt, control-plane state, transcript, and report;
    optionally project those surfaces in vc-frame.
 

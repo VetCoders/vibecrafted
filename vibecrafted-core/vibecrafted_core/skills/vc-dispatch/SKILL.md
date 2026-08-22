@@ -120,7 +120,7 @@ pin deliberately, and treat a missing pin as a smell to resolve before launch.
 3. **Spanko**: await through artifacts, never by staring at a pane. Use the
    dedicated command as the standard dispatcher loop. Canonical supervisor
    contract (see `docs/runtime/AGENT_OPS.md`): After dispatch, arm
-   `vibecrafted <agent> await --run-id <id>` immediately, supervisor-side.
+   `vibecrafted await <agent> --run-id <id>` immediately, supervisor-side.
    Control-plane JSON, report files, transcripts, panes, and scheduled wakeups
    are diagnostic only, not wake signals. Hedging await with ad-hoc
    pollers/watchers is a Class 3 violation; fix `control_plane.await_run`, do

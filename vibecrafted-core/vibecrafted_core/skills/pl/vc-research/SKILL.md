@@ -226,9 +226,9 @@ vc-research-await --last     # newest swarm
 Do inspekcji na poziomie transkryptu, gdy swarm jest w trakcie:
 
 ```bash
-vibecrafted claude observe --last
-vibecrafted codex observe --last
-vibecrafted gemini observe --last
+vibecrafted observe claude --last
+vibecrafted observe codex --last
+vibecrafted observe gemini --last
 ```
 
 Nie traktuj ręcznych wywołań `observe --last` jako wystarczającej obserwowalności. Stan workflow domyślnie przechodzi przez metadane launchu, helper oczekiwania i trwałe ścieżki raportów.

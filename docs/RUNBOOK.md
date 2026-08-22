@@ -23,13 +23,13 @@ Conversation happens in the agent CLI itself (Claude Code, Codex). Vibecrafted
 is the engine you use to _send agents away with a defined task_ and to
 supervise what comes back. The division of labor:
 
-| You want to…                         | Use                                         |
-| ------------------------------------ | ------------------------------------------- |
-| Talk to an agent, think out loud     | `claude` / `codex` directly, in the repo    |
-| Orient an agent before anything else | `vibecrafted init <agent>`                  |
-| Send an agent off with a task        | `vibecrafted <skill> <agent> --prompt "…"`  |
-| Execute a prepared brief             | `vibecrafted <agent> <mode> --file <brief>` |
-| Watch / steer the fleet              | `status`, `observe`, `await`, dashboard     |
+| You want to…                         | Use                                          |
+| ------------------------------------ | -------------------------------------------- |
+| Talk to an agent, think out loud     | `claude` / `codex` directly, in the repo     |
+| Orient an agent before anything else | `vibecrafted init <agent>`                   |
+| Send an agent off with a task        | `vibecrafted <skill> <agent> --prompt "…"`   |
+| Execute a prepared brief             | `vibecrafted <skill> <agent> --file <brief>` |
+| Watch / steer the fleet              | `status`, `observe`, `await`, dashboard      |
 
 `--prompt` takes plain text typed on the spot. `--file` is for briefs written
 in advance. You never need a prepared `.md` just to start working.
@@ -58,17 +58,17 @@ Notes that save time:
   for claude (`--model`) and codex (`-m`); grok always runs its default.
 - Every skill also installs a `vc-<skill>` shortcut.
 
-## 2. Dispatch grammar (two shapes, one engine)
+## 2. Dispatch grammar (one public shape, one engine)
 
 ```bash
 # skill-first (public grammar — use this in docs and muscle memory)
 vibecrafted <skill> <agent> --prompt "text" | --file brief.md
 
-# agent-first modes (brief execution)
-vibecrafted <agent> implement <brief.md>   # execute a plan file
-vibecrafted <agent> research  <brief.md>
-vibecrafted <agent> review    <brief.md>
-vibecrafted <agent> observe --last         # last report/transcript
+# prepared-brief execution
+vibecrafted implement <agent> <brief.md>   # execute a plan file
+vibecrafted research <agent>  <brief.md>
+vibecrafted review <agent>    <brief.md>
+vibecrafted observe <agent> --last         # last report/transcript
 ```
 
 Each dispatch creates a **run** (`impl-…`, `scaf-…`, `work-…`) in the control
@@ -78,8 +78,8 @@ plane. The run — not the terminal tab — is the unit of truth.
 
 ```bash
 vibecrafted status                          # today's runs at a glance
-vibecrafted <agent> await --run-id <id>     # block until the run lands (arm early)
-vibecrafted <agent> observe --last          # read the last report
+vibecrafted await <agent> --run-id <id>     # block until the run lands (arm early)
+vibecrafted observe <agent> --last          # read the last report
 vibecrafted settlements list                # read-only f/x/n ledger
 vibecrafted server status                   # local control-plane viewer (web)
 vibecrafted tui                             # Rust operator console

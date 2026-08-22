@@ -89,7 +89,7 @@ Verify a worker's truth through the run record, not the tab:
 
 ```bash
 vibecrafted status
-vibecrafted <agent> await --run-id <id>
+vibecrafted await <agent> --run-id <id>
 vibecrafted settlements summary
 ```
 

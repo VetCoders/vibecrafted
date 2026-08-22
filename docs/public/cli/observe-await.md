@@ -15,10 +15,10 @@ terminal tab, not the process — is the unit of truth. Two verbs follow it:
 ## The two verbs
 
 ```bash
-vibecrafted <agent> observe --last            # last report/transcript
-vibecrafted <agent> observe --run-id <id>     # a specific run
-vibecrafted <agent> await --last              # wait for the last run
-vibecrafted <agent> await --run-id <id>       # wait for a specific run
+vibecrafted observe <agent> --last            # last report/transcript
+vibecrafted observe <agent> --run-id <id>     # a specific run
+vibecrafted await <agent> --last              # wait for the last run
+vibecrafted await <agent> --run-id <id>       # wait for a specific run
 ```
 
 Arm `await` immediately after dispatching — supervisor-side, before doing
@@ -26,7 +26,7 @@ anything else with the run:
 
 ```bash
 vibecrafted implement codex --prompt "Ship <task>"
-vibecrafted codex await --run-id impl-<timestamp>-<id>
+vibecrafted await codex --run-id impl-<timestamp>-<id>
 ```
 
 `await` is liveness-aware: it aggregates child-run movement for looping
@@ -80,13 +80,13 @@ re-arm `await`.
 
 ```bash
 # 1. await verdict
-vibecrafted codex await --run-id impl-<timestamp>-<id>
+vibecrafted await codex --run-id impl-<timestamp>-<id>
 
 # 2. run meta terminal state
 cat ~/.vibecrafted/control_plane/runs/impl-<timestamp>-<id>.json
 
 # 3. report delivered and non-empty
-vibecrafted codex observe --run-id impl-<timestamp>-<id>
+vibecrafted observe codex --run-id impl-<timestamp>-<id>
 ```
 
 Failure signatures worth knowing:

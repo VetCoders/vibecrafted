@@ -106,7 +106,7 @@ vibecrafted marbles codex --count 10 --depth n
 vc-marbles claude --depth 12 --prompt 'Focus on "vc-followup assumptions from the last 12 plans'
 ```
 
-**To nie to samo co `vibecrafted codex implement <plan>`.** `implement`
+**To nie to samo co `vibecrafted implement codex <plan>`.** `implement`
 to sposób, w jaki kod powstaje. `marbles` to to, co dzieje się po tym, jak kod
 już istnieje, ale wciąż trzeba uczynić go prawdziwym i gotowym do dowiezienia.
 Każda runda owija świeżego agenta w gorącą pętlę zbieżności. `--count` steruje

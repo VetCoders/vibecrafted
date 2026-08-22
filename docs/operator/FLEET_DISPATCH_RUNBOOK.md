@@ -67,7 +67,7 @@ vibecrafted <workflow> <agent> --prompt '<inline intent>'
   optional projection of state and transcripts, never the process owner. A true
   PTY is reserved for the User Session, a bare resume, or an explicit
   `--runtime terminal` for a proven TTY-required path.
-- After dispatch, arm `vibecrafted <agent> await --run-id <id>` immediately,
+- After dispatch, arm `vibecrafted await <agent> --run-id <id>` immediately,
   supervisor-side. Control-plane JSON, report files, transcripts, viewer panes, and
   scheduled wakeups are diagnostic only, not wake signals. Hedging await with
   ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,

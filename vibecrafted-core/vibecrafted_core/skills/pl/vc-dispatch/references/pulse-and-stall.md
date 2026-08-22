@@ -20,7 +20,7 @@ vibecrafted dostarcza heartbeat — sięgnij po niego, zanim ręcznie sklecisz t
 | auto-await pane per-dispatch        | `vibecrafted-await-watch.sh --meta <meta.json>` — tailuje transcript, obserwuje status meta + deltę rozmiaru + liveness procesu, sam się terminuje (tunable'e: `VIBECRAFTED_AWAIT_IDLE_TIMEOUT`, `VIBECRAFTED_AWAIT_POLL`) |
 
 Kanoniczny kontrakt supervisora (zobacz `docs/runtime/AGENT_OPS.md`): po dispatchu
-od razu uzbrój `vibecrafted <agent> await --run-id <id>` po stronie supervisora.
+od razu uzbrój `vibecrafted await <agent> --run-id <id>` po stronie supervisora.
 JSON control plane'u, pliki raportów, transkrypty, pane'y i zaplanowane wybudzenia
 są wyłącznie diagnostyczne — to nie są sygnały wybudzenia. Hedge'owanie awaita
 doraźnymi pollerami/watcherami to naruszenie Class 3; napraw
@@ -108,7 +108,7 @@ dodatkowego ticka — batch jest ofiarą.
 
 ## Mechanika await
 
-- Zbackgrounduj await (`vibecrafted <agent> await --run-id <id>`) i pozwól jego
+- Zbackgrounduj await (`vibecrafted await <agent> --run-id <id>`) i pozwól jego
   ukończeniu cię obudzić; puls tick to fallbackowy heartbeat.
 - Pliki raportów mogą pojawić się pod nazwą `pending-report-*` przed kanoniczną
   — szukaj w katalogu raportów po mtime, nie po zgadywanej nazwie pliku.

@@ -5,7 +5,7 @@ Every Vibecrafted entry point already runs an init pass: the operator-facing
 launch carries the "Step 0 — orient before you touch" contract. Until this
 module, neither of them knew whether the repository they were opening had
 unfinished work waiting on the control plane. Resuming was a separate verb the
-operator had to remember (``vibecrafted <agent> resume --run-id ...``), which
+operator had to remember (``vibecrafted resume <agent> --run-id ...``), which
 means it was skipped exactly when it mattered: after a crash, days later, by a
 different agent.
 
@@ -96,16 +96,15 @@ def classify_resume_row(row: Mapping[str, Any]) -> str:
 def resume_command(row: Mapping[str, Any]) -> str:
     """Exact one-line resume command for a row, or '' when none is honest.
 
-    Both ``vibecrafted <agent> resume --run-id`` and
-    ``vibecrafted resume <agent> --run-id`` are real (docs/public/cli/commands.md);
-    the agent-first form is emitted because it reads as "this agent, continue".
+    The public grammar is action-first:
+    ``vibecrafted resume <agent> --run-id`` (docs/public/cli/commands.md).
     A row without a recorded agent gets no command rather than a guessed one.
     """
     agent = str(row.get("agent") or "").strip()
     run_id = str(row.get("run_id") or "").strip()
     if not agent or not run_id:
         return ""
-    return f"vibecrafted {agent} resume --run-id {run_id}"
+    return f"vibecrafted resume {agent} --run-id {run_id}"
 
 
 def resume_payload(

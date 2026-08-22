@@ -152,7 +152,7 @@ READ stages must not write source (a violation is traced as
    run_id (`life-ship-…`), context atlas loaded, stage 1 accepted.
 3. **Arm await immediately, supervisor-side** (never inside a subagent — see
    `docs/runtime/AGENT_OPS.md`): After dispatch, arm
-   `vibecrafted <agent> await --run-id <id>` immediately, supervisor-side.
+   `vibecrafted await <agent> --run-id <id>` immediately, supervisor-side.
    Control-plane JSON, report files, transcripts, panes, and scheduled wakeups
    are diagnostic only, not wake signals. Hedging await with ad-hoc
    pollers/watchers is a Class 3 violation; fix `control_plane.await_run`, do

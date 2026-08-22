@@ -109,7 +109,7 @@ interactive card), the runtime opens a **read-only viewer** next to it:
 ```text
 1. Launch accepted; the dispatcher spawns headless as always.
 2. The runtime opens one tab in session `Live runs`, named by run id, running
-   `vibecrafted <agent> observe --run-id <id>` for the status header and then
+   `vibecrafted observe <agent> --run-id <id>` for the status header and then
    `tail -F` on the run's transcript. A missing `Live runs` session is
    resurrected by G3 (`attach --create-background`), same as a worker host.
 3. `origin_session: "Live runs"` / `origin_tab: <run_id>` are stamped into
