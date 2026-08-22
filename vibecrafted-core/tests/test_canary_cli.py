@@ -212,3 +212,29 @@ def test_failed_rerun_removes_previous_settled_output(tmp_path: Path) -> None:
     assert not (tmp_path / "catalog.json").exists(), (
         "failed merge must not leave a settled-looking artifact behind"
     )
+
+
+def test_merge_catalog_rejects_paths_escaping_the_repository(tmp_path: Path) -> None:
+    for name, bad in (("dotdot.json", "../outside.py"), ("abs.json", "/tmp/other.py")):
+        catalogs = tmp_path / name.replace(".json", "") / "catalogs"
+        catalogs.mkdir(parents=True)
+        (catalogs / name).write_text(
+            json.dumps({"catalog": [_unit(bad, "fn")]}), encoding="utf-8"
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(CLI),
+                "merge-catalog",
+                "--input-dir",
+                str(catalogs),
+                "--output",
+                str(catalogs.parent / "catalog.json"),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0, bad
+        assert "non-escaping repository" in result.stderr, bad
+        assert not (catalogs.parent / "catalog.json").exists(), bad

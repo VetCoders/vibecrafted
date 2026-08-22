@@ -208,6 +208,16 @@ def validate_catalog_unit(
     raw_file = unit.get("file")
     if not isinstance(raw_file, str) or not raw_file.strip():
         _die(f"{location}: missing required field 'file'")
+    from pathlib import PurePosixPath
+
+    unit_path = PurePosixPath(raw_file.strip())
+    if unit_path.is_absolute() or ".." in unit_path.parts:
+        # An ownership catalog settles THIS repository only: absolute paths and
+        # parent-escapes would let a unit claim files outside the root.
+        _die(
+            f"{location}: 'file' must be a relative, non-escaping repository "
+            f"path ({raw_file!r})"
+        )
     if raw_file != raw_file.strip():
         # A trailing/leading space would dodge the language plugin AND leak an
         # unresolvable path into the merged catalog — reject, never normalize.
