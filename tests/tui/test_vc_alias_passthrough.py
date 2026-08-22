@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DISPATCH = (
@@ -105,11 +108,39 @@ def test_sync_script_covers_both_deck_paths() -> None:
 
 def test_interactive_zsh_resume_help_does_not_create_runs(tmp_path: Path) -> None:
     """Real user path: zsh -ic 'vc-resume --help' must not mint control-plane runs."""
+    if shutil.which("zsh") is None:
+        # The test provisions its own HOME/ZDOTDIR/control plane, but it cannot
+        # provision the shell itself. Missing zsh used to surface as a raw
+        # FileNotFoundError, which reads like a product failure on a
+        # contributor box that simply has no zsh. In CI it stays a hard
+        # failure: every job that runs this suite installs zsh on purpose
+        # (portable.yml) or ships it (macOS), so a missing binary there means
+        # the image regressed and the coverage silently vanished — exactly the
+        # green-washing this repo refuses.
+        if os.environ.get("CI"):
+            pytest.fail("zsh is missing from a CI image that must provide it")
+        pytest.skip("zsh is not installed on this host")
     home = tmp_path / "home"
     home.mkdir()
     vibecrafted_home = home / ".vibecrafted"
-    runs_dir = vibecrafted_home / "control_plane" / "runs"
+    control_plane = vibecrafted_home / "control_plane"
+    # Both halves of the control plane, not just the projection: the runtime
+    # WRITES a minted run to runtime_runs/<id>/ (resolve_run probes it first
+    # and calls artifacts/ the legacy location), while runs/<id>.json is the
+    # projected snapshot. Watching only runs/ can pass while --help mints a run
+    # the runtime can see — a green gate over the exact bug it exists to catch.
+    runs_dir = control_plane / "runs"
+    runtime_runs_dir = control_plane / "runtime_runs"
     runs_dir.mkdir(parents=True)
+    runtime_runs_dir.mkdir(parents=True)
+
+    def minted() -> set[str]:
+        return {
+            f"{directory.name}/{entry.name}"
+            for directory in (runs_dir, runtime_runs_dir)
+            for entry in directory.iterdir()
+        }
+
     shell_entry = (
         REPO_ROOT
         / "vibecrafted-core"
@@ -131,7 +162,7 @@ def test_interactive_zsh_resume_help_does_not_create_runs(tmp_path: Path) -> Non
             "VIBECRAFTED_ROOT": str(REPO_ROOT),
         }
     )
-    before = {p.name for p in runs_dir.iterdir()}
+    before = minted()
     result = subprocess.run(
         ["zsh", "-ic", "vc-resume --help"],
         cwd=REPO_ROOT,
@@ -140,7 +171,7 @@ def test_interactive_zsh_resume_help_does_not_create_runs(tmp_path: Path) -> Non
         text=True,
         check=False,
     )
-    after = {p.name for p in runs_dir.iterdir()}
+    after = minted()
     assert result.returncode == 0, result.stderr
     assert "Resume" in result.stdout or "resume" in result.stdout
     assert before == after, f"new runs from --help: {after - before}"
