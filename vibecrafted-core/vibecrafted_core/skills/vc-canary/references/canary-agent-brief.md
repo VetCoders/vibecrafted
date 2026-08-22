@@ -31,7 +31,9 @@ For every def/class/fn/struct/mod (language plugin rules) and each module file:
 
 Return ONE JSON object — written to
 {ROOT}/.loctree/canary/catalogs/{SCOPE_ID}.json AND returned as your final
-message. The top-level key is `catalog` — canonical; `units` is accepted only as a
+message. `{ROOT}` is YOUR substrate root: solo → the shared checkout; fleet →
+your own `{WORKTREE_PATH}` (never the integration checkout — the integrator
+collects per-scope catalogs when merging scope branches). The top-level key is `catalog` — canonical; `units` is accepted only as a
 warned legacy alias and must not be used for new output:
 
 {"scope": "{SCOPE_ID}",

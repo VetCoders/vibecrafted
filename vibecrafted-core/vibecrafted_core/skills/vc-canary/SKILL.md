@@ -91,10 +91,14 @@ vibecrafted canary claude --prompt 'Catalog this repo; agent pin default if unse
    recorded decision, not an omission.
 3. **FLEET** — 1 agent = 1 scope. Hybrid: N≤8 native; N>8 external.
    **Substrate is mechanics, not judgement:** N=1 → Living Tree; N>1 → Fleet
-   Worktrees (Living Tree Rule, Mode B) — one worktree per scope branched from
-   the integration base, the agent commits inside its own worktree, a
-   single-thread integrator merges scope branches sequentially. Never park a
-   parallel fleet in one shared checkout.
+   Worktrees as a Living Tree Rule **Mode B formation** — canary satisfies its
+   conditions by construction: the per-scope briefs are the written dispatch
+   plan, the per-scope gates are the pre-committed verifiers, scope domains are
+   disjoint, and the canary session is the single-thread integrator. One
+   worktree per scope branched from the integration base; the agent commits
+   inside its own worktree; the integrator merges scope branches sequentially.
+   Never park a parallel fleet in one shared checkout (operator standing order,
+   2026-08-20).
    Native subagents inherit the **parent model** (agent model parity); the
    session defaults below pin external workers only. Every scope gets its
    **own scratchpad subdirectory**, named in the brief — flat shared tmp
