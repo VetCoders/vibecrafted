@@ -10,10 +10,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 
 - Public commands and every generated follow-up command — launch receipts,
-  resume receipts, and the LIVE viewer script — emit action-first, agent-last
-  grammar (`vibecrafted observe <agent> --run-id <id>`). The agent-first form is
-  no longer taught anywhere; it is still accepted, so panes, scripts, and muscle
-  memory keep working.
+  resume receipts, the LIVE viewer script, and the lifecycle help pages — emit
+  action-first, agent-last grammar (`vibecrafted observe <agent> --run-id <id>`).
+  The agent-first form is no longer taught by any surface.
+
+  Whether it is still *accepted* depends on the entrypoint, and this release does
+  not change that. The shell deck removed it in 4.2.1 (`a275e0f`) and answers with
+  an exact migration command, exit 2. The `vibecrafted` console script never
+  reaches that check: `cli.py` handles `<agent> observe|await|stop|resume`
+  natively, and `_normalize_raw_args` silently reorders `<agent> <launcher>` into
+  launcher-first. So a wheel or `uv tool` install still runs every agent-first
+  command, while the deck run directly rejects it.
 
 ### Fixed
 

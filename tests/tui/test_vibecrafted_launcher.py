@@ -2298,6 +2298,15 @@ def test_swarm_alias_routes_to_research_help() -> None:
 
 
 def test_swarm_lifecycle_help_uses_existing_core_route() -> None:
+    """swarm keeps its agent-first ROUTE, but is taught the action-first form.
+
+    swarm is not in the deck's agent-first rejection list — it routes through
+    cmd_swarm — so `vibecrafted swarm observe` remains a working invocation.
+    What changed is what the help page teaches: it used to be the only agent
+    whose usage line printed the agent-first grammar, while all five providers
+    printed action-first. This release makes every surface teach action-first,
+    and a help page is a surface.
+    """
     result = subprocess.run(
         [str(LAUNCHER), "swarm", "observe", "--help"],
         check=True,
@@ -2307,7 +2316,8 @@ def test_swarm_lifecycle_help_uses_existing_core_route() -> None:
     )
 
     assert "Check an agent report or transcript." in result.stdout
-    assert "vibecrafted swarm observe --last" in result.stdout
+    assert "vibecrafted observe swarm --last" in result.stdout
+    assert "vibecrafted swarm observe --last" not in result.stdout
 
 
 def test_canary_launcher_has_canonical_help() -> None:
