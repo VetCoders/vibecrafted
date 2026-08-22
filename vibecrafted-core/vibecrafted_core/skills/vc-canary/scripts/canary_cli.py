@@ -208,6 +208,9 @@ def validate_catalog_unit(
     raw_file = unit.get("file")
     if not isinstance(raw_file, str) or not raw_file.strip():
         _die(f"{location}: missing required field 'file'")
+    # Normalize before plugin resolution: surrounding whitespace must not
+    # divert a known-language unit into the laxer pluginless branch.
+    raw_file = raw_file.strip()
     plugin = plugin_for_file(raw_file, plugins)
     if plugin is None:
         # Languages the atlas inventories without a dedicated plugin (swift,
@@ -770,6 +773,14 @@ def cmd_merge_catalog(args: argparse.Namespace) -> int:
         )
         units += len(cat)
         added += sum(1 for u in cat if isinstance(u, dict) and u.get("docstring_added"))
+    if not catalogs:
+        _die(
+            f"no catalog files found in {src} — an empty merge is not a settled canary"
+        )
+    if units == 0:
+        _die(
+            "merged catalog has zero units — refusing to write a settled-looking empty catalog"
+        )
     merged = {
         "schema": "canary-catalog.v1",
         "generated": _utc_now(),

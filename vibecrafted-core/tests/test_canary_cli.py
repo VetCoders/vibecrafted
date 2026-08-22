@@ -160,3 +160,39 @@ def test_merge_catalog_rejects_pluginless_unit_missing_authority(
     assert "no language plugin; shared contract" in result.stderr
     assert "missing required field 'authority'" in result.stderr
     assert not (tmp_path / "catalog.json").exists()
+
+
+def test_merge_catalog_fails_on_empty_input_dir(tmp_path: Path) -> None:
+    (tmp_path / "catalogs").mkdir()
+
+    result = _run_merge(tmp_path)
+
+    assert result.returncode != 0
+    assert "empty merge is not a settled canary" in result.stderr
+    assert not (tmp_path / "catalog.json").exists()
+
+
+def test_merge_catalog_fails_on_zero_units_total(tmp_path: Path) -> None:
+    catalogs = tmp_path / "catalogs"
+    catalogs.mkdir()
+    (catalogs / "empty-scope.json").write_text(
+        json.dumps({"catalog": []}), encoding="utf-8"
+    )
+
+    result = _run_merge(tmp_path)
+
+    assert result.returncode != 0
+    assert "zero units" in result.stderr
+    assert not (tmp_path / "catalog.json").exists()
+
+
+def test_merge_catalog_strips_whitespace_before_plugin_resolution(
+    tmp_path: Path,
+) -> None:
+    _write_catalog(tmp_path, "shell-scope.json", _unit("scripts/demo.sh ", "def"))
+
+    result = _run_merge(tmp_path)
+
+    assert result.returncode != 0
+    assert "plugin shell.py" in result.stderr
+    assert "invalid kind 'def'" in result.stderr
