@@ -786,12 +786,25 @@ def test_windows_entry_point_does_not_drift_between_its_two_copies() -> None:
     )
 
 
-def _workflow_step_names(relative: str, job: str) -> list[str]:
+def _workflow_steps(relative: str, job: str) -> list[tuple[str, str, str]]:
+    """Each step as (name, uses, run) — identity AND body.
+
+    Comparing names alone would let `make test` on one side and `make test-core`
+    on the other both call themselves "Run installer and product tests" while the
+    gate stayed green, which is the failure the rehearsal exists to rule out.
+    Unnamed steps key off `uses` so two of them cannot collapse into one entry.
+    """
     yaml = pytest.importorskip("yaml")
     payload = yaml.safe_load((REPO_ROOT / relative).read_text(encoding="utf-8"))
-    return [
-        str(step.get("name") or "checkout") for step in payload["jobs"][job]["steps"]
-    ]
+    steps = []
+    for step in payload["jobs"][job]["steps"]:
+        uses = str(step.get("uses") or "")
+        name = str(step.get("name") or uses or "unnamed")
+        run = "\n".join(
+            line.rstrip() for line in str(step.get("run") or "").strip().splitlines()
+        )
+        steps.append((name, uses, run))
+    return steps
 
 
 def test_gate_rehearsal_runs_every_release_source_gate_step_in_order() -> None:
@@ -804,17 +817,19 @@ def test_gate_rehearsal_runs_every_release_source_gate_step_in_order() -> None:
     omitted, the publication boundary, is the one release.yml itself records as
     never having executed on any tag.
     """
-    release = _workflow_step_names(".github/workflows/release.yml", "source-gate")
-    rehearsal = _workflow_step_names(
+    release = _workflow_steps(".github/workflows/release.yml", "source-gate")
+    rehearsal = _workflow_steps(
         ".github/workflows/gate-rehearsal.yml", "gate-rehearsal"
     )
-    # The tag-only preamble cannot be rehearsed: there is no tag on a PR.
-    preamble = {"checkout", "Verify immutable release source"}
-    expected = [name for name in release if name not in preamble]
-    actual = [name for name in rehearsal if name not in preamble]
+    # The tag-only preamble cannot be rehearsed: there is no tag on a PR. The
+    # checkout differs only in `with:`, which is not part of the step body.
+    preamble = {"Verify immutable release source"}
+    expected = [step for step in release if step[0] not in preamble]
+    actual = [step for step in rehearsal if step[0] not in preamble]
 
     assert actual == expected, (
-        "gate-rehearsal.yml must run release.yml's source-gate steps, in order; "
+        "gate-rehearsal.yml must run release.yml's source-gate steps, in order, "
+        "with the same bodies; "
         f"missing={[s for s in expected if s not in actual]} "
         f"extra={[s for s in actual if s not in expected]}"
     )
