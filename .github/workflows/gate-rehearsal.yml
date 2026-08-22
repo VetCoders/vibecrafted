@@ -13,11 +13,14 @@
 #      preamble is rehearsed here, in the same order — including the last one.
 #      The publication-boundary step is the one that has never once executed on
 #      any tag (every tag died before reaching it), which makes it the single
-#      most important step to rehearse, not the one to leave out.
+#      most important step to rehearse, not the one to leave out. A contract
+#      test compares both step lists, so the next divergence is a red PR rather
+#      than a discovery on the tag.
 #   2. A release PR always rehearses. The paths filter below is an
 #      optimisation for ordinary PRs; it must never be the reason a release
-#      goes to a tag unrehearsed, so pushes to `release/*` run unconditionally
-#      — a version-bump-only PR touches none of the paths a code PR does.
+#      goes to a tag unrehearsed. It is kept wide, and `release/*` pushes run
+#      unconditionally on top — an allowlist only protects the cuts whose
+#      shape someone predicted, and the next release need not have that shape.
 #
 # NOT wired to `merge_group` on purpose: this is an early-warning check on the
 # release PR, and the tag gate re-runs everything anyway, so paying a macOS
@@ -39,6 +42,8 @@ on:
       - "vibecrafted-core/**"
       - "vibecrafted-mcp/**"
       - "vibecrafted-acp/**"
+      - "vibecrafted-app/**"
+      - "vibecrafted-server/**"
       - "tests/**"
       - "scripts/**"
       - "packaging/**"
@@ -52,6 +57,8 @@ on:
       - "**/pyproject.toml"
       - "**/Cargo.toml"
       - "**/Cargo.lock"
+      - "vetcoders.zsh"
+      - "CHANGELOG.md"
       - "docs/RELEASE_KICKOFF.md"
       - ".github/workflows/release.yml"
       - ".github/workflows/gate-rehearsal.yml"
