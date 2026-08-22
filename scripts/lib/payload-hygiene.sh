@@ -61,6 +61,24 @@ payload_hygiene_topmost_host_root() {
 # Emits the workshop above each root as well: the topmost still-host-specific
 # ancestor subsumes every longer path under it, so one literal closes the whole
 # blind spot without drowning the report in near-duplicate matches.
+# PAYLOAD_HYGIENE_EPHEMERAL_ROOTS — newline-separated absolute paths that
+# identify nobody: the home and workspace of a hosted CI runner such as
+# /Users/runner and /Users/runner/work. Every hosted macOS runner on earth has
+# the same ones, so a payload that names them says nothing about who built it.
+# This is NOT an allowlist of payload strings: the scanner still refuses every
+# literal that survives, and a root is only ephemeral when the caller declares
+# it so. Unset (the operator boundary) changes nothing.
+payload_hygiene_is_ephemeral() {
+  local path="${1%/}" root
+  [[ -n "${PAYLOAD_HYGIENE_EPHEMERAL_ROOTS:-}" ]] || return 1
+  while IFS= read -r root; do
+    root="${root%/}"
+    [[ -n "$root" && "$root" != "/" ]] || continue
+    [[ "$path" == "$root" || "$path" == "$root"/* ]] && return 0
+  done <<< "$PAYLOAD_HYGIENE_EPHEMERAL_ROOTS"
+  return 1
+}
+
 payload_hygiene_literals() {
   local root
   local -a ancestors=()
@@ -93,6 +111,7 @@ payload_hygiene_literals() {
     # `/` and the empty string would match the entire payload; the scanner
     # refuses them too, but not emitting them keeps the failure honest.
     [[ -n "$candidate" && "$candidate" != "/" ]] || continue
+    payload_hygiene_is_ephemeral "$candidate" && continue
     printf '%s\n' "${candidate%/}"
   done | sort -u
 }
