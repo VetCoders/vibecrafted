@@ -144,7 +144,13 @@ jobs:
       - name: Build, sign, notarize
         working-directory: vibecrafted
         env:
-          RELEASE_FLAGS: ${{ (github.event_name == 'workflow_dispatch' && inputs.notarize == false) && '--no-notarize' || '' }}
+          # --snapshot-donors: the tracked zellij-utils/assets/plugins/*.wasm
+          # blobs are build output of whichever machine last ran
+          # `make plugins-assets` (run #5 measured 411 operator-home paths
+          # reaching Contents/Helpers/vc-frame through include_bytes!). The
+          # builder recompiles them under its remaps, but only inside a donor
+          # snapshot it owns — on this runner the donors are throwaway anyway.
+          RELEASE_FLAGS: ${{ (github.event_name == 'workflow_dispatch' && inputs.notarize == false) && '--snapshot-donors --no-notarize' || '--snapshot-donors' }}
         run: |
           set -euo pipefail
           rustup show active-toolchain || true
