@@ -40,8 +40,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - A continuation prompt says how the parent run actually ended. A `stalled` run
   was not killed, and telling the resumed agent its process group died is a false
   premise about the job it is being asked to continue.
-- LIVE viewer scripts, resume receipts, and rejection hints no longer teach the
-  agent-first grammar.
+- LIVE viewer scripts, resume receipts, rejection hints, and the lifecycle help
+  pages no longer teach the agent-first grammar — `vibecrafted observe swarm
+  --help` answered in the other grammar than the one invoked.
 - The interactive `vc-resume --help` contract test provisions its own zsh
   startup, checkout launcher, HOME, and control plane instead of depending on a
   preinstalled host runtime. It watches both halves of the control plane
