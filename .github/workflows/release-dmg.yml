@@ -141,9 +141,19 @@ jobs:
             -pass env:VC_FONT_PASSPHRASE
           file "$KEYS/Certificates.p12" "$KEYS/fonts/SpotMono.ttc"
 
+      - name: Trust the Developer ID intermediate on the runner
+        # The .p12 carries the leaf; codesign still has to chain it to Apple's
+        # Developer ID G2 CA, which the hosted image does not ship.
+        run: |
+          set -euo pipefail
+          curl -fsSL -o DeveloperIDG2CA.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          security import DeveloperIDG2CA.cer -k "$HOME/Library/Keychains/login.keychain-db" -T /usr/bin/codesign
+          rm -f DeveloperIDG2CA.cer
+
       - name: Build, sign, notarize
         working-directory: vibecrafted
         env:
+          VIBECRAFTED_KEYCHAIN_SEARCH_LIST: "1"
           # --snapshot-donors: the tracked zellij-utils/assets/plugins/*.wasm
           # blobs are build output of whichever machine last ran
           # `make plugins-assets` (run #5 measured 411 operator-home paths
