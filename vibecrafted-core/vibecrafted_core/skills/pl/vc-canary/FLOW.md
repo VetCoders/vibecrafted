@@ -6,7 +6,7 @@ flowchart TD
   B --> C{coverage pass?}
   C -->|no| D[STOP + loctree-fail hak]
   C -->|yes| E[SENSE: planes_hint + hubs → scopes.json]
-  E --> F[Fleet: 1 agent per scope]
+  E --> F[Fleet: 1 agent per scope / worktree per scope when parallel]
   F --> G[merge-catalog + diff-audit]
   G --> H{suspicious deletions?}
   H -->|yes| I[examine why + AskUser — no revert]
@@ -16,12 +16,12 @@ flowchart TD
   K --> L[report → discuss → decide]
 ```
 
-## Kontrakt faz
+## Phase contract
 
-| Faza     | Pytanie                                 | Wyjście                          |
-| -------- | --------------------------------------- | -------------------------------- |
-| Atlas    | Czy inwentarz jest kompletny z receipt? | `.loctree/atlas/*`               |
-| Sense    | Które planes?                           | `scopes.json` + briefy           |
-| Fleet    | Czy każdy scope dowiózł katalog?        | `catalogs/<id>.json`             |
-| Settle   | Czy można bezpiecznie commitować?       | jeden commit albo hold operatora |
-| Findings | Co jest potwierdzonym sygnałem?         | `findings.json` + raport         |
+| Phase    | Question                            | Output                      |
+| -------- | ----------------------------------- | --------------------------- |
+| Atlas    | Is inventory complete with receipt? | `.loctree/atlas/*`          |
+| Sense    | Which planes?                       | `scopes.json` + briefs      |
+| Fleet    | Did each scope deliver catalog?     | `catalogs/<id>.json`        |
+| Settle   | Safe to commit?                     | one commit or operator hold |
+| Findings | What is confirmed signal?           | `findings.json` + report    |

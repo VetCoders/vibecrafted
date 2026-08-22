@@ -35,6 +35,18 @@ Canary answers: _this repo needs a proper catalog, but first I must know
 `context --full`), spawns **one agent per scope** (variable N), adds missing
 docstrings only, commits once, then reports findings for discussion.
 
+## Canonical Orientation Gate
+
+Before building the repo-atlas, consume fresh `vc-init` evidence for
+the repo. If absent, run `vc-init` first — canary's ownership catalog
+is only as sound as the orientation it starts from. Use
+`Loctree:loctree` (repo-view, focus, slice, impact, find, follow) to
+materialize the Code-Derived Application Map that seeds `scopes.json`
+and the per-scope briefs. Sensing planes via raw grep, docs, or
+"I remember this repo" instead of Loctree organs is a process failure —
+it is exactly the `loct context --full` / `structural.files` shortcut
+this skill already forbids as inventory (see Sense organ below).
+
 ## Sense organ (mandatory)
 
 | Question                     | Organ                      | How                                    |
@@ -72,13 +84,40 @@ vibecrafted canary claude --prompt 'Catalog this repo; agent pin default if unse
 2. **SENSE** — read `repo-atlas.json` + `planes_hint` + hubs; **you** write
    `./.loctree/canary/scopes.json` and one brief per scope
    (`scopes/<id>.brief.md`). N is **not fixed** — e.g. `core`, `macos`,
-   `Makefile`, `scripts`.
+   `Makefile`, `scripts`. **Scale-adaptive:** when one plane dwarfs the rest
+   (loctree-suite 2026-08-20: one crate held 73% of LOC), split it along its
+   own substructure into agent-honest budgets and declare what stays out as an
+   explicit deferred wave (`wave` field in `scopes.json`) — deferral is a
+   recorded decision, not an omission.
 3. **FLEET** — 1 agent = 1 scope. Hybrid: N≤8 native; N>8 external.
+   **Substrate is mechanics, not judgement:** N=1 → Living Tree; N>1 → Fleet
+   Worktrees as a Living Tree Rule **Mode B formation** — canary satisfies its
+   conditions by construction: the per-scope briefs are the written dispatch
+   plan, the per-scope gates are the pre-committed verifiers, scope domains are
+   disjoint, and the canary session is the single-thread integrator. One
+   worktree per scope branched from the integration base — the WORKER creates
+   it itself with the brief's substrate block (no launcher provisioning is
+   implied); the agent commits inside its own worktree; the integrator (the
+   canary session) merges scope branches sequentially and collects catalogs
+   from worktree disk before cleanup.
+   Never park a parallel fleet in one shared checkout (operator standing order,
+   2026-08-20).
+   Native subagents inherit the **parent model** (agent model parity); the
+   session defaults below pin external workers only. Every scope gets its
+   **own scratchpad subdirectory**, named in the brief — flat shared tmp
+   filenames collided between parallel scopes (loctree-suite, 2026-08-20).
    Agent pin: user; else session defaults (claude Sonnet 5 / codex gpt-5.6-terra /
    grok-4.5). Await = **session wake** ([await-arming](../vc-dispatch/references/await-arming.md)).
-4. **SETTLE** — merge catalogs; `diff-audit` (**no auto-revert** — examine why,
-   ask operator); compile/lint via plugin; **one** commit.
-5. **FINDINGS** — notes signals × `loct follow` / findings.json; only confirmed.
+4. **SETTLE** — strict merge validates every catalog unit against the language
+   plugin resolved from its `file`; `diff-audit` (**no auto-revert** — examine
+   why, ask operator); compile/lint via plugin; **one** commit (solo) or a
+   single-thread integration of scope branches with `diff-audit` re-run on the
+   integrated tree (fleet).
+5. **FINDINGS** — only after the fleet fully settles: fleet edits shift line
+   numbers and re-trigger incremental scans, so `loct follow` counts drift
+   mid-flight (observed 4→9 dead exports inside one wave). Pin the snapshot
+   fingerprint next to every quoted count. Then: notes signals × `loct follow`
+   / findings.json; only confirmed.
 6. **REPORT → DISCUSS → DECIDE** — no silent memex/aicx seed.
 
 ## Utility scripts
@@ -89,12 +128,23 @@ CLI="uv run --python 3.12 …/vc-canary/scripts/canary_cli.py"
 $CLI snapshot-path --root .
 $CLI repo-view --root .
 $CLI atlas --root . --refresh
-$CLI merge-catalog --root .
+$CLI merge-catalog --root . --strict
 $CLI diff-audit --root .
 $CLI coverage --root .
 ```
 
 All writes go under `./.loctree/` (atlas + canary). Status on stdout; data in files.
+
+## Catalog contract at settle
+
+`merge-catalog` loads every `plugins/*.py` contract, resolves the plugin from
+each unit's `file` glob, and by default rejects the first unit that is missing a
+plugin `REQUIRED_FIELDS` value or has a `kind` outside `KIND_ENUM`. Files whose
+language ships no plugin (swift, make, go, java, …) validate fail-closed against
+the shared required-field contract with the kind enum waived — never silently
+skipped. It names the catalog file, unit index, source file, and plugin
+in the error, and writes no merged output on failure. `--no-strict` is an
+explicit compatibility escape hatch and prints a warning; it is never implicit.
 
 ## Dependencies
 
@@ -116,7 +166,12 @@ Prefer whichever launcher is live in the session, in order:
 - Fixed agent count instead of scopes from sense
 - `( await > file ) &` false-armed await
 - Auto-revert on bad canary diff
-- Codescribe-style catalog without `role` / `authority` (Rust plugin must enforce)
+- Using `--no-strict` without an operator-approved compatibility reason
+- Parking a parallel fleet in one shared checkout (concurrency ⇒ worktrees)
+- Returning the catalog under any top-level key other than `catalog`
+- Flat shared scratchpad filenames across parallel scopes
+- Running FINDINGS while the fleet still edits (drifting `loct follow` counts)
+- Docstringing generated / SRI-pinned / vendored artifacts — catalog, never edit
 
 ## Verify before the handoff
 
