@@ -15,7 +15,7 @@ name: Release DMG (hosted macOS)
 #   VC_SIGNING_IDENTITY    "Developer ID Application: <name> (<team>)"
 #   VC_SIGNING_KEY         vibecrafted-signing.key (release-output signature)
 #   VC_NOTARY_APPLE_ID / VC_NOTARY_TEAM_ID / VC_NOTARY_PASSWORD  notarytool
-#   VC_SPOT_MONO_TTC_B64   base64 of fonts/SpotMono.ttc
+#   VC_FONT_PASSPHRASE     decrypts assets/fonts/SpotMono.ttc.enc (licensed font, AES-256-CBC/PBKDF2)
 #
 # 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 
@@ -112,10 +112,10 @@ jobs:
           VC_NOTARY_APPLE_ID: ${{ secrets.VC_NOTARY_APPLE_ID }}
           VC_NOTARY_TEAM_ID: ${{ secrets.VC_NOTARY_TEAM_ID }}
           VC_NOTARY_PASSWORD: ${{ secrets.VC_NOTARY_PASSWORD }}
-          VC_SPOT_MONO_TTC_B64: ${{ secrets.VC_SPOT_MONO_TTC_B64 }}
+          VC_FONT_PASSPHRASE: ${{ secrets.VC_FONT_PASSPHRASE }}
         run: |
           set -euo pipefail
-          for v in VC_CERT_P12_B64 VC_CERT_PASSWORD VC_SIGNING_IDENTITY VC_SIGNING_KEY VC_NOTARY_APPLE_ID VC_NOTARY_TEAM_ID VC_NOTARY_PASSWORD VC_SPOT_MONO_TTC_B64; do
+          for v in VC_CERT_P12_B64 VC_CERT_PASSWORD VC_SIGNING_IDENTITY VC_SIGNING_KEY VC_NOTARY_APPLE_ID VC_NOTARY_TEAM_ID VC_NOTARY_PASSWORD VC_FONT_PASSPHRASE; do
             [[ -n "${!v:-}" ]] || { echo "::error::missing secret $v"; exit 1; }
           done
           umask 077
@@ -126,7 +126,9 @@ jobs:
           printf '%s\n' "$VC_SIGNING_KEY" > "$KEYS/vibecrafted-signing.key"
           printf 'NOTARY_APPLE_ID=%s\nNOTARY_TEAM_ID=%s\nNOTARY_PASSWORD=%s\n' \
             "$VC_NOTARY_APPLE_ID" "$VC_NOTARY_TEAM_ID" "$VC_NOTARY_PASSWORD" > "$KEYS/.notary.env"
-          printf '%s' "$VC_SPOT_MONO_TTC_B64" | base64 --decode > "$KEYS/fonts/SpotMono.ttc"
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+            -in vibecrafted/assets/fonts/SpotMono.ttc.enc -out "$KEYS/fonts/SpotMono.ttc" \
+            -pass env:VC_FONT_PASSPHRASE
           file "$KEYS/Certificates.p12" "$KEYS/fonts/SpotMono.ttc"
 
       - name: Build, sign, notarize
