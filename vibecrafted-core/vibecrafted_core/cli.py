@@ -1059,7 +1059,6 @@ def _agent_await(agent: str, argv: Sequence[str]) -> int:
         except RunNotResolved as exc:
             print(str(RunNotResolved(exc.run_id, agent)), file=sys.stderr)
             return 1
-        print(f"await: not projected yet; resolved on disk — polling {args.run_id}")
     run_id = str((run or {}).get("run_id") or "") or args.run_id
     if args.json:
         result = await_launch_truth(
@@ -1077,6 +1076,8 @@ def _agent_await(agent: str, argv: Sequence[str]) -> int:
             else 1
         )
 
+    if run is None:
+        print(f"await: not projected yet; resolved on disk — polling {run_id}")
     print("await: initial status")
     if run is not None:
         _print_run_status(run)

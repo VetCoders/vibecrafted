@@ -1418,3 +1418,33 @@ def test_root_cli_agent_observe_hint_names_the_agent(monkeypatch, capsys) -> Non
     err = capsys.readouterr().err
     assert "vibecrafted await codex --run-id impl-ghost" in err
     assert "vibecrafted await --run-id" not in err
+
+
+def test_root_cli_agent_await_json_stdout_stays_machine_readable(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    """`--json` stdout is a contract: one document, nothing else.
+
+    The read-follows-write fallback announces itself on stdout for a human. That
+    notice must not be emitted before the --json branch, or every consumer of
+    `vibecrafted await <agent> --run-id <id> --json` gets a parse error on
+    exactly the runs the fallback exists to serve.
+    """
+    run_id = "impl-260822-101500-9090"
+    monkeypatch.setattr(cli, "lookup_run", lambda _run_id: None)
+    monkeypatch.setattr(cli, "resolve_run", lambda rid: _resolved_run(rid, tmp_path))
+    monkeypatch.setattr(
+        cli,
+        "await_launch_truth",
+        lambda rid, **_kwargs: {
+            "run_id": rid,
+            "completed": True,
+            "artifact_ok": True,
+            "terminal_evidence": True,
+        },
+    )
+
+    assert cli.main(["codex", "await", "--run-id", run_id, "--json"]) == 0
+
+    out = capsys.readouterr().out
+    assert json.loads(out)["run_id"] == run_id
