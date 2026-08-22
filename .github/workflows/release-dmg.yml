@@ -27,9 +27,9 @@ on:
         required: false
         default: main
       frame_ref:
-        description: vc-frame donor ref
+        description: vc-frame donor ref (develop is the integration line; main lags it)
         required: false
-        default: main
+        default: develop
       terminal_ref:
         description: vc-terminal donor ref
         required: false
@@ -78,7 +78,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: vetcoders/vc-frame
-          ref: ${{ inputs.frame_ref || 'main' }}
+          ref: ${{ inputs.frame_ref || 'develop' }}
           path: vc-frame
           fetch-depth: 0
           persist-credentials: false
