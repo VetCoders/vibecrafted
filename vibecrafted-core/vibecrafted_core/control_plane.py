@@ -3515,6 +3515,18 @@ def lookup_run(run_id: str) -> dict[str, Any] | None:
     return _select_run(snapshot, run_id)
 
 
+def await_hint(run_id: str, agent: str = "") -> str:
+    """The one action-first ``await`` command string every hint hands the operator.
+
+    ``vibecrafted await --run-id <id>`` — the agent-less form this used to
+    teach — is not a command: the deck reads the first token after the verb as
+    the agent and dies with ``Unknown agent: --run-id``. A hint that does not
+    run is worse than no hint, so the agent is part of the template; callers
+    that know it substitute it, callers that do not leave the placeholder.
+    """
+    return f"vibecrafted await {agent or '<agent>'} --run-id {run_id}"
+
+
 class RunNotResolved(Exception):
     """Raised when a run id maps to no on-disk artifacts yet.
 
@@ -3523,12 +3535,13 @@ class RunNotResolved(Exception):
     at ``await`` instead of failing silently.
     """
 
-    def __init__(self, run_id: str) -> None:
+    def __init__(self, run_id: str, agent: str = "") -> None:
         """Store the unresolved run id and format the actionable error message."""
         self.run_id = run_id
+        self.agent = agent
         super().__init__(
             f"run {run_id!r} not found in runtime_runs/ or artifacts/ — it may "
-            f"still be launching. Wait with: vibecrafted await --run-id {run_id}"
+            f"still be launching. Wait with: {await_hint(run_id, agent)}"
         )
 
 

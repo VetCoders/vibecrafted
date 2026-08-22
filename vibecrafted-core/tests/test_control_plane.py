@@ -104,6 +104,28 @@ def test_resolve_run_raises_loud_when_still_launching(
     assert run_id in message
     assert "await" in message
     assert excinfo.value.run_id == run_id
+    # The hint has to be a command, not a shape: the agent-less
+    # `vibecrafted await --run-id <id>` dies with "Unknown agent: --run-id"
+    # because the deck reads the first token after the verb as the agent.
+    assert "vibecrafted await --run-id" not in message
+    assert f"vibecrafted await <agent> --run-id {run_id}" in message
+
+
+def test_await_hint_is_always_action_first_and_carries_an_agent_slot() -> None:
+    assert (
+        control_plane.await_hint("impl-1", "codex")
+        == "vibecrafted await codex --run-id impl-1"
+    )
+    assert (
+        control_plane.await_hint("impl-1")
+        == "vibecrafted await <agent> --run-id impl-1"
+    )
+
+
+def test_run_not_resolved_substitutes_a_known_agent() -> None:
+    message = str(control_plane.RunNotResolved("impl-1", "claude"))
+    assert "vibecrafted await claude --run-id impl-1" in message
+    assert "<agent>" not in message
 
 
 def test_full_sync_rotates_terminal_transcript_and_sweeps_old_temps(

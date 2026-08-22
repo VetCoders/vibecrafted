@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from vibecrafted_core import cli, lifecycle_delivery
+from vibecrafted_core import cli, control_plane, lifecycle_delivery
 
 
 def _accepted_launch_payload() -> dict[str, object]:
@@ -1312,3 +1312,109 @@ def test_startup_watch_survives_a_null_accepted_field(tmp_path, capsys, monkeypa
     )
 
     assert "Not logged in" in capsys.readouterr().err
+
+
+def _resolved_run(run_id: str, tmp_path: Path) -> control_plane.ResolvedRun:
+    """A run the runtime has written to runtime_runs/ and nothing else."""
+    run_dir = tmp_path / "runtime_runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    meta = run_dir / "meta.json"
+    meta.write_text(json.dumps({"run_id": run_id}), encoding="utf-8")
+    return control_plane.ResolvedRun(
+        run_id=run_id,
+        source="runtime_runs",
+        run_dir=run_dir,
+        meta=meta,
+        transcript=None,
+        report=None,
+    )
+
+
+def test_root_cli_agent_await_accepts_run_the_projection_has_not_seen(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    """await must answer for every run id observe answers for.
+
+    The launch receipt says "await (ARM NOW, supervisor-side)" while the run is
+    still `launching`, so the control-plane projection can legitimately not know
+    a run the runtime has already written to runtime_runs/. Refusing it here —
+    while `observe` resolves it — is the split-brain resolve_run closes, and
+    refusing is what teaches supervisors to hedge await with ad-hoc pollers.
+    """
+    run_id = "impl-260822-101500-4242"
+    monkeypatch.setattr(cli, "lookup_run", lambda _run_id: None)
+    monkeypatch.setattr(cli, "resolve_run", lambda rid: _resolved_run(rid, tmp_path))
+    seen: dict[str, object] = {}
+
+    def fake_await(rid: str, **kwargs: object) -> dict[str, object]:
+        seen["run_id"] = rid
+        return {
+            "run_id": rid,
+            "found": True,
+            "completed": True,
+            "timed_out": False,
+            "reason": "terminal",
+            "worker_alive": False,
+            "run": {"run_id": rid, "state": "report_validated", "agent": "codex"},
+        }
+
+    monkeypatch.setattr(cli, "await_run", fake_await)
+
+    assert cli.main(["codex", "await", "--run-id", run_id, "--timeout", "0"]) == 0
+
+    assert seen["run_id"] == run_id
+    out = capsys.readouterr().out
+    assert "await: not projected yet; resolved on disk" in out
+    assert "await: completed (terminal)" in out
+
+
+def test_root_cli_agent_await_hint_for_an_unknown_run_is_runnable(
+    monkeypatch, capsys
+) -> None:
+    """The refusal must hand back a command that runs.
+
+    `vibecrafted await --run-id <id>` — the agent-less form this used to print —
+    dies with "Unknown agent: --run-id": the deck reads the first token after the
+    verb as the agent.
+    """
+    monkeypatch.setattr(cli, "lookup_run", lambda _run_id: None)
+
+    def raise_unresolved(rid: str) -> None:
+        raise cli.RunNotResolved(rid)
+
+    monkeypatch.setattr(cli, "resolve_run", raise_unresolved)
+
+    assert cli.main(["codex", "await", "--run-id", "impl-ghost"]) == 1
+
+    err = capsys.readouterr().err
+    assert "vibecrafted await codex --run-id impl-ghost" in err
+    assert "vibecrafted await --run-id" not in err
+    # The old text told the operator to pass a flag they had just passed.
+    assert "Pass --run-id or --last" not in err
+
+
+def test_root_cli_agent_await_without_any_selector_still_teaches_the_flags(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        cli, "sync_state", lambda: {"active_runs": [], "recent_runs": []}
+    )
+
+    assert cli.main(["codex", "await"]) == 1
+
+    assert "No run found. Pass --run-id or --last." in capsys.readouterr().err
+
+
+def test_root_cli_agent_observe_hint_names_the_agent(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "lookup_run", lambda _run_id: None)
+
+    def raise_unresolved(rid: str) -> None:
+        raise cli.RunNotResolved(rid)
+
+    monkeypatch.setattr(cli, "resolve_run", raise_unresolved)
+
+    assert cli.main(["codex", "observe", "--run-id", "impl-ghost"]) == 1
+
+    err = capsys.readouterr().err
+    assert "vibecrafted await codex --run-id impl-ghost" in err
+    assert "vibecrafted await --run-id" not in err

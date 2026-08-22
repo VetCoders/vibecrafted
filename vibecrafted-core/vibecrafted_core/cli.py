@@ -958,7 +958,7 @@ def _agent_observe(agent: str, argv: Sequence[str]) -> int:
         if args.run_id:
             # Control-plane projection missed it; resolve read-follows-write
             # against runtime_runs/ (where the runtime writes) before giving up.
-            return _observe_resolved(args.run_id, json_output=args.json)
+            return _observe_resolved(args.run_id, json_output=args.json, agent=agent)
         print("No run found. Pass --run-id or --last.", file=sys.stderr)
         return 1
     if args.json:
@@ -968,13 +968,15 @@ def _agent_observe(agent: str, argv: Sequence[str]) -> int:
     return 0
 
 
-def _observe_resolved(run_id: str, *, json_output: bool) -> int:
+def _observe_resolved(run_id: str, *, json_output: bool, agent: str = "") -> int:
     """Fallback observe path: resolve a run directly from runtime_runs/artifacts
     on disk when the control-plane projection has no record of it yet."""
     try:
         resolved = resolve_run(run_id)
     except RunNotResolved as exc:
-        print(str(exc), file=sys.stderr)
+        # This surface knows the agent, so the operator gets the command with
+        # the agent already filled in instead of a template to complete.
+        print(str(RunNotResolved(exc.run_id, agent) if agent else exc), file=sys.stderr)
         return 1
     if json_output:
         print(
@@ -1041,9 +1043,24 @@ def _agent_await(agent: str, argv: Sequence[str]) -> int:
     args = parser.parse_args(list(argv))
     run = _run_for_agent(agent, args.run_id, last=args.last)
     if run is None:
-        print("No run found. Pass --run-id or --last.", file=sys.stderr)
-        return 1
-    run_id = str(run.get("run_id") or "")
+        if not args.run_id:
+            print("No run found. Pass --run-id or --last.", file=sys.stderr)
+            return 1
+        # Read-follows-write, the same fallback `observe` already has. The launch
+        # receipt prints "await (ARM NOW, supervisor-side)" while the run is still
+        # `launching`, so the control-plane projection can legitimately not know a
+        # run the runtime has already written to runtime_runs/. Refusing that id
+        # with "No run found" — while `observe` answers for it — is the split-brain
+        # resolve_run exists to close, and it is exactly what teaches supervisors
+        # to hedge await with ad-hoc pollers: a Class 3 violation of the doctrine
+        # this verb serves (docs/runtime/AGENT_OPS.md).
+        try:
+            resolve_run(args.run_id)
+        except RunNotResolved as exc:
+            print(str(RunNotResolved(exc.run_id, agent)), file=sys.stderr)
+            return 1
+        print(f"await: not projected yet; resolved on disk — polling {args.run_id}")
+    run_id = str((run or {}).get("run_id") or "") or args.run_id
     if args.json:
         result = await_launch_truth(
             run_id,
@@ -1061,7 +1078,12 @@ def _agent_await(agent: str, argv: Sequence[str]) -> int:
         )
 
     print("await: initial status")
-    _print_run_status(run)
+    if run is not None:
+        _print_run_status(run)
+    else:
+        print(f"run_id:     {run_id}")
+        print(f"agent:      {agent}")
+        print("state:      not projected yet (resolved from runtime_runs/)")
 
     interval = max(float(args.interval), 0.1)
     status_interval = max(float(args.status_interval), interval)
@@ -1107,7 +1129,18 @@ def _agent_await(agent: str, argv: Sequence[str]) -> int:
             _print_run_status(final_run)
         return 0
     if not result.get("found"):
-        print(f"await: run disappeared: {run_id}", file=sys.stderr)
+        if run is None:
+            # Entered through the on-disk resolver: the run exists in
+            # runtime_runs/ but never reached the control-plane projection, so
+            # "disappeared" would be a second lie on top of the first.
+            print(
+                f"await: {run_id} resolved on disk but never entered the "
+                "control-plane projection — inspect it with "
+                f"vibecrafted observe {agent} --run-id {run_id}",
+                file=sys.stderr,
+            )
+        else:
+            print(f"await: run disappeared: {run_id}", file=sys.stderr)
         return 1
     print(f"await: timed out ({reason})")
     if final_run:
