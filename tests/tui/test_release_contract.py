@@ -786,13 +786,16 @@ def test_windows_entry_point_does_not_drift_between_its_two_copies() -> None:
     )
 
 
-def _workflow_steps(relative: str, job: str) -> list[tuple[str, str, str]]:
-    """Each step as (name, uses, run) — identity AND body.
+def _workflow_steps(relative: str, job: str) -> list[tuple[str, str, str, str]]:
+    """Each step as (name, uses, run, with) — identity AND everything it does.
 
     Comparing names alone would let `make test` on one side and `make test-core`
     on the other both call themselves "Run installer and product tests" while the
     gate stayed green, which is the failure the rehearsal exists to rule out.
-    Unnamed steps key off `uses` so two of them cannot collapse into one entry.
+    `with:` is part of the body for an action step, not decoration: it carries
+    the checkout depth and the tool versions, so a rehearsal on a shallow
+    checkout would still claim parity with a tag gate on a full one. Unnamed
+    steps key off `uses` so two of them cannot collapse into one entry.
     """
     yaml = pytest.importorskip("yaml")
     payload = yaml.safe_load((REPO_ROOT / relative).read_text(encoding="utf-8"))
@@ -803,7 +806,9 @@ def _workflow_steps(relative: str, job: str) -> list[tuple[str, str, str]]:
         run = "\n".join(
             line.rstrip() for line in str(step.get("run") or "").strip().splitlines()
         )
-        steps.append((name, uses, run))
+        inputs = step.get("with") or {}
+        rendered = ", ".join(f"{key}={inputs[key]!r}" for key in sorted(inputs))
+        steps.append((name, uses, run, rendered))
     return steps
 
 
@@ -821,8 +826,8 @@ def test_gate_rehearsal_runs_every_release_source_gate_step_in_order() -> None:
     rehearsal = _workflow_steps(
         ".github/workflows/gate-rehearsal.yml", "gate-rehearsal"
     )
-    # The tag-only preamble cannot be rehearsed: there is no tag on a PR. The
-    # checkout differs only in `with:`, which is not part of the step body.
+    # The tag-only preamble cannot be rehearsed: there is no tag on a PR.
+    # Everything after it — checkout included, `with:` and all — must match.
     preamble = {"Verify immutable release source"}
     expected = [step for step in release if step[0] not in preamble]
     actual = [step for step in rehearsal if step[0] not in preamble]
