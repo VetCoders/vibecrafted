@@ -9,22 +9,63 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
-- Public commands and every generated follow-up command use action-first,
-  agent-last grammar. The removed `vibecrafted <agent> <action>` form is rejected
-  with an exact migration command instead of remaining as compatibility syntax.
+- Public commands and every generated follow-up command — launch receipts,
+  resume receipts, and the LIVE viewer script — emit action-first, agent-last
+  grammar (`vibecrafted observe <agent> --run-id <id>`). The agent-first form is
+  no longer taught anywhere; it is still accepted, so panes, scripts, and muscle
+  memory keep working.
 
 ### Fixed
 
 - `vibecrafted resume <agent> --run-id ...` can recover a run settled as
   `stalled`, preserving the recorded provider session and run lineage in the
   newly tracked continuation.
+- `vibecrafted await <agent> --run-id <id>` answers for every run id `observe`
+  answers for. It resolves read-follows-write against `runtime_runs/` when the
+  control-plane projection has not caught up, instead of refusing — with "No run
+  found. Pass --run-id or --last." — the run the launch receipt just told the
+  supervisor to arm await on. Refusing there is what teaches supervisors to hedge
+  await with ad-hoc pollers, a Class 3 violation of the same doctrine.
+- Action-first `observe` / `await` reach the lifecycle for `swarm`, the fan-out
+  pseudo-agent a research launch settles on. The deck's registry gates provider
+  binaries and has no `swarm`, so the action-first form died with
+  `Unknown agent: swarm` while the agent-first form worked through `cmd_swarm`.
+- The "still launching" hint prints a command that runs: the agent-less
+  `vibecrafted await --run-id <id>` it used to print exits 1 with
+  `Unknown agent: --run-id`.
+- Run-id shape recognition is derived from the allocator instead of transcribed.
+  Nine of the twenty-two registered workflows — ownership (`owne`, not `ownr`),
+  polarize, release, audit, canary, delegate, followup, intents, dou — minted run
+  ids their own shape check rejected as `not_a_run_id`.
+- A continuation prompt says how the parent run actually ended. A `stalled` run
+  was not killed, and telling the resumed agent its process group died is a false
+  premise about the job it is being asked to continue.
 - LIVE viewer scripts, resume receipts, and rejection hints no longer teach the
-  removed agent-first grammar.
-- The interactive `vc-resume --help` contract test now provisions its own zsh
+  agent-first grammar.
+- The interactive `vc-resume --help` contract test provisions its own zsh
   startup, checkout launcher, HOME, and control plane instead of depending on a
-  preinstalled host runtime.
+  preinstalled host runtime. It watches both halves of the control plane
+  (`runs/` and `runtime_runs/`), and on a host without zsh it skips instead of
+  raising `FileNotFoundError` — while staying a hard failure in CI, where every
+  job that runs this suite provides zsh on purpose.
 - The Polish `vc-workflow` doctrine mirror includes the canonical await and
   liveness contract and uses action-first commands.
+
+### CI
+
+- The macOS release-gate rehearsal runs every step of `release.yml`'s
+  source-gate, in order — including the publication-boundary step that has never
+  executed on any tag — and runs unconditionally on `release/*` pushes, so a
+  version-bump-only release PR cannot silently skip it through the paths filter.
+  A contract test pins both properties, and a concurrency group stops superseded
+  hour-long macOS jobs from stacking.
+
+### Release truth
+
+- v4.2.0 through v4.2.3 are immutable failed cuts with no changelog entries of
+  their own: each died inside the source gate, one step further along than the
+  last, and published nothing. 4.2.4 is the first cut of this line a user can
+  install.
 
 ## 4.2.1 — 2026-08-21
 
