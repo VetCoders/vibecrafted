@@ -839,3 +839,54 @@ def test_gate_rehearsal_cannot_be_skipped_on_a_release_branch() -> None:
         str(branch).startswith("release/") for branch in (push.get("branches") or [])
     ), "pushes to release/* must trigger the rehearsal unconditionally"
     assert not push.get("paths"), "the release/* trigger must carry no paths filter"
+
+
+# Every projection of the product version that a release cut must move
+# together, with how to read it. `vibecrafted-acp` is deliberately absent: it
+# has been on its own number since 3.7.0 (the repo was already 3.7.1 then), so
+# whether it tracks the product line is a policy call, not a drift to gate —
+# but until that call is written down, nothing checks it either.
+_VERSION_PROJECTIONS = (
+    ("vibecrafted-core/vibecrafted_core/VERSION", "text"),
+    ("vibecrafted-mcp/vibecrafted_mcp/VERSION", "text"),
+    ("plugin.json", "json"),
+    ("vibecrafted-core/pyproject.toml", "pyproject"),
+    ("vibecrafted-mcp/pyproject.toml", "pyproject"),
+    ("vibecrafted-server/control-core/Cargo.toml", "cargo"),
+    ("vibecrafted-server/web/Cargo.toml", "cargo"),
+    ("README.md", "badge"),
+)
+
+
+def _projected_version(relative: str, kind: str) -> str:
+    text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+    if kind == "text":
+        return text.strip()
+    if kind == "json":
+        return str(json.loads(text)["version"])
+    if kind in {"pyproject", "cargo"}:
+        match = re.search(r'^version = "([^"]+)"', text, re.MULTILINE)
+        assert match, f"{relative} has no top-level version"
+        return match.group(1)
+    badge = re.search(r"img\.shields\.io/badge/version-([0-9][^-]*)-", text)
+    assert badge, "README has no version badge"
+    return badge.group(1)
+
+
+def test_every_product_version_projection_matches_VERSION() -> None:
+    """One number, everywhere it is written down.
+
+    Four tags burned in one night, and the surviving parity check for
+    vibecrafted-mcp lives in vibecrafted-mcp/tests/ — which no Makefile target
+    and no workflow runs, so it has never guarded a release. This test lives in
+    tests/tui, which `make test` runs, which both release.yml's source-gate and
+    the pre-tag rehearsal run. A projection left behind is now a red gate
+    instead of a stranger installing 4.2.4 and being told it is 3.7.1.
+    """
+    expected = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    drift = {
+        relative: found
+        for relative, kind in _VERSION_PROJECTIONS
+        if (found := _projected_version(relative, kind)) != expected
+    }
+    assert not drift, f"VERSION is {expected}; these still project: {drift}"

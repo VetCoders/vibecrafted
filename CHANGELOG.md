@@ -59,6 +59,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   version-bump-only release PR cannot silently skip it through the paths filter.
   A contract test pins both properties, and a concurrency group stops superseded
   hour-long macOS jobs from stacking.
+- Every product version projection is gated where a release can see it. The
+  only parity test that existed lived in `vibecrafted-mcp/tests/`, which no
+  Makefile target and no workflow runs, so nothing checked the claim: the README
+  badge shipped 4.2.4 while telling visitors 3.7.1. The badge is corrected and
+  the gate now runs inside `make test`.
 
 ### Release truth
 
