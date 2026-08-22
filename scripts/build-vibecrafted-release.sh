@@ -184,7 +184,12 @@ prepare_signing_identity() {
     # old `security default-keychain -d user -s "$TEMP_KEYCHAIN_PATH"` is what
     # made Codescribe (and everything else on the host) prompt for a uuidgen
     # password for the whole length of the release.
-    KEYCHAIN_SESSION_REGISTER_SEARCH_LIST=0 \
+    #
+    # A hosted runner is the one place where registering it is right: nothing
+    # else runs there, and codesign resolves the Developer ID chain through the
+    # search list, not through --keychain alone (run 32597029908: identity
+    # present, "The specified item could not be found in the keychain").
+    KEYCHAIN_SESSION_REGISTER_SEARCH_LIST="${VIBECRAFTED_KEYCHAIN_SEARCH_LIST:-0}" \
       keychain_session_begin "$SIGNING_KEYCHAIN_LABEL"
     TEMP_KEYCHAIN_PATH="$KEYCHAIN_SESSION_PATH"
     temp_password="$(cat "$(keychain_session_password_file)")"
