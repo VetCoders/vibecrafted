@@ -61,7 +61,7 @@ Every skill launcher accepts the same flag contract:
 `--verbose` is a global option for detailed output. Model overrides exist for
 claude (`--model`) and codex (`-m`); other agents run their defaults.
 
-## Agent-first modes
+## Action-first agent modes
 
 The same action-first grammar executes prepared plan files directly:
 

@@ -51,7 +51,7 @@ polarize → dou → hydrate → release.
 | ------------- | ----- | --------------------------------------------------------------------- | ------------------------------------- |
 | `vc-ship`     | Meta  | The full lifecycle umbrella: all eleven stages as one supervised run. | `/vc-ship` (interactive)              |
 | `vc-dispatch` | Meta  | Operate external fleet lines: prompt assembly, await, recovery.       | `vibecrafted dispatch`                |
-| `vc-agents`   | Meta  | External-fleet dispatch contract and agent-mode grammar.              | `vibecrafted implement codex plan.md` |
+| `vc-agents`   | Meta  | External-fleet dispatch contract and action-first grammar.            | `vibecrafted implement codex plan.md` |
 | `vc-delegate` | Meta  | Decide native in-session subagents vs. external escalation.           | `vibecrafted delegate claude`         |
 
 ## Verification and curation

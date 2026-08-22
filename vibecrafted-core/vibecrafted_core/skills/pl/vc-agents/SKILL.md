@@ -89,7 +89,7 @@ się na zewnętrznych workerów.
 ```bash
 vibecrafted implement codex /path/to/plan.md
 vibecrafted implement claude /path/to/plan.md
-vibecrafted gemini implement /path/to/plan.md
+vibecrafted implement gemini /path/to/plan.md
 ```
 
 > Nie outsourcujemy myślenia. Wdrażamy równie zdolne umysły na równoległych ścieżkach wykonania, aby chronić główny bufor kontekstu.
@@ -250,7 +250,7 @@ vibecrafted implement claude "$PLAN"
 
 ```bash
 PLAN="$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan>.md"
-vibecrafted gemini implement "$PLAN"
+vibecrafted implement gemini "$PLAN"
 ```
 
 Jeśli te narzędzia są niedostępne, przestań udawać, że spawn jest poprawnie skonfigurowany, i powiedz to wprost.

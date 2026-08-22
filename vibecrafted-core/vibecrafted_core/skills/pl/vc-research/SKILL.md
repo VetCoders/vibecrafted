@@ -228,7 +228,7 @@ Do inspekcji na poziomie transkryptu, gdy swarm jest w trakcie:
 ```bash
 vibecrafted observe claude --last
 vibecrafted observe codex --last
-vibecrafted gemini observe --last
+vibecrafted observe gemini --last
 ```
 
 Nie traktuj ręcznych wywołań `observe --last` jako wystarczającej obserwowalności. Stan workflow domyślnie przechodzi przez metadane launchu, helper oczekiwania i trwałe ścieżki raportów.
