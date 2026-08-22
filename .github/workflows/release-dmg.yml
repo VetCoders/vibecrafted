@@ -65,6 +65,11 @@ jobs:
       PAYLOAD_HYGIENE_EPHEMERAL_ROOTS: |
         /Users/runner
         ${{ github.workspace }}
+      # …and what the runner must still prove: the payload names neither the
+      # operator whose Developer ID signs it nor their workshop.
+      PAYLOAD_HYGIENE_EXTRA_LITERALS: |
+        /Users/polyversai
+        /Volumes/vc-workspace
     steps:
       - name: Check out vibecrafted
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

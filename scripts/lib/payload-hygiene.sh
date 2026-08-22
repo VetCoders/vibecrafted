@@ -97,6 +97,19 @@ payload_hygiene_literals() {
     done < <(payload_hygiene_topmost_host_root "$root")
   done
 
+  # PAYLOAD_HYGIENE_EXTRA_LITERALS — newline-separated literals a caller adds on
+  # top of the build-host set. A hosted runner declares its own roots ephemeral
+  # and then has nothing of its own to forbid; what it must still prove is that
+  # the payload does not name the OPERATOR whose keys sign it. The operator's
+  # home and workshop are those literals.
+  local -a extra=()
+  if [[ -n "${PAYLOAD_HYGIENE_EXTRA_LITERALS:-}" ]]; then
+    local line
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && extra+=("$line")
+    done <<< "$PAYLOAD_HYGIENE_EXTRA_LITERALS"
+  fi
+
   local candidate
   for candidate in \
     "${HOME:-}" \
@@ -106,6 +119,7 @@ payload_hygiene_literals() {
     "${TERMINAL_REPO:-}" \
     "${FRAME_REPO:-}" \
     "${ancestors[@]+"${ancestors[@]}"}" \
+    "${extra[@]+"${extra[@]}"}" \
     "$@"
   do
     # `/` and the empty string would match the entire payload; the scanner
