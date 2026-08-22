@@ -103,7 +103,9 @@ jobs:
           # macos-15 images ship rustup; donors pin their toolchain via rust-toolchain.toml
           rustup --version
           rustup default stable
-          rustup target add wasm32-wasip1
+          rustup target add wasm32-wasip1 wasm32-unknown-unknown
+          # Vibecrafted Server shell (leptos); version matches the operator machine
+          cargo install --locked cargo-leptos@0.3.7
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
 
       - name: Materialize signing keys from secrets
