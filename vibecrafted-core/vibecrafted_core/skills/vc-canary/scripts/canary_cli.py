@@ -208,9 +208,13 @@ def validate_catalog_unit(
     raw_file = unit.get("file")
     if not isinstance(raw_file, str) or not raw_file.strip():
         _die(f"{location}: missing required field 'file'")
-    # Normalize before plugin resolution: surrounding whitespace must not
-    # divert a known-language unit into the laxer pluginless branch.
-    raw_file = raw_file.strip()
+    if raw_file != raw_file.strip():
+        # A trailing/leading space would dodge the language plugin AND leak an
+        # unresolvable path into the merged catalog — reject, never normalize.
+        _die(
+            f"{location}: 'file' has surrounding whitespace ({raw_file!r}); "
+            "emit the exact repository path"
+        )
     plugin = plugin_for_file(raw_file, plugins)
     if plugin is None:
         # Languages the atlas inventories without a dedicated plugin (swift,

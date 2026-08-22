@@ -186,7 +186,7 @@ def test_merge_catalog_fails_on_zero_units_total(tmp_path: Path) -> None:
     assert not (tmp_path / "catalog.json").exists()
 
 
-def test_merge_catalog_strips_whitespace_before_plugin_resolution(
+def test_merge_catalog_rejects_file_with_surrounding_whitespace(
     tmp_path: Path,
 ) -> None:
     _write_catalog(tmp_path, "shell-scope.json", _unit("scripts/demo.sh ", "def"))
@@ -194,5 +194,5 @@ def test_merge_catalog_strips_whitespace_before_plugin_resolution(
     result = _run_merge(tmp_path)
 
     assert result.returncode != 0
-    assert "plugin shell.py" in result.stderr
-    assert "invalid kind 'def'" in result.stderr
+    assert "surrounding whitespace" in result.stderr
+    assert not (tmp_path / "catalog.json").exists()
