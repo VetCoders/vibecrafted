@@ -1,7 +1,16 @@
 """TypeScript canary plugin contract enforced by canary_cli strict merge."""
 
 GLOBS = ("*.ts", "*.tsx", "*.mts", "*.cts")
-KIND_ENUM = ("function", "class", "interface", "type", "const", "method", "module")
+KIND_ENUM = (
+    "function",
+    "class",
+    "interface",
+    "type",
+    "enum",
+    "const",
+    "method",
+    "module",
+)
 REQUIRED_FIELDS = (
     "file",
     "name",

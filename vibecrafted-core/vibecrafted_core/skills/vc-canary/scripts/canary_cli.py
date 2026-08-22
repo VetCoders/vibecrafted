@@ -183,6 +183,17 @@ def plugin_for_file(
     return matches[0] if matches else None
 
 
+SHARED_REQUIRED_FIELDS = (
+    "file",
+    "name",
+    "line",
+    "kind",
+    "role",
+    "docstring_added",
+    "authority",
+)
+
+
 def validate_catalog_unit(
     catalog_path: Path,
     unit_index: int,
@@ -199,10 +210,27 @@ def validate_catalog_unit(
         _die(f"{location}: missing required field 'file'")
     plugin = plugin_for_file(raw_file, plugins)
     if plugin is None:
-        _die(
-            f"{location} file {raw_file!r}: no language plugin matches this file "
-            "(strict merge rejects unvalidated units)"
-        )
+        # Languages the atlas inventories without a dedicated plugin (swift,
+        # make, go, java, …) still validate fail-closed against the shared
+        # required-field contract; only the per-language kind enum is waived.
+        for field in SHARED_REQUIRED_FIELDS:
+            value = unit.get(field)
+            if (
+                field not in unit
+                or value is None
+                or (isinstance(value, str) and not value.strip())
+            ):
+                _die(
+                    f"{location} file {raw_file!r} (no language plugin; shared "
+                    f"contract): missing required field {field!r}"
+                )
+        kind = unit.get("kind")
+        if not isinstance(kind, str) or not kind.strip():
+            _die(
+                f"{location} file {raw_file!r} (no language plugin; shared "
+                "contract): 'kind' must be a non-empty string"
+            )
+        return
 
     for field in plugin.required_fields:
         value = unit.get(field)

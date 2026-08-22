@@ -132,8 +132,10 @@ All writes go under `./.loctree/` (atlas + canary). Status on stdout; data in fi
 
 `merge-catalog` loads every `plugins/*.py` contract, resolves the plugin from
 each unit's `file` glob, and by default rejects the first unit that is missing a
-plugin `REQUIRED_FIELDS` value, has a `kind` outside `KIND_ENUM`, or has no
-language plugin. It names the catalog file, unit index, source file, and plugin
+plugin `REQUIRED_FIELDS` value or has a `kind` outside `KIND_ENUM`. Files whose
+language ships no plugin (swift, make, go, java, …) validate fail-closed against
+the shared required-field contract with the kind enum waived — never silently
+skipped. It names the catalog file, unit index, source file, and plugin
 in the error, and writes no merged output on failure. `--no-strict` is an
 explicit compatibility escape hatch and prints a warning; it is never implicit.
 

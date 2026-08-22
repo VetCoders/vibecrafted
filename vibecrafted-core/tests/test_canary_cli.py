@@ -131,3 +131,32 @@ def test_merge_catalog_accepts_legacy_units_key_with_warning(tmp_path: Path) -> 
     assert "legacy top-level key 'units'" in result.stderr
     merged = json.loads((tmp_path / "catalog.json").read_text(encoding="utf-8"))
     assert merged["counts"]["units_cataloged"] == 1
+
+
+def test_merge_catalog_validates_pluginless_language_with_shared_contract(
+    tmp_path: Path,
+) -> None:
+    _write_catalog(
+        tmp_path, "swift-scope.json", _unit("Sources/App/Main.swift", "func")
+    )
+
+    result = _run_merge(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    merged = json.loads((tmp_path / "catalog.json").read_text(encoding="utf-8"))
+    assert merged["counts"]["units_cataloged"] == 1
+
+
+def test_merge_catalog_rejects_pluginless_unit_missing_authority(
+    tmp_path: Path,
+) -> None:
+    unit = _unit("Sources/App/Main.swift", "func")
+    unit.pop("authority")
+    _write_catalog(tmp_path, "swift-scope.json", unit)
+
+    result = _run_merge(tmp_path)
+
+    assert result.returncode != 0
+    assert "no language plugin; shared contract" in result.stderr
+    assert "missing required field 'authority'" in result.stderr
+    assert not (tmp_path / "catalog.json").exists()
