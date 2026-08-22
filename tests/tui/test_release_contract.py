@@ -784,3 +784,58 @@ def test_windows_entry_point_does_not_drift_between_its_two_copies() -> None:
     assert digest == hashlib.sha256(served.read_bytes()).hexdigest(), (
         "install.ps1 drifted between the framework repo and the served site copy"
     )
+
+
+def _workflow_step_names(relative: str, job: str) -> list[str]:
+    yaml = pytest.importorskip("yaml")
+    payload = yaml.safe_load((REPO_ROOT / relative).read_text(encoding="utf-8"))
+    return [
+        str(step.get("name") or "checkout") for step in payload["jobs"][job]["steps"]
+    ]
+
+
+def test_gate_rehearsal_runs_every_release_source_gate_step_in_order() -> None:
+    """The rehearsal is only worth its macOS minutes if it is the same gate.
+
+    Four tags burned in one night because the full suite had never run on a
+    bare macOS image outside the immutable tag. A rehearsal that stops one step
+    short of release.yml reproduces exactly that: a green PR check, then a tag
+    that dies on the step nobody rehearsed — and the step this originally
+    omitted, the publication boundary, is the one release.yml itself records as
+    never having executed on any tag.
+    """
+    release = _workflow_step_names(".github/workflows/release.yml", "source-gate")
+    rehearsal = _workflow_step_names(
+        ".github/workflows/gate-rehearsal.yml", "gate-rehearsal"
+    )
+    # The tag-only preamble cannot be rehearsed: there is no tag on a PR.
+    preamble = {"checkout", "Verify immutable release source"}
+    expected = [name for name in release if name not in preamble]
+    actual = [name for name in rehearsal if name not in preamble]
+
+    assert actual == expected, (
+        "gate-rehearsal.yml must run release.yml's source-gate steps, in order; "
+        f"missing={[s for s in expected if s not in actual]} "
+        f"extra={[s for s in actual if s not in expected]}"
+    )
+
+
+def test_gate_rehearsal_cannot_be_skipped_on_a_release_branch() -> None:
+    """A version-bump-only release PR touches none of the code paths.
+
+    The paths filter is an optimisation for ordinary PRs. If it is the only
+    trigger, a release PR that just projects 4.2.x into VERSION/manifests
+    matches nothing, the rehearsal never runs, and the tag discovers the suite
+    again — the whole failure this workflow exists to prevent.
+    """
+    yaml = pytest.importorskip("yaml")
+    payload = yaml.safe_load(
+        (REPO_ROOT / ".github/workflows/gate-rehearsal.yml").read_text(encoding="utf-8")
+    )
+    # `on` parses as the boolean True in YAML 1.1 unless quoted.
+    triggers = payload.get("on") or payload.get(True)
+    push = triggers.get("push") or {}
+    assert any(
+        str(branch).startswith("release/") for branch in (push.get("branches") or [])
+    ), "pushes to release/* must trigger the rehearsal unconditionally"
+    assert not push.get("paths"), "the release/* trigger must carry no paths filter"
