@@ -1448,3 +1448,31 @@ def test_root_cli_agent_await_json_stdout_stays_machine_readable(
 
     out = capsys.readouterr().out
     assert json.loads(out)["run_id"] == run_id
+
+
+def test_stop_accepts_the_swarm_fan_out_like_the_other_lifecycle_verbs(
+    monkeypatch, capsys
+) -> None:
+    """`stop swarm` must not die on argparse while observe and await work.
+
+    `--agent` is a filter over run records for `--last`, and a run record's
+    agent is "swarm" for every research fan-out. Excluding it from a flag that
+    launches nothing made `stop swarm` fail in BOTH grammars.
+    """
+    from vibecrafted_core import workflow
+
+    # stop_main imports stop_run inside the function body, so the patch has to
+    # land on the module it imports from.
+    monkeypatch.setattr(
+        workflow,
+        "stop_run",
+        lambda run_id, **_kwargs: {
+            "accepted": True,
+            "run": {"run_id": run_id, "state": "stopped"},
+            "target": "launcher",
+            "target_pid": 4242,
+        },
+    )
+
+    assert cli.main(["swarm", "stop", "--run-id", "rsch-1"]) == 0
+    assert "run_id=rsch-1" in capsys.readouterr().out

@@ -656,7 +656,12 @@ def stop_main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--run-id", default="")
     parser.add_argument("--last", action="store_true")
-    parser.add_argument("--agent", choices=sorted(AGENTS))
+    # `--agent` here is only a filter over run records for `--last`, and a run
+    # record's agent can be "swarm" (a research fan-out). AGENTS is the set of
+    # providers with a CLI binary, which swarm is not — so it was excluded from
+    # a flag that never launches anything, and `stop swarm` died on argparse in
+    # BOTH grammars while observe and await worked.
+    parser.add_argument("--agent", choices=sorted(AGENTS | {"swarm"}))
     parser.add_argument("--reason", default="operator stop request")
     parser.add_argument("--grace-seconds", type=float, default=2.0)
     ns = parser.parse_args(list(sys.argv[1:] if argv is None else argv))

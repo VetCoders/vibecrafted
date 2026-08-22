@@ -313,8 +313,12 @@ def test_observe_resolves_renamed_legacy_meta_path(tmp_path: Path) -> None:
 DECK = REPO_ROOT / "scripts" / "vibecrafted"
 
 
+#: The action-first verbs the deck routes through cmd_lifecycle_command.
+_LIFECYCLE_VERBS = ("observe", "await", "stop")
+
+
 def _deck_lifecycle_gate(
-    agent: str, tmp_path: Path
+    agent: str, tmp_path: Path, verb: str = "observe"
 ) -> subprocess.CompletedProcess[str]:
     """Run the deck's action-first lifecycle gate for one agent, help-only.
 
@@ -330,7 +334,7 @@ def _deck_lifecycle_gate(
         }
     )
     return subprocess.run(
-        ["bash", str(DECK), "observe", agent, "--help"],
+        ["bash", str(DECK), verb, agent, "--help"],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,
@@ -352,10 +356,12 @@ def test_action_first_lifecycle_accepts_every_launchable_agent(tmp_path: Path) -
     from vibecrafted_core.workflow import SUPPORTED_AGENTS
 
     for agent in sorted(SUPPORTED_AGENTS):
-        result = _deck_lifecycle_gate(agent, tmp_path / agent)
-        assert "Unknown agent" not in (result.stdout + result.stderr), (
-            f"deck rejects a launchable agent on the action-first path: {agent}"
-        )
+        for verb in _LIFECYCLE_VERBS:
+            result = _deck_lifecycle_gate(agent, tmp_path / f"{verb}-{agent}", verb)
+            assert "Unknown agent" not in (result.stdout + result.stderr), (
+                f"deck rejects a launchable agent on the action-first "
+                f"{verb} path: {agent}"
+            )
 
 
 def test_action_first_lifecycle_still_rejects_a_real_unknown_agent(
@@ -366,16 +372,15 @@ def test_action_first_lifecycle_still_rejects_a_real_unknown_agent(
     assert result.returncode != 0
 
 
-def test_lifecycle_help_teaches_the_grammar_it_was_invoked_with(
+def test_lifecycle_help_teaches_the_action_first_form_for_every_agent(
     tmp_path: Path,
 ) -> None:
-    """`vibecrafted observe <agent> --help` must not answer in the other grammar.
+    """Every lifecycle help page teaches one grammar: action-first.
 
     swarm had a special case printing `vibecrafted swarm observe ...` — dead
     code while action-first could not reach the lifecycle for swarm at all, and
-    a contradiction the moment it could. A help page that teaches a different
-    command than the one just invoked teaches the reader off the surface they
-    are standing on.
+    the last surface teaching agent-first the moment it could. Help pages are
+    where a migration is either taught or quietly undone.
     """
     from vibecrafted_core.workflow import SUPPORTED_AGENTS
 
