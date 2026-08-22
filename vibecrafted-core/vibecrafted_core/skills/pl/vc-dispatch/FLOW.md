@@ -11,7 +11,7 @@ Nie staje się workerem.
 ```mermaid
 flowchart TD
     A[Operator plan, tracker, or baton] --> B[Declare dispatcher posture]
-    A2[Szybka fala: operator zarządza dispatch na żywych ustaleniach] --> B2[Dispatcher pisze zwięzłe briefy w sesji]
+    A2[Fast wave: operator orders dispatch on live findings] --> B2[Dispatcher authors lean briefs in-session]
     B2 --> C
     B --> C[Canonical Orientation Gate: vc-init + Loctree map]
     C --> D[Read briefs, tracker, journal, and cited files]

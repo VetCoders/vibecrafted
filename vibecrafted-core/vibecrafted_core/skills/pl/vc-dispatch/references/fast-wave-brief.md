@@ -44,10 +44,10 @@ Loctree-first · Gałąź/commity/raport.
 ## Blok substratu (worktrees na rozkaz operatora)
 
 ```
-git -C <główny-checkout> worktree add \
-  ~/.vibecrafted/worktrees/<org>/<repo>/<RRRR_MMDD>/<slug> \
+git -C <main-checkout> worktree add \
+  ~/.vibecrafted/worktrees/<org>/<repo>/<YYYY_MMDD>/<slug> \
   -b <agent>/workflow/<slug> <baseline-sha>
-cd ~/.vibecrafted/worktrees/<org>/<repo>/<RRRR_MMDD>/<slug>
+cd ~/.vibecrafted/worktrees/<org>/<repo>/<YYYY_MMDD>/<slug>
 ```
 
 Pracuj TYLKO tam; nigdy nie dotykaj głównego checkoutu; baseline SHA nazwany.
