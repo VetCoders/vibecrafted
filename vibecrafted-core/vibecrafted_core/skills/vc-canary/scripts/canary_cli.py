@@ -183,6 +183,34 @@ def plugin_for_file(
     return matches[0] if matches else None
 
 
+def validate_unit_path_integrity(
+    catalog_path: Path, unit_index: int, unit: dict
+) -> str:
+    """File-path shape checks that hold in BOTH strict and --no-strict merges."""
+    from pathlib import PurePosixPath
+
+    location = f"catalog {catalog_path} unit[{unit_index}]"
+    raw_file = unit.get("file")
+    if not isinstance(raw_file, str) or not raw_file.strip():
+        _die(f"{location}: missing required field 'file'")
+    unit_path = PurePosixPath(raw_file.strip())
+    if unit_path.is_absolute() or ".." in unit_path.parts:
+        # An ownership catalog settles THIS repository only: absolute paths and
+        # parent-escapes would let a unit claim files outside the root.
+        _die(
+            f"{location}: 'file' must be a relative, non-escaping repository "
+            f"path ({raw_file!r})"
+        )
+    if raw_file != raw_file.strip():
+        # A trailing/leading space would dodge the language plugin AND leak an
+        # unresolvable path into the merged catalog — reject, never normalize.
+        _die(
+            f"{location}: 'file' has surrounding whitespace ({raw_file!r}); "
+            "emit the exact repository path"
+        )
+    return raw_file
+
+
 SHARED_REQUIRED_FIELDS = (
     "file",
     "name",
@@ -205,26 +233,7 @@ def validate_catalog_unit(
     if not isinstance(unit, dict):
         _die(f"{location}: unit must be an object")
 
-    raw_file = unit.get("file")
-    if not isinstance(raw_file, str) or not raw_file.strip():
-        _die(f"{location}: missing required field 'file'")
-    from pathlib import PurePosixPath
-
-    unit_path = PurePosixPath(raw_file.strip())
-    if unit_path.is_absolute() or ".." in unit_path.parts:
-        # An ownership catalog settles THIS repository only: absolute paths and
-        # parent-escapes would let a unit claim files outside the root.
-        _die(
-            f"{location}: 'file' must be a relative, non-escaping repository "
-            f"path ({raw_file!r})"
-        )
-    if raw_file != raw_file.strip():
-        # A trailing/leading space would dodge the language plugin AND leak an
-        # unresolvable path into the merged catalog — reject, never normalize.
-        _die(
-            f"{location}: 'file' has surrounding whitespace ({raw_file!r}); "
-            "emit the exact repository path"
-        )
+    raw_file = validate_unit_path_integrity(catalog_path, unit_index, unit)
     plugin = plugin_for_file(raw_file, plugins)
     if plugin is None:
         # Languages the atlas inventories without a dedicated plugin (swift,
@@ -746,6 +755,12 @@ def cmd_merge_catalog(args: argparse.Namespace) -> int:
     out = Path(args.output or root / ".loctree" / "canary" / "catalog.json")
     if not src.is_dir():
         _die(f"catalogs dir missing: {src}")
+    if out.resolve().parent == src.resolve() or src.resolve() in out.resolve().parents:
+        _die(
+            f"--output {out} lives inside --input-dir {src}; the pre-merge "
+            "cleanup would destroy its own input — pick an output path outside "
+            "the catalogs dir"
+        )
     # A rerun must never leave yesterday's settled-looking output behind a
     # failed merge: drop any existing artifact before validation so failure
     # states are unambiguous (output exists ⇔ this merge succeeded).
@@ -777,6 +792,11 @@ def cmd_merge_catalog(args: argparse.Namespace) -> int:
             )
         if not isinstance(cat, list):
             _die(f"catalog not a list in {p}")
+        # Path integrity is output integrity, not a language contract:
+        # it holds even under --no-strict.
+        for ui, u in enumerate(cat):
+            if isinstance(u, dict):
+                validate_unit_path_integrity(p, ui, u)
         if args.strict:
             validate_catalog(p, cat, plugins)
         catalogs.append(

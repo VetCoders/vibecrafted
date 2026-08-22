@@ -95,8 +95,11 @@ vibecrafted canary claude --prompt 'Catalog this repo; agent pin default if unse
    conditions by construction: the per-scope briefs are the written dispatch
    plan, the per-scope gates are the pre-committed verifiers, scope domains are
    disjoint, and the canary session is the single-thread integrator. One
-   worktree per scope branched from the integration base; the agent commits
-   inside its own worktree; the integrator merges scope branches sequentially.
+   worktree per scope branched from the integration base — the WORKER creates
+   it itself with the brief's substrate block (no launcher provisioning is
+   implied); the agent commits inside its own worktree; the integrator (the
+   canary session) merges scope branches sequentially and collects catalogs
+   from worktree disk before cleanup.
    Never park a parallel fleet in one shared checkout (operator standing order,
    2026-08-20).
    Native subagents inherit the **parent model** (agent model parity); the

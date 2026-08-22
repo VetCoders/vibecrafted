@@ -238,3 +238,50 @@ def test_merge_catalog_rejects_paths_escaping_the_repository(tmp_path: Path) -> 
         assert result.returncode != 0, bad
         assert "non-escaping repository" in result.stderr, bad
         assert not (catalogs.parent / "catalog.json").exists(), bad
+
+
+def test_no_strict_still_rejects_escaping_paths(tmp_path: Path) -> None:
+    catalogs = tmp_path / "catalogs"
+    catalogs.mkdir()
+    (catalogs / "bad.json").write_text(
+        json.dumps({"catalog": [_unit("../outside.py", "fn")]}), encoding="utf-8"
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(CLI),
+            "merge-catalog",
+            "--input-dir",
+            str(catalogs),
+            "--output",
+            str(tmp_path / "catalog.json"),
+            "--no-strict",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "non-escaping repository" in result.stderr
+
+
+def test_output_inside_input_dir_is_rejected_before_cleanup(tmp_path: Path) -> None:
+    _write_catalog(tmp_path, "rust-scope.json", _unit("src/lib.rs", "fn"))
+    catalogs = tmp_path / "catalogs"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(CLI),
+            "merge-catalog",
+            "--input-dir",
+            str(catalogs),
+            "--output",
+            str(catalogs / "rust-scope.json"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "destroy its own input" in result.stderr
+    assert (catalogs / "rust-scope.json").exists(), "input must survive"
