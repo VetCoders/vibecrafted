@@ -5340,7 +5340,14 @@ cmd_lifecycle_command() {
     printf '%b✗ gemini CLI is deprecated.%b Use agy (Google Antigravity CLI) instead.\n' "$_red" "$_reset" >&2
     return 1
   fi
-  _has_agent "$agent" || {
+  # `swarm` is a fan-out pseudo-agent, not a provider CLI, so it is absent from
+  # _has_agent — which gates "is there a binary to launch". The agent-first form
+  # reached the lifecycle through cmd_swarm, so `vibecrafted swarm observe` has
+  # always worked; the action-first form lands here and died with "Unknown
+  # agent: swarm". That is the exact command the LIVE viewer script and the
+  # receipts now print for a research fan-out (workflow.py sets agent="swarm"),
+  # so the two registries have to agree on the lifecycle verbs.
+  _has_agent "$agent" || [[ "$agent" == "swarm" ]] || {
     printf '%b✗%b Unknown agent: %s\n' "$_red" "$_reset" "$agent" >&2
     return 1
   }

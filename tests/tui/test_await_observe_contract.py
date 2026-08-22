@@ -308,3 +308,59 @@ def test_observe_resolves_renamed_legacy_meta_path(tmp_path: Path) -> None:
     assert "Run ID:     inte-204103-26970" in result.stdout
     assert f"Report:     {paths['canonical_report']}" in result.stdout
     assert "FileNotFoundError" not in result.stderr
+
+
+DECK = REPO_ROOT / "scripts" / "vibecrafted"
+
+
+def _deck_lifecycle_gate(
+    agent: str, tmp_path: Path
+) -> subprocess.CompletedProcess[str]:
+    """Run the deck's action-first lifecycle gate for one agent, help-only.
+
+    `--help` short-circuits inside cmd_lifecycle_command *after* the agent gate,
+    so this exercises the gate without launching the runtime.
+    """
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(tmp_path),
+            "VIBECRAFTED_HOME": str(tmp_path / ".vibecrafted"),
+            "VIBECRAFTED_TOOLS_HOME": str(tmp_path / "tools"),
+        }
+    )
+    return subprocess.run(
+        ["bash", str(DECK), "observe", agent, "--help"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_action_first_lifecycle_accepts_every_launchable_agent(tmp_path: Path) -> None:
+    """Both grammars must reach the lifecycle for every agent the runtime can launch.
+
+    `swarm` is the fan-out pseudo-agent a research launch settles on
+    (workflow.py sets ``agent = "swarm"``), and the LIVE viewer script and the
+    launch receipts print `vibecrafted observe <agent> --run-id <id>` for it.
+    The deck's provider registry does not list swarm — it has no CLI binary —
+    so the action-first form used to die with "Unknown agent: swarm" while the
+    agent-first form worked through cmd_swarm. One registry, one answer.
+    """
+    from vibecrafted_core.workflow import SUPPORTED_AGENTS
+
+    for agent in sorted(SUPPORTED_AGENTS):
+        result = _deck_lifecycle_gate(agent, tmp_path / agent)
+        assert "Unknown agent" not in (result.stdout + result.stderr), (
+            f"deck rejects a launchable agent on the action-first path: {agent}"
+        )
+
+
+def test_action_first_lifecycle_still_rejects_a_real_unknown_agent(
+    tmp_path: Path,
+) -> None:
+    result = _deck_lifecycle_gate("definitely-not-an-agent", tmp_path)
+    assert "Unknown agent" in (result.stdout + result.stderr)
+    assert result.returncode != 0
