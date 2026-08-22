@@ -120,10 +120,21 @@ def vibecrafted_launcher(source_dir: str | Path) -> Path:
     return package_deck_path()
 
 
+def run_id_code(skill: str) -> str:
+    """The 4-char run-id prefix a skill mints. One rule, one place.
+
+    ``looks_like_control_plane_run_id`` used to compare against a hand-written
+    list of abbreviations, and it had drifted from what this rule produces:
+    `ownr` vs the real `owne`, `polr` vs `pola`, `relz` vs `rele` — 9 of the 22
+    registered workflows minted ids their own shape check rejected.
+    """
+    return (skill or "run")[:4].ljust(4, "x")
+
+
 def reserve_run_id(skill: str) -> str:
     """Return a safe control-plane run id without creating runtime state."""
     stamp = time.strftime("%y%m%d-%H%M%S")
-    code = (skill or "run")[:4].ljust(4, "x")
+    code = run_id_code(skill)
     # CSPRNG entropy: clock-derived time_ns % 100000 collides when the OS
     # quantizes the clock (macOS CI ticks in whole ms → identical remainder
     # within one second, observed as duplicate run ids).
@@ -3783,7 +3794,11 @@ def manual_resume_session(
     }
 
 
-CONTROL_PLANE_RUN_PREFIXES = frozenset(
+#: Prefixes minted by non-skill allocators (resume children, marbles rounds,
+#: deck-side launchers) plus the historical spellings kept so ids already on
+#: disk keep resolving. The skill codes themselves are DERIVED below from the
+#: registry through the same rule that mints them — never transcribed again.
+_LEGACY_RUN_PREFIXES = frozenset(
     {
         "work",
         "impl",
@@ -3815,6 +3830,9 @@ CONTROL_PLANE_RUN_PREFIXES = frozenset(
         "guar",
         "guard",
     }
+)
+CONTROL_PLANE_RUN_PREFIXES = _LEGACY_RUN_PREFIXES | frozenset(
+    run_id_code(workflow_id) for workflow_id in workflow_registry.SUPPORTED_WORKFLOWS
 )
 OPERATOR_CONTINUABLE_STATES = frozenset(
     {
@@ -3985,6 +4003,27 @@ def _provider_session_for_continue(run: dict[str, Any]) -> str:
     return agent_session
 
 
+#: How each continuable state actually ended, in words a resumed agent can
+#: trust. `stalled` is not `stopped`: nobody killed the process group, the run
+#: went quiet — and handing the continuation a false premise about why it is
+#: being resumed is the same class of lie as a green gate over a red suite.
+_CONTINUATION_CAUSE = {
+    "stalled": "stalled — it went silent, with no movement and no live worker",
+    "timed_out": "timed out",
+    "blocked": "was blocked before it could finish",
+    "failed": "failed",
+    "contract_failed": "failed its delivery contract",
+    "report_missing": "ended without delivering its report",
+    "ghost": "went missing — no live worker and no terminal state",
+}
+
+
+def _continuation_cause(run: dict[str, Any]) -> str:
+    """Describe how the parent run ended, defaulting to the stop/kill wording."""
+    state = str(run.get("state") or run.get("status") or "").strip().lower()
+    return _CONTINUATION_CAUSE.get(state, "was stopped (process group killed)")
+
+
 def _operator_continue_prompt(
     run_id: str,
     run: dict[str, Any],
@@ -4011,8 +4050,8 @@ def _operator_continue_prompt(
 
     if native_session:
         header = (
-            f"The tracked Vibecrafted run {run_id} was stopped "
-            "(process group killed). Continue that job from the last honest "
+            f"The tracked Vibecrafted run {run_id} {_continuation_cause(run)}. "
+            "Continue that job from the last honest "
             "point. Do not restart from zero unless the work is actually "
             "unfinished at the start."
         )
@@ -4021,7 +4060,7 @@ def _operator_continue_prompt(
         return header
 
     header = (
-        f"This Vibecrafted run ({run_id}) was stopped or interrupted. "
+        f"This Vibecrafted run ({run_id}) {_continuation_cause(run)}. "
         "Continue the same job from the last honest point. "
         "Do not treat this as a greenfield task."
     )

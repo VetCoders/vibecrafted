@@ -298,3 +298,60 @@ def test_deck_accepts_action_first_resume_mode() -> None:
     assert result.returncode == 0
     assert "Unknown mode" not in result.stderr
     assert "--run-id" in result.stdout or "resume --run-id" in result.stdout
+
+
+def test_every_registered_workflow_mints_a_run_id_its_own_shape_check_accepts() -> None:
+    """The minter and the recogniser must not drift apart.
+
+    `reserve_run_id` takes ``skill[:4]``; the recogniser compared against a
+    hand-written list of abbreviations. Nine of the twenty-two registered
+    workflows — ownership (`owne`, not `ownr`), polarize, release, audit,
+    canary, delegate, followup, intents, dou — minted run ids their own shape
+    check rejected, so `classify_resume_identity` fell through to "unknown"
+    and operator-continue answered `not_a_run_id` for a real run id.
+    """
+    from vibecrafted_core.workflows import registry as workflow_registry
+
+    for workflow_id in sorted(workflow_registry.SUPPORTED_WORKFLOWS):
+        run_id = workflow.reserve_run_id(workflow_id)
+        assert looks_like_control_plane_run_id(run_id), (
+            f"{workflow_id} mints {run_id}, which its own shape check rejects"
+        )
+
+
+def test_stalled_continuation_prompt_does_not_claim_a_process_kill(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A stalled run was not killed — the continuation must not say it was."""
+    parent = {
+        "run_id": "owne-260822-093025-32039",
+        "agent": "claude",
+        "skill": "ownership",
+        "state": "stalled",
+        "status": "stalled",
+        "root": str(tmp_path),
+        "agent_session_id": "988ace3a-5cb9-4cae-a229-20e1d3222d45",
+        "runtime_session_id": "01a02548-3097-7cd2-b7b2-61e218253026",
+    }
+    monkeypatch.setattr(workflow, "lookup_run", lambda _run_id: dict(parent))
+    monkeypatch.setattr(workflow, "_native_resume_meta", lambda *_a, **_k: dict(parent))
+    monkeypatch.setattr(workflow, "_worker_process_alive", lambda _run: False)
+    seen: dict[str, Any] = {}
+
+    def fake_manual(
+        agent: str, agent_session_id: str, _source: Any, **kwargs: Any
+    ) -> dict[str, Any]:
+        seen.update(kwargs)
+        return {"accepted": True, "run_id": "rsme-child", "agent": agent}
+
+    monkeypatch.setattr(workflow, "manual_resume_session", fake_manual)
+
+    operator_continue_run(
+        "owne-260822-093025-32039",
+        source_dir=tmp_path,
+        expected_agent="claude",
+    )
+
+    prompt = str(seen.get("prompt") or "")
+    assert "stalled" in prompt
+    assert "process group killed" not in prompt
