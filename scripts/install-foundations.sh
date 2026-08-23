@@ -3,17 +3,32 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # install-foundations.sh — portable installer for 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. foundation layer
 #
-# Handles:
-#   loctree / loctree-mcp  — required Loctree product binaries via Loctree installer
-#   aicx / aicx-mcp       — required AICX product binaries via Loctree installer
-#   vc-frame               — required donor BINARY installed by this owner from sibling source
-#   prview                 — cargo install OR binary from GH releases
+# Two tiers, decided 2026-08-23 (operator):
+#
+#   CRITICAL — the framework does not run without them; missing = FAIL CLOSED.
+#     loct / loctree / loctree-mcp   npm: @loctree/loctree  (>= 0.14.2 ships all three
+#                                    bins; the older @loctree/loct hid loctree-mcp)
+#     aicx / aicx-mcp                npm: @loctree/aicx     (>= 0.12.3)
+#     vc-frame                       donor BINARY installed by this owner (see below)
+#
+#   FOUNDATION — installed by default; a failure is a loud DEGRADATION WARNING,
+#   never a silent skip and never a fatal.
+#     prview        GitHub release vetcoders/prview-rs (SHA256SUMS verified),
+#                   then `cargo install prview`
+#     screenscribe  PyPI `screenscribe` via uv tool / pipx / pip --user
+#
+# First choice for the Loctree products is `npm install -g`: the packages exist
+# on the public registry today and carry the exact binaries for this platform.
+# The canonical curl installer (loct.io) is printed as the fallback, never run
+# from here.
 #
 # Usage:
 #   bash scripts/install-foundations.sh                   # install/validate foundations
 #   bash scripts/install-foundations.sh --all             # + framework-owned extras
 #   bash scripts/install-foundations.sh loctree           # Loctree product binaries
 #   bash scripts/install-foundations.sh aicx              # AICX product binaries
+#   bash scripts/install-foundations.sh prview            # prview (release tarball / cargo)
+#   bash scripts/install-foundations.sh screenscribe      # screenscribe (PyPI)
 #   bash scripts/install-foundations.sh vc-frame          # hard-install / validate vc-frame
 #   bash scripts/install-foundations.sh --check           # dry-run: show what would install
 #   bash scripts/install-foundations.sh --prefix /usr/local  # custom install prefix
@@ -30,7 +45,15 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 PRVIEW_CRATE="prview"
-PRVIEW_REPO="vetcoders/prview"
+PRVIEW_REPO="vetcoders/prview-rs"
+SCREENSCRIBE_PYPI="screenscribe"
+
+# Loctree products on npm. The wrapper package resolves the platform package
+# (darwin-arm64, darwin-x64, linux-x64-gnu, win32-x64) itself.
+LOCTREE_NPM_PACKAGE="${LOCTREE_NPM_PACKAGE:-@loctree/loctree}"
+LOCTREE_NPM_MIN_VERSION="0.14.2"
+AICX_NPM_PACKAGE="${AICX_NPM_PACKAGE:-@loctree/aicx}"
+AICX_NPM_MIN_VERSION="0.12.3"
 
 LOCTREE_INSTALL_URL="${LOCTREE_INSTALL_URL:-https://loct.io/install.sh}"
 
@@ -144,13 +167,11 @@ LAUNCHER_PREFIX="${VIBECRAFTED_LAUNCHER_BIN:-$HOME/.local/bin}"
 CHECK_ONLY=0
 INSTALL_ALL=0
 AGENTS_REQUIRED=0
-# Product foundations (loctree/aicx/vc-frame) are externally managed: this
-# script deliberately refuses to guess crates/npm/checkout paths and points at
-# the canonical installer instead. Their absence is therefore an ADVISORY, not
-# an install failure — consistent with `make install-vendored-binaries`, which
-# already keeps the "external fallback" path non-fatal when vendored binaries
-# are absent. Set REQUIRE_FOUNDATIONS=1 (e.g. release validation) to make a
-# missing product foundation fail the run instead.
+# loctree and aicx are CRITICAL and always fatal when missing (see the tier
+# table at the top). REQUIRE_FOUNDATIONS only still governs vc-frame, whose
+# donor binary is installed by the Vibecrafted owner, not from a registry:
+# 1 = its absence fails the run (release validation), 0 = reported, run
+# continues so a product install can still assemble the rest.
 REQUIRE_FOUNDATIONS="${REQUIRE_FOUNDATIONS:-0}"
 TARGETS=()
 
@@ -159,6 +180,7 @@ TARGETS=()
 # ---------------------------------------------------------------------------
 
 die()  { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
+err()  { printf '\033[31m✗\033[0m %s\n' "$*" >&2; }
 info() { printf '\033[36m▸\033[0m %s\n' "$*"; }
 ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
 warn() { printf '\033[33m!\033[0m %s\n' "$*"; }
@@ -489,34 +511,87 @@ ensure_prefix() {
   esac
 }
 
-install_loctree() {
-  loctree_suite_ready() {
-    local missing=() bin
-    for bin in loct loctree loctree-mcp; do
-      binary_runs "$bin" || missing+=("$bin")
-    done
-    if (( ${#missing[@]} == 0 )); then
-      return 0
-    fi
-    warn "Loctree incomplete; missing or broken: ${missing[*]}"
-    return 1
-  }
+# npm_package_version <package> — version of the globally installed package, or empty.
+npm_package_version() {
+  local package="$1"
+  has_cmd npm || return 1
+  npm ls -g --depth=0 --json "$package" 2>/dev/null \
+    | python3 -c 'import json,sys
+d=json.load(sys.stdin).get("dependencies",{})
+print(next(iter(d.values()),{}).get("version",""))' 2>/dev/null
+}
 
-  if loctree_suite_ready; then
-    ok "loctree suite already installed: loct=$(command -v loct), loctree-mcp=$(command -v loctree-mcp)"
+# version_at_least <have> <want> — dotted numeric compare; unknown/empty = false.
+version_at_least() {
+  local have="${1%%[+-]*}" want="${2%%[+-]*}"
+  [[ -n "$have" ]] || return 1
+  [[ "$(printf '%s\n%s\n' "$want" "$have" | sort -V | head -n1)" == "$want" ]]
+}
+
+# install_critical_from_npm <label> <package> <min-version> <bin>... — fail closed.
+#
+# Order: every binary already runs on PATH -> ok. Otherwise `npm install -g
+# <package>@latest`, then the same binary check; the package's own dist-tag
+# decides the version, the minimum only guards against a stale registry mirror.
+# Any failure returns 1 and the caller dies: no "deferring to external install".
+install_critical_from_npm() {
+  local label="$1" package="$2" min_version="$3"
+  shift 3
+  local bins=("$@") missing=() bin
+
+  for bin in "${bins[@]}"; do
+    binary_runs "$bin" || missing+=("$bin")
+  done
+  if (( ${#missing[@]} == 0 )); then
+    ok "$label already installed: $(command -v "${bins[0]}")"
     return 0
   fi
+  warn "$label incomplete; missing or broken: ${missing[*]}"
 
   if (( CHECK_ONLY )); then
-    info "Would install Loctree foundations from canonical installer:"
-    info "  curl -fsSL $LOCTREE_INSTALL_URL | sh"
+    info "Would install $label (CRITICAL) from npm:"
+    info "  npm install -g $package   # >= $min_version"
+    info "  fallback (manual): curl -fsSL $LOCTREE_INSTALL_URL | sh"
     return 0
   fi
 
-  warn "Loctree foundations are required, but Vibecrafted will not guess crates, npm packages, or local checkout paths."
-  warn "Use the canonical installer, then rerun this check:"
-  warn "  curl -fsSL $LOCTREE_INSTALL_URL | sh"
-  return 1
+  if ! ensure_node; then
+    err "$label is CRITICAL and npm is unavailable; cannot install $package."
+    err "Install Node.js (https://nodejs.org) or run the canonical installer:"
+    err "  curl -fsSL $LOCTREE_INSTALL_URL | sh"
+    return 1
+  fi
+
+  info "Installing $label via npm ($package)..."
+  if ! npm install -g "$package@latest" | tail -5; then
+    err "npm install -g $package failed; $label is CRITICAL."
+    err "Fallback: curl -fsSL $LOCTREE_INSTALL_URL | sh"
+    return 1
+  fi
+  hash -r 2>/dev/null || true
+
+  local installed
+  installed="$(npm_package_version "$package" || true)"
+  if [[ -n "$installed" ]] && ! version_at_least "$installed" "$min_version"; then
+    err "$package $installed is older than the required $min_version (stale registry?)."
+    return 1
+  fi
+
+  missing=()
+  for bin in "${bins[@]}"; do
+    binary_runs "$bin" || missing+=("$bin")
+  done
+  if (( ${#missing[@]} > 0 )); then
+    err "$package installed but these binaries do not run: ${missing[*]}"
+    err "Check that \`npm prefix -g\`/bin is on PATH: $(npm prefix -g 2>/dev/null)/bin"
+    return 1
+  fi
+  ok "$label ${installed:+$installed }installed via npm: $(command -v "${bins[0]}")"
+}
+
+install_loctree() {
+  install_critical_from_npm "Loctree" "$LOCTREE_NPM_PACKAGE" "$LOCTREE_NPM_MIN_VERSION" \
+    loct loctree loctree-mcp
 }
 
 # ---------------------------------------------------------------------------
@@ -586,21 +661,8 @@ install_from_cargo() {
 # ---------------------------------------------------------------------------
 
 install_aicx() {
-  if has_cmd aicx-mcp; then
-    ok "aicx-mcp already installed: $(command -v aicx-mcp)"
-    return 0
-  fi
-
-  if (( CHECK_ONLY )); then
-    info "Would install AICX foundations from canonical Loctree installer:"
-    info "  curl -fsSL $LOCTREE_INSTALL_URL | sh"
-    return 0
-  fi
-
-  warn "AICX foundations are required, but Vibecrafted will not guess crates, npm packages, or local checkout paths."
-  warn "Use the canonical installer, then rerun this check:"
-  warn "  curl -fsSL $LOCTREE_INSTALL_URL | sh"
-  return 1
+  install_critical_from_npm "AICX" "$AICX_NPM_PACKAGE" "$AICX_NPM_MIN_VERSION" \
+    aicx aicx-mcp
 }
 
 # ---------------------------------------------------------------------------
@@ -917,17 +979,100 @@ install_agents() {
 # prview installer
 # ---------------------------------------------------------------------------
 
+# install_prview_from_release — GitHub release tarball of vetcoders/prview-rs.
+# Assets: prview-<target>.tar.gz + SHA256SUMS. The checksum is verified before
+# anything is written to $PREFIX; no gh CLI needed (public repo, curl only).
+install_prview_from_release() {
+  local os arch target
+  os="$(detect_os)"; arch="$(detect_arch)"
+  case "$os-$arch" in
+    macos-aarch64) target="aarch64-apple-darwin" ;;
+    macos-x86_64)  target="x86_64-apple-darwin" ;;
+    linux-x86_64)  target="x86_64-unknown-linux-gnu" ;;
+    linux-aarch64) target="aarch64-unknown-linux-gnu" ;;
+    *) warn "prview: no release asset for $os/$arch"; return 1 ;;
+  esac
+  has_cmd curl || { warn "prview: curl required for the release download"; return 1; }
+
+  local base="https://github.com/$PRVIEW_REPO/releases/latest/download"
+  local asset="prview-${target}.tar.gz" tmpdir
+  tmpdir="$(mktemp -d)"
+  info "Downloading $asset from $PRVIEW_REPO (latest release)..."
+  if ! curl -fsSL -o "$tmpdir/$asset" "$base/$asset" \
+     || ! curl -fsSL -o "$tmpdir/SHA256SUMS" "$base/SHA256SUMS"; then
+    warn "prview: release download failed ($base/$asset)"
+    rm -rf "$tmpdir"; return 1
+  fi
+  local expected actual
+  expected="$(awk -v a="$asset" '$2 == a || $2 == "*"a {print $1}' "$tmpdir/SHA256SUMS" | head -n1)"
+  actual="$(shasum -a 256 "$tmpdir/$asset" | awk '{print $1}')"
+  if [[ -z "$expected" || "$expected" != "$actual" ]]; then
+    warn "prview: SHA256 mismatch for $asset (expected ${expected:-<absent>}, got $actual); refusing"
+    rm -rf "$tmpdir"; return 1
+  fi
+  tar -xzf "$tmpdir/$asset" -C "$tmpdir"
+  local bin
+  bin="$(find "$tmpdir" -type f -name prview -perm -u+x | head -n1)"
+  if [[ -z "$bin" ]]; then
+    warn "prview: tarball has no executable named prview"
+    rm -rf "$tmpdir"; return 1
+  fi
+  ensure_prefix
+  install -m 0755 "$bin" "$PREFIX/prview"
+  rm -rf "$tmpdir"
+  binary_runs prview && ok "prview installed from release: $PREFIX/prview"
+}
+
 install_prview() {
-  if has_cmd prview; then
+  if binary_runs prview; then
     ok "prview already installed: $(command -v prview)"
+    return 0
+  fi
+  if (( CHECK_ONLY )); then
+    info "Would install prview (FOUNDATION): bundled -> GitHub release $PRVIEW_REPO -> cargo install $PRVIEW_CRATE"
     return 0
   fi
 
   # --- Attempt 0: bundled tarball (notarized drop-in) ---
   install_from_bundled "prview" && return 0
-
-  info "Installing prview from crate metadata; release repo is $PRVIEW_REPO"
+  # --- Attempt 1: GitHub release, checksum-verified ---
+  install_prview_from_release && return 0
+  # --- Attempt 2: build from crates.io ---
+  info "Installing prview from crates.io ($PRVIEW_CRATE)"
   install_from_cargo "$PRVIEW_CRATE" "prview"
+}
+
+# screenscribe — PyPI package; isolated tool env, never the host site-packages.
+install_screenscribe() {
+  if binary_runs screenscribe; then
+    ok "screenscribe already installed: $(command -v screenscribe)"
+    return 0
+  fi
+  if (( CHECK_ONLY )); then
+    info "Would install screenscribe (FOUNDATION) from PyPI: uv tool install $SCREENSCRIBE_PYPI (or pipx / pip --user)"
+    return 0
+  fi
+
+  if has_cmd uv; then
+    info "Installing screenscribe via uv tool..."
+    uv tool install --upgrade "$SCREENSCRIBE_PYPI" | tail -3 || true
+  elif has_cmd pipx; then
+    info "Installing screenscribe via pipx..."
+    pipx install --force "$SCREENSCRIBE_PYPI" | tail -3 || true
+  elif has_cmd python3; then
+    info "Installing screenscribe via pip --user..."
+    python3 -m pip install --user --upgrade "$SCREENSCRIBE_PYPI" | tail -3 || true
+  else
+    warn "screenscribe: no uv, pipx or python3 on PATH"
+    return 1
+  fi
+  hash -r 2>/dev/null || true
+  if binary_runs screenscribe; then
+    ok "screenscribe installed: $(command -v screenscribe)"
+    return 0
+  fi
+  warn "screenscribe: installed package but the binary does not run (is ~/.local/bin on PATH?)"
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -1072,13 +1217,14 @@ usage() {
 Usage: install-foundations.sh [options] [targets...]
 
 Targets:
-  loctree         Validate loctree + loctree-mcp product binaries
-  aicx            Validate aicx / aicx-mcp product binaries
-  vc-frame        Validate vc-frame product binary
-  prview          Install prview (cargo)
+  loctree         CRITICAL: loct + loctree + loctree-mcp (npm @loctree/loctree) — fails closed
+  aicx            CRITICAL: aicx + aicx-mcp (npm @loctree/aicx) — fails closed
+  vc-frame        CRITICAL: vc-frame product binary
+  prview          FOUNDATION: GitHub release vetcoders/prview-rs, then cargo — warns on failure
+  screenscribe    FOUNDATION: PyPI screenscribe (uv tool / pipx / pip) — warns on failure
   sandbox         Optional microsandbox/libkrun runtime
   iterm2-plugin   vibecrafted iTerm2 / locterm AutoLaunch plugin (macOS, opt-in)
-  (no target)     Validate required foundations; install only framework-owned tools
+  (no target)     loctree aicx vc-frame agents prview screenscribe
 
 Options:
   --all        Install all foundations (including optional)
@@ -1099,6 +1245,7 @@ while [[ $# -gt 0 ]]; do
     vc-frame)    TARGETS+=("vc-frame") ;;
     agents)      TARGETS+=("agents"); AGENTS_REQUIRED=1 ;;
     prview)      TARGETS+=("prview") ;;
+    screenscribe) TARGETS+=("screenscribe") ;;
     sandbox)     TARGETS+=("sandbox") ;;
     iterm2-plugin) TARGETS+=("iterm2-plugin") ;;
     *)           die "Unknown argument: $1" ;;
@@ -1110,9 +1257,9 @@ enforce_runtime_root_contract || exit 1
 
 # Default: install required foundations
 if (( ${#TARGETS[@]} == 0 )); then
-  TARGETS=("loctree" "aicx" "vc-frame" "agents")
+  TARGETS=("loctree" "aicx" "vc-frame" "agents" "prview" "screenscribe")
   if (( INSTALL_ALL )); then
-    TARGETS+=("prview" "sandbox")
+    TARGETS+=("sandbox")
   fi
   # macOS users always get the optional iTerm2 plugin prompt; the
   # install function itself is a no-op on Linux/Windows and in
@@ -1127,26 +1274,43 @@ printf '  ─────────────────────\n'
 printf '  Runtime bin:  %s\n' "$PREFIX"
 printf '  Launcher bin: %s\n\n' "$LAUNCHER_PREFIX"
 
-# Product foundations are externally managed; a missing binary is advisory
-# unless the caller opted into strict validation via REQUIRE_FOUNDATIONS=1.
-foundation_optional_fail() {
+# CRITICAL foundations fail closed: the run stops at the first missing one,
+# because everything after it (skills, dispatch, doctor) would only fail later
+# and less legibly. vc-frame keeps its donor contract: REQUIRE_FOUNDATIONS=1
+# makes its absence fatal too; by default it is reported and the run continues
+# so a product install can still assemble the rest.
+foundation_critical_fail() {
   local name="$1"
+  err "CRITICAL foundation missing: $name — Vibecrafted does not run without it. Stopping."
+  exit 1
+}
+
+foundation_vcframe_fail() {
   if [[ "$REQUIRE_FOUNDATIONS" == "1" ]]; then
     exit_code=1
   else
-    warn "$name unavailable — deferring to external/canonical install (non-fatal). Set REQUIRE_FOUNDATIONS=1 to enforce."
+    warn "vc-frame unavailable — donor must be installed by the Vibecrafted owner. Set REQUIRE_FOUNDATIONS=1 to enforce."
   fi
 }
 
+# FOUNDATION tier: loud, never fatal. The warning names the exact command so the
+# operator can repair without rereading this script.
+foundation_degraded() {
+  local name="$1" how="$2"
+  DEGRADED+=("$name")
+  warn "DEGRADED: $name is not installed — $how"
+}
+
+DEGRADED=()
 exit_code=0
 for target in "${TARGETS[@]}"; do
   case "$target" in
-    loctree)  install_loctree  || foundation_optional_fail loctree ;;
-    aicx)     install_aicx     || foundation_optional_fail aicx ;;
+    loctree)  install_loctree  || foundation_critical_fail loctree ;;
+    aicx)     install_aicx     || foundation_critical_fail aicx ;;
     # vc-frame is a donor installed only by the Vibecrafted owner. There is no
     # separate vc-frame release or installer fallback.
     vc-frame)
-      install_vcframe  || foundation_optional_fail vc-frame
+      install_vcframe  || foundation_vcframe_fail
       install_vc_frame_product_wrapper || true
       install_product_entry_into_current || true
       ;;
@@ -1159,12 +1323,24 @@ for target in "${TARGETS[@]}"; do
         fi
       fi
       ;;
-    prview)  install_prview  || exit_code=1 ;;
+    prview)
+      install_prview || foundation_degraded prview \
+        "PR review artifacts are unavailable. Repair: bash scripts/install-foundations.sh prview (release $PRVIEW_REPO or cargo install $PRVIEW_CRATE)"
+      ;;
+    screenscribe)
+      install_screenscribe || foundation_degraded screenscribe \
+        "screencast analysis is unavailable. Repair: uv tool install $SCREENSCRIBE_PYPI (or pipx install $SCREENSCRIBE_PYPI)"
+      ;;
     sandbox) install_sandbox || exit_code=1 ;;
     iterm2-plugin) install_iterm2_integration || exit_code=1 ;;
   esac
   echo
 done
+
+if (( ${#DEGRADED[@]} > 0 )); then
+  printf '\033[33m\033[1mDegraded foundations:\033[0m %s\n' "${DEGRADED[*]}"
+  printf '  Install completes, but the workflows that need them will refuse to run.\n\n'
+fi
 
 # Python ``vc-*`` launchers are owned exclusively by ``uv tool install`` in
 # Makefile::install-tools-held. Copying the checkout's ``bin/vc-*`` files here

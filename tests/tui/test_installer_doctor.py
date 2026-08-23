@@ -1821,6 +1821,117 @@ def test_run_doctor_accepts_external_foundation_provider(
     )
 
 
+def test_run_doctor_fails_closed_on_missing_critical_foundation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Loctree/AICX are CRITICAL: a missing binary is a broken install, not advice."""
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    store_path = crafted_home / "skills"
+    store_path.mkdir(parents=True)
+    installer.InstallState(framework_version="1.6.0").save(store_path)
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+
+    critical = installer.Foundation(
+        name="loct",
+        description="Loctree operator CLI short command",
+        channels=["npm", "canonical"],
+        packages={
+            "npm": installer.LOCTREE_NPM_PACKAGE,
+            "canonical": installer.LOCTREE_CANONICAL_INSTALLER,
+        },
+        verify_cmd="loct --version",
+    )
+    degraded = installer.Foundation(
+        name="prview",
+        description="PR review artifact generator",
+        channels=["github", "crates"],
+        packages={
+            "github": "https://github.com/vetcoders/prview-rs/releases",
+            "crates": "prview",
+        },
+        verify_cmd="prview --version",
+        required=False,
+    )
+    monkeypatch.setattr(installer, "FOUNDATIONS", [critical, degraded])
+    monkeypatch.setattr(installer.shutil, "which", lambda name: None)
+
+    findings = installer.run_doctor(
+        store_path, state := installer.InstallState.load(store_path)
+    )
+    assert state is not None
+    indexed = {finding.component: finding for finding in findings}
+
+    assert indexed["foundation:loct"].level == "fail"
+    assert "CRITICAL" in indexed["foundation:loct"].message
+    assert "npm i -g @loctree/loctree" in indexed["foundation:loct"].message
+    assert indexed["foundation:prview"].level == "warn"
+    assert "DEGRADED" in indexed["foundation:prview"].message
+
+    actions = installer._doctor_action_items(findings)
+    assert any("install-foundations.sh" in action for action in actions)
+
+    assert installer.critical_foundations_missing() == [critical]
+    assert installer.fail_closed_on_missing_foundations(dry_run=False) == 1
+    assert installer.fail_closed_on_missing_foundations(dry_run=True) == 0
+
+
+def test_install_or_find_foundation_delegates_once_per_target(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """loct/loctree/loctree-mcp share one npm package: the script runs once, and
+    the second lookup sees the binary the first run produced."""
+    repo_root = tmp_path / "repo"
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "scripts" / "install-foundations.sh").write_text("#!/bin/bash\n")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    monkeypatch.setattr(installer, "_FOUNDATION_TARGETS_ATTEMPTED", set())
+    monkeypatch.setattr(
+        installer, "install_foundation_from_bundle", lambda *a, **k: None
+    )
+
+    calls: list[list[str]] = []
+    present: set[str] = set()
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        present.update({"loct", "loctree", "loctree-mcp"})
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(installer.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        installer.shutil,
+        "which",
+        lambda name: f"/npm/bin/{name}" if name in present else None,
+    )
+
+    loct = next(f for f in installer.FOUNDATIONS if f.name == "loct")
+    mcp = next(f for f in installer.FOUNDATIONS if f.name == "loctree-mcp")
+
+    assert installer.install_or_find_foundation(loct, repo_root) == (
+        "/npm/bin/loct",
+        "installed",
+    )
+    assert installer.install_or_find_foundation(mcp, repo_root) == (
+        "/npm/bin/loctree-mcp",
+        "pre-existing",
+    )
+    assert len(calls) == 1
+    assert calls[0][1:] == [
+        str(repo_root / "scripts" / "install-foundations.sh"),
+        "loctree",
+    ]
+
+    # dry runs never touch the registry
+    monkeypatch.setattr(installer, "_FOUNDATION_TARGETS_ATTEMPTED", set())
+    present.clear()
+    assert installer.install_or_find_foundation(loct, repo_root, dry_run=True) == (
+        "",
+        "not-installed",
+    )
+    assert len(calls) == 1
+
+
 def test_install_agent_commands_makes_marbles_discoverable(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -298,7 +298,7 @@ class Foundation:
             elif ch == "github":
                 hints.append(f"Download from {pkg}")
             elif ch == "pip":
-                hints.append(f"pipx install {pkg}")
+                hints.append(f"uv tool install {pkg}  (or pipx install {pkg})")
             elif ch == "source":
                 hints.append(f"Download from {pkg}")
         return " | ".join(hints)
@@ -386,13 +386,56 @@ def install_foundation_from_bundle(
     return dst
 
 
+# install-foundations.sh target that owns each foundation. One shell
+# implementation, two front doors: the bash script and this installer.
+FOUNDATION_INSTALL_TARGET = {
+    "aicx": "aicx",
+    "aicx-mcp": "aicx",
+    "loct": "loctree",
+    "loctree": "loctree",
+    "loctree-mcp": "loctree",
+    "prview": "prview",
+    "screenscribe": "screenscribe",
+}
+_FOUNDATION_TARGETS_ATTEMPTED: set[str] = set()
+
+
+def install_foundation_from_registry(
+    foundation: Foundation, repo_root: Path, dry_run: bool = False
+) -> str | None:
+    """Install `foundation` through `scripts/install-foundations.sh <target>` (npm for
+    the Loctree products, GitHub release/cargo for prview, PyPI for screenscribe).
+
+    Each target runs at most once per process: loct/loctree/loctree-mcp share one
+    npm package. Returns the installed path, or None when the target is unknown,
+    the script is missing, dry_run is set, or the install did not yield a runnable
+    binary — the caller decides whether that is fatal.
+    """
+    target = FOUNDATION_INSTALL_TARGET.get(foundation.name)
+    if not target or dry_run:
+        return None
+    script = repo_root / "scripts" / "install-foundations.sh"
+    if not script.is_file():
+        return None
+    if target not in _FOUNDATION_TARGETS_ATTEMPTED:
+        _FOUNDATION_TARGETS_ATTEMPTED.add(target)
+        print(f"  {dim(f'installing {target} via install-foundations.sh')}")
+        subprocess.run(
+            ["bash", str(script), target],
+            check=False,
+            cwd=str(repo_root),
+        )
+    return foundation.is_installed()
+
+
 def install_or_find_foundation(
     foundation: Foundation, repo_root: Path, dry_run: bool = False
 ) -> tuple[str, str]:
-    """Install `foundation` from the bundled vendor payload, else fall back to an
-    existing PATH install.
+    """Install `foundation` from the bundled vendor payload, else an existing PATH
+    install, else its registry (npm / GitHub release / PyPI).
 
-    Returns `(path, source)` where source is 'bundled', 'pre-existing', or 'not-installed'.
+    Returns `(path, source)` where source is 'bundled', 'pre-existing', 'installed'
+    or 'not-installed'.
     """
     bundled = install_foundation_from_bundle(foundation, repo_root, dry_run=dry_run)
     if bundled:
@@ -401,62 +444,115 @@ def install_or_find_foundation(
     found = foundation.is_installed()
     if found:
         return found, "pre-existing"
+
+    installed = install_foundation_from_registry(foundation, repo_root, dry_run=dry_run)
+    if installed:
+        return installed, "installed"
     return "", "not-installed"
 
+
+def critical_foundations_missing() -> list[Foundation]:
+    """CRITICAL foundations (required=True) that do not resolve to a runnable binary."""
+    return [f for f in FOUNDATIONS if f.required and not f.is_installed()]
+
+
+def fail_closed_on_missing_foundations(dry_run: bool = False) -> int:
+    """Print the fail-closed verdict for missing CRITICAL foundations.
+
+    Returns 1 when the install must stop, 0 otherwise. Dry runs report and
+    continue, so `--dry-run` still shows the full plan.
+    """
+    missing = critical_foundations_missing()
+    if not missing:
+        return 0
+    names = ", ".join(f.name for f in missing)
+    print()
+    print(red(f"  CRITICAL foundations missing: {names}"))
+    print(
+        red(
+            "  Vibecrafted does not run without Loctree and AICX; the install stops here."
+        )
+    )
+    for f in missing:
+        print(f"    {f.name}: {f.install_hint()}")
+    print()
+    if dry_run:
+        print(dim("  (dry run: continuing so the rest of the plan is visible)"))
+        print()
+        return 0
+    return 1
+
+
+# Two tiers (operator decision 2026-08-23):
+#   required=True   CRITICAL — the framework does not run without it; a missing
+#                   one FAILS THE INSTALL CLOSED and is a `fail` in doctor.
+#   required=False  FOUNDATION — installed by default; a failure is a loud
+#                   degradation warning, never a silent skip.
+# npm is the first choice for the Loctree products: @loctree/loctree (>= 0.14.2,
+# ships loct + loctree + loctree-mcp + loctree-lsp) and @loctree/aicx (>= 0.12.3,
+# ships aicx + aicx-mcp). The canonical curl installer stays a printed fallback.
+LOCTREE_NPM_PACKAGE = "@loctree/loctree"
+AICX_NPM_PACKAGE = "@loctree/aicx"
+LOCTREE_CANONICAL_INSTALLER = "curl -fsSL https://loct.io/install.sh | sh"
 
 FOUNDATIONS: list[Foundation] = [
     Foundation(
         name="aicx",
         description="AICX CLI for session history and memory recovery",
-        channels=["canonical"],
+        channels=["npm", "canonical"],
         packages={
-            "canonical": "curl -fsSL https://loct.io/install.sh | sh",
+            "npm": AICX_NPM_PACKAGE,
+            "canonical": LOCTREE_CANONICAL_INSTALLER,
         },
         verify_cmd="aicx --version",
     ),
     Foundation(
         name="aicx-mcp",
         description="AICX MCP server for session history and memory recovery",
-        channels=["canonical"],
+        channels=["npm", "canonical"],
         packages={
-            "canonical": "curl -fsSL https://loct.io/install.sh | sh",
+            "npm": AICX_NPM_PACKAGE,
+            "canonical": LOCTREE_CANONICAL_INSTALLER,
         },
         verify_cmd="aicx-mcp --version",
     ),
     Foundation(
         name="loct",
         description="Loctree operator CLI short command",
-        channels=["canonical"],
+        channels=["npm", "canonical"],
         packages={
-            "canonical": "curl -fsSL https://loct.io/install.sh | sh",
+            "npm": LOCTREE_NPM_PACKAGE,
+            "canonical": LOCTREE_CANONICAL_INSTALLER,
         },
         verify_cmd="loct --version",
     ),
     Foundation(
         name="loctree",
         description="Loctree structural code mapping CLI",
-        channels=["canonical"],
+        channels=["npm", "canonical"],
         packages={
-            "canonical": "curl -fsSL https://loct.io/install.sh | sh",
+            "npm": LOCTREE_NPM_PACKAGE,
+            "canonical": LOCTREE_CANONICAL_INSTALLER,
         },
         verify_cmd="loctree --version",
     ),
     Foundation(
         name="loctree-mcp",
         description="Structural code mapping MCP server",
-        channels=["canonical"],
+        channels=["npm", "canonical"],
         packages={
-            "canonical": "curl -fsSL https://loct.io/install.sh | sh",
+            "npm": LOCTREE_NPM_PACKAGE,
+            "canonical": LOCTREE_CANONICAL_INSTALLER,
         },
         verify_cmd="loctree-mcp --version",
     ),
     Foundation(
         name="prview",
         description="PR review artifact generator",
-        channels=["crates", "github"],
+        channels=["github", "crates"],
         packages={
+            "github": "https://github.com/vetcoders/prview-rs/releases",
             "crates": "prview",
-            "github": "https://github.com/vetcoders/prview/releases",
         },
         verify_cmd="prview --version",
         required=False,
@@ -464,10 +560,9 @@ FOUNDATIONS: list[Foundation] = [
     Foundation(
         name="screenscribe",
         description="Screencast analysis — turns narrated recordings into structured engineering findings",
-        channels=["pip", "source"],
+        channels=["pip"],
         packages={
             "pip": "screenscribe",
-            "source": "https://github.com/vetcoders/Screenscribe/releases",
         },
         verify_cmd="screenscribe --version",
         required=False,
@@ -728,11 +823,10 @@ def _doctor_action_items(findings: Sequence[DoctorFinding]) -> list[str]:
 
     actions: list[str] = []
     if any(finding.component.startswith("foundation:") for finding in issues):
-        # Foundation findings are now warn-level (externally managed), so key off
-        # the component, not the level — the repair guidance must still surface.
         actions.append(
-            "repair Loctree/AICX from their own release surface, then "
-            "`bash scripts/install-foundations.sh --check`"
+            "repair foundations: `bash scripts/install-foundations.sh` "
+            "(npm @loctree/loctree + @loctree/aicx are critical; prview and "
+            "screenscribe degrade), then `bash scripts/install-foundations.sh --check`"
         )
     if any(
         finding.component.startswith(("runtime:", "symlink:", "stale-copy:"))
@@ -11279,23 +11373,24 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
             findings.append(DoctorFinding("ok", f"foundation:{f.name}", f"-> {path}"))
             findings.extend(_foundation_provenance_findings(f.name, Path(path)))
         elif f.required:
-            # Required product foundations (loctree/aicx/vc-frame) are externally
-            # managed — installed via their own canonical installer, not by this
-            # framework. Their absence is an advisory (warn), not a broken
-            # install (fail): the framework is functional without them and the
-            # message points at the fix. Consistent with install-foundations.sh,
-            # which likewise treats them as non-fatal. Keeps `make doctor` green
-            # in headless/CI contexts where the product binaries are not present.
+            # CRITICAL foundation (Loctree / AICX / vc-frame): the framework does
+            # not run without it, so its absence is a broken install, not an
+            # advisory. Consistent with install-foundations.sh, which fails
+            # closed on the same set.
             findings.append(
                 DoctorFinding(
-                    "warn",
+                    "fail",
                     f"foundation:{f.name}",
-                    f"missing (externally managed) — {f.install_hint()}",
+                    f"CRITICAL, missing — {f.install_hint()}",
                 )
             )
         else:
             findings.append(
-                DoctorFinding("warn", f"foundation:{f.name}", "optional, not installed")
+                DoctorFinding(
+                    "warn",
+                    f"foundation:{f.name}",
+                    f"DEGRADED, not installed — {f.install_hint()}",
+                )
             )
 
     # 5b. Runtime horse selected by install.sh --runtime / make install RUNTIME=...
@@ -12202,17 +12297,18 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                     args._fnd_checked = True
 
                 missing_foundations = args._missing_foundations
-                if (
-                    missing_foundations
-                    and interactive
-                    and not getattr(args, "_fnd_warn_done", False)
-                ):
-                    print(yellow("Missing foundations are not auto-installed here."))
+                if fail_closed_on_missing_foundations(dry_run=dry_run):
+                    return 1
+                degraded = [f for f in missing_foundations if not f.required]
+                if degraded and not getattr(args, "_fnd_warn_done", False):
+                    names = ", ".join(f.name for f in degraded)
                     print(
-                        dim(
-                            "Use the owning product or support-tool installer, then rerun diagnostics."
+                        yellow(
+                            f"DEGRADED: {names} not installed — the workflows that need them will refuse to run."
                         )
                     )
+                    for f in degraded:
+                        print(dim(f"  repair: {f.install_hint()}"))
                     args._fnd_warn_done = True
                     print()
 
@@ -12755,9 +12851,11 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
                 "path": path,
             }
             print(
-                f"  {f.name}: {path or 'not installed'} [{channel}] {'(required)' if f.required else '(optional)'}"
+                f"  {f.name}: {path or 'not installed'} [{channel}] {'(critical)' if f.required else '(foundation)'}"
             )
         print()
+        if fail_closed_on_missing_foundations(dry_run=dry_run):
+            return 1
         detected_agents = [
             rt for rt in ("claude", "codex", "gemini") if available_runtimes.get(rt)
         ]
@@ -13043,9 +13141,13 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
     print(
         f"    skills {len(selected_skills)} \u00b7 agents {agent_str} \u00b7 store {store_display}"
     )
+    degraded_fnd = [f for f in FOUNDATIONS if not f.required and not f.is_installed()]
     if missing_fnd:
         names = " · ".join(f.name for f in missing_fnd)
-        print(f"    {WARN} foundations missing: {names} — vibecrafted doctor")
+        print(f"    {WARN} CRITICAL foundations missing: {names} — vibecrafted doctor")
+    if degraded_fnd:
+        names = " · ".join(f.name for f in degraded_fnd)
+        print(f"    {WARN} DEGRADED: {names} not installed — vibecrafted doctor")
     print()
     print(f"    → {cyan('vibecrafted init claude')}       {dim('start here')}")
     print(f"    → {cyan('vibecrafted doctor')}            {dim('verify')}")
