@@ -104,6 +104,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       return
     }
 
+    // The install moment. Publishing the generation above touched nothing an
+    // agent reads; what follows is the part a person decides: which agents,
+    // which skills language, where agents work, what they may do. Recorded
+    // once in ~/.config/vibecrafted/config.toml, re-applied on every launch
+    // so an upgrade keeps the agents connected without asking again.
+    switch ensureFirstRunDecisions(install) {
+    case .ready:
+      break
+    case .quit:
+      NSApp.terminate(nil)
+      return
+    case .failed(let message):
+      reportWorkspaceLaunchFailure(message)
+      return
+    }
+
     for required in [
       install.terminal, install.terminalHost, install.frame, install.start,
       install.primaryShell,
@@ -475,6 +491,175 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   private func composedPath(generation: URL, inherited: String?) -> String {
     let tail = (inherited ?? "").isEmpty ? "/usr/bin:/bin:/usr/sbin:/sbin" : inherited!
     return "\(generation.appendingPathComponent("bin").path):\(tail)"
+  }
+
+  private enum FirstRunOutcome {
+    case ready
+    case quit
+    case failed(String)
+  }
+
+  /// Run a runtime Python command to completion and return (status, stdout, stderr).
+  private func runRuntimePython(
+    _ install: CanonicalRuntimeInstall, _ arguments: [String], timeout: TimeInterval = 600
+  ) -> (Int32, String, String) {
+    let process = Process()
+    process.executableURL = install.root.appendingPathComponent("bin/python3")
+    process.arguments = arguments
+    process.environment = firstRunEnvironment(install)
+    let out = Pipe()
+    let err = Pipe()
+    process.standardOutput = out
+    process.standardError = err
+    do {
+      try process.run()
+    } catch {
+      return (-1, "", error.localizedDescription)
+    }
+    let deadline = Date().addingTimeInterval(timeout)
+    while process.isRunning && Date() < deadline {
+      RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
+    }
+    if process.isRunning {
+      process.terminate()
+      return (-1, "", "timed out after \(Int(timeout)) s")
+    }
+    let stdout = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    let stderr = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    return (process.terminationStatus, stdout, stderr)
+  }
+
+  private func firstRunEnvironment(_ install: CanonicalRuntimeInstall) -> [String: String] {
+    let host = ProcessInfo.processInfo.environment
+    var environment: [String: String] = [:]
+    for key in ["HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "SHELL"] {
+      if let value = host[key] { environment[key] = value }
+    }
+    environment["PATH"] = composedPath(generation: install.root, inherited: host["PATH"])
+    environment["PYTHONNOUSERSITE"] = "1"
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["XDG_CONFIG_HOME"] = install.configHome.path
+    environment["VIBECRAFTED_HOME"] = install.craftedHome.path
+    environment["VIBECRAFTED_RUNTIME_HOME"] = install.runtimeHome.path
+    environment["VIBECRAFTED_RUNTIME_ROOT"] = install.root.path
+    environment["VIBECRAFTED_ROOT"] = install.root.path
+    environment["VIBECRAFTED_PYTHON"] = install.root.appendingPathComponent("bin/python3").path
+    return environment
+  }
+
+  /// Whether `[product]` decisions are recorded (`first_run show` prints JSON or `null`).
+  private func firstRunDecisionsRecorded(_ install: CanonicalRuntimeInstall) -> Bool {
+    let (status, stdout, _) = runRuntimePython(
+      install, ["-m", "vibecrafted_core.first_run", "show"], timeout: 30)
+    return status == 0 && stdout.trimmingCharacters(in: .whitespacesAndNewlines) != "null"
+  }
+
+  /// The install moment: wizard in the browser (or an explicit unattended
+  /// preset), then the skills projection from whatever was decided.
+  private func ensureFirstRunDecisions(_ install: CanonicalRuntimeInstall) -> FirstRunOutcome {
+    let unattended =
+      ProcessInfo.processInfo.arguments.contains("--unattended")
+      || ProcessInfo.processInfo.environment["VIBECRAFTED_FIRST_RUN"] == "unattended"
+
+    if !firstRunDecisionsRecorded(install) {
+      if unattended {
+        installLog.notice(
+          "first run: unattended preset (all detected agents, English skills, Living Tree, agents ask) — VIBECRAFTED_FIRST_RUN=unattended")
+        let (detectStatus, detected, _) = runRuntimePython(
+          install, ["-m", "vibecrafted_core.agent_view", "detect"], timeout: 30)
+        let agents = detectStatus == 0
+          ? detected.split(separator: "\n").map(String.init).joined(separator: ",") : ""
+        let version = (try? String(
+          contentsOf: install.root.appendingPathComponent("VERSION"), encoding: .utf8))?
+          .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let (status, stdout, stderr) = runRuntimePython(
+          install,
+          [
+            "-m", "vibecrafted_core.first_run", "apply", "--unattended",
+            "--agents", agents, "--lang", "en", "--work-mode", "living-tree",
+            "--permissions", "ask", "--version", version,
+          ])
+        installLog.notice("first run (unattended): \(stdout, privacy: .public)")
+        if status != 0 {
+          return .failed("Unattended first run could not record its decisions: \(stderr)")
+        }
+      } else {
+        switch runFirstRunWizard(install) {
+        case .ready: break
+        case .quit: return .quit
+        case .failed(let message): return .failed(message)
+        }
+      }
+    }
+
+    // Every launch: re-project from the record, so a new generation (this
+    // one) is what the agents see. Errors here are loud but not fatal: the
+    // workspace still opens, doctor names the broken link.
+    let (status, stdout, stderr) = runRuntimePython(
+      install, ["-m", "vibecrafted_core.first_run", "reapply"], timeout: 120)
+    if status != 0 {
+      installLog.error(
+        "skills projection failed (\(status)): \(stdout, privacy: .public) \(stderr, privacy: .public)")
+    } else {
+      installLog.notice("skills projection: \(stdout, privacy: .public)")
+    }
+    return .ready
+  }
+
+  /// Open the first-run wizard (runtime scripts/installer_gui.py --first-run)
+  /// in the browser and wait until it has recorded the decisions, the person
+  /// quit, or the wizard process died.
+  private func runFirstRunWizard(_ install: CanonicalRuntimeInstall) -> FirstRunOutcome {
+    let wizardScript = install.root.appendingPathComponent("scripts/installer_gui.py")
+    guard FileManager.default.isReadableFile(atPath: wizardScript.path) else {
+      return .failed(
+        "The first-run wizard is missing from this runtime: \(wizardScript.path). Reinstall Vibecrafted, or launch with --unattended to accept the default setup.")
+    }
+    let wizard = Process()
+    wizard.executableURL = install.root.appendingPathComponent("bin/python3")
+    wizard.arguments = [wizardScript.path, "--first-run", "--source", install.root.path, "--port", "0"]
+    wizard.environment = firstRunEnvironment(install)
+    wizard.standardOutput = FileHandle.nullDevice
+    wizard.standardError = FileHandle.nullDevice
+    do {
+      try wizard.run()
+    } catch {
+      return .failed("Cannot open the first-run wizard: \(error.localizedDescription)")
+    }
+    defer { if wizard.isRunning { wizard.terminate() } }
+
+    let alert = NSAlert()
+    alert.alertStyle = .informational
+    alert.messageText = "Setting up Vibecrafted"
+    alert.informativeText =
+      "The setup opened in your browser. It installs the foundations (Loctree, AICX, prview, screenscribe) and asks four things: which agents, skills language, where agents work, and what they may do. This window closes by itself when the setup is done."
+    alert.addButton(withTitle: "Quit Vibecrafted")
+
+    var outcome: FirstRunOutcome = .quit
+    let poll = Timer(timeInterval: 1.5, repeats: true) { [weak self] timer in
+      // Timer callbacks land on the main run loop; the actor check is only
+      // what the compiler cannot see from a nonisolated closure.
+      MainActor.assumeIsolated {
+        guard let self else { return }
+        if self.firstRunDecisionsRecorded(install) {
+          outcome = .ready
+          timer.invalidate()
+          NSApp.abortModal()
+        } else if !wizard.isRunning {
+          outcome = .failed(
+            "The first-run wizard closed before the setup was recorded. Open Vibecrafted again to retry, or launch with --unattended.")
+          timer.invalidate()
+          NSApp.abortModal()
+        }
+      }
+    }
+    RunLoop.main.add(poll, forMode: .common)
+    let response = alert.runModal()
+    poll.invalidate()
+    if response == .alertFirstButtonReturn {
+      return .quit
+    }
+    return outcome
   }
 
   /// Surface a launch failure where the operator can actually see it: the unified

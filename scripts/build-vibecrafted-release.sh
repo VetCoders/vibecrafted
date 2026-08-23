@@ -509,10 +509,21 @@ build_product() {
   mkdir -p "$runtime/scripts" "$runtime/vibecrafted-core" "$runtime/config"
   local canonical_deck="$REPO_ROOT/vibecrafted-core/vibecrafted_core/deck/vibecrafted"
   install -m 0755 "$canonical_deck" "$runtime/scripts/vibecrafted"
+  # First-run wizard (browser control plane, inline HTML) and the foundations
+  # installer it drives. Vibecrafted.app opens the wizard when no [product]
+  # decisions are recorded yet; the wizard's plan under --first-run is
+  # foundations + vibecrafted_core.first_run, never the checkout installer.
+  for wizard_file in installer_gui.py control_plane_launch.py control_plane_state.py \
+      installer_brand.py runtime_paths.py; do
+    install -m 0644 "$REPO_ROOT/scripts/$wizard_file" "$runtime/scripts/$wizard_file"
+  done
+  install -m 0755 "$REPO_ROOT/scripts/install-foundations.sh" "$runtime/scripts/install-foundations.sh"
   install -m 0755 "$canonical_deck" "$runtime/bin/vibecrafted"
   /bin/cp -R "$REPO_ROOT/bin/." "$runtime/bin/"
   /bin/cp -R "$REPO_ROOT/vibecrafted-core/vibecrafted_core" \
     "$runtime/vibecrafted-core/"
+  mkdir -p "$runtime/vibecrafted-mcp"
+  /bin/cp -R "$REPO_ROOT/vibecrafted-mcp/vibecrafted_mcp" "$runtime/vibecrafted-mcp/"
   printf '%s\n' "$RUNTIME_VERSION" \
     > "$runtime/vibecrafted-core/vibecrafted_core/VERSION"
   /bin/cp -R "$REPO_ROOT/config/." "$runtime/config/"
@@ -534,8 +545,11 @@ build_product() {
   python_home="$(cd "$(dirname "$seed_python")/.." && pwd)"
   mkdir -p "$runtime/python" "$runtime/python-site"
   /bin/cp -RL "$python_home/." "$runtime/python/"
+  # fastmcp: the MCP surface (vibecrafted-mcp, 20 tools) used to reach a
+  # machine only through `uv tool install` in the checkout installer; a DMG-only
+  # first run of 4.2.4 had no MCP at all. The server package rides along below.
   uv pip install --python "$seed_python" --target "$runtime/python-site" \
-    'jsonschema>=4.23,<5' 'PyYAML>=6.0,<7'
+    'jsonschema>=4.23,<5' 'PyYAML>=6.0,<7' 'fastmcp>=2.0,<3'
   install_name_tool -id '@loader_path/libpython3.12.dylib' \
     "$runtime/python/lib/libpython3.12.dylib"
 
@@ -573,7 +587,7 @@ build_product() {
     'runtime_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"' \
     'export PYTHONNOUSERSITE=1' \
     'export PYTHONDONTWRITEBYTECODE=1' \
-    'export PYTHONPATH="$runtime_root/vibecrafted-core:$runtime_root/python-site"' \
+    'export PYTHONPATH="$runtime_root/vibecrafted-core:$runtime_root/vibecrafted-mcp:$runtime_root/python-site"' \
     'exec "$runtime_root/python/bin/python3.12" "$@"' \
     > "$runtime/bin/python3"
   chmod 0755 "$runtime/bin/python3"
@@ -584,6 +598,10 @@ build_product() {
   "$REPO_ROOT/scripts/project-python" \
     "$REPO_ROOT/scripts/render-python-entrypoint-launchers.py" \
     --pyproject "$REPO_ROOT/vibecrafted-core/pyproject.toml" \
+    --bin-dir "$runtime/bin"
+  "$REPO_ROOT/scripts/project-python" \
+    "$REPO_ROOT/scripts/render-python-entrypoint-launchers.py" \
+    --pyproject "$REPO_ROOT/vibecrafted-mcp/pyproject.toml" \
     --bin-dir "$runtime/bin"
 
   if find "$APP" -type l -print -quit | grep -q .; then
@@ -615,6 +633,8 @@ build_product() {
     "${CODESIGN_KEYCHAIN_ARGS[@]}" "$APP"
   log "Probing the signed bundled Python without mutating the app seal"
   "$runtime/bin/python3" -c 'import jsonschema, yaml, vibecrafted_core.product_contract'
+  "$runtime/bin/python3" -c 'import fastmcp, vibecrafted_mcp.server, vibecrafted_core.agent_view'
+  [[ -x "$runtime/bin/vibecrafted-mcp" ]] || die "vibecrafted-mcp launcher was not rendered into the runtime"
   if find "$APP/Contents" \( -type d -name __pycache__ -o -type f -name '*.py[co]' \) \
       -print -quit | grep -q .; then
     die "bundled Python mutated the signed application payload"

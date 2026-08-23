@@ -170,6 +170,92 @@ def _serialize_install_plan(steps: list[InstallStep]) -> list[dict[str, str]]:
     ]
 
 
+FIRST_RUN_LANGUAGES = ("en", "pl")
+FIRST_RUN_WORK_MODES = ("living-tree", "worktrees", "vm")
+FIRST_RUN_PERMISSION_MODES = ("ask", "bypass")
+FIRST_RUN_AGENTS = ("claude", "codex", "gemini", "agy", "junie", "grok")
+
+
+def detected_agents() -> list[str]:
+    """Agent runtimes whose home directory exists on this machine."""
+    views = runtime_skill_views()
+    return [
+        runtime
+        for runtime in FIRST_RUN_AGENTS
+        if runtime in views and views[runtime].parent.is_dir()
+    ]
+
+
+def normalize_decisions(payload: Any) -> dict[str, Any]:
+    """Validate the four first-run decisions posted by the wizard.
+
+    Raises ValueError (TypeError for a non-object) with a message the UI can
+    show verbatim."""
+    if not isinstance(payload, dict):
+        raise TypeError("decisions must be an object")
+    agents = payload.get("agents", [])
+    if not isinstance(agents, list) or not all(isinstance(a, str) for a in agents):
+        raise ValueError("decisions.agents must be a list of runtime names")
+    unknown = [a for a in agents if a not in FIRST_RUN_AGENTS]
+    if unknown:
+        raise ValueError(f"unknown agent runtime(s): {', '.join(unknown)}")
+    lang = str(payload.get("skills_lang", "en"))
+    if lang not in FIRST_RUN_LANGUAGES:
+        raise ValueError(f"unknown skills language: {lang}")
+    work_mode = str(payload.get("work_mode", "living-tree"))
+    if work_mode not in FIRST_RUN_WORK_MODES:
+        raise ValueError(f"unknown work mode: {work_mode}")
+    permissions = str(payload.get("agent_permissions", "ask"))
+    if permissions not in FIRST_RUN_PERMISSION_MODES:
+        raise ValueError(f"unknown agent permissions mode: {permissions}")
+    return {
+        "agents": agents,
+        "skills_lang": lang,
+        "work_mode": work_mode,
+        "agent_permissions": permissions,
+    }
+
+
+def build_first_run_steps(
+    source_dir: str, decisions: dict[str, Any], *, version: str
+) -> list[InstallStep]:
+    """The DMG first-run plan: foundations (Loctree/AICX fail closed, prview/
+    screenscribe degrade), then record the decisions and project the skills
+    through vibecrafted_core.first_run. No checkout installer is involved:
+    the runtime generation was published by Vibecrafted.app already."""
+    steps: list[InstallStep] = []
+    foundations_path = foundations_script_path(source_dir)
+    if foundations_path.exists():
+        steps.append(
+            InstallStep(
+                label="Install foundations (Loctree, AICX, prview, screenscribe)",
+                command=["bash", str(foundations_path)],
+            )
+        )
+    steps.append(
+        InstallStep(
+            label="Record decisions and connect the agents",
+            command=[
+                sys.executable,
+                "-m",
+                "vibecrafted_core.first_run",
+                "apply",
+                "--agents",
+                ",".join(decisions["agents"]),
+                "--lang",
+                decisions["skills_lang"],
+                "--work-mode",
+                decisions["work_mode"],
+                "--permissions",
+                decisions["agent_permissions"],
+                "--version",
+                version,
+            ],
+        )
+    )
+    return steps
+
+
 def build_install_steps(source_dir: str, *, with_shell: bool) -> list[InstallStep]:
     """Build the ordered install plan: optional foundations, core install, optional runtime."""
     steps: list[InstallStep] = []
@@ -453,9 +539,21 @@ class InstallRun:
 class InstallController:
     """Owns diagnostics, the running install thread, and control-plane state for the GUI."""
 
-    def __init__(self, source_dir: str, *, bundle_dir: str | None = None) -> None:
-        """Resolve source_dir, run initial diagnostics, and locate the site bundle."""
+    def __init__(
+        self,
+        source_dir: str,
+        *,
+        bundle_dir: str | None = None,
+        first_run: bool = False,
+    ) -> None:
+        """Resolve source_dir, run initial diagnostics, and locate the site bundle.
+
+        ``first_run`` is the DMG mode: the source is a published runtime
+        generation, the plan is foundations + decisions, and the inline HTML
+        is served even when a site bundle is around (the bundle's wizard does
+        not carry the four decisions yet)."""
         self.source_dir = str(Path(source_dir).resolve())
+        self.first_run = first_run
         self.version = read_framework_version(self.source_dir)
         self.diagnostics = run_diagnostics(self.source_dir)
         self.found_items, self.missing_items, self.needs_install = (
@@ -463,7 +561,7 @@ class InstallController:
         )
         self._lock = threading.Lock()
         self._run = InstallRun()
-        self.site_dist_dir = self._resolve_site_dist(bundle_dir)
+        self.site_dist_dir = None if first_run else self._resolve_site_dist(bundle_dir)
         self.bundled_bin_dir = bundled_bin_root(self.source_dir)
 
     def _resolve_site_dist(self, explicit: str | None) -> Path | None:
@@ -549,7 +647,13 @@ class InstallController:
         """Assemble the full `/api/preflight` JSON payload: brand, diagnostics, plan, status."""
         try:
             install_plan = _serialize_install_plan(
-                build_install_steps(self.source_dir, with_shell=True)
+                build_first_run_steps(
+                    self.source_dir,
+                    self.first_run_payload()["defaults"],
+                    version=self.version,
+                )
+                if self.first_run
+                else build_install_steps(self.source_dir, with_shell=True)
             )
         except FileNotFoundError:
             install_plan = []
@@ -580,6 +684,7 @@ class InstallController:
             "categories": self._category_cards(),
             "install_plan": install_plan,
             "control_plane": control_plane,
+            "first_run": self.first_run_payload(),
             "launcher_defaults": {
                 "workflows": ["workflow", "research", "review", "marbles"],
                 "agents": ["claude", "codex", "agy", "junie", "grok"],
@@ -626,11 +731,42 @@ class InstallController:
                 "finished_at": self._run.finished_at,
             }
 
-    def start(self, *, with_shell: bool) -> tuple[bool, str]:
+    def first_run_payload(self) -> dict[str, Any]:
+        """What the first-run form is built from: detected agents and the
+        option sets, with defaults that change nothing an operator did not ask for."""
+        return {
+            "enabled": self.first_run,
+            "detected_agents": detected_agents(),
+            "agents": list(FIRST_RUN_AGENTS),
+            "languages": list(FIRST_RUN_LANGUAGES),
+            "work_modes": list(FIRST_RUN_WORK_MODES),
+            "permission_modes": list(FIRST_RUN_PERMISSION_MODES),
+            "defaults": {
+                "agents": detected_agents(),
+                "skills_lang": "en",
+                "work_mode": "living-tree",
+                "agent_permissions": "ask",
+            },
+        }
+
+    def start(
+        self, *, with_shell: bool, decisions: dict[str, Any] | None = None
+    ) -> tuple[bool, str]:
         """Start the install steps in a background daemon thread, refusing a concurrent run."""
         try:
-            steps = build_install_steps(self.source_dir, with_shell=with_shell)
-        except FileNotFoundError as exc:
+            if self.first_run:
+                if decisions is None:
+                    raise ValueError(
+                        "first run needs the decisions (agents, language, work mode, permissions)"
+                    )
+                steps = build_first_run_steps(
+                    self.source_dir,
+                    normalize_decisions(decisions),
+                    version=self.version,
+                )
+            else:
+                steps = build_install_steps(self.source_dir, with_shell=with_shell)
+        except (FileNotFoundError, TypeError, ValueError) as exc:
             with self._lock:
                 self._run = InstallRun(
                     command=[],
@@ -732,7 +868,7 @@ class InstallController:
                 env=install_runtime_env(),
             )
             return True, launch_payload
-        except (FileNotFoundError, ValueError) as exc:
+        except (FileNotFoundError, TypeError, ValueError) as exc:
             return False, {
                 "accepted": False,
                 "message": str(exc),
@@ -888,7 +1024,8 @@ class InstallerRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/install":
             payload = self._read_json()
             accepted, message = self.server.controller.start(
-                with_shell=bool(payload.get("with_shell", True))
+                with_shell=bool(payload.get("with_shell", True)),
+                decisions=payload.get("decisions"),
             )
             status_payload = self.server.controller.status_payload()
             status_payload["accepted"] = accepted
@@ -1557,6 +1694,25 @@ def build_html(preflight: dict[str, Any]) -> str:
                 gap: 14px;
               }
 
+              .decision-group {
+                border: 1px solid rgba(127, 127, 127, 0.25);
+                border-radius: 12px;
+                padding: 0.75rem 1rem 0.5rem;
+                margin: 0.75rem 0 0;
+              }
+              .decision-group legend {
+                font-weight: 600;
+                padding: 0 0.35rem;
+              }
+              .decision-options {
+                display: grid;
+                gap: 0.35rem;
+              }
+              .decision-hint {
+                margin: 0.5rem 0 0;
+                opacity: 0.8;
+                font-size: 0.9em;
+              }
               .toggle {
                 display: flex;
                 gap: 12px;
@@ -1983,7 +2139,7 @@ def build_html(preflight: dict[str, Any]) -> str:
                           <div class="lead-grid">
                             <div class="main-card">
                               <p class="slide-copy">
-                                This setup checks the machine and runs the repo-owned installer.
+                                This setup checks the machine, asks how Vibecrafted should work here, and installs it.
                               </p>
                             </div>
                             <div class="main-card">
@@ -1993,9 +2149,9 @@ def build_html(preflight: dict[str, Any]) -> str:
                             </div>
                           </div>
                           <ul class="bullet-list">
-                            <li>Foundations are bootstrapped before workflow skills touch your runtime.</li>
-                            <li>The browser surface stays thin on purpose: one mutation engine, one live log, one truthful outcome.</li>
-                            <li>The result should feel like onboarding, not like scrolling through raw terminal entropy.</li>
+                            <li>Foundations first: Loctree and AICX are required; prview and screenscribe are installed too and reported if they cannot be.</li>
+                            <li>Then four settings — which agents, skills language, where agents work, agent permissions — recorded in your config.</li>
+                            <li>Every step shows its command and its live output; the summary at the end lists what landed and where.</li>
                           </ul>
                         </div>
                       </section>
@@ -2064,13 +2220,34 @@ def build_html(preflight: dict[str, Any]) -> str:
                           </section>
 
                           <form class="install-form" id="install-form">
-                            <label class="toggle" for="with-shell">
+                            <label class="toggle" for="with-shell" id="with-shell-row">
                               <input checked id="with-shell" name="with-shell" type="checkbox">
                               <span>
                                 <strong>Install shell helpers</strong><br>
                                 Add the optional helper layer so `vc-*` wrappers and the command deck are available in future sessions.
                               </span>
                             </label>
+                            <section class="summary-card" hidden id="decisions">
+                              <h3>How Vibecrafted should work here</h3>
+                              <p class="slide-copy">Four settings. They are written to <code>~/.config/vibecrafted/config.toml</code> and can be changed there later.</p>
+                              <fieldset class="decision-group">
+                                <legend>Agents that get the skills</legend>
+                                <div class="decision-options" id="decision-agents"></div>
+                                <p class="decision-hint" id="decision-agents-hint"></p>
+                              </fieldset>
+                              <fieldset class="decision-group">
+                                <legend>Skills language</legend>
+                                <div class="decision-options" id="decision-lang"></div>
+                              </fieldset>
+                              <fieldset class="decision-group">
+                                <legend>Where agents work</legend>
+                                <div class="decision-options" id="decision-work-mode"></div>
+                              </fieldset>
+                              <fieldset class="decision-group">
+                                <legend>Agent permissions</legend>
+                                <div class="decision-options" id="decision-permissions"></div>
+                              </fieldset>
+                            </section>
                           </form>
                         </div>
                       </section>
@@ -2163,6 +2340,54 @@ def build_html(preflight: dict[str, Any]) -> str:
             </script>
             <script>
               const boot = window.__BOOT__;
+              const firstRun = boot.first_run || { enabled: false };
+
+              const DECISION_LABELS = {
+                skills_lang: { en: 'English', pl: 'Polski' },
+                work_mode: {
+                  'living-tree': 'Living Tree — agents work in the checkout you already have',
+                  worktrees: 'Worktrees — each dispatch gets its own git worktree',
+                  vm: 'vibecrafted-vm — dispatches run in an isolated VM',
+                },
+                agent_permissions: {
+                  ask: 'Ask — agents stop for approval the way their vendor CLI does',
+                  bypass: 'Bypass — agents run with their vendor\'s skip-permissions flags',
+                },
+              };
+
+              function decisionRadio(group, value, selected) {
+                const label = (DECISION_LABELS[group] || {})[value] || value;
+                return `<label class="toggle"><input name="${escapeHtml(group)}" type="radio" value="${escapeHtml(value)}" ${value === selected ? 'checked' : ''}><span>${escapeHtml(label)}</span></label>`;
+              }
+
+              function renderDecisions() {
+                if (!firstRun.enabled) {
+                  return;
+                }
+                dom.withShellRow.hidden = true;
+                dom.decisions.hidden = false;
+                const detected = new Set(firstRun.detected_agents || []);
+                dom.decisionAgents.innerHTML = (firstRun.agents || []).map((agent) => (
+                  `<label class="toggle"><input name="agents" type="checkbox" value="${escapeHtml(agent)}" ${detected.has(agent) ? 'checked' : ''}><span>${escapeHtml(agent)}${detected.has(agent) ? '' : ' <small>(not found on this machine)</small>'}</span></label>`
+                )).join('');
+                dom.decisionAgentsHint.textContent = detected.size
+                  ? `Found on this machine: ${Array.from(detected).join(', ')}. Skills are linked into each agent's own skills directory; private skills there are left alone.`
+                  : 'No agent CLI home found yet. Skills still land in ~/.agents/skills, the shared location every agent can read.';
+                dom.decisionLang.innerHTML = (firstRun.languages || []).map((v) => decisionRadio('skills_lang', v, firstRun.defaults.skills_lang)).join('');
+                dom.decisionWorkMode.innerHTML = (firstRun.work_modes || []).map((v) => decisionRadio('work_mode', v, firstRun.defaults.work_mode)).join('');
+                dom.decisionPermissions.innerHTML = (firstRun.permission_modes || []).map((v) => decisionRadio('agent_permissions', v, firstRun.defaults.agent_permissions)).join('');
+              }
+
+              function readDecisions() {
+                const form = dom.installForm;
+                const checked = (name) => Array.from(form.querySelectorAll(`input[name="${name}"]:checked`)).map((el) => el.value);
+                return {
+                  agents: checked('agents'),
+                  skills_lang: (checked('skills_lang')[0]) || firstRun.defaults.skills_lang,
+                  work_mode: (checked('work_mode')[0]) || firstRun.defaults.work_mode,
+                  agent_permissions: (checked('agent_permissions')[0]) || firstRun.defaults.agent_permissions,
+                };
+              }
               const dom = {
                 version: document.getElementById('version-value'),
                 source: document.getElementById('source-value'),
@@ -2195,6 +2420,13 @@ def build_html(preflight: dict[str, Any]) -> str:
                 planList: document.getElementById('plan-list'),
                 installForm: document.getElementById('install-form'),
                 withShell: document.getElementById('with-shell'),
+                withShellRow: document.getElementById('with-shell-row'),
+                decisions: document.getElementById('decisions'),
+                decisionAgents: document.getElementById('decision-agents'),
+                decisionAgentsHint: document.getElementById('decision-agents-hint'),
+                decisionLang: document.getElementById('decision-lang'),
+                decisionWorkMode: document.getElementById('decision-work-mode'),
+                decisionPermissions: document.getElementById('decision-permissions'),
                 installButton: document.getElementById('install-button'),
                 statusChip: document.getElementById('status-chip'),
                 statusText: document.getElementById('status-text'),
@@ -2616,10 +2848,14 @@ def build_html(preflight: dict[str, Any]) -> str:
                   window.clearTimeout(pollTimer);
                 }
                 setGuideFeedback('');
+                const body = { with_shell: dom.withShell.checked };
+                if (firstRun && firstRun.enabled) {
+                  body.decisions = readDecisions();
+                }
                 const response = await fetch('/api/install', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ with_shell: dom.withShell.checked }),
+                  body: JSON.stringify(body),
                 });
                 const payload = await response.json();
                 renderStatus(payload);
@@ -2711,6 +2947,7 @@ def build_html(preflight: dict[str, Any]) -> str:
               });
 
               renderBoot();
+              renderDecisions();
               pollStatus();
               pollControlPlane();
             </script>
@@ -2749,6 +2986,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Start the local server without opening a browser tab.",
     )
     parser.add_argument(
+        "--first-run",
+        action="store_true",
+        help=(
+            "DMG first run: --source is a published runtime generation; the plan "
+            "is foundations + the four decisions (agents, skills language, work "
+            "mode, agent permissions) recorded through vibecrafted_core.first_run."
+        ),
+    )
+    parser.add_argument(
         "--bundle-dir",
         default=None,
         help=(
@@ -2763,7 +3009,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint: start the local control-plane server, open a browser, serve forever."""
     args = parse_args(argv)
-    controller = InstallController(args.source, bundle_dir=args.bundle_dir)
+    controller = InstallController(
+        args.source, bundle_dir=args.bundle_dir, first_run=args.first_run
+    )
     server = InstallerHTTPServer((args.host, args.port), controller)
     host, port = server.server_address[:2]
     host = host.decode() if isinstance(host, bytes) else str(host)

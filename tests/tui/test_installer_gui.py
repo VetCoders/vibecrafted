@@ -365,3 +365,70 @@ def test_resolve_site_dist_returns_none_when_absent(
     controller = installer_gui.InstallController(str(tmp_path))
 
     assert controller.site_dist_dir is None
+
+
+def test_first_run_decisions_are_validated_and_drive_the_plan(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """DMG first run: the plan is foundations + vibecrafted_core.first_run, never
+    the checkout installer, and the four decisions are validated before any
+    subprocess starts."""
+    import pytest
+
+    source = tmp_path / "gen"
+    (source / "scripts").mkdir(parents=True)
+    (source / "scripts" / "install-foundations.sh").write_text("#!/bin/bash\n")
+    (source / "VERSION").write_text("4.2.4+gdeadbeef\n")
+
+    decisions = installer_gui.normalize_decisions(
+        {
+            "agents": ["claude", "codex"],
+            "skills_lang": "pl",
+            "work_mode": "worktrees",
+            "agent_permissions": "bypass",
+        }
+    )
+    steps = installer_gui.build_first_run_steps(str(source), decisions, version="4.2.4")
+    assert [s.label for s in steps] == [
+        "Install foundations (Loctree, AICX, prview, screenscribe)",
+        "Record decisions and connect the agents",
+    ]
+    assert steps[0].command == [
+        "bash",
+        str(source / "scripts" / "install-foundations.sh"),
+    ]
+    apply = steps[1].command
+    assert apply[1:4] == ["-m", "vibecrafted_core.first_run", "apply"]
+    assert apply[apply.index("--agents") + 1] == "claude,codex"
+    assert apply[apply.index("--lang") + 1] == "pl"
+    assert apply[apply.index("--work-mode") + 1] == "worktrees"
+    assert apply[apply.index("--permissions") + 1] == "bypass"
+    assert "vetcoders_install.py" not in " ".join(apply)
+
+    for bad in (
+        {"agents": ["vim"]},
+        {"agents": [], "skills_lang": "de"},
+        {"agents": [], "work_mode": "yolo"},
+        {"agents": [], "agent_permissions": "maybe"},
+    ):
+        with pytest.raises(ValueError):
+            installer_gui.normalize_decisions(bad)
+    with pytest.raises(TypeError):
+        installer_gui.normalize_decisions("nope")
+
+    # the controller in first-run mode refuses to start without decisions,
+    # advertises the form inputs, and never picks up a site bundle
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    (source / "site" / "dist").mkdir(parents=True)
+    controller = installer_gui.InstallController(str(source), first_run=True)
+    assert controller.site_dist_dir is None
+    payload = controller.first_run_payload()
+    assert payload["enabled"] is True
+    assert payload["detected_agents"] == ["codex"]
+    assert payload["defaults"]["agent_permissions"] == "ask"
+    accepted, message = controller.start(with_shell=True)
+    assert accepted is False
+    assert "decisions" in message
+    assert controller.preflight_payload()["first_run"]["languages"] == ["en", "pl"]

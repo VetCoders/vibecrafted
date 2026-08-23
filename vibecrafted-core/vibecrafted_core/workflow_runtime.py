@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .first_run import permission_flags
 from .model_overrides import _with_model_override
 from .package_resources import package_root
 from .research_config import (
@@ -540,7 +541,7 @@ def native_resume_argv(agent: str, agent_session_id: str) -> list[str]:
             "--output-format",
             "stream-json",
             "--verbose",
-            "--dangerously-skip-permissions",
+            *permission_flags("claude"),
         ]
     if normalized_agent == "codex":
         return [
@@ -548,7 +549,7 @@ def native_resume_argv(agent: str, agent_session_id: str) -> list[str]:
             "exec",
             "resume",
             "--json",
-            "--dangerously-bypass-approvals-and-sandbox",
+            *permission_flags("codex"),
             native_id,
             "-",
         ]
@@ -559,8 +560,7 @@ def native_resume_argv(agent: str, agent_session_id: str) -> list[str]:
             native_id,
             "--cwd",
             ".",
-            "--permission-mode",
-            "bypassPermissions",
+            *permission_flags("grok"),
             "--no-alt-screen",
             "--output-format",
             "streaming-json",

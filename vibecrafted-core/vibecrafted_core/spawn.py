@@ -16,6 +16,8 @@ from pathlib import Path
 from shutil import which
 from typing import Any
 
+from vibecrafted_core.first_run import permission_flags
+
 from .agent_dispatch import extract_session_id, sandbox_supported
 from .control_plane import ensure_session_id, normalize_run_root
 from .events import append_event
@@ -165,17 +167,17 @@ def _default_command(agent: str, prompt: str) -> list[str]:
             "claude",
             "--print",
             "--verbose",
-            "--dangerously-skip-permissions",
+            *permission_flags("claude"),
             prompt,
         ]
     if agent == "codex":
-        return ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", prompt]
+        return ["codex", "exec", *permission_flags("codex"), prompt]
     if agent == "agy":
         # agy >= 1.1: --print takes the prompt as its value (Go flags) and
         # print mode does not read stdin; flags must precede it.
         return [
             "agy",
-            "--dangerously-skip-permissions",
+            *permission_flags("agy"),
             "--add-dir",
             ".",
             "--print-timeout",
@@ -190,8 +192,7 @@ def _default_command(agent: str, prompt: str) -> list[str]:
             "grok",
             "--cwd",
             ".",
-            "--permission-mode",
-            "bypassPermissions",
+            *permission_flags("grok"),
             "--no-alt-screen",
             "--single",
             prompt,
@@ -213,14 +214,14 @@ def _stdin_command(agent: str) -> list[str]:
             "--output-format",
             "stream-json",
             "--verbose",
-            "--dangerously-skip-permissions",
+            *permission_flags("claude"),
         ]
     if agent == "codex":
         return [
             "codex",
             "exec",
             "--json",
-            "--dangerously-bypass-approvals-and-sandbox",
+            *permission_flags("codex"),
             "-",
         ]
     if agent == "gemini":
@@ -233,11 +234,12 @@ def _stdin_command(agent: str) -> list[str]:
         # agy >= 1.1 print mode reads no stdin and --print requires a value;
         # a shell shim folds stdin into the flag. The prompt lands on the
         # inner argv (ARG_MAX-bound) because agy has no file/stdin lane.
+        agy_flags = " ".join(shlex.quote(flag) for flag in permission_flags("agy"))
         return [
             "bash",
             "-c",
             (
-                "agy --dangerously-skip-permissions --add-dir . "
+                f"agy {agy_flags}{' ' if agy_flags else ''}--add-dir . "
                 '--print-timeout 30m --print "$(cat)"'
             ),
         ]
@@ -257,8 +259,7 @@ def _stdin_command(agent: str) -> list[str]:
             "grok",
             "--cwd",
             ".",
-            "--permission-mode",
-            "bypassPermissions",
+            *permission_flags("grok"),
             "--no-alt-screen",
             "--output-format",
             "streaming-json",
