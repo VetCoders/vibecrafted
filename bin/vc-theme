@@ -7,6 +7,40 @@ config_home=${XDG_CONFIG_HOME:-${HOME:?HOME is required}/.config}
 theme_dir=${runtime_root}/config/vc-terminal/themes
 product_dir=${config_home}/vibecrafted
 active_theme=${product_dir}/terminal-theme.toml
+# vc-frame's product-owned config (the copy Vibecrafted.app publishes once per
+# install). Its static `theme "..."` is what a NEW session starts with: the
+# terminal does not answer CSI 2031/DSR 997, so theme_dark/theme_light never
+# auto-switch and a light host palette used to come up under monochrome ink —
+# grey plugin text on ivory paper at every fresh vc-start (4.2.4 first run).
+frame_config=${VC_FRAME_CONFIG_DIR:-${product_dir}/vc-frame}/config.kdl
+
+frame_theme_for() {
+    case $1 in
+        light) printf '%s\n' vibecrafted-ivory ;;
+        *) printf '%s\n' monochrome ;;
+    esac
+}
+
+# persist_frame_theme <light|dark> — rewrite the top-level `theme "..."` line
+# of the product config so the next session starts in the same mode the host
+# palette is in. Only that one line changes; a config without the line gets it
+# appended. Missing config = nothing to persist (attach-only hosts).
+persist_frame_theme() {
+    frame_theme=$(frame_theme_for "$1")
+    test -f "$frame_config" || return 0
+    frame_tmp=$(mktemp "${frame_config}.XXXXXX") || return 1
+    if grep -q '^theme "' "$frame_config"; then
+        sed "s/^theme \"[^\"]*\"/theme \"${frame_theme}\"/" "$frame_config" > "$frame_tmp"
+    else
+        cat "$frame_config" > "$frame_tmp"
+        printf 'theme "%s"\n' "$frame_theme" >> "$frame_tmp"
+    fi
+    if mv -f "$frame_tmp" "$frame_config"; then
+        return 0
+    fi
+    rm -f -- "$frame_tmp"
+    return 1
+}
 
 theme_name() {
     if grep -q 'background = "#fafafa"' "$active_theme" 2>/dev/null; then
@@ -55,6 +89,10 @@ publish_theme() {
         return 1
     fi
     trap - EXIT HUP INT TERM
+    if ! persist_frame_theme "$name"; then
+        printf 'vc-theme: host palette is %s but vc-frame config could not be updated (%s); next session starts in the previous frame theme\n' \
+            "$name" "$frame_config" >&2
+    fi
     printf '%s\n' "$name"
 }
 

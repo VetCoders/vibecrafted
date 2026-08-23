@@ -129,3 +129,52 @@ def test_theme_failure_never_publishes_host_palette_before_frame_accepts_it(
     assert "host palette remains dark" in result.stderr
     assert observed_theme.read_text(encoding="utf-8") == dark_palette
     assert active_theme.read_text(encoding="utf-8") == dark_palette
+
+
+def test_theme_switch_persists_the_frame_theme_for_the_next_session(
+    tmp_path: Path,
+) -> None:
+    """The host palette and the frame's static `theme` move together: a light
+    terminal under monochrome ink was the unreadable Guide of the 4.2.4 first
+    run. Only the one `theme` line changes; everything else in config.kdl stays."""
+    config_home = tmp_path / "xdg"
+    frame_dir = config_home / "vibecrafted" / "vc-frame"
+    frame_dir.mkdir(parents=True)
+    frame_config = frame_dir / "config.kdl"
+    frame_config.write_text(
+        "// product config\n"
+        "themes {\n"
+        '    theme_name "x"\n'
+        "}\n"
+        'theme "monochrome"\n'
+        'theme_dark "monochrome"\n'
+        'theme_light "vibecrafted-ivory"\n'
+        'default_layout "operator"\n',
+        encoding="utf-8",
+    )
+
+    light = _run_theme("light", config_home=config_home)
+    assert light.returncode == 0, light.stderr
+    text = frame_config.read_text(encoding="utf-8")
+    assert 'theme "vibecrafted-ivory"\n' in text
+    assert 'theme_dark "monochrome"' in text
+    assert 'theme_light "vibecrafted-ivory"' in text
+    assert '    theme_name "x"' in text
+    assert 'default_layout "operator"' in text
+    assert text.count("\ntheme ") == 1
+
+    dark = _run_theme("dark", config_home=config_home)
+    assert dark.returncode == 0, dark.stderr
+    assert 'theme "monochrome"\n' in frame_config.read_text(encoding="utf-8")
+
+    # a config without the static line gets one, nothing else is touched
+    frame_config.write_text('default_layout "operator"\n', encoding="utf-8")
+    assert _run_theme("light", config_home=config_home).returncode == 0
+    assert frame_config.read_text(encoding="utf-8") == (
+        'default_layout "operator"\ntheme "vibecrafted-ivory"\n'
+    )
+
+    # no product frame config at all: the palette still switches, nothing is created
+    frame_config.unlink()
+    assert _run_theme("dark", config_home=config_home).returncode == 0
+    assert not frame_config.exists()
