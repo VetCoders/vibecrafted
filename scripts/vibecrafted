@@ -43,6 +43,47 @@ fi
 crafted_skills="$crafted_home/skills"
 crafted_tools="$(_expand_home_path "${VIBECRAFTED_TOOLS_HOME:-$crafted_runtime_home/tools}")/vibecrafted-current"
 
+# The runtime generation this deck belongs to. Launchers from Vibecrafted.app
+# export VIBECRAFTED_RUNTIME_ROOT; anything that reaches the deck without it
+# (launchd jobs, a bare `vibecrafted` on PATH) reads the app's receipt
+# <runtime_home>/active.json instead. Empty when neither exists — the
+# installer-era layout under <runtime_home> is then the only candidate.
+_active_runtime_root() {
+  if [[ -n "${VIBECRAFTED_RUNTIME_ROOT:-}" ]]; then
+    printf '%s\n' "$VIBECRAFTED_RUNTIME_ROOT"
+    return 0
+  fi
+  local receipt="$crafted_runtime_home/active.json" root
+  [[ -f "$receipt" ]] || return 1
+  root="$(sed -n 's/.*"runtime_root"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$receipt" | head -n1)"
+  root="${root//\\\//\/}"
+  [[ -n "$root" && -d "$root" ]] || return 1
+  printf '%s\n' "$root"
+}
+
+# vc-server binary: the active generation's own, else the launcher the app
+# (or the installer) put on ~/.local/bin.
+_server_binary() {
+  local root
+  if root="$(_active_runtime_root)" && [[ -x "$root/bin/vc-server" ]]; then
+    printf '%s\n' "$root/bin/vc-server"
+    return 0
+  fi
+  printf '%s\n' "$HOME/.local/bin/vc-server"
+}
+
+# Hydrated site assets: <generation>/server/site when the app published a
+# generation (run 4.2.4 first-run: that is the only place the DMG puts them),
+# else the installer layout <runtime_home>/server/site.
+_server_site_root() {
+  local root
+  if root="$(_active_runtime_root)" && [[ -d "$root/server/site" ]]; then
+    printf '%s\n' "$root/server/site"
+    return 0
+  fi
+  printf '%s\n' "$crafted_runtime_home/server/site"
+}
+
 # The installer stages npm-provided agent CLIs under $crafted_home/tools/node/bin
 # and reports them as installed — but that directory never reaches the user's
 # PATH, so a fresh install answered `vibecrafted init claude` with exit 1 and
@@ -3557,16 +3598,18 @@ cmd_server() {
         return 1
       fi
 
-      # 3. Locate binary & site root
-      local server_bin="$HOME/.local/bin/vc-server"
+      # 3. Locate binary & site root (active generation first, installer layout second)
+      local server_bin
+      server_bin="$(_server_binary)"
       if [[ ! -x "$server_bin" ]]; then
-        printf "%b✗%b vc-server binary not found at %s. Please run 'make install-all' or 'make install-server' first.\n" "$_red" "$_reset" "$server_bin" >&2
+        printf "%b✗%b vc-server binary not found at %s. Open Vibecrafted.app once (it publishes the runtime), or run 'make install-server' from a checkout.\n" "$_red" "$_reset" "$server_bin" >&2
         return 1
       fi
 
-      local site_root="${VIBECRAFTED_RUNTIME_ROOT:-${VIBECRAFTED_RUNTIME_HOME:-$HOME/.local/share/vibecrafted}}/server/site"
+      local site_root
+      site_root="$(_server_site_root)"
       if [[ ! -d "$site_root" ]]; then
-        printf "%b✗%b site assets directory not found at %s. Please run 'make install-all' or 'make install-server' first.\n" "$_red" "$_reset" "$site_root" >&2
+        printf "%b✗%b site assets directory not found at %s. Open Vibecrafted.app once (it publishes the runtime), or run 'make install-server' from a checkout.\n" "$_red" "$_reset" "$site_root" >&2
         return 1
       fi
 
@@ -3861,7 +3904,8 @@ cmd_server() {
       _server_supervisor_cli runtime-status || has_errors=1
 
       # 1. Binary check
-      local server_bin="$HOME/.local/bin/vc-server"
+      local server_bin
+      server_bin="$(_server_binary)"
       if [[ -f "$server_bin" ]]; then
         if [[ -x "$server_bin" ]]; then
           printf "  [%b✓%b] Binary present and executable at %s\n" "$_green" "$_reset" "$server_bin"
@@ -3889,7 +3933,8 @@ cmd_server() {
       fi
 
       # 2. Site root & Fonts check
-      local site_root="${VIBECRAFTED_RUNTIME_ROOT:-${VIBECRAFTED_RUNTIME_HOME:-$HOME/.local/share/vibecrafted}}/server/site"
+      local site_root
+      site_root="$(_server_site_root)"
       if [[ -d "$site_root" ]]; then
         printf "  [%b✓%b] Site root present at %s\n" "$_green" "$_reset" "$site_root"
         if [[ -d "$site_root/fonts" ]]; then

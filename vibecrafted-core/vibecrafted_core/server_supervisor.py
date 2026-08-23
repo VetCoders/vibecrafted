@@ -1494,6 +1494,17 @@ def render_launch_agent_plist(
         config.paths.launch_agent_file.parent,
     ):
         _ensure_owned_directory(directory)
+    # The deck resolves its site assets and vc-server from this root; launchd
+    # inherits no shell, so without it the supervisor's child looked for
+    # <runtime_home>/server/site (installer layout) while the app had published
+    # <generation>/server/site — six failures in 30 s, KeepAlive forever
+    # (first run of 4.2.4, 2026-08-23).
+    generation_bin = _active_generation_bin(config.paths.runtime_home)
+    runtime_root_env = (
+        {"VIBECRAFTED_RUNTIME_ROOT": str(generation_bin.parent)}
+        if generation_bin is not None
+        else {}
+    )
     payload: dict[str, Any] = {
         "Label": LAUNCH_AGENT_LABEL,
         "ProgramArguments": [
@@ -1530,6 +1541,7 @@ def render_launch_agent_plist(
             "PATH": _service_path(config.paths),
             "VIBECRAFTED_HOME": str(config.paths.home),
             "VIBECRAFTED_RUNTIME_HOME": str(config.paths.runtime_home),
+            **runtime_root_env,
             "VC_SERVER_PUBLIC_URL": config.public_url or config.endpoint,
             "VIBECRAFTED_SERVER_CONFIG": str(config.config_file or ""),
             "VIBECRAFTED_SERVER_SERVICE": "launchd",
