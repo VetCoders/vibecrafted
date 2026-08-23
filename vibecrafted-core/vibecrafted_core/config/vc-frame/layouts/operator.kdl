@@ -39,6 +39,12 @@ layout {
             plugin location="about" {
                 guide_mode "mission-control"
                 pane_title "Start here — map of this workspace"
+                // Product identity on the Guide's first line ("Vibecrafted 4.2.4").
+                // The version placeholder is stamped by build-vibecrafted-release.sh
+                // when the runtime is assembled; an unstamped checkout shows the
+                // name alone (the about plugin drops an @PLACEHOLDER@).
+                product_name "Vibecrafted"
+                product_version "@VIBECRAFTED_VERSION@"
             }
         }
     }

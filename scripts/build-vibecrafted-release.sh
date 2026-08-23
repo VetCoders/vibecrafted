@@ -515,6 +515,18 @@ build_product() {
     "$runtime/vibecrafted-core/"
   printf '%s\n' "$RUNTIME_VERSION" \
     > "$runtime/vibecrafted-core/vibecrafted_core/VERSION"
+  # The Guide's first line reads the product version from the operator layout
+  # (about plugin: product_name / product_version). Stamp the marketing
+  # version, not the +sha runtime version: it is what the DMG is named after.
+  local layouts_dir="$runtime/vibecrafted-core/vibecrafted_core/config/vc-frame/layouts" layout
+  for layout in "$layouts_dir"/*.kdl; do
+    [[ -f "$layout" ]] || continue
+    grep -q '@VIBECRAFTED_VERSION@' "$layout" || continue
+    sed -i '' "s/@VIBECRAFTED_VERSION@/$VERSION/g" "$layout"
+  done
+  if grep -rq '@VIBECRAFTED_VERSION@' "$layouts_dir"; then
+    die "unstamped @VIBECRAFTED_VERSION@ left in $layouts_dir"
+  fi
   /bin/cp -R "$REPO_ROOT/config/." "$runtime/config/"
   mkdir -p "$runtime/server/site"
   /bin/cp -R "$server_site/." "$runtime/server/site/"
