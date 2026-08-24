@@ -2,9 +2,9 @@ import sys
 from pathlib import Path
 
 import pytest
+from vibecrafted_core.runtime_paths import read_version_file, vibecrafted_home
 
 from scripts import installer_gui, vetcoders_install
-from scripts.runtime_paths import read_version_file, vibecrafted_home
 
 
 def _write_installed_runtime_deck(home: Path) -> Path:
@@ -281,11 +281,15 @@ def test_non_python_launcher_wrappers_have_explicit_deck_verbs() -> None:
         "telemetry": "telemetry",
         "vc-dashboard": "dashboard",
         "vc-dispatch": "dispatch",
+        "vc-doctor": "doctor",
         "vc-help": "help",
         "vc-init": "init",
         "vc-justdo": "justdo",
+        "vc-receipt": "receipt",
         "vc-resume": "resume",
         "vc-start": "start",
+        "vc-status": "status",
+        "vc-update": "update",
     }
 
 

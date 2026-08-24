@@ -52,11 +52,37 @@ from typing import Any, Literal
 try:
     _distribution_manifest = importlib.import_module("distribution_manifest")
     _installer_brand = importlib.import_module("installer_brand")
-    _runtime_paths = importlib.import_module("runtime_paths")
 except ModuleNotFoundError:  # pragma: no cover - import path depends on entrypoint
     _distribution_manifest = importlib.import_module("scripts.distribution_manifest")
     _installer_brand = importlib.import_module("scripts.installer_brand")
-    _runtime_paths = importlib.import_module("scripts.runtime_paths")
+
+
+def _load_runtime_paths() -> Any:
+    """Load vibecrafted_core/runtime_paths.py by file, never through the package.
+
+    The root grammar has exactly one definition and it lives in the package.
+    This installer runs on the host's python3 before the product interpreter
+    exists, and ``vibecrafted_core/__init__.py`` pulls the whole control plane
+    (Python 3.11+), so the module is executed from its file without importing
+    the package. No copy of the grammar lives under scripts/.
+    """
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime_paths.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "vibecrafted_core.runtime_paths", module_path
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load runtime paths from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_runtime_paths = _load_runtime_paths()
 
 FOOTER_BRANDING = _installer_brand.FOOTER_BRANDING
 FRAMEWORK_STAMP = _installer_brand.FRAMEWORK_STAMP
@@ -66,6 +92,7 @@ VAPOR_HEADER = _installer_brand.VAPOR_HEADER
 brand_separator = _installer_brand.separator
 brand_version_line = _installer_brand.version_line
 read_version_file = _runtime_paths.read_version_file
+read_staged_tools_version = _runtime_paths.read_staged_tools_version
 vibecrafted_backups_home = _runtime_paths.vibecrafted_backups_home
 vibecrafted_launcher_bin = _runtime_paths.vibecrafted_launcher_bin
 vibecrafted_runtime_home = _runtime_paths.vibecrafted_runtime_home
@@ -301,6 +328,8 @@ class Foundation:
                 hints.append(f"pipx install {pkg}")
             elif ch == "source":
                 hints.append(f"Download from {pkg}")
+            elif ch == "bundled":
+                hints.append(pkg)
         return " | ".join(hints)
 
 
@@ -531,12 +560,15 @@ FOUNDATIONS: list[Foundation] = [
     Foundation(
         name="vc-frame",
         description="VC Frame multi-agent terminal workspace surface",
-        channels=["canonical"],
+        channels=["bundled"],
         packages={
-            # Frame binary installer — not the framework orchestrator.
-            "canonical": (
-                "curl -fsSL https://github.com/vetcoders/vc-frame"
-                "/releases/latest/download/install.sh | sh"
+            # vc-frame has no standalone installer: it ships inside the signed
+            # Vibecrafted desktop app (DMG) and is built from the sibling
+            # checkout by `make install` for maintainers. The headless runtime
+            # (dispatch / observe / await / reports) does not need it.
+            "bundled": (
+                "optional cockpit: ships with the Vibecrafted desktop app (DMG); "
+                "headless runs work without it"
             ),
         },
         verify_cmd="vc-frame --version",
@@ -2473,6 +2505,10 @@ LAUNCHER_WRAPPERS = [
     "vc-ship",
     "vc-dispatch",
     "vc-resume",
+    "vc-doctor",
+    "vc-status",
+    "vc-update",
+    "vc-receipt",
     "vc-agents",
     "telemetry",
     *[f"vc-{name}" for name in SKILL_WRAPPER_NAMES],
@@ -4280,6 +4316,8 @@ def _teardown_owned_runtime_for_uninstall(
         return ()
     actions: list[str] = []
     current_link = _current_tools_link(shared_home)
+    lease_path = _tools_install_lease_path(current_link)
+    lease_preexisting = _path_present(lease_path)
     with _tools_install_lease(
         current_link,
         operation="runtime-uninstall",
@@ -4341,6 +4379,13 @@ def _teardown_owned_runtime_for_uninstall(
                         raise OSError(
                             "retired vc-frame.real processes remain after teardown"
                         )
+    if dry_run and not lease_preexisting:
+        # A dry run must leave the disk exactly as it found it. The real teardown
+        # leaves the lease to the uninstall inventory, which removes it by name.
+        try:
+            lease_path.unlink()
+        except OSError:
+            pass
     return tuple(actions)
 
 
@@ -11053,9 +11098,23 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
     """Run full installation health check."""
     findings: list[DoctorFinding] = []
 
-    # 0. Framework version
-    fw_ver = state.framework_version or "unknown"
-    findings.append(DoctorFinding("ok", "version", fw_ver))
+    # 0. Framework version. The install state may predate the stamped-identity
+    # contract (or be written by a lane that never filled it); the published
+    # runtime's own VERSION stamp is the same truth the launcher resolves.
+    fw_ver = (state.framework_version or "").strip()
+    if not fw_ver or fw_ver == "unknown":
+        fw_ver = read_staged_tools_version()
+    if fw_ver == "unknown":
+        findings.append(
+            DoctorFinding(
+                "warn",
+                "version",
+                "no stamped install identity found — run `make install` "
+                "(or `vibecrafted update`) to publish a versioned runtime",
+            )
+        )
+    else:
+        findings.append(DoctorFinding("ok", "version", fw_ver))
 
     # 0b. Distribution channel + upgrade path
     current_link = vibecrafted_tools_home() / "vibecrafted-current"
@@ -13342,6 +13401,14 @@ def _managed_tools_entry(path: Path) -> bool:
         path.name == "vibecrafted-current"
         or path.name.startswith("vibecrafted-")
         or path.name.startswith(".incoming-")
+        # Installer-generated siblings: atomic-staging dirs, the current-handoff
+        # marker, and the install lock. Legacy installs accumulate these without
+        # any manifest entry, so ownership is by name pattern, not state.
+        or path.name.startswith(".vibecrafted-")
+        or path.name.startswith("..vibecrafted-")
+        # Finder metadata inside a directory the framework owns end to end.
+        # Left behind it keeps the tools root non-empty and unprunable forever.
+        or path.name == ".DS_Store"
     )
 
 
@@ -13363,12 +13430,23 @@ def _build_uninstall_inventory(
     records: list[ManagedPath] = []
     seen: dict[str, int] = {}
 
-    def add(kind: str, path: Path, action: str = "remove", reason: str = "") -> None:
+    def add(
+        kind: str,
+        path: Path,
+        action: str = "remove",
+        reason: str = "",
+        *,
+        always: bool = False,
+    ) -> None:
         """Record one managed path for the uninstall inventory, deduping by resolved path and
         upgrading a prior 'preserve' record if a stronger action applies.
+
+        `always=True` registers a path that does not exist yet, for state this very
+        teardown is about to create. Both the backup pass and the removal pass
+        re-check presence, so an absent path is still never deleted unbacked.
         """
         normalized = path.expanduser()
-        if action != "remove-if-empty" and not _path_present(normalized):
+        if not always and action != "remove-if-empty" and not _path_present(normalized):
             return
         key = str(normalized)
         existing = seen.get(key)
@@ -13435,6 +13513,19 @@ def _build_uninstall_inventory(
                 "shared parent remains when unrelated entries exist",
             )
 
+    # `_teardown_owned_runtime_for_uninstall` takes the cross-process install lease
+    # AFTER this inventory is built, so pure discovery never sees the lockfile it
+    # creates: it survived every teardown and kept the tools root non-empty
+    # forever. Register it up front so the same run that creates it removes it.
+    if vibecrafted_tools_home().is_dir():
+        add(
+            "install-lease",
+            _tools_install_lease_path(_current_tools_link(shared_home)),
+            "remove",
+            "transient install lease; created by this teardown and removed with it",
+            always=True,
+        )
+
     runtime_bin = vibecrafted_runtime_bin()
     if runtime_bin.is_dir():
         children = sorted(runtime_bin.iterdir(), key=lambda item: item.name)
@@ -13451,25 +13542,141 @@ def _build_uninstall_inventory(
 
     runtime_home = vibecrafted_runtime_home()
     if runtime_home.is_dir():
+        # Names the framework itself writes under the runtime home. Discovery by
+        # name keeps this correct for legacy installs whose manifests predate
+        # these payloads entirely (releases/providers/server were invisible to
+        # uninstall until 2026-08-19 and survived every teardown).
+        framework_runtime_names = {
+            "releases",
+            "providers",
+            "server",
+            "active.json",
+            ".DS_Store",
+        }
         for child in sorted(runtime_home.iterdir(), key=lambda item: item.name):
             if child in {vibecrafted_tools_home(), runtime_bin}:
                 continue
-            add(
-                "runtime-data",
-                child,
-                "preserve",
-                "runtime data is not proven installer-owned",
-            )
+            if child.name in framework_runtime_names:
+                add(
+                    "runtime-data",
+                    child,
+                    "remove",
+                    "framework runtime payload (release/provider/server state)",
+                )
+            else:
+                add(
+                    "runtime-data",
+                    child,
+                    "preserve",
+                    "runtime data is not proven installer-owned",
+                )
+        add(
+            "runtime-home",
+            runtime_home,
+            "remove-if-empty",
+            "shared parent remains when unrelated entries exist",
+        )
 
     uv_tools_root = Path(
         os.environ.get("UV_TOOL_DIR", str(xdg_data_home() / "uv" / "tools"))
     ).expanduser()
-    for name in ("vibecrafted", "vibecrafted-core", "vibecrafted-mcp"):
+    for name in (
+        "vibecrafted",
+        "vibecrafted-core",
+        "vibecrafted-mcp",
+        "vibecrafted-iterm2",
+    ):
         add(
             "uv-tool",
             uv_tools_root / name,
             "preserve",
             "uv owns this environment; remove it with `uv tool uninstall`",
+        )
+
+    # Config and macOS surfaces the framework writes outside the runtime home.
+    # Discovery by known path, not manifest, so installs that predate manifest
+    # tracking still come off cleanly. Operator secrets (*.env) are preserved.
+    home_dir = Path.home()
+    config_root = Path(
+        os.environ.get("XDG_CONFIG_HOME", str(home_dir / ".config"))
+    ).expanduser()
+    vib_config = config_root / "vibecrafted"
+    if vib_config.is_dir():
+        for child in sorted(vib_config.iterdir(), key=lambda item: item.name):
+            if child.suffix == ".env":
+                add("config", child, "preserve", "operator secret env file")
+            else:
+                add("config", child, "remove", "framework-generated configuration")
+        add(
+            "config-root",
+            vib_config,
+            "remove-if-empty",
+            "kept when operator secrets remain",
+        )
+    add(
+        "config",
+        config_root / "vc-frame",
+        "remove",
+        "framework-generated vc-frame config tree",
+    )
+    add(
+        "config",
+        config_root / "vetcoders" / "frontier",
+        "remove",
+        "framework sidecar wiring (starship/atuin/vc-frame links and .bak snapshots)",
+    )
+    if sys.platform == "darwin":
+        library = home_dir / "Library"
+        add(
+            "launchagent",
+            library / "LaunchAgents" / "com.vetcoders.vibecrafted-slack-bridge.plist",
+            "remove",
+            "provider service plist; a loaded job ends at logout or explicit bootout",
+        )
+        dynamic_profiles = (
+            library / "Application Support" / "iTerm2" / "DynamicProfiles"
+        )
+        for profile_name in ("vibecrafted.json", "vibecrafted-experimental.json"):
+            add(
+                "iterm2-profile",
+                dynamic_profiles / profile_name,
+                "remove",
+                "dynamic profile installed by the iterm2 plugin",
+            )
+        for bundle_id in (
+            "io.vetcoders.vc-frame",
+            "com.vibecrafted.vc-board",
+            "com.vibecrafted.vc-term",
+        ):
+            add(
+                "app-support",
+                library / "Application Support" / bundle_id,
+                "remove",
+                "framework runtime state",
+            )
+        add(
+            "cache",
+            library / "Caches" / "io.vetcoders.vc-frame",
+            "remove",
+            "framework cache",
+        )
+        for pref_domain in (
+            "io.vetcoders.vibecrafted",
+            "com.vibecrafted.vc-board",
+            "com.vibecrafted.vc-board.debug",
+            "com.vibecrafted.vc-term",
+        ):
+            add(
+                "preference",
+                library / "Preferences" / f"{pref_domain}.plist",
+                "remove",
+                "framework preference domain",
+            )
+        add(
+            "app-bundle",
+            Path("/Applications/Vibecrafted.app"),
+            "preserve",
+            "installed from the DMG; remove by dragging to Trash",
         )
 
     for name in ("artifacts", "control_plane", "logs"):
@@ -13486,6 +13693,10 @@ def _print_uninstall_inventory(inventory: Sequence[ManagedPath]) -> None:
     """Print the planned uninstall inventory (remove/edit/preserve) before acting on it."""
     print(bold("Managed teardown inventory:"))
     for record in inventory:
+        if record.action != "remove-if-empty" and not _path_present(record.path):
+            # Registered ahead of time (the install lease this teardown creates);
+            # nothing on disk to report until it exists.
+            continue
         verb = {
             "remove": "remove",
             "edit": "edit",
@@ -13551,7 +13762,11 @@ def _apply_uninstall_inventory(
         elif reason:
             preserved.append(ManagedPath(record.kind, record.path, "preserve", reason))
 
-    for record in (item for item in inventory if item.action == "remove-if-empty"):
+    prunable = sorted(
+        (item for item in inventory if item.action == "remove-if-empty"),
+        key=lambda item: (-len(item.path.parts), str(item.path)),
+    )
+    for record in prunable:
         if not record.path.is_dir():
             continue
         try:
@@ -13638,7 +13853,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         or bool(_retired_vc_frame_process_census())
     )
     has_work = runtime_evidence or any(
-        record.action in {"remove", "edit"}
+        (record.action in {"remove", "edit"} and _path_present(record.path))
         or (
             record.action == "remove-if-empty"
             and record.path.is_dir()

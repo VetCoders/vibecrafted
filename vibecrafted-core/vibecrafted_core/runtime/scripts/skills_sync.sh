@@ -14,11 +14,11 @@ Then create symlink views inside the remote tool homes:
   $HOME/.agy/skills
 
 Examples:
-  bash runtime/scripts/skills_sync.sh mgbook16
-  bash runtime/scripts/skills_sync.sh mgbook16 --tool codex --tool claude
-  bash runtime/scripts/skills_sync.sh mgbook16 --dry-run
-  bash runtime/scripts/skills_sync.sh mgbook16 --mirror
-  bash runtime/scripts/skills_sync.sh mgbook16 --with-shell
+  bash runtime/scripts/skills_sync.sh host-b
+  bash runtime/scripts/skills_sync.sh host-b --tool codex --tool claude
+  bash runtime/scripts/skills_sync.sh host-b --dry-run
+  bash runtime/scripts/skills_sync.sh host-b --mirror
+  bash runtime/scripts/skills_sync.sh host-b --with-shell
 EOF_USAGE
 }
 
@@ -143,6 +143,12 @@ if [[ ${#tools[@]} -eq 0 ]]; then
 fi
 
 rsync_args=(-az --exclude '.DS_Store' --exclude '.backup' --exclude '.loctree' -e ssh)
+# Private, operator-only skills are never part of a mirror: neither pushed
+# from the repo nor deleted on the target when --delete is in effect.
+private_skills=(vc-deprivatize)
+for skill in "${private_skills[@]}"; do
+  rsync_args+=(--exclude "/${skill}/")
+done
 if (( mirror )); then
   rsync_args+=(--delete)
 fi

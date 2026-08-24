@@ -232,7 +232,6 @@ REQUIRED_FILES = frozenset(
         "install.toml",
         "scripts/distribution_manifest.py",
         "scripts/vetcoders_install.py",
-        "scripts/runtime_paths.py",
         "scripts/vibecrafted",
         "scripts/verify-vibecrafted-product.sh",
         "vibecrafted-core/pyproject.toml",
@@ -323,6 +322,7 @@ FORBIDDEN_COMPONENTS = frozenset(
         ".DS_Store",
         ".backup",
         ".build",
+        ".cache",
         ".circleci",
         ".coverage",
         ".devcontainer",
@@ -337,6 +337,7 @@ FORBIDDEN_COMPONENTS = frozenset(
         ".loctignore",
         ".loctree",
         ".mypy_cache",
+        ".netrc",
         ".next",
         ".prettierignore",
         ".pytest_cache",
@@ -352,11 +353,18 @@ FORBIDDEN_COMPONENTS = frozenset(
         "__tests__",
         "build",
         "coverage.xml",
+        "credentials.json",
         "dist",
+        "id_dsa",
+        "id_ecdsa",
+        "id_ed25519",
+        "id_rsa",
         "node_modules",
         "package-lock.json",
         "pnpm-lock.yaml",
         "poetry.lock",
+        "reports",
+        "secrets.json",
         "target",
         "test",
         "tests",
@@ -364,7 +372,7 @@ FORBIDDEN_COMPONENTS = frozenset(
         "yarn.lock",
     }
 )
-FORBIDDEN_SUFFIXES = (".pyc", ".pyo", ".swp", "~")
+FORBIDDEN_SUFFIXES = (".pyc", ".pyo", ".swp", "~", ".pem", ".p12", ".pfx")
 REQUIRED_LOCKFILES = frozenset(
     {"vibecrafted-app/Cargo.lock", "vibecrafted-server/Cargo.lock"}
 )
@@ -890,9 +898,6 @@ except OSError as exc:
 PY_BOOTSTRAP_SNAPSHOT
 }
 
-is_interactive_session() {
-  [[ -t 0 && -t 1 ]]
-}
 
 has_attended_tty() {
   if { exec 9<>/dev/tty; } 2>/dev/null; then
@@ -900,6 +905,11 @@ has_attended_tty() {
     return 0
   fi
   return 1
+}
+
+# >>> scripts/lib/runtime-roots.sh (verbatim copy — install.sh is the curl|bash bootstrap; parity test pins it)
+is_interactive_session() {
+  [[ -t 0 && -t 1 ]]
 }
 
 default_vibecrafted_home() {
@@ -922,6 +932,22 @@ default_vibecrafted_runtime_home() {
   printf '%s\n' "$HOME/.local/share/vibecrafted"
 }
 
+default_vibecrafted_tools_home() {
+  if [[ -n "${VIBECRAFTED_TOOLS_HOME:-}" ]]; then
+    printf '%s\n' "$VIBECRAFTED_TOOLS_HOME"
+    return
+  fi
+  printf '%s/tools\n' "$(default_vibecrafted_runtime_home)"
+}
+
+default_vibecrafted_launcher_bin() {
+  if [[ -n "${VIBECRAFTED_LAUNCHER_BIN:-}" ]]; then
+    printf '%s\n' "$VIBECRAFTED_LAUNCHER_BIN"
+    return
+  fi
+  printf '%s\n' "$HOME/.local/bin"
+}
+
 canonical_vibecrafted_home() {
   printf '%s\n' "$HOME/.vibecrafted"
 }
@@ -935,11 +961,11 @@ canonical_vibecrafted_launcher_bin() {
 }
 
 pause_runtime_contract_failure() {
-  if ! is_interactive_session; then
+  printf '  → fix: vibecrafted doctor --fix-legacy-bootstrap --fix-launchers\n' >&2
+  if [[ "${VIBECRAFTED_INSTALL_NONINTERACTIVE:-0}" == "1" ]] || ! is_interactive_session; then
     return
   fi
-  printf '  → fix: vibecrafted doctor --fix-launchers\n' >&2
-  printf 'Press Enter to continue, or Ctrl-C to abort: '
+  printf 'Press Enter to continue, or Ctrl-C to abort: ' >&2
   read -r _ || true
 }
 
@@ -954,7 +980,7 @@ enforce_runtime_root_contract() {
 
   resolved_store="$(default_vibecrafted_home)"
   resolved_runtime="$(default_vibecrafted_runtime_home)"
-  resolved_launcher="${VIBECRAFTED_LAUNCHER_BIN:-$expected_launcher}"
+  resolved_launcher="$(default_vibecrafted_launcher_bin)"
 
   if [[ "$resolved_store" != "$expected_store" ]]; then
     printf '✗ store root drift: %s ≠ %s\n' "$resolved_store" "$expected_store" >&2
@@ -978,6 +1004,7 @@ enforce_runtime_root_contract() {
 
   return 0
 }
+# <<< scripts/lib/runtime-roots.sh
 
 bootstrap_next_step() {
   if [[ "$target" == "vibecrafted" && "$use_gui" == "1" ]]; then
@@ -1043,7 +1070,7 @@ vibecrafted_home="$(default_vibecrafted_home)"
 export VIBECRAFTED_HOME="$vibecrafted_home"
 vibecrafted_runtime_home="$(default_vibecrafted_runtime_home)"
 export VIBECRAFTED_RUNTIME_HOME="$vibecrafted_runtime_home"
-default_tools_dir="${VIBECRAFTED_TOOLS_HOME:-$vibecrafted_runtime_home/tools}"
+default_tools_dir="$(default_vibecrafted_tools_home)"
 default_ref="${VIBECRAFTED_REF:-main}"
 
 ref="$default_ref"
@@ -1256,7 +1283,7 @@ verify_signature() {
 
   if curl -fsSL "${base_url}/$(basename "$sig_file")" -o "$sig_file" 2>/dev/null; then
     if openssl dgst -sha256 -verify "$pub_file" -signature "$sig_file" "$file" >/dev/null 2>&1; then
-      vinfo "  Signature ✓  (Maciej Gad / MW223P3NPX)"
+      vinfo "  Signature ✓  (Developer ID, team MW223P3NPX)"
     else
       die "Signature verification FAILED for $(basename "$file")"
     fi
