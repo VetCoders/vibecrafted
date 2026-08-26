@@ -58,8 +58,23 @@ try:
     _distribution_manifest = importlib.import_module("distribution_manifest")
     _installer_brand = importlib.import_module("installer_brand")
 except ModuleNotFoundError:  # pragma: no cover - import path depends on entrypoint
-    _distribution_manifest = importlib.import_module("scripts.distribution_manifest")
-    _installer_brand = importlib.import_module("scripts.installer_brand")
+    try:
+        _distribution_manifest = importlib.import_module("scripts.distribution_manifest")
+        _installer_brand = importlib.import_module("scripts.installer_brand")
+    except ModuleNotFoundError:
+        def _load_adjacent_script(name: str) -> Any:
+            path = Path(__file__).resolve().parent / f"{name}.py"
+            spec = importlib.util.spec_from_file_location(
+                f"vibecrafted_runtime_{name}", path
+            )
+            if spec is None or spec.loader is None:
+                raise ModuleNotFoundError(name)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+
+        _distribution_manifest = _load_adjacent_script("distribution_manifest")
+        _installer_brand = _load_adjacent_script("installer_brand")
 
 
 def _load_runtime_paths() -> Any:

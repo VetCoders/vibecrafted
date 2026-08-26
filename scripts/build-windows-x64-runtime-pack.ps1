@@ -165,6 +165,7 @@ $zipName
 .
 ..\python-site
 ..\vibecrafted-core
+..\scripts
 import site
 "@
 Set-Content -LiteralPath $pth.FullName -Value $pthBody -Encoding ascii
@@ -203,6 +204,24 @@ Set-Content -LiteralPath (Join-Path $payload "bin\vibecrafted.cmd") -Value $laun
 & python (Join-Path $repoRoot "scripts\render-python-entrypoint-launchers.py") `
     --pyproject (Join-Path $repoRoot "vibecrafted-core\pyproject.toml") `
     --bin-dir (Join-Path $payload "bin") --windows
+
+$screenscribeSite = Join-Path $payload "python-site\screenscribe"
+if (Test-Path -LiteralPath $screenscribeSite) {
+    $screenscribeCmd = @'
+@echo off
+setlocal EnableExtensions
+set "BIN_DIR=%~dp0"
+for %%I in ("%BIN_DIR%..") do set "VIBECRAFTED_RUNTIME_ROOT=%%~fI"
+set "PYTHONPATH=%VIBECRAFTED_RUNTIME_ROOT%\python-site;%VIBECRAFTED_RUNTIME_ROOT%\vibecrafted-core"
+set "PYTHONNOUSERSITE=1"
+set "PYTHONDONTWRITEBYTECODE=1"
+"%BIN_DIR%python.exe" -c "from screenscribe.bootstrap import main; main()" %*
+'@
+    Set-Content -LiteralPath (Join-Path $binDir "screenscribe.cmd") -Value $screenscribeCmd -Encoding ascii
+    if (-not (Test-Path -LiteralPath (Join-Path $binDir "screenscribe.cmd"))) {
+        Die "screenscribe wheel is present but bin/screenscribe.cmd was not written"
+    }
+}
 
 $inventoryScript = Join-Path $work "write_inventory.py"
 @'
