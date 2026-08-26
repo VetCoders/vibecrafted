@@ -429,13 +429,16 @@ def install_or_find_foundation(
 
     Returns `(path, source)` where source is 'bundled', 'pre-existing', or 'not-installed'.
     """
-    bundled = install_foundation_from_bundle(foundation, repo_root, dry_run=dry_run)
-    if bundled:
-        return str(bundled), "bundled"
-
+    # A standalone installation of the same tool owns its public name. The
+    # vendored payload only fills a gap; it never overwrites another product's
+    # command with an older bundled copy.
     found = foundation.is_installed()
     if found:
         return found, "pre-existing"
+
+    bundled = install_foundation_from_bundle(foundation, repo_root, dry_run=dry_run)
+    if bundled:
+        return str(bundled), "bundled"
     return "", "not-installed"
 
 
@@ -14534,6 +14537,59 @@ def _atomic_text(path: Path, body: str, *, mode: int = 0o644) -> None:
     os.replace(temporary, path)
 
 
+_RUNTIME_NAMESPACE_PREFIXES = ("vc-", "vibecrafted")
+_RUNTIME_NAMESPACE_NAMES = {"vibecraft", "telemetry"}
+
+
+def _runtime_launcher_public_name(name: str) -> str:
+    """The ~/.local/bin basename a generation executable may claim.
+
+    Vibecrafted owns only its own namespace. A bundled public tool (loct,
+    aicx, prview, screenscribe, ...) stays generation-private and is published
+    globally only under the vibecrafted- prefix, so it can never shadow or
+    silently downgrade a standalone installation of that product.
+    """
+    base = name.lower()
+    if base.startswith(_RUNTIME_NAMESPACE_PREFIXES) or base in _RUNTIME_NAMESPACE_NAMES:
+        return name
+    return f"vibecrafted-{name}"
+
+
+def _reclaim_foreign_launcher_names(
+    bin_dir: Path,
+    launcher_home: Path,
+    *,
+    runtime_home: Path,
+    receipt: dict[str, Any],
+    previous: dict[str, Any],
+) -> None:
+    """Remove bare public-tool launchers earlier generations published.
+
+    Only launchers this installer receipted (path and byte digest both match
+    ``owned_files``) are removed. A bare name without our receipt — or one
+    mutated since we wrote it — belongs to someone else and is left alone.
+    """
+    previous_owned = previous.get("owned_files", {})
+    for entry in sorted(bin_dir.iterdir(), key=lambda item: item.name):
+        if not entry.is_file():
+            continue
+        if _runtime_launcher_public_name(entry.name) == entry.name:
+            continue
+        stale = launcher_home / entry.name
+        stale_key = str(stale)
+        if stale_key not in previous_owned or not _path_present(stale):
+            continue
+        if (
+            stale.is_symlink()
+            or not stale.is_file()
+            or _sha256_path(stale) != previous_owned[stale_key]
+        ):
+            continue
+        _remove_path(stale)
+        receipt.get("owned_files", {}).pop(stale_key, None)
+    _checkpoint_runtime_install_receipt(runtime_home, receipt)
+
+
 def _runtime_launcher_body(
     *,
     generation: Path,
@@ -15064,7 +15120,9 @@ def cmd_runtime_install(args: argparse.Namespace) -> int:
             continue
         if not os.access(entry, os.X_OK):
             continue
-        destination = paths["launcher_home"] / entry.name
+        destination = paths["launcher_home"] / _runtime_launcher_public_name(
+            entry.name
+        )
         body = _runtime_launcher_body(
             generation=generation,
             config_home=paths["config_home"],
@@ -15081,6 +15139,13 @@ def cmd_runtime_install(args: argparse.Namespace) -> int:
             receipt=receipt,
             previous=previous,
         )
+    _reclaim_foreign_launcher_names(
+        bin_dir,
+        paths["launcher_home"],
+        runtime_home=runtime_home,
+        receipt=receipt,
+        previous=previous,
+    )
 
     verifier_launcher = paths["launcher_home"] / SECURE_WALKAROUND_LAUNCHER
     verifier_body = _secure_walkaround_launcher_contents(

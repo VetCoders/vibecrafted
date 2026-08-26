@@ -1702,3 +1702,72 @@ def test_cmd_uninstall_names_every_uv_environment_it_will_not_touch(
         assert (environment / "uv-receipt.toml").is_file()
         assert str(environment) in output
     assert "uv tool uninstall" in output
+
+
+def test_runtime_launcher_public_name_never_claims_foreign_tools() -> None:
+    for own in (
+        "vc-start",
+        "vc-server-supervisor",
+        "vibecrafted",
+        "vibecrafted-resume",
+        "vibecraft",
+        "telemetry",
+    ):
+        assert installer._runtime_launcher_public_name(own) == own
+    for foreign in (
+        "loct",
+        "loctree",
+        "loctree-lsp",
+        "loctree-mcp",
+        "aicx",
+        "aicx-mcp",
+        "prview",
+        "screenscribe",
+    ):
+        assert (
+            installer._runtime_launcher_public_name(foreign)
+            == f"vibecrafted-{foreign}"
+        )
+
+
+def test_reclaim_foreign_launcher_names_removes_only_receipted_shims(
+    tmp_path: Path,
+) -> None:
+    bin_dir = tmp_path / "generation/bin"
+    bin_dir.mkdir(parents=True)
+    launcher_home = tmp_path / "launchers"
+    launcher_home.mkdir()
+    runtime_home = tmp_path / "runtime"
+    runtime_home.mkdir()
+    for name in ("prview", "loct", "aicx", "vc-start"):
+        executable = bin_dir / name
+        executable.write_text("#!/bin/bash\n", encoding="utf-8")
+        executable.chmod(0o755)
+
+    receipted = launcher_home / "prview"
+    receipted.write_text("#!/bin/bash\nexec ours\n", encoding="utf-8")
+    foreign = launcher_home / "loct"
+    foreign.write_text("#!/bin/bash\nexec theirs\n", encoding="utf-8")
+    mutated = launcher_home / "aicx"
+    mutated.write_text("#!/bin/bash\nexec edited-by-operator\n", encoding="utf-8")
+
+    previous = {
+        "owned_files": {
+            str(receipted): installer._sha256_path(receipted),
+            str(mutated): "0" * 64,
+        }
+    }
+    receipt = {"owned_files": dict(previous["owned_files"])}
+    installer._reclaim_foreign_launcher_names(
+        bin_dir,
+        launcher_home,
+        runtime_home=runtime_home,
+        receipt=receipt,
+        previous=previous,
+    )
+
+    assert not receipted.exists()
+    assert str(receipted) not in receipt["owned_files"]
+    assert foreign.exists()
+    assert mutated.exists()
+    assert str(mutated) in receipt["owned_files"]
