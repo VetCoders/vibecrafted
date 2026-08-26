@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import contextlib
 import errno
-import fcntl
 import hashlib
 import json
 import os
@@ -27,6 +26,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from . import portable_lock as fcntl
 
 if TYPE_CHECKING:
     from .settlement import SettlementEventV2

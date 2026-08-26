@@ -11,7 +11,6 @@ while giving both surfaces the same filesystem-backed exclusion boundary.
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -22,6 +21,8 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, BinaryIO
+
+from . import portable_lock as fcntl
 
 _LOCAL_LOCKS_GUARD = threading.Lock()
 _LOCAL_LOCKS: dict[str, threading.RLock] = {}

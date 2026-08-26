@@ -13,10 +13,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_PAGE = "https://github.com/vetcoders/vibecrafted/releases/latest"
 
 # Pinned so the Windows entry point cannot drift silently. Measured
-# 2026-08-18; both copies agreed at this digest. See
+# 2026-08-26 after the native Runtime Pack rewrite. See
 # test_windows_entry_point_does_not_drift_between_its_two_copies for why a
-# constant is needed on top of the cross-repo comparison.
-INSTALL_PS1_SHA256 = "12c2ca5b95195a2fcee0f4987962fd35ec52dde85588c226f68bcab4680450b6"
+# constant is needed on top of the cross-repo comparison. The served
+# vibecrafted-io copy is a release-operator follow-up, not this Windows lane.
+INSTALL_PS1_SHA256 = "c0d3fd82beba5534846c23efc91a3f2bad8034e1dd41445bddb5f6269ed1d478"
 
 # Binaries a developer laptop always has and the GitHub macos-15 image does
 # not. Measured 2026-08-18 against actions/runner-images

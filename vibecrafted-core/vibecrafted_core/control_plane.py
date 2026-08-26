@@ -8,7 +8,6 @@ import argparse
 import contextlib
 import datetime as dt
 import errno
-import fcntl
 import gzip
 import json
 import os
@@ -22,6 +21,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from . import portable_lock as fcntl
 from .clock import utc_now
 from .delivery.model import (
     ContractError,
@@ -32,6 +32,7 @@ from .delivery.model import (
     ProofResult,
     ProofState,
 )
+from .portable_lock import owned_by_current_user
 from .report_contract import (
     CLAIM_BLOCKED,
     CLAIM_COMPLETED,
@@ -335,9 +336,9 @@ def _event_lock(*, exclusive: bool) -> Iterator[None]:
         metadata = os.fstat(fd)
         if not stat.S_ISREG(metadata.st_mode):
             raise OSError(errno.EINVAL, "event lock is not a regular file")
-        if metadata.st_uid != os.getuid():
+        if not owned_by_current_user(metadata):
             raise PermissionError("event lock is not owned by the current user")
-        if metadata.st_mode & 0o022:
+        if os.name != "nt" and metadata.st_mode & 0o022:
             raise PermissionError("event lock must not be group/world writable")
         operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
         fcntl.flock(fd, operation)

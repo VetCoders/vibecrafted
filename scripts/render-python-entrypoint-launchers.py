@@ -20,7 +20,9 @@ _DISPATCH = (
 )
 
 
-def render_launchers(pyproject: Path, bin_dir: Path) -> list[str]:
+def render_launchers(
+    pyproject: Path, bin_dir: Path, *, windows: bool = False
+) -> list[str]:
     """Create every missing ``project.scripts`` launcher in ``bin_dir``."""
 
     with pyproject.open("rb") as handle:
@@ -36,8 +38,23 @@ def render_launchers(pyproject: Path, bin_dir: Path) -> list[str]:
         if not isinstance(target, str) or not _ENTRYPOINT_TARGET.fullmatch(target):
             raise ValueError(f"invalid launcher target for {name}: {target!r}")
 
-        destination = bin_dir / name
+        destination = bin_dir / (f"{name}.cmd" if windows else name)
         if destination.exists() or destination.is_symlink():
+            continue
+
+        if windows:
+            payload = (
+                "@echo off\r\n"
+                "setlocal EnableExtensions\r\n"
+                'set "BIN_DIR=%~dp0"\r\n'
+                f'set "target={target}"\r\n'
+                'set "launcher=%BIN_DIR%' + name + '.cmd"\r\n'
+                'if defined VIBECRAFTED_DECLARED_LAUNCHER set "launcher=%VIBECRAFTED_DECLARED_LAUNCHER%"\r\n'
+                '"%BIN_DIR%python.exe" -c '
+                f'"{_DISPATCH}" "%target%" "%launcher%" %*\r\n'
+            )
+            destination.write_text(payload, encoding="utf-8")
+            created.append(name)
             continue
 
         dispatch_command = (
@@ -71,8 +88,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--pyproject", type=Path, required=True)
     parser.add_argument("--bin-dir", type=Path, required=True)
+    parser.add_argument(
+        "--windows",
+        action="store_true",
+        help="render .cmd launchers (default remains POSIX even on Windows hosts)",
+    )
     args = parser.parse_args()
-    created = render_launchers(args.pyproject, args.bin_dir)
+    created = render_launchers(args.pyproject, args.bin_dir, windows=args.windows)
     print(f"rendered {len(created)} Python entrypoint launcher(s)")
     return 0
 

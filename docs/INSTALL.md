@@ -1,6 +1,6 @@
 # Install Vibecrafted
 
-Vibecrafted runs on macOS, Linux and Windows-through-WSL2. The channels differ
+Vibecrafted runs on macOS, Linux and native Windows. The channels differ
 in what they give you and in how finished they are, so this page states both.
 
 ## Channel matrix
@@ -12,10 +12,10 @@ in what they give you and in how finished they are, so this page states both.
 | Bootstrap `install.sh`       | macOS, Linux, WSL2   | Command deck, runtime, control plane, skills                        | Published; CI-gated                      |
 | Source checkout              | macOS, Linux, WSL2   | Everything above plus build, test and release targets               | Published                                |
 | Container                    | anywhere Docker runs | Isolated operator runtime                                           | Published                                |
-| `install.ps1`                | Windows              | WSL2 detection and handoff — not a native install                   | In repo; not yet served over HTTP        |
+| `install.ps1`                | Windows              | Native Runtime Pack installer (`scripts/install-runtime-pack.ps1`)  | In repo; not yet served over HTTP        |
 
 If you want one sentence: **on macOS and Linux use the bootstrap today; on
-Windows install WSL2 first and then use the same bootstrap.**
+Windows use `install.ps1` with a Runtime Pack. WSL2 is an optional Linux channel.**
 
 ---
 
@@ -150,11 +150,21 @@ settlement ledger — runs on Linux.
 
 ---
 
-## Windows — WSL2
+## Windows — native Runtime Pack
 
-Vibecrafted has no native Windows build. The installer is POSIX shell, and the
-runtime assumes a POSIX process model. On Windows you install WSL2 once and then
-use the ordinary Linux path inside it.
+Native Windows installs the same receipted Runtime Pack as macOS/Linux CLI:
+one generation, `active.json` as authority, `install-runtime-pack.ps1` as the
+only installer. GUI is optional. WSL is not required.
+
+```powershell
+$env:VIBECRAFTED_RUNTIME_PACK = '.\Vibecrafted_RuntimePack_<version>-win32-x64.tar.gz'
+.\install.ps1
+```
+
+### Optional: WSL2 Linux channel
+
+WSL2 still runs the Linux portable/bootstrap path inside a distro if you want
+that layout instead of the native pack.
 
 ### 1. Install WSL2
 
@@ -185,30 +195,24 @@ install layout.
 
 ### What `install.ps1` is for
 
-The repository ships `install.ps1` as an honest Windows entry point. It is not a
-native installer and does not pretend to be one. It:
+The repository ships `install.ps1` as the native Windows Runtime Pack entry
+point. It requires PowerShell 5.1 or newer and delegates to
+`scripts/install-runtime-pack.ps1`, which verifies checksum and signature
+before extract and then runs pack-owned `python.exe` + `vetcoders_install.py`.
+WSL is not required. Set `VIBECRAFTED_RUNTIME_PACK` to a local
+`Vibecrafted_RuntimePack_*-win32-x64.tar.gz` (or let the script resolve a
+pack next to the installer).
 
-1. requires PowerShell 5.1 or newer,
-2. probes whether WSL is installed and healthy (`wsl --status`),
-3. if WSL is available, prints the exact one-liner to bootstrap inside your
-   default distro,
-4. if WSL is missing, prints the canonical WSL2 install path and **exits
-   non-zero** so no caller mistakes the outcome for success.
-
-It never silently succeeds. Either it tells you exactly what to run next, or it
-tells you what is missing.
-
-Run it from a checkout:
+Run it from a checkout after a pack is present:
 
 ```powershell
+$env:VIBECRAFTED_RUNTIME_PACK = '.\Vibecrafted_RuntimePack_<version>-win32-x64.tar.gz'
 .\install.ps1
 ```
 
 > **Current status.** `install.ps1` is not yet served from
-> `https://vibecrafted.io/install.ps1`, so the `iwr -useb … | iex` form in its
-> own header does not work yet. Use the checkout form above, or run the `wsl`
-> one-liner directly. Native Windows binaries are not on the near roadmap;
-> WSL2 is the supported answer.
+> `https://vibecrafted.io/install.ps1`. The Windows lane produces a local
+> commit, report, and artifact; publication is an operator decision.
 
 ---
 

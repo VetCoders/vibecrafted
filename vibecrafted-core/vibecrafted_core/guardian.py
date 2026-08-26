@@ -29,7 +29,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import errno
-import fcntl
 import hashlib
 import heapq
 import hmac
@@ -53,7 +52,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import portable_lock as fcntl
 from .delivery.store import atomic_write_json
+from .portable_lock import owned_by_current_user
 from .runtime_paths import vibecrafted_home
 from .server_config import load_server_config
 from .settlement import (
@@ -69,6 +70,13 @@ from .settlement import (
 from .settlement_board import SettlementBoardPublisher
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _posix_mode_private(metadata: os.stat_result) -> bool:
+    """POSIX 0600/nlink=1, or True on Windows where that contract does not exist."""
+    if os.name == "nt":
+        return True
+    return metadata.st_nlink == 1 and stat.S_IMODE(metadata.st_mode) == 0o600
 
 GUARDIAN_STATE_SCHEMA = "vibecrafted.guardian-state.v2"
 GUARDIAN_STATE_SCHEMA_V1 = "vibecrafted.guardian-state.v1"
@@ -330,11 +338,11 @@ def _ensure_private_directory(path: Path) -> None:
             raise GuardianLockSecurityError(
                 f"guardian directory is not a real directory: {path}"
             )
-        if metadata.st_uid != os.getuid():
+        if not owned_by_current_user(metadata):
             raise GuardianLockSecurityError(
                 f"guardian directory is not owned by this uid: {path}"
             )
-        if stat.S_IMODE(metadata.st_mode) & 0o077:
+        if os.name != "nt" and stat.S_IMODE(metadata.st_mode) & 0o077:
             raise GuardianLockSecurityError(
                 f"guardian directory permissions are not private: {path}"
             )
@@ -350,9 +358,8 @@ def _validate_existing_private_file(path: Path) -> None:
         return
     if (
         not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or metadata.st_nlink != 1
-        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or not owned_by_current_user(metadata)
+        or not _posix_mode_private(metadata)
     ):
         raise GuardianStateError(f"unsafe guardian file target: {path}")
 
@@ -388,7 +395,7 @@ def _atomic_private_write(path: Path, encoded: bytes) -> None:
                 raise OSError("short write while persisting guardian state")
             view = view[written:]
         metadata = os.fstat(descriptor)
-        if stat.S_IMODE(metadata.st_mode) != 0o600:
+        if os.name != "nt" and stat.S_IMODE(metadata.st_mode) != 0o600:
             raise GuardianStateError(
                 f"guardian temporary file permissions are not 0600: {temporary}"
             )
@@ -414,9 +421,8 @@ def _read_private_file(path: Path, *, maximum: int) -> bytes:
         metadata = os.fstat(descriptor)
         if (
             not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
-            or metadata.st_nlink != 1
-            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or not owned_by_current_user(metadata)
+            or not _posix_mode_private(metadata)
         ):
             raise GuardianStateError(f"unsafe guardian state file: {path}")
         if metadata.st_size > maximum:
@@ -3524,9 +3530,8 @@ def _validate_lock_descriptor(path: Path, descriptor: int) -> None:
     metadata = os.fstat(descriptor)
     if (
         not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != os.getuid()
-        or metadata.st_nlink != 1
-        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or not owned_by_current_user(metadata)
+        or not _posix_mode_private(metadata)
     ):
         raise GuardianLockSecurityError(f"unsafe guardian lock descriptor: {path}")
     try:
@@ -3537,9 +3542,8 @@ def _validate_lock_descriptor(path: Path, descriptor: int) -> None:
         ) from exc
     if (
         not stat.S_ISREG(path_metadata.st_mode)
-        or path_metadata.st_uid != os.getuid()
-        or path_metadata.st_nlink != 1
-        or stat.S_IMODE(path_metadata.st_mode) != 0o600
+        or not owned_by_current_user(path_metadata)
+        or not _posix_mode_private(path_metadata)
         or path_metadata.st_dev != metadata.st_dev
         or path_metadata.st_ino != metadata.st_ino
     ):

@@ -9,6 +9,7 @@ workspace (HAK-31).
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -75,6 +76,23 @@ def isolate_vibecrafted_test_env(
 
     isolated_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("VIBECRAFTED_HOME", str(isolated_home))
+    if sys.platform == "win32":
+        profile = isolated_home / "profile"
+        local = profile / "AppData" / "Local"
+        roaming = profile / "AppData" / "Roaming"
+        runtime = local / "Vibecrafted"
+        home_cp = runtime / "home"
+        launchers = runtime / "bin"
+        for directory in (profile, local, roaming, home_cp, launchers):
+            directory.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("USERPROFILE", str(profile))
+        monkeypatch.setenv("HOME", str(profile))
+        monkeypatch.setenv("LOCALAPPDATA", str(local))
+        monkeypatch.setenv("APPDATA", str(roaming))
+        monkeypatch.setenv("VIBECRAFTED_RUNTIME_HOME", str(runtime))
+        monkeypatch.setenv("VIBECRAFTED_LAUNCHER_BIN", str(launchers))
+        monkeypatch.setenv("VIBECRAFTED_SKIP_USER_PATH", "1")
+        monkeypatch.setenv("VIBECRAFTED_HOME", str(home_cp))
     for key, value in (restore or {}).items():
         monkeypatch.setenv(key, value)
     fail_closed_isolated_home(os.environ.get("VIBECRAFTED_HOME"))

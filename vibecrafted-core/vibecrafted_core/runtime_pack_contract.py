@@ -35,10 +35,51 @@ LINUX_ARM64_EXECUTABLES = frozenset(
         "voc",
     }
 )
+WINDOWS_X64_MANDATORY_EXECUTABLES = frozenset(
+    {
+        "python",
+        "loct",
+        "loctree",
+        "loctree-mcp",
+        "loctree-lsp",
+        "aicx",
+        "aicx-mcp",
+        "vc-server",
+    }
+)
+WINDOWS_X64_OPTIONAL_EXECUTABLES = frozenset(
+    {
+        "prview",
+        "screenscribe",
+        "voc",
+        "vc-start",
+        "vc-frame",
+        "vc-terminal",
+        "vc-server-supervisor",
+    }
+)
+WINDOWS_X64_CLASSIFICATIONS = {
+    "vc-frame": "limited-platform-scope",
+    "vc-terminal": "limited-platform-scope",
+    "voc": "limited-platform-scope",
+    "vc-start": "limited-platform-scope",
+    "prview": "release-blocker",
+    "screenscribe": "release-blocker",
+    "vc-server-supervisor": "limited-platform-scope",
+}
+WINDOWS_X64_TARGET = "x86_64-pc-windows-msvc"
 RUNTIME_INSTALLER_EXECUTABLES = frozenset(
     {
         "bin/vc-start",
         "scripts/vibecrafted",
+    }
+)
+WINDOWS_INSTALLER_PAYLOAD = frozenset(
+    {
+        "scripts/vetcoders_install.py",
+        "scripts/install-runtime-pack.ps1",
+        "bin/python.exe",
+        "bin/vibecrafted.cmd",
     }
 )
 
@@ -59,7 +100,15 @@ def _canonical_json(payload: Mapping[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2) + "\n"
 
 
-def _runtime_installer_payload(root: Path) -> None:
+def _runtime_installer_payload(root: Path, *, platform: str = "") -> None:
+    if platform in {"win32", "windows"}:
+        for relative in WINDOWS_INSTALLER_PAYLOAD:
+            path = root / relative
+            if not path.is_file() or path.is_symlink():
+                raise RuntimePackContractError(
+                    f"Runtime Pack installer payload is missing {relative}"
+                )
+        return
     for relative in RUNTIME_INSTALLER_EXECUTABLES:
         path = root / relative
         try:
@@ -193,6 +242,121 @@ def _linux_arm64_inventory(root: Path) -> dict[str, Any]:
     return inventory
 
 
+def _windows_executable_path(name: str) -> str:
+    if name == "python":
+        return "bin/python.exe"
+    if name == "screenscribe":
+        # Real Python package + cmd launcher (same class as the Linux wrapper).
+        return "bin/screenscribe.cmd"
+    return f"bin/{name}.exe"
+
+
+def _windows_x64_inventory(root: Path) -> dict[str, Any]:
+    path = root / INVENTORY_NAME
+    try:
+        raw = path.read_text(encoding="utf-8")
+        inventory = json.loads(raw)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimePackContractError(
+            "Windows x64 Runtime Pack inventory is invalid"
+        ) from exc
+    executables = inventory.get("executables") if isinstance(inventory, dict) else None
+    unsupported = inventory.get("unsupported") if isinstance(inventory, dict) else None
+    required_record = {
+        "name",
+        "path",
+        "sha256",
+        "version_argv",
+        "version_output",
+        "source_url",
+        "source_revision",
+        "source_archive_sha256",
+        "target",
+        "license",
+    }
+    unsupported_record = {"name", "classification", "reason"}
+    allowed_classifications = {"limited-platform-scope", "release-blocker"}
+    if (
+        not isinstance(inventory, dict)
+        or set(inventory)
+        != {"schema", "platform", "architecture", "executables", "unsupported"}
+        or inventory.get("schema") != "io.vetcoders.vibecrafted.runtime-inventory.v1"
+        or inventory.get("platform") != "win32"
+        or inventory.get("architecture") != "x64"
+        or raw != _canonical_json(inventory)
+        or not isinstance(executables, list)
+        or not isinstance(unsupported, list)
+        or any(
+            not isinstance(record, dict)
+            or record.get("classification") not in allowed_classifications
+            for record in unsupported
+        )
+    ):
+        raise RuntimePackContractError(
+            "Windows x64 Runtime Pack inventory violates the closed schema"
+        )
+    present = {record.get("name") for record in executables if isinstance(record, dict)}
+    missing_declared = {
+        record.get("name") for record in unsupported if isinstance(record, dict)
+    }
+    if not WINDOWS_X64_MANDATORY_EXECUTABLES <= present:
+        raise RuntimePackContractError(
+            "Windows x64 Runtime Pack inventory is missing mandatory executables"
+        )
+    if present & missing_declared:
+        raise RuntimePackContractError(
+            "Windows x64 Runtime Pack inventory lists a binary as both present and unsupported"
+        )
+    if present - (WINDOWS_X64_MANDATORY_EXECUTABLES | WINDOWS_X64_OPTIONAL_EXECUTABLES):
+        raise RuntimePackContractError(
+            "Windows x64 Runtime Pack inventory contains an undeclared executable"
+        )
+    expected_unsupported = (
+        WINDOWS_X64_OPTIONAL_EXECUTABLES - present
+    )
+    if missing_declared != expected_unsupported:
+        raise RuntimePackContractError(
+            "Windows x64 Runtime Pack unsupported set does not match missing optional tools"
+        )
+    for record in executables:
+        if (
+            not isinstance(record, dict)
+            or set(record) != required_record
+            or not all(
+                isinstance(record[field], str) and record[field]
+                for field in required_record - {"version_argv"}
+            )
+            or not isinstance(record["version_argv"], list)
+            or not all(
+                isinstance(item, str) and item for item in record["version_argv"]
+            )
+            or SHA256.fullmatch(record["sha256"]) is None
+            or SHA256.fullmatch(record["source_archive_sha256"]) is None
+            or record["target"] != WINDOWS_X64_TARGET
+            or record["path"] != _windows_executable_path(record["name"])
+            or _sha256(root / record["path"]) != record["sha256"]
+        ):
+            raise RuntimePackContractError(
+                "Windows x64 Runtime Pack executable inventory is invalid"
+            )
+    for record in unsupported:
+        name = record.get("name") if isinstance(record, dict) else None
+        expected_class = WINDOWS_X64_CLASSIFICATIONS.get(str(name), "")
+        if (
+            not isinstance(record, dict)
+            or set(record) != unsupported_record
+            or not isinstance(name, str)
+            or name not in WINDOWS_X64_OPTIONAL_EXECUTABLES
+            or record.get("classification") != expected_class
+            or not isinstance(record.get("reason"), str)
+            or not record["reason"]
+        ):
+            raise RuntimePackContractError(
+                "Windows x64 Runtime Pack unsupported inventory is invalid"
+            )
+    return inventory
+
+
 def write_provenance(
     root: str | Path,
     *,
@@ -216,10 +380,12 @@ def write_provenance(
         raise RuntimePackContractError("carrier basename must be a .tar.gz basename")
     if not version or version != version.strip():
         raise RuntimePackContractError("Runtime Pack version is invalid")
-    _runtime_installer_payload(payload_root)
+    _runtime_installer_payload(payload_root, platform=platform)
     _source_provenance(payload_root, expected_revision=source_revision)
     if platform == "linux" and architecture == "arm64":
         _linux_arm64_inventory(payload_root)
+    if platform == "win32" and architecture == "x64":
+        _windows_x64_inventory(payload_root)
     provenance = {
         "schema": SCHEMA,
         "carrier_basename": carrier_basename,
@@ -319,10 +485,12 @@ def verify_provenance(
             raise RuntimePackContractError(
                 f"Runtime Pack {field} disagrees with the selected release asset"
             )
-    _runtime_installer_payload(payload_root)
+    _runtime_installer_payload(payload_root, platform=str(provenance["platform"]))
     _source_provenance(payload_root, expected_revision=revisions["vibecrafted"])
     if provenance["platform"] == "linux" and provenance["architecture"] == "arm64":
         _linux_arm64_inventory(payload_root)
+    if provenance["platform"] == "win32" and provenance["architecture"] == "x64":
+        _windows_x64_inventory(payload_root)
     observed = _payload_files(payload_root)
     if files != observed:
         raise RuntimePackContractError(

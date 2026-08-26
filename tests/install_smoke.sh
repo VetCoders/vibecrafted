@@ -211,10 +211,10 @@ else
   fail "install.ps1 missing brand string"
 fi
 
-if grep -q "Test-WslAvailable" "$REPO_ROOT/install.ps1" 2>/dev/null; then
-  ok "install.ps1 has WSL detection helper"
+if grep -q "install-runtime-pack.ps1" "$REPO_ROOT/install.ps1" 2>/dev/null; then
+  ok "install.ps1 delegates to the native Runtime Pack installer"
 else
-  fail "install.ps1 missing WSL detection helper"
+  fail "install.ps1 missing native Runtime Pack installer handoff"
 fi
 
 # Optional: parse-check via pwsh if available (locally on macOS or in CI).

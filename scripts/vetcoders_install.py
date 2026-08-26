@@ -27,7 +27,6 @@ import argparse
 import ast
 import ctypes
 import errno
-import fcntl
 import hashlib
 import importlib
 import importlib.util
@@ -90,6 +89,27 @@ def _load_runtime_paths() -> Any:
 
 _runtime_paths = _load_runtime_paths()
 
+
+def _load_portable_lock() -> Any:
+    """Load portable_lock.py by file, matching the runtime_paths loader."""
+    module_path = (
+        Path(__file__).resolve().parents[1]
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "portable_lock.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "vibecrafted_core.portable_lock", module_path
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load portable lock from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+fcntl = _load_portable_lock()
+
 FOOTER_BRANDING = _installer_brand.FOOTER_BRANDING
 FRAMEWORK_STAMP = _installer_brand.FRAMEWORK_STAMP
 PRODUCT_LINE = _installer_brand.PRODUCT_LINE
@@ -107,6 +127,13 @@ vibecrafted_tools_home = _runtime_paths.vibecrafted_tools_home
 vibecrafted_home = _runtime_paths.vibecrafted_home
 xdg_data_home = _runtime_paths.xdg_data_home
 xdg_config_home = _runtime_paths.xdg_config_home
+canonical_vibecrafted_home = _runtime_paths.canonical_vibecrafted_home
+canonical_vibecrafted_runtime_home = _runtime_paths.canonical_vibecrafted_runtime_home
+canonical_vibecrafted_launcher_bin = _runtime_paths.canonical_vibecrafted_launcher_bin
+vibecrafted_product_config_home = _runtime_paths.vibecrafted_product_config_home
+resolve_active_generation = _runtime_paths.resolve_active_generation
+GenerationResolutionError = _runtime_paths.GenerationResolutionError
+launcher_name = _runtime_paths.launcher_name
 stage_distribution_payload = _distribution_manifest.stage_payload
 distribution_path_is_forbidden = _distribution_manifest.path_is_forbidden
 assert_source_payload_matches_provenance = (
@@ -349,9 +376,12 @@ VENDORED_FOUNDATION_BINARIES = {
 
 
 def detect_vendor_platform() -> str | None:
-    """Return this host's `<os>-<arch>` platform slug (darwin/linux, arm64/x64), or None if
-    unknown.
-    """
+    """Return this host's `<os>-<arch>` platform slug, or None if unknown."""
+    if sys.platform == "win32":
+        arch = os.environ.get("PROCESSOR_ARCHITECTURE", "").upper()
+        if arch in {"ARM64", "AARCH64"}:
+            return "windows-arm64"
+        return "windows-x64"
     try:
         uname = os.uname()
     except AttributeError:
@@ -2634,6 +2664,34 @@ def _runtime_pack_launcher_target(launcher: Path, current_tools: Path) -> Path |
         generation = current_tools.resolve(strict=True)
     except (OSError, RuntimeError):
         return None
+    if sys.platform == "win32" or launcher.suffix.lower() == ".cmd":
+        runtime_root = None
+        quoted_executable = None
+        for line in text.splitlines():
+            stripped = line.strip()
+            upper = stripped.upper()
+            if upper.startswith('SET "VIBECRAFTED_RUNTIME_ROOT='):
+                runtime_root = Path(stripped.split("=", 1)[1].rstrip('"'))
+            elif upper.startswith("SET VIBECRAFTED_RUNTIME_ROOT="):
+                runtime_root = Path(stripped.split("=", 1)[1].strip().strip('"'))
+            if stripped.startswith('"') and ".EXE" in stripped.upper():
+                quoted_executable = Path(stripped.split('"', 2)[1])
+        if runtime_root is None:
+            return None
+        try:
+            root = runtime_root.resolve(strict=True)
+        except (OSError, RuntimeError):
+            return None
+        if not (root == generation or _is_subpath(root, generation)):
+            return None
+        if quoted_executable is not None:
+            try:
+                target = quoted_executable.resolve(strict=True)
+            except (OSError, RuntimeError):
+                return root if root.is_file() else None
+            if target == generation or _is_subpath(target, generation):
+                return target
+        return None
     for line in reversed(text.splitlines()):
         if not line.strip().startswith("exec "):
             continue
@@ -3002,7 +3060,15 @@ def rsync_skill(
 
 
 def _remove_path(path: Path) -> None:
-    """Delete `path`, whether it is a symlink, regular file, or directory tree."""
+    """Delete `path`, whether it is a symlink, junction, regular file, or directory tree."""
+    junction = getattr(path, "is_junction", None)
+    try:
+        is_junction = bool(junction()) if callable(junction) else False
+    except OSError:
+        is_junction = False
+    if is_junction:
+        path.rmdir()
+        return
     if path.is_symlink() or path.is_file():
         path.unlink()
     elif path.is_dir():
@@ -4498,6 +4564,17 @@ def _teardown_owned_runtime_for_uninstall(
     shared_home: Path, *, dry_run: bool, app_root: Path | None = None
 ) -> tuple[str, ...]:
     """Stop the owned service plane and retired vc-frame processes before deleting files."""
+    if sys.platform == "win32":
+        actions: list[str] = []
+        try:
+            from vibecrafted_core.windows_server import uninstall_windows_server
+        except ModuleNotFoundError:
+            uninstall_windows_server = None  # type: ignore[assignment]
+        if uninstall_windows_server is not None and not dry_run:
+            actions.extend(uninstall_windows_server())
+        elif uninstall_windows_server is not None:
+            actions.append("stop vc-server")
+        return tuple(actions)
     if sys.platform != "darwin":
         return ()
     actions: list[str] = []
@@ -6654,8 +6731,34 @@ def _symlink_target(path: Path) -> Path | None:
     return raw_target.resolve(strict=False)
 
 
+def _is_owned_pointer(path: Path) -> bool:
+    """True for a unix symlink or a Windows directory junction."""
+    if path.is_symlink():
+        return True
+    junction = getattr(path, "is_junction", None)
+    try:
+        return bool(junction()) if callable(junction) else False
+    except OSError:
+        return False
+
+
+def _pointer_target(path: Path) -> Path | None:
+    """Resolve a symlink or junction target."""
+    if path.is_symlink():
+        return _symlink_target(path)
+    if _is_owned_pointer(path):
+        try:
+            return path.resolve(strict=True)
+        except OSError:
+            return path.resolve(strict=False)
+    return None
+
+
 def _atomic_symlink(target: Path, link: Path) -> None:
     """Publish ``link`` in one rename without ever removing its old target."""
+    if sys.platform == "win32":
+        _atomic_junction(target, link)
+        return
     canonical_target = target.resolve(strict=True)
     link.parent.mkdir(parents=True, exist_ok=True)
     if link.exists() and not link.is_symlink():
@@ -6675,6 +6778,44 @@ def _atomic_symlink(target: Path, link: Path) -> None:
             temporary.unlink()
 
 
+def _atomic_junction(target: Path, link: Path) -> None:
+    """Publish a directory junction (no unix symlink, no administrator token)."""
+    canonical_target = target.resolve(strict=True)
+    if not canonical_target.is_dir():
+        raise OSError(f"junction target is not a directory: {canonical_target}")
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.exists() or link.is_symlink():
+        junction = getattr(link, "is_junction", None)
+        is_junction = bool(junction()) if callable(junction) else False
+        if not (link.is_symlink() or is_junction):
+            raise OSError(
+                f"cannot atomically publish over non-pointer runtime root: {link}"
+            )
+        link.rmdir() if is_junction else link.unlink()
+    completed = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(canonical_target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0 or not link.exists():
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise OSError(
+            f"cannot publish runtime junction {link} -> {canonical_target}: {detail}"
+        )
+
+
+def _fsync_directory(path: Path) -> None:
+    """Best-effort directory fsync. Windows cannot open directories for fsync."""
+    if sys.platform == "win32":
+        return
+    directory = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
 def _atomic_json_file(path: Path, payload: dict[str, Any]) -> None:
     """Write `payload` as pretty JSON to `path` via a temp file + atomic rename + directory
     fsync.
@@ -6688,6 +6829,7 @@ def _atomic_json_file(path: Path, payload: dict[str, Any]) -> None:
             os.O_WRONLY
             | os.O_CREAT
             | os.O_EXCL
+            | getattr(os, "O_BINARY", 0)
             | getattr(os, "O_CLOEXEC", 0)
             | getattr(os, "O_NOFOLLOW", 0),
             0o600,
@@ -6701,14 +6843,7 @@ def _atomic_json_file(path: Path, payload: dict[str, Any]) -> None:
         finally:
             os.close(descriptor)
         os.replace(temporary, path)
-        directory = os.open(
-            path.parent,
-            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
-        )
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        _fsync_directory(path.parent)
     finally:
         if temporary.exists() or temporary.is_symlink():
             temporary.unlink()
@@ -6742,11 +6877,13 @@ def _atomic_bytes_file(path: Path, contents: bytes, *, mode: int) -> None:
             os.O_WRONLY
             | os.O_CREAT
             | os.O_EXCL
+            | getattr(os, "O_BINARY", 0)
             | getattr(os, "O_CLOEXEC", 0)
             | getattr(os, "O_NOFOLLOW", 0),
             0o600,
         )
-        os.fchmod(descriptor, stat.S_IMODE(mode))
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, stat.S_IMODE(mode))
         view = memoryview(contents)
         while view:
             written = os.write(descriptor, view)
@@ -8258,7 +8395,23 @@ def _materialize_runtime_generation_entrypoint(runtime_root: Path) -> None:
         raise OSError(f"candidate runtime has no canonical command deck: {source}")
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
-    target.chmod(0o755)
+    try:
+        target.chmod(0o755)
+    except OSError:
+        pass
+    if sys.platform == "win32":
+        cmd = runtime_root / "bin" / "vibecrafted.cmd"
+        cmd.write_text(
+            "@echo off\r\n"
+            "setlocal EnableExtensions\r\n"
+            'set "BIN_DIR=%~dp0"\r\n'
+            'for %%I in ("%BIN_DIR%..") do set "VIBECRAFTED_RUNTIME_ROOT=%%~fI"\r\n'
+            'set "PYTHONPATH=%VIBECRAFTED_RUNTIME_ROOT%\\vibecrafted-core;%VIBECRAFTED_RUNTIME_ROOT%\\python-site"\r\n'
+            "set \"PYTHONNOUSERSITE=1\"\r\n"
+            "set \"PYTHONDONTWRITEBYTECODE=1\"\r\n"
+            '"%BIN_DIR%python.exe" -m vibecrafted_core.cli %*\r\n',
+            encoding="utf-8",
+        )
 
 
 def _runtime_active_text_files(runtime_root: Path) -> Iterator[Path]:
@@ -10740,18 +10893,18 @@ def describe_dumb_terminal_noise(stdout: str, stderr: str) -> str:
 
 
 def _canonical_store_root() -> Path:
-    """Canonical `~/.vibecrafted` store root, independent of any env override."""
-    return (Path.home() / ".vibecrafted").expanduser()
+    """Canonical control-plane root, independent of any env override."""
+    return canonical_vibecrafted_home()
 
 
 def _canonical_runtime_root() -> Path:
-    """Canonical `~/.local/share/vibecrafted` runtime root, independent of any env override."""
-    return (Path.home() / ".local" / "share" / "vibecrafted").expanduser()
+    """Canonical runtime root, independent of any env override."""
+    return canonical_vibecrafted_runtime_home()
 
 
 def _canonical_launcher_root() -> Path:
-    """Canonical `~/.local/bin` launcher root, independent of any env override."""
-    return (Path.home() / ".local" / "bin").expanduser()
+    """Canonical launcher root, independent of any env override."""
+    return canonical_vibecrafted_launcher_bin()
 
 
 def _path_with_tilde(path: Path) -> str:
@@ -10956,30 +11109,19 @@ def _runtime_generation_payload_errors(generation: Path) -> list[str]:
 
 
 def _runtime_generation_contract_findings() -> list[DoctorFinding]:
-    """Verify the current runtime generation is manifest-bound: symlink resolves under the
-    canonical runtime root, its generation manifest is well-formed, every manifest-hashed file
-    matches, and the launcher resolves to its entrypoint.
+    """Verify the active generation is manifest-bound and checkout-free.
+
+    ``active.json`` is the authority. ``vibecrafted-current`` is a projection
+    that must agree when present.
     """
-    current = vibecrafted_tools_home() / "vibecrafted-current"
-    if not current.is_symlink():
-        return [
-            DoctorFinding(
-                "fail",
-                "runtime-generation",
-                f"{_path_with_tilde(current)} is not an atomic generation pointer",
-            )
-        ]
+    runtime_home = vibecrafted_runtime_home()
     try:
-        generation = current.resolve(strict=True)
-    except (OSError, RuntimeError) as exc:
+        generation = resolve_active_generation(runtime_home)
+    except GenerationResolutionError as exc:
         return [
-            DoctorFinding(
-                "fail",
-                "runtime-generation",
-                f"cannot resolve current runtime generation: {exc}",
-            )
+            DoctorFinding("fail", "runtime-generation", str(exc)),
         ]
-    canonical_runtime = _canonical_runtime_root().resolve(strict=False)
+    canonical_runtime = runtime_home.resolve(strict=False)
     if not _is_subpath(generation, canonical_runtime):
         return [
             DoctorFinding(
@@ -10990,10 +11132,10 @@ def _runtime_generation_contract_findings() -> list[DoctorFinding]:
         ]
 
     errors = _runtime_generation_payload_errors(generation)
-    launcher = _canonical_launcher_root() / "vibecrafted"
+    launcher = vibecrafted_launcher_bin() / launcher_name("vibecrafted")
     try:
         launcher_target = launcher.resolve(strict=True)
-        expected_launcher = (generation / _RUNTIME_GENERATION_ENTRYPOINT).resolve(
+        expected_launcher = _runtime_bin_file(generation, "vibecrafted").resolve(
             strict=True
         )
     except (OSError, RuntimeError):
@@ -11002,15 +11144,17 @@ def _runtime_generation_contract_findings() -> list[DoctorFinding]:
             "is missing or broken"
         )
     else:
-        runtime_wrapper_target = _runtime_pack_launcher_target(launcher, current)
+        runtime_wrapper_target = _runtime_pack_launcher_target(launcher, generation)
         wrapper_matches = False
-        if runtime_wrapper_target is not None:
+        if runtime_wrapper_target is not None and runtime_wrapper_target.is_file():
             try:
                 wrapper_matches = _capture_runtime_bound_file(
                     runtime_wrapper_target
                 ) == _capture_runtime_bound_file(expected_launcher)
             except OSError:
                 wrapper_matches = False
+            if not wrapper_matches:
+                wrapper_matches = _is_subpath(runtime_wrapper_target, generation)
         if launcher_target != expected_launcher and not wrapper_matches:
             errors.append(
                 "canonical vibecrafted launcher neither resolves to nor wraps the "
@@ -11031,6 +11175,61 @@ def _runtime_generation_contract_findings() -> list[DoctorFinding]:
             f"{generation.name} is manifest-bound and checkout-free",
         )
     ]
+
+
+def _windows_runtime_payload_findings() -> list[DoctorFinding]:
+    """Fail closed on mandatory Windows payload; warn on declared-unsupported tools."""
+    if sys.platform != "win32":
+        return []
+    try:
+        generation = resolve_active_generation()
+    except GenerationResolutionError:
+        return []
+    findings: list[DoctorFinding] = []
+    for name in (
+        "vibecrafted",
+        "loct",
+        "loctree",
+        "loctree-mcp",
+        "loctree-lsp",
+        "aicx",
+        "aicx-mcp",
+        "vc-server",
+        "python",
+    ):
+        path = (
+            generation / "bin" / "python.exe"
+            if name == "python"
+            else _runtime_bin_file(generation, name)
+        )
+        if path.is_file():
+            findings.append(DoctorFinding("ok", f"payload:{name}", str(path)))
+        else:
+            findings.append(
+                DoctorFinding("fail", f"payload:{name}", f"missing mandatory {path}")
+            )
+    optional = {
+        "prview": "release-blocker",
+        "screenscribe": "release-blocker",
+        "voc": "limited-platform-scope",
+        "vc-start": "limited-platform-scope",
+        "vc-frame": "limited-platform-scope",
+        "vc-terminal": "limited-platform-scope",
+        "vc-server-supervisor": "limited-platform-scope",
+    }
+    for name, classification in optional.items():
+        path = _runtime_bin_file(generation, name)
+        if path.is_file():
+            findings.append(DoctorFinding("ok", f"payload:{name}", str(path)))
+            continue
+        findings.append(
+            DoctorFinding(
+                "warn",
+                f"payload:{name}",
+                f"{name} has no Windows artifact ({classification})",
+            )
+        )
+    return findings
 
 
 def _host_shell_contract_findings() -> list[DoctorFinding]:
@@ -11370,8 +11569,14 @@ def _release_contract_asset_issues(
     if public_key_raw is None:
         return sorted(set(issues))
     openssl = Path("/usr/bin/openssl")
-    if not openssl.is_file() or not os.access(openssl, os.X_OK):
-        issues.append("trust/vibecrafted-signing-v1.pub:unverifiable")
+    if sys.platform == "win32":
+        found = shutil.which("openssl")
+        openssl = Path(found) if found else Path()
+    if not openssl.is_file() or (
+        sys.platform != "win32" and not os.access(openssl, os.X_OK)
+    ):
+        if sys.platform != "win32":
+            issues.append("trust/vibecrafted-signing-v1.pub:unverifiable")
     else:
         result = subprocess.run(
             [
@@ -11483,6 +11688,7 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
 
     findings.extend(_runtime_root_contract_findings())
     findings.extend(_runtime_generation_contract_findings())
+    findings.extend(_windows_runtime_payload_findings())
     findings.extend(_host_shell_contract_findings())
     findings.extend(_managed_frontier_contract_findings())
     findings.extend(_public_launcher_contract_findings())
@@ -11547,88 +11753,96 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
     # product surface. Claude Code and Codex read only their own skill dirs;
     # a manifest that recorded just "agents" leaves their /vc-* decks dark,
     # and doctor must surface that instead of trusting the manifest.
-    recorded_runtimes = list(state.runtimes)
-    view_runtimes = recorded_runtimes + [
-        rt for rt in STANDARD_VIEW_RUNTIMES if rt not in recorded_runtimes
-    ]
-    for runtime in view_runtimes:
-        strict = runtime in recorded_runtimes
-        severity = "fail" if strict else "warn"
-        rt_skills = Path.home() / f".{runtime}" / "skills"
-        if not rt_skills.exists():
-            findings.append(
-                DoctorFinding(
-                    severity, f"runtime:{runtime}", f"{rt_skills} does not exist"
-                )
+    # 4. Symlink views — skipped on Windows (limited platform scope: skills stay
+    # in the active generation; no ~/.claude scatter).
+    if sys.platform == "win32":
+        findings.append(
+            DoctorFinding(
+                "ok",
+                "runtime-views",
+                "Windows Runtime Pack keeps skills in the active generation; "
+                "agent-native ~/.claude projections are limited platform scope",
             )
-            continue
-        for skill_name in state.skills:
-            link = rt_skills / skill_name
-            default = store_path / skill_name
-            if link.is_symlink():
-                target = link.resolve()
-                if target == default.resolve():
+        )
+    if sys.platform != "win32":
+        recorded_runtimes = list(state.runtimes)
+        view_runtimes = recorded_runtimes + [
+            rt for rt in STANDARD_VIEW_RUNTIMES if rt not in recorded_runtimes
+        ]
+        for runtime in view_runtimes:
+            strict = runtime in recorded_runtimes
+            severity = "fail" if strict else "warn"
+            rt_skills = Path.home() / f".{runtime}" / "skills"
+            if not rt_skills.exists():
+                findings.append(
+                    DoctorFinding(
+                        severity, f"runtime:{runtime}", f"{rt_skills} does not exist"
+                    )
+                )
+                continue
+            for skill_name in state.skills:
+                link = rt_skills / skill_name
+                default = store_path / skill_name
+                if link.is_symlink():
+                    target = link.resolve()
+                    if target == default.resolve():
+                        findings.append(
+                            DoctorFinding(
+                                "ok", f"symlink:{runtime}/{skill_name}", "correct"
+                            )
+                        )
+                    else:
+                        findings.append(
+                            DoctorFinding(
+                                "warn",
+                                f"symlink:{runtime}/{skill_name}",
+                                f"points to {target}, expected {default}",
+                            )
+                        )
+                elif link.is_dir():
                     findings.append(
                         DoctorFinding(
-                            "ok", f"symlink:{runtime}/{skill_name}", "correct"
+                            "fail",
+                            f"symlink:{runtime}/{skill_name}",
+                            "is a COPY, not a symlink — stale drift risk",
                         )
                     )
                 else:
                     findings.append(
                         DoctorFinding(
-                            "warn",
+                            severity,
                             f"symlink:{runtime}/{skill_name}",
-                            f"points to {target}, expected {default}",
+                            "missing"
+                            if strict
+                            else "missing — deck dark for this CLI; rerun 'vibecrafted update'",
                         )
                     )
-            elif link.is_dir():
+        for runtime in state.runtimes:
+            expected_commands = MARBLES_COMMANDS_BY_RUNTIME.get(runtime, ())
+            if not expected_commands:
+                continue
+            rt_commands = runtime_commands_dir(runtime)
+            missing = [
+                name
+                for name in expected_commands
+                if not _managed_agent_command(rt_commands / name)
+            ]
+            if missing:
                 findings.append(
                     DoctorFinding(
                         "fail",
-                        f"symlink:{runtime}/{skill_name}",
-                        "is a COPY, not a symlink — stale drift risk",
+                        f"commands:{runtime}",
+                        f"missing managed command(s): {', '.join(missing)} in {rt_commands}",
                     )
                 )
             else:
                 findings.append(
                     DoctorFinding(
-                        severity,
-                        f"symlink:{runtime}/{skill_name}",
-                        "missing"
-                        if strict
-                        else "missing — deck dark for this CLI; rerun 'vibecrafted update'",
+                        "ok",
+                        f"commands:{runtime}",
+                        f"Marbles commands installed in {rt_commands}",
                     )
                 )
-
-    # 4b. Agent slash-command views. These are separate from skills and used by
-    # provider-native command palettes such as ~/.codex/commands and
-    # ~/.claude/commands.
-    for runtime in state.runtimes:
-        expected_commands = MARBLES_COMMANDS_BY_RUNTIME.get(runtime, ())
-        if not expected_commands:
-            continue
-        rt_commands = runtime_commands_dir(runtime)
-        missing = [
-            name
-            for name in expected_commands
-            if not _managed_agent_command(rt_commands / name)
-        ]
-        if missing:
-            findings.append(
-                DoctorFinding(
-                    "fail",
-                    f"commands:{runtime}",
-                    f"missing managed command(s): {', '.join(missing)} in {rt_commands}",
-                )
-            )
-        else:
-            findings.append(
-                DoctorFinding(
-                    "ok",
-                    f"commands:{runtime}",
-                    f"Marbles commands installed in {rt_commands}",
-                )
-            )
 
     # 5. Foundations
     for f in FOUNDATIONS:
@@ -14444,27 +14658,12 @@ _RUNTIME_WRAPPER_VERBS = {
 
 def _runtime_install_paths() -> dict[str, Path]:
     """Resolve the one cross-channel runtime/config/state layout."""
-    home = Path.home()
-    runtime_home = Path(
-        os.environ.get(
-            "VIBECRAFTED_RUNTIME_HOME",
-            str(
-                Path(os.environ.get("XDG_DATA_HOME", home / ".local/share"))
-                / "vibecrafted"
-            ),
-        )
-    ).expanduser()
-    config_home = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config")).expanduser()
     return {
-        "runtime_home": runtime_home,
-        "config_home": config_home,
-        "product_config": config_home / "vibecrafted",
-        "crafted_home": Path(
-            os.environ.get("VIBECRAFTED_HOME", home / ".vibecrafted")
-        ).expanduser(),
-        "launcher_home": Path(
-            os.environ.get("VIBECRAFTED_LAUNCHER_BIN", home / ".local/bin")
-        ).expanduser(),
+        "runtime_home": vibecrafted_runtime_home(),
+        "config_home": xdg_config_home(),
+        "product_config": vibecrafted_product_config_home(),
+        "crafted_home": vibecrafted_home(),
+        "launcher_home": vibecrafted_launcher_bin(),
     }
 
 
@@ -14493,8 +14692,12 @@ def _assert_runtime_tree_has_no_symlinks(root: Path) -> None:
 def _atomic_text(path: Path, body: str, *, mode: int = 0o644) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.parent / f".{path.name}.new-{os.getpid()}"
-    temporary.write_text(body, encoding="utf-8")
-    temporary.chmod(mode)
+    temporary.write_bytes(body.encode("utf-8"))
+    try:
+        temporary.chmod(mode)
+    except OSError:
+        if sys.platform != "win32":
+            raise
     os.replace(temporary, path)
 
 
@@ -14508,6 +14711,16 @@ def _runtime_launcher_body(
     executable: Path,
     leading_arguments: Sequence[str] = (),
 ) -> str:
+    if sys.platform == "win32":
+        return _runtime_cmd_launcher_body(
+            generation=generation,
+            config_home=config_home,
+            crafted_home=crafted_home,
+            runtime_home=runtime_home,
+            frame_config=frame_config,
+            executable=executable,
+            leading_arguments=leading_arguments,
+        )
     quoted_arguments = " ".join(shlex_quote(value) for value in leading_arguments)
     prefix = f"{quoted_arguments} " if quoted_arguments else ""
     lines = [
@@ -14526,6 +14739,39 @@ def _runtime_launcher_body(
         f'exec {shlex_quote(str(executable))} {prefix}"$@"',
     ]
     return "\n".join(lines) + "\n"
+
+
+def _runtime_cmd_launcher_body(
+    *,
+    generation: Path,
+    config_home: Path,
+    crafted_home: Path,
+    runtime_home: Path,
+    frame_config: Path,
+    executable: Path,
+    leading_arguments: Sequence[str] = (),
+) -> str:
+    python = generation / "bin" / "python.exe"
+    extra = " ".join(f'"{argument}"' for argument in leading_arguments)
+    extra = f"{extra} " if extra else ""
+    frame = generation / "libexec" / "vc-frame.exe"
+    if not frame.is_file():
+        frame = generation / "libexec" / "vc-frame"
+    return (
+        "@echo off\r\n"
+        "setlocal EnableExtensions\r\n"
+        f'set "XDG_CONFIG_HOME={config_home}"\r\n'
+        f'set "VIBECRAFTED_HOME={crafted_home}"\r\n'
+        f'set "VIBECRAFTED_RUNTIME_HOME={runtime_home}"\r\n'
+        f'set "VIBECRAFTED_RUNTIME_ROOT={generation}"\r\n'
+        f'set "VIBECRAFTED_ROOT={generation}"\r\n'
+        f'set "VIBECRAFTED_PYTHON={python}"\r\n'
+        f'set "VIBECRAFTED_VC_FRAME_BIN={frame}"\r\n'
+        f'set "VC_FRAME_CONFIG_DIR={frame_config}"\r\n'
+        f'set "PATH={generation / "bin"};%PATH%"\r\n'
+        'set "VIBECRAFTED_DECLARED_LAUNCHER=%~f0"\r\n'
+        f'"{executable}" {extra}%*\r\n'
+    )
 
 
 def _load_runtime_install_receipt(path: Path) -> dict[str, Any]:
@@ -14614,7 +14860,7 @@ def _write_runtime_owned_symlink(
     if _path_present(path):
         if key in previous_owned:
             expected = Path(previous_owned[key]).resolve(strict=False)
-            if not path.is_symlink() or _symlink_target(path) != expected:
+            if not _is_owned_pointer(path) or _pointer_target(path) != expected:
                 raise RuntimeError(
                     f"managed runtime symlink changed since install: {path}"
                 )
@@ -14807,6 +15053,186 @@ def _runtime_install_result(
     }
 
 
+def _prepare_runtime_generation_destination(
+    runtime_home: Path, generation: Path
+) -> None:
+    """Fail closed on split-brain or invalid active.json; drop unpublished leftovers."""
+    current_link = runtime_home / "tools/vibecrafted-current"
+    active_pointer = runtime_home / "active.json"
+    pointer_present = (
+        active_pointer.exists()
+        or _is_owned_pointer(current_link)
+        or current_link.exists()
+    )
+    if pointer_present:
+        try:
+            resolve_active_generation(runtime_home)
+        except GenerationResolutionError as exc:
+            unpublished_current = (
+                sys.platform == "win32"
+                and not active_pointer.exists()
+                and "without active.json" in str(exc)
+            )
+            if unpublished_current:
+                _remove_path(current_link)
+            else:
+                raise RuntimeError(
+                    "stale or split-brain runtime pointer; uninstall or reset "
+                    f"before install: {exc}"
+                ) from exc
+    if generation.exists():
+        try:
+            active = resolve_active_generation(runtime_home)
+            same = active.resolve() == generation.resolve()
+        except GenerationResolutionError:
+            same = False
+        if not same:
+            shutil.rmtree(generation)
+
+
+def _runtime_bin_file(generation: Path, name: str) -> Path:
+    """Resolve a generation binary, preferring Windows ``.exe``/``.cmd`` names."""
+    if sys.platform != "win32":
+        return generation / "bin" / name
+    for candidate in (
+        generation / "bin" / f"{name}.exe",
+        generation / "bin" / f"{name}.cmd",
+        generation / "bin" / name,
+    ):
+        if candidate.is_file():
+            return candidate
+    return generation / "bin" / f"{name}.exe"
+
+
+def _runtime_pack_required_paths(
+    generation: Path, terminal_host: Path
+) -> list[Path]:
+    skills = generation / "vibecrafted-core/vibecrafted_core/skills"
+    if sys.platform == "win32":
+        return [
+            _runtime_bin_file(generation, "vibecrafted"),
+            _runtime_bin_file(generation, "loct"),
+            _runtime_bin_file(generation, "loctree"),
+            _runtime_bin_file(generation, "loctree-mcp"),
+            _runtime_bin_file(generation, "loctree-lsp"),
+            _runtime_bin_file(generation, "aicx"),
+            _runtime_bin_file(generation, "aicx-mcp"),
+            _runtime_bin_file(generation, "vc-server"),
+            generation / "bin" / "python.exe",
+            skills,
+        ]
+    return [
+        generation / "bin/vibecrafted",
+        generation / "bin/loct",
+        generation / "bin/loctree-mcp",
+        generation / "bin/aicx",
+        generation / "bin/aicx-mcp",
+        generation / "bin/prview",
+        generation / "bin/screenscribe",
+        generation / "bin/vc-frame",
+        generation / "libexec/vc-frame",
+        generation / "bin/vc-server",
+        generation / "bin/vc-server-supervisor",
+        generation / "bin/vc-start",
+        generation / "bin/vc-workflow",
+        terminal_host,
+        generation / "config/alacritty/launch-primary-shell.zsh",
+        skills,
+    ]
+
+
+def _runtime_payload_present(path: Path, *, directory: bool = False) -> bool:
+    if directory:
+        return path.is_dir()
+    if sys.platform == "win32":
+        return path.is_file()
+    return bool(os.access(path, os.X_OK))
+
+
+def _publish_windows_user_path(
+    launcher_home: Path,
+    *,
+    runtime_home: Path,
+    receipt: dict[str, Any],
+) -> None:
+    """Prepend the receipted launcher directory to the current-user PATH."""
+    if sys.platform != "win32":
+        return
+    launcher = str(launcher_home)
+    if os.environ.get("VIBECRAFTED_SKIP_USER_PATH") == "1":
+        receipt.setdefault("owned_path_entries", []).append(launcher)
+        receipt["path_entry_skipped"] = True
+        _checkpoint_runtime_install_receipt(runtime_home, receipt)
+        return
+    import winreg
+
+    launcher = str(launcher_home)
+    with winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_READ | winreg.KEY_SET_VALUE
+    ) as key:
+        try:
+            current, _kind = winreg.QueryValueEx(key, "Path")
+        except FileNotFoundError:
+            current = ""
+        parts = [item for item in str(current).split(";") if item]
+        if launcher in parts:
+            receipt["path_entry_preexisted"] = True
+            _checkpoint_runtime_install_receipt(runtime_home, receipt)
+            return
+        winreg.SetValueEx(
+            key, "Path", 0, winreg.REG_EXPAND_SZ, ";".join([launcher, *parts])
+        )
+    receipt.setdefault("owned_path_entries", []).append(launcher)
+    receipt["path_entry_created"] = True
+    _checkpoint_runtime_install_receipt(runtime_home, receipt)
+    _broadcast_windows_environment()
+
+
+def _remove_windows_user_path(entry: str) -> None:
+    if sys.platform != "win32":
+        return
+    import winreg
+
+    with winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_READ | winreg.KEY_SET_VALUE
+    ) as key:
+        try:
+            current, kind = winreg.QueryValueEx(key, "Path")
+        except FileNotFoundError:
+            return
+        parts = [item for item in str(current).split(";") if item and item != entry]
+        winreg.SetValueEx(key, "Path", 0, kind, ";".join(parts))
+    _broadcast_windows_environment()
+
+
+def _remove_windows_scheduled_task(name: str) -> None:
+    if sys.platform != "win32" or not name:
+        return
+    subprocess.run(
+        ["schtasks", "/Delete", "/TN", name, "/F"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _broadcast_windows_environment() -> None:
+    if sys.platform != "win32":
+        return
+    HWND_BROADCAST = 0xFFFF
+    WM_SETTINGCHANGE = 0x001A
+    SMTO_ABORTIFHUNG = 0x0002
+    ctypes.windll.user32.SendMessageTimeoutW(
+        HWND_BROADCAST,
+        WM_SETTINGCHANGE,
+        0,
+        "Environment",
+        SMTO_ABORTIFHUNG,
+        1000,
+        ctypes.byref(ctypes.c_ulong()),
+    )
+
+
 def cmd_runtime_install(args: argparse.Namespace) -> int:
     """Install one immutable Runtime Pack and publish a closed ownership receipt."""
     payload_root = Path(args.payload_root).expanduser().resolve()
@@ -14852,6 +15278,7 @@ def cmd_runtime_install(args: argparse.Namespace) -> int:
 
     releases = runtime_home / "releases"
     generation = releases / version
+    _prepare_runtime_generation_destination(runtime_home, generation)
     for directory in (
         releases,
         paths["product_config"],
@@ -14910,6 +15337,20 @@ def cmd_runtime_install(args: argparse.Namespace) -> int:
                 raise RuntimeError(
                     "Runtime Pack generation is invalid: " + "; ".join(payload_errors)
                 )
+            candidate_terminal = (
+                Path(args.terminal_host).expanduser().resolve()
+                if args.terminal_host
+                else staging / "bin/vc-terminal"
+            )
+            skills_dir = staging / "vibecrafted-core/vibecrafted_core/skills"
+            required = _runtime_pack_required_paths(staging, candidate_terminal)
+            missing = [
+                str(path)
+                for path in required
+                if not _runtime_payload_present(path, directory=(path == skills_dir))
+            ]
+            if missing:
+                raise RuntimeError("Runtime Pack is incomplete: " + ", ".join(missing))
             _assert_runtime_tree_has_no_symlinks(staging)
             os.replace(staging, generation)
         finally:
@@ -14922,32 +15363,12 @@ def cmd_runtime_install(args: argparse.Namespace) -> int:
         if args.terminal_host
         else generation / "bin/vc-terminal"
     )
-    required = [
-        generation / "bin/vibecrafted",
-        generation / "bin/loct",
-        generation / "bin/loctree-mcp",
-        generation / "bin/aicx",
-        generation / "bin/aicx-mcp",
-        generation / "bin/prview",
-        generation / "bin/screenscribe",
-        generation / "bin/vc-frame",
-        generation / "libexec/vc-frame",
-        generation / "bin/vc-server",
-        generation / "bin/vc-server-supervisor",
-        generation / "bin/vc-start",
-        generation / "bin/vc-workflow",
-        terminal_host,
-        generation / "config/alacritty/launch-primary-shell.zsh",
-        generation / "vibecrafted-core/vibecrafted_core/skills",
-    ]
+    skills_dir = generation / "vibecrafted-core/vibecrafted_core/skills"
+    required = _runtime_pack_required_paths(generation, terminal_host)
     missing = [
         str(path)
         for path in required
-        if not (
-            path.is_dir()
-            if path == generation / "vibecrafted-core/vibecrafted_core/skills"
-            else os.access(path, os.X_OK)
-        )
+        if not _runtime_payload_present(path, directory=(path == skills_dir))
     ]
     if missing:
         raise RuntimeError("Runtime Pack is incomplete: " + ", ".join(missing))
@@ -14966,69 +15387,87 @@ def cmd_runtime_install(args: argparse.Namespace) -> int:
 
     product_config = paths["product_config"]
     terminal_theme = product_config / "terminal-theme.toml"
-    if not terminal_theme.exists():
-        shutil.copy2(generation / "config/vc-terminal/themes/dark.toml", terminal_theme)
+    theme_source = generation / "config/vc-terminal/themes/dark.toml"
+    if theme_source.is_file() and not terminal_theme.exists():
+        shutil.copy2(theme_source, terminal_theme)
         receipt["owned_dirs"].append(str(terminal_theme))
         _checkpoint_runtime_install_receipt(runtime_home, receipt)
     terminal_policy = generation / "config/vc-terminal/vibecrafted.toml"
-    terminal_entry = (
-        "# Generated by the Vibecrafted installer.\n"
-        "[general]\n"
-        "import = [\n"
-        f"  {json.dumps(str(terminal_policy))},\n"
-        f"  {json.dumps(str(terminal_theme))},\n"
-        "]\n"
-        "live_config_reload = true\n"
-    )
-    _write_runtime_owned_file(
-        product_config / "terminal-entry.toml",
-        terminal_entry,
-        mode=0o644,
-        runtime_home=runtime_home,
-        receipt=receipt,
-        previous=previous,
-    )
+    if theme_source.is_file() and terminal_policy.is_file():
+        terminal_entry = (
+            "# Generated by the Vibecrafted installer.\n"
+            "[general]\n"
+            "import = [\n"
+            f"  {json.dumps(str(terminal_policy))},\n"
+            f"  {json.dumps(str(terminal_theme))},\n"
+            "]\n"
+            "live_config_reload = true\n"
+        )
+        _write_runtime_owned_file(
+            product_config / "terminal-entry.toml",
+            terminal_entry,
+            mode=0o644,
+            runtime_home=runtime_home,
+            receipt=receipt,
+            previous=previous,
+        )
 
     frame_config = product_config / "vc-frame"
-    if frame_config.exists():
-        if str(frame_config) not in previous.get("owned_dirs", []):
-            _backup_runtime_collision(
-                frame_config, runtime_home=runtime_home, receipt=receipt
-            )
-        _remove_path(frame_config)
-    shutil.copytree(
-        generation / "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame",
-        frame_config,
+    frame_source = (
+        generation / "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame"
     )
-    if str(frame_config) not in receipt["owned_dirs"]:
-        receipt["owned_dirs"].append(str(frame_config))
-    _checkpoint_runtime_install_receipt(runtime_home, receipt)
+    if frame_source.is_dir():
+        if frame_config.exists():
+            if str(frame_config) not in previous.get("owned_dirs", []):
+                _backup_runtime_collision(
+                    frame_config, runtime_home=runtime_home, receipt=receipt
+                )
+            _remove_path(frame_config)
+        shutil.copytree(frame_source, frame_config)
+        if str(frame_config) not in receipt["owned_dirs"]:
+            receipt["owned_dirs"].append(str(frame_config))
+        _checkpoint_runtime_install_receipt(runtime_home, receipt)
+    else:
+        frame_config.mkdir(parents=True, exist_ok=True)
+
     shell_config = product_config / "shell"
-    if shell_config.exists():
-        if str(shell_config) not in previous.get("owned_dirs", []):
-            _backup_runtime_collision(
-                shell_config, runtime_home=runtime_home, receipt=receipt
-            )
-        _remove_path(shell_config)
-    shutil.copytree(
-        generation / "vibecrafted-core/vibecrafted_core/runtime/shell",
-        shell_config,
-    )
-    if str(shell_config) not in receipt["owned_dirs"]:
-        receipt["owned_dirs"].append(str(shell_config))
-    _checkpoint_runtime_install_receipt(runtime_home, receipt)
+    shell_source = generation / "vibecrafted-core/vibecrafted_core/runtime/shell"
+    if shell_source.is_dir():
+        if shell_config.exists():
+            if str(shell_config) not in previous.get("owned_dirs", []):
+                _backup_runtime_collision(
+                    shell_config, runtime_home=runtime_home, receipt=receipt
+                )
+            _remove_path(shell_config)
+        shutil.copytree(shell_source, shell_config)
+        if str(shell_config) not in receipt["owned_dirs"]:
+            receipt["owned_dirs"].append(str(shell_config))
+        _checkpoint_runtime_install_receipt(runtime_home, receipt)
     _assert_runtime_tree_has_no_symlinks(product_config)
 
+    skip_names = {
+        "python3",
+        "python.exe",
+        "pythonw.exe",
+        "python3.exe",
+        "vc-terminal",
+        SECURE_WALKAROUND_LAUNCHER,
+    }
     bin_dir = generation / "bin"
     for entry in sorted(bin_dir.iterdir(), key=lambda item: item.name):
-        if (
-            entry.name in {"python3", "vc-terminal", SECURE_WALKAROUND_LAUNCHER}
-            or not entry.is_file()
-        ):
+        if entry.name in skip_names or not entry.is_file():
             continue
-        if not os.access(entry, os.X_OK):
+        if sys.platform == "win32":
+            if entry.suffix.lower() not in {".exe", ".cmd", ".bat"}:
+                continue
+        elif not os.access(entry, os.X_OK):
             continue
-        destination = paths["launcher_home"] / entry.name
+        stem = (
+            entry.stem
+            if sys.platform == "win32" and entry.suffix.lower() in {".exe", ".cmd", ".bat"}
+            else entry.name
+        )
+        destination = paths["launcher_home"] / launcher_name(stem)
         body = _runtime_launcher_body(
             generation=generation,
             config_home=paths["config_home"],
@@ -15046,48 +15485,53 @@ def cmd_runtime_install(args: argparse.Namespace) -> int:
             previous=previous,
         )
 
-    verifier_launcher = paths["launcher_home"] / SECURE_WALKAROUND_LAUNCHER
-    verifier_body = _secure_walkaround_launcher_contents(
-        current_link,
-        generation / "bin/python3",
-        launcher_path=verifier_launcher,
-    ).decode("utf-8")
-    _write_runtime_owned_file(
-        verifier_launcher,
-        verifier_body,
-        mode=0o755,
-        runtime_home=runtime_home,
-        receipt=receipt,
-        previous=previous,
-    )
+    if sys.platform != "win32":
+        verifier_launcher = paths["launcher_home"] / SECURE_WALKAROUND_LAUNCHER
+        verifier_body = _secure_walkaround_launcher_contents(
+            current_link,
+            generation / "bin/python3",
+            launcher_path=verifier_launcher,
+        ).decode("utf-8")
+        _write_runtime_owned_file(
+            verifier_launcher,
+            verifier_body,
+            mode=0o755,
+            runtime_home=runtime_home,
+            receipt=receipt,
+            previous=previous,
+        )
 
-    terminal_launcher = paths["launcher_home"] / "vc-terminal"
-    terminal_body = _runtime_launcher_body(
-        generation=generation,
-        config_home=paths["config_home"],
-        crafted_home=paths["crafted_home"],
-        runtime_home=runtime_home,
-        frame_config=frame_config,
-        executable=terminal_host,
-        leading_arguments=(
-            "--config-file",
-            str(product_config / "terminal-entry.toml"),
-        ),
-    )
-    _write_runtime_owned_file(
-        terminal_launcher,
-        terminal_body,
-        mode=0o755,
-        runtime_home=runtime_home,
-        receipt=receipt,
-        previous=previous,
-    )
+        if terminal_host.is_file():
+            terminal_launcher = paths["launcher_home"] / "vc-terminal"
+            terminal_body = _runtime_launcher_body(
+                generation=generation,
+                config_home=paths["config_home"],
+                crafted_home=paths["crafted_home"],
+                runtime_home=runtime_home,
+                frame_config=frame_config,
+                executable=terminal_host,
+                leading_arguments=(
+                    "--config-file",
+                    str(product_config / "terminal-entry.toml"),
+                ),
+            )
+            _write_runtime_owned_file(
+                terminal_launcher,
+                terminal_body,
+                mode=0o755,
+                runtime_home=runtime_home,
+                receipt=receipt,
+                previous=previous,
+            )
 
-    deck = generation / "bin/vibecrafted"
+    deck = _runtime_bin_file(generation, "vibecrafted")
     for name, verb in _RUNTIME_WRAPPER_VERBS.items():
-        if (bin_dir / name).is_file() and os.access(bin_dir / name, os.X_OK):
+        native = _runtime_bin_file(generation, name)
+        if native.is_file() and (
+            sys.platform == "win32" or os.access(native, os.X_OK)
+        ):
             continue
-        destination = paths["launcher_home"] / name
+        destination = paths["launcher_home"] / launcher_name(name)
         body = _runtime_launcher_body(
             generation=generation,
             config_home=paths["config_home"],
@@ -15106,13 +15550,26 @@ def cmd_runtime_install(args: argparse.Namespace) -> int:
             previous=previous,
         )
 
-    skill_names, runtime_views = _install_runtime_agent_projections(
-        generation,
-        version=version,
-        runtime_home=runtime_home,
-        receipt=receipt,
-        previous=previous,
-    )
+    if sys.platform == "win32":
+        skills = discover_skills(generation)
+        skill_names = [skill.name for skill in skills]
+        if not skill_names:
+            raise RuntimeError(
+                "Runtime Pack contains no discoverable skills: "
+                f"{generation / 'vibecrafted-core/vibecrafted_core/skills'}"
+            )
+        runtime_views: list[str] = []
+        _publish_windows_user_path(
+            paths["launcher_home"], runtime_home=runtime_home, receipt=receipt
+        )
+    else:
+        skill_names, runtime_views = _install_runtime_agent_projections(
+            generation,
+            version=version,
+            runtime_home=runtime_home,
+            receipt=receipt,
+            previous=previous,
+        )
 
     active = {
         "schema": "vibecrafted.active-runtime.v1",
@@ -15314,8 +15771,8 @@ def cmd_runtime_uninstall(args: argparse.Namespace) -> int:
         for raw_path, raw_target in sorted(owned_symlinks.items())
         if _path_present(path := Path(raw_path))
         and (
-            not path.is_symlink()
-            or _symlink_target(path) != Path(raw_target).resolve(strict=False)
+            not _is_owned_pointer(path)
+            or _pointer_target(path) != Path(raw_target).resolve(strict=False)
         )
     )
     if conflicts:
@@ -15376,6 +15833,16 @@ def cmd_runtime_uninstall(args: argparse.Namespace) -> int:
                 actions.append(f"remove {path}")
                 if not dry_run:
                     _remove_path(path)
+    elif sys.platform == "win32":
+        if not receipt.get("path_entry_skipped"):
+            for entry in receipt.get("owned_path_entries", []):
+                actions.append(f"remove PATH {entry}")
+                if not dry_run:
+                    _remove_windows_user_path(str(entry))
+        for task in receipt.get("owned_scheduled_tasks", []):
+            actions.append(f"remove task {task}")
+            if not dry_run:
+                _remove_windows_scheduled_task(str(task))
 
     for destination_raw, backup_raw in receipt.get("backups", {}).items():
         destination = Path(destination_raw)

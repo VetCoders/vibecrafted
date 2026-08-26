@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import contextlib
 import errno
-import fcntl
 import json
 import logging
 import os
@@ -25,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import portable_lock as fcntl
 from .runtime_paths import vibecrafted_home
 from .settlement_ledger import (
     SETTLEMENT_LEDGER_SCHEMA,

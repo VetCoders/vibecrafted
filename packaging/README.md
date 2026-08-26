@@ -12,7 +12,7 @@ Canonical stranger install truth lives in [docs/INSTALL.md](../docs/INSTALL.md):
 | Signed `Vibecrafted.app` DMG | macOS 14+ arm64           | Build path exists; no published DMG yet |
 | Source checkout              | maintainers / power users | Published                               |
 | Container                    | isolated operator runtime | Published                               |
-| `install.ps1`                | Windows WSL2 handoff only | In repo; not a native installer         |
+| `install.ps1`                | Windows native Runtime Pack | In repo; not a published channel        |
 
 ## Homebrew (staged)
 
@@ -24,21 +24,16 @@ See [homebrew/README.md](homebrew/README.md).
 Do **not** create `vetcoders/homebrew-tap` from this worker. Copy the files
 into that repo when the operator is ready.
 
-## winget (skipped)
+## winget (not staged this cut)
 
-No native Windows build exists. `install.ps1` only probes WSL2 and prints
-the Linux bootstrap. winget's installer types (`exe`, `msi`, `msix`,
-`burn`, `inno`, `nullsoft`, `portable`, `zip`) all describe a Windows PE
-payload. There is no honest installer type for "requires WSL2, then run a
-POSIX script."
+Native Windows now installs a receipted Runtime Pack (`install.ps1` →
+`scripts/install-runtime-pack.ps1`). That is a product-owned tarball plus
+checksum/signature, not a winget installer type. Do not list a winget
+manifest until an operator-owned `.exe`/`.msi` carrier exists.
 
-A winget manifest that pointed at `install.ps1`, a `.zip` of this repo, or
-a dummy EXE would list Vibecrafted as a Windows application. That is the
-lie this hydration pass refuses to ship.
-
-When a native Windows installer exists, start a new manifest under
-`packaging/winget/` against the [winget-pkgs schema](https://github.com/microsoft/winget-pkgs).
-Until then, Windows users follow the WSL2 path in `docs/INSTALL.md`.
+Until then, Windows users follow the native Runtime Pack path in
+`docs/INSTALL.md`. WSL2 remains an optional Linux channel, not the native
+product.
 
 ## Other stores (not staged)
 

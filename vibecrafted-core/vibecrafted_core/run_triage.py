@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import argparse
 import errno
-import fcntl
 import hashlib
 import json
 import os
@@ -55,6 +54,7 @@ from typing import Any, Protocol, TypeGuard
 # Module-path import on purpose; see the note in vc_frame_delivery.py.
 import vibecrafted_core.run_mutation as run_mutation_module
 
+from . import portable_lock as fcntl
 from .run_mutation import (
     RunMetaMutationError,
     mutate_run_meta,

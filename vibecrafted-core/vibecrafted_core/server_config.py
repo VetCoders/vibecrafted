@@ -60,6 +60,10 @@ def config_path(*, operator_home: Path | None = None) -> Path:
         configured = os.environ.get("XDG_CONFIG_HOME")
         if configured:
             return Path(configured).expanduser() / "vibecrafted" / "config.toml"
+        from .runtime_paths import is_windows, vibecrafted_product_config_home
+
+        if is_windows():
+            return vibecrafted_product_config_home() / "config.toml"
         operator_home = Path(os.environ.get("HOME", str(Path.home())))
     return operator_home.expanduser() / ".config" / "vibecrafted" / "config.toml"
 

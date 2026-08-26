@@ -1278,6 +1278,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not raw_args or raw_args[0] in {"-h", "--help"}:
         print(render_root_help(help_version), end="")
         return 0
+    if sys.platform == "win32" and raw_args[0] == "server":
+        from .windows_server import main as windows_server_main
+
+        return windows_server_main(raw_args[1:])
     if raw_args[0] == "help":
         if len(raw_args) == 1:
             print(render_root_help(help_version), end="")
@@ -1326,6 +1330,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "settlements",
         "stop",
     } | set(LAUNCHERS)
+    if sys.platform == "win32":
+        python_commands = python_commands | {"server"}
     agent_python_verbs = {"observe", "await", "stop", "resume"}
     is_lifecycle = shell_wrapper_verb is not None
     if raw_args and shell_wrapper_verb is None:

@@ -16,6 +16,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::process::{Command, Stdio};
 
 use chrono::{DateTime, Utc};
@@ -39,18 +40,35 @@ fn expanduser(path: PathBuf) -> PathBuf {
     path
 }
 
-/// `$HOME` as a path. Unix/macOS only — Vibecrafted runs on darwin/linux.
+/// `$HOME`, then Windows `$USERPROFILE`.
 fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
 }
 
 /// Vibecrafted home. Mirrors `runtime_paths.vibecrafted_home`:
-/// `$VIBECRAFTED_HOME` (expanded) if set & non-empty, else `~/.vibecrafted`.
+/// `$VIBECRAFTED_HOME` (expanded) if set & non-empty, else the platform
+/// control-plane root (`%LOCALAPPDATA%\Vibecrafted\home` on Windows,
+/// `~/.vibecrafted` elsewhere).
 #[must_use]
 pub fn vibecrafted_home() -> PathBuf {
     if let Some(raw) = std::env::var_os("VIBECRAFTED_HOME") {
         if !raw.is_empty() {
             return expanduser(PathBuf::from(raw));
+        }
+    }
+    #[cfg(windows)]
+    {
+        if let Some(local) = std::env::var_os("LOCALAPPDATA").filter(|value| !value.is_empty()) {
+            return PathBuf::from(local).join("Vibecrafted").join("home");
+        }
+        if let Some(profile) = std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()) {
+            return PathBuf::from(profile)
+                .join("AppData")
+                .join("Local")
+                .join("Vibecrafted")
+                .join("home");
         }
     }
     home_dir()
@@ -1304,12 +1322,39 @@ fn pid_is_alive(pid: i64) -> bool {
     if pid <= 0 {
         return false;
     }
-    Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+    #[cfg(unix)]
+    {
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+    #[cfg(windows)]
+    {
+        let Ok(pid) = u32::try_from(pid) else {
+            return false;
+        };
+        const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+        const SYNCHRONIZE: u32 = 0x0010_0000;
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut core::ffi::c_void;
+            fn CloseHandle(handle: *mut core::ffi::c_void) -> i32;
+        }
+        // SAFETY: OpenProcess returns a process handle or null. A non-null
+        // handle is closed exactly once. This is the Windows equivalent of
+        // unix `kill -0`.
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, 0, pid);
+            if handle.is_null() {
+                return false;
+            }
+            CloseHandle(handle);
+            true
+        }
+    }
 }
 
 fn is_pytest_temp_path(path: &Path) -> bool {
@@ -1844,9 +1889,7 @@ mod tests {
     fn temp_home(prefix: &str) -> PathBuf {
         static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
-        let base = std::env::var_os("TMPDIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/tmp"));
+        let base = std::env::temp_dir();
         let nanos = Utc::now().timestamp_nanos_opt().unwrap_or_default();
         for attempt in 0..100 {
             let nonce = NEXT_ID.fetch_add(1, Ordering::Relaxed);

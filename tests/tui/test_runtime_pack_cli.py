@@ -15,6 +15,11 @@ from vibecrafted_core.runtime_pack_contract import (
     write_provenance,
 )
 
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="bash Runtime Pack CLI; Windows coverage is test_windows_runtime_pack.py",
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = REPO_ROOT / "scripts/install-runtime-pack.sh"
 PACKAGER = REPO_ROOT / "scripts/package-runtime-pack.sh"

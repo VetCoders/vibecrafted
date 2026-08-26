@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -125,6 +126,7 @@ def _write_fake_cli(directory: Path, name: str, version: str, help_text: str) ->
     return script
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="unix detached PATH allowlist")
 def test_agent_tool_search_path_matches_detached_allowlist(tmp_path: Path) -> None:
     home = tmp_path / "home"
     runtime_bin = tmp_path / "runtime-bin"

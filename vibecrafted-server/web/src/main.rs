@@ -153,7 +153,9 @@ Examples:
     }
 
     fn home_dir() -> Option<PathBuf> {
-        std::env::var_os("HOME").map(PathBuf::from)
+        std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
     }
 
     fn configured_site_root() -> String {
@@ -171,6 +173,9 @@ Examples:
         if let Some(dir) = exe_dir {
             candidates.push(dir.join("vc-server-site"));
             candidates.push(dir.join("site"));
+            if let Some(parent) = dir.parent() {
+                candidates.push(parent.join("server").join("site"));
+            }
         }
         if let Some(home) = home_dir() {
             candidates.push(home.join(".local/share/vibecrafted/server/site"));

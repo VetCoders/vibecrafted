@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import errno
-import fcntl
 import hashlib
 import json
 import os
@@ -27,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from . import control_plane
+from . import portable_lock as fcntl
 from .clock import utc_now_iso
 from .run_mutation import run_mutation_locks
 from .settlement import (

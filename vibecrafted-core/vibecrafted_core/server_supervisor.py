@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import errno
-import fcntl
 import hashlib
 import json
 import os
@@ -25,6 +24,8 @@ from typing import Any, Self
 from xml.parsers.expat import ExpatError
 
 from . import __version__ as PACKAGE_VERSION
+from . import portable_lock as fcntl
+from .portable_lock import current_uid, owned_by_current_user
 from .server_config import (
     ServerConfigError,
     config_path,
@@ -209,14 +210,15 @@ def _ensure_owned_directory(path: Path, mode: int = 0o700) -> None:
     info = path.lstat()
     if (
         not stat.S_ISDIR(info.st_mode)
-        or info.st_uid != os.getuid()
+        or not owned_by_current_user(info)
         or path.is_symlink()
     ):
         raise SupervisorError(
             f"directory is not an owned regular directory: {path}",
             EX_CONFIG,
         )
-    os.chmod(path, mode)
+    if os.name != "nt":
+        os.chmod(path, mode)
 
 
 def _file_owner_is_trusted(
@@ -228,7 +230,10 @@ def _file_owner_is_trusted(
     """Trust a file owned by the current uid, or (when `allow_root_owned`) one
     owned by root with no group/other write bits set."""
 
-    if file_uid == os.getuid():
+    uid = current_uid()
+    if uid is None:
+        return True
+    if file_uid == uid:
         return True
     return (
         allow_root_owned
@@ -392,7 +397,7 @@ def _validate_existing_destination(path: Path) -> None:
     info = path.lstat()
     if (
         not stat.S_ISREG(info.st_mode)
-        or info.st_uid != os.getuid()
+        or not owned_by_current_user(info)
         or info.st_nlink != 1
         or path.is_symlink()
     ):
@@ -432,7 +437,7 @@ def _atomic_private_write(path: Path, payload: bytes) -> bool:
             visible = path.lstat()
             if (
                 not stat.S_ISREG(opened.st_mode)
-                or opened.st_uid != os.getuid()
+                or not owned_by_current_user(opened)
                 or opened.st_nlink != 1
                 or (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino)
             ):
@@ -504,7 +509,7 @@ def _open_verified_lock(path: Path, *, create: bool) -> int:
         visible = path.lstat()
         if (
             not stat.S_ISREG(opened.st_mode)
-            or opened.st_uid != os.getuid()
+            or not owned_by_current_user(opened)
             or opened.st_nlink != 1
             or (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino)
         ):
@@ -708,7 +713,7 @@ def _read_owned_bytes(path: Path) -> bytes | None:
         if (
             path.is_symlink()
             or not stat.S_ISREG(visible.st_mode)
-            or visible.st_uid != os.getuid()
+            or not owned_by_current_user(visible)
             or visible.st_nlink != 1
         ):
             return None
@@ -750,7 +755,7 @@ def _service_stderr_cursor(path: Path) -> tuple[int, int, int] | None:
         if (
             path.is_symlink()
             or not stat.S_ISREG(visible.st_mode)
-            or visible.st_uid != os.getuid()
+            or not owned_by_current_user(visible)
             or visible.st_nlink != 1
         ):
             return None
@@ -785,7 +790,7 @@ def _bounded_service_stderr(
         if (
             path.is_symlink()
             or not stat.S_ISREG(visible.st_mode)
-            or visible.st_uid != os.getuid()
+            or not owned_by_current_user(visible)
             or visible.st_nlink != 1
         ):
             return None
@@ -1037,7 +1042,7 @@ def _validate_tools_install_descriptor(descriptor: int, lock_path: Path) -> None
         ) from exc
     if (
         not stat.S_ISREG(opened.st_mode)
-        or opened.st_uid != os.geteuid()
+        or not owned_by_current_user(opened)
         or opened.st_nlink != 1
         or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
     ):
@@ -1088,7 +1093,7 @@ class _ToolsInstallMutationLease:
         directory = lock_path.parent.lstat()
         if (
             not stat.S_ISDIR(directory.st_mode)
-            or directory.st_uid != os.geteuid()
+            or not owned_by_current_user(directory)
             or lock_path.parent.is_symlink()
         ):
             raise SupervisorError(
@@ -1725,7 +1730,8 @@ def _launchctl(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
 def _launch_domain() -> str:
     """launchd GUI domain string for the current uid."""
 
-    return f"gui/{os.getuid()}"
+    uid = current_uid()
+    return f"gui/{uid if uid is not None else 'windows'}"
 
 
 def _launch_target() -> str:

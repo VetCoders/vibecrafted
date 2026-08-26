@@ -6,6 +6,16 @@ import hashlib
 import io
 import json
 import os
+import sys
+
+import pytest
+
+if sys.platform == "win32":
+    pytest.skip(
+        "POSIX pty bootstrap coverage; Windows uses test_windows_runtime_pack.py",
+        allow_module_level=True,
+    )
+
 import pty
 import select
 import shlex
@@ -13,12 +23,9 @@ import signal
 import stat
 import struct
 import subprocess
-import sys
 import tarfile
 import time
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALL_SH = REPO_ROOT / "install.sh"
@@ -33,6 +40,9 @@ FIXTURE_REQUIRED_FILES = {
     "install.toml",
     "scripts/distribution_manifest.py",
     "scripts/build-linux-arm64-runtime-pack.sh",
+    "scripts/build-windows-x64-runtime-pack.ps1",
+    "scripts/install-runtime-pack.ps1",
+    "scripts/package-runtime-pack.ps1",
     "scripts/installer_brand.py",
     "scripts/vetcoders_install.py",
     "scripts/vibecrafted",

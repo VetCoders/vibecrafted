@@ -92,14 +92,25 @@ fi
 if find "$root" -type l -print -quit | grep -q .; then
   die "standalone Runtime Pack contains symlinks"
 fi
-for required in \
-  VERSION bin/python3 bin/vibecrafted bin/vc-start bin/vc-terminal bin/vc-frame \
-  libexec/vc-frame scripts/vibecrafted scripts/vetcoders_install.py \
-  vibecrafted-core/vibecrafted_core/runtime_pack_contract.py; do
-  [[ -e "$root/$required" ]] || die "standalone Runtime Pack is missing $required"
-done
+if [[ "$platform" == "win32" ]]; then
+  for required in \
+    VERSION bin/python.exe bin/vibecrafted.cmd \
+    scripts/vetcoders_install.py scripts/install-runtime-pack.ps1 \
+    vibecrafted-core/vibecrafted_core/runtime_pack_contract.py; do
+    [[ -e "$root/$required" ]] || die "standalone Runtime Pack is missing $required"
+  done
+  pack_python="$root/bin/python.exe"
+else
+  for required in \
+    VERSION bin/python3 bin/vibecrafted bin/vc-start bin/vc-terminal bin/vc-frame \
+    libexec/vc-frame scripts/vibecrafted scripts/vetcoders_install.py \
+    vibecrafted-core/vibecrafted_core/runtime_pack_contract.py; do
+    [[ -e "$root/$required" ]] || die "standalone Runtime Pack is missing $required"
+  done
+  pack_python="$root/bin/python3"
+fi
 
-PYTHONPATH="$root/vibecrafted-core" "$root/bin/python3" \
+PYTHONPATH="$root/vibecrafted-core" "$pack_python" \
   -m vibecrafted_core.runtime_pack_contract write \
   --root "$root" \
   --carrier-basename "$(basename "$output")" \

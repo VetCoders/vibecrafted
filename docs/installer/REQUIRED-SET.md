@@ -18,7 +18,8 @@ Implementation: `cmd_runtime_install`, `cmd_runtime_uninstall`,
 `scripts/vetcoders_install.py`. The exact same installer is embedded under
 `Vibecrafted.app/Contents/Resources/runtime/scripts/`; AppDelegate delegates to
 it and does not write the installation itself. Regression coverage:
-`tests/tui/test_installer_uninstall.py`, `tests/tui/test_installer_restore.py`.
+`tests/tui/test_installer_uninstall.py`, `tests/tui/test_installer_restore.py`,
+`tests/tui/test_windows_runtime_pack.py`.
 
 ## 1. The required set
 
@@ -41,6 +42,25 @@ Every row is load-bearing: delete it and the named flow stops working.
 | Required tools    | `loct`, `loctree-mcp`, `aicx`, `prview`, `screenscribe` plus the `vc-*` projections                                     | complete agent product; every named tool belongs to the product payload, with no optional-product fiction |
 | Frame config      | `~/.config/vibecrafted/vc-frame/`, `~/.config/vetcoders/frontier/`                                                      | `vc-frame` / `vc-start` cockpit; no private top-level `~/.config/vc-frame`                                |
 | App bundle        | `/Applications/Vibecrafted.app` when the DMG channel is used                                                            | optional native transport/onboarding shell; CLI runtime must remain first-class without it                |
+
+### Windows native required set
+
+Same installer (`vetcoders_install.py runtime-install` / `scripts/install-runtime-pack.ps1`). Paths are env-overridable (`LOCALAPPDATA`, `APPDATA`, `VIBECRAFTED_*`). Never a hardcoded user profile.
+
+| Surface           | Required path                                                                 | Needed for |
+| ----------------- | ----------------------------------------------------------------------------- | ---------- |
+| Runtime home      | `%LOCALAPPDATA%\Vibecrafted`                                                  | generations, receipt, `active.json` |
+| Launchers         | `%LOCALAPPDATA%\Vibecrafted\bin\*.cmd` plus HKCU user PATH                    | CLI without WSL |
+| Product config    | `%APPDATA%\Vibecrafted`                                                       | server/config projections |
+| Operator home     | `%LOCALAPPDATA%\Vibecrafted\home`                                             | control plane |
+| Active pointer    | `%LOCALAPPDATA%\Vibecrafted\active.json`                                      | sole runtime authority |
+| Current projection| `%LOCALAPPDATA%\Vibecrafted\tools\vibecrafted-current` (directory junction)   | filesystem projection of the generation |
+| Ownership receipt | `%LOCALAPPDATA%\Vibecrafted\install-receipt.json`                             | uninstall/reset |
+| Mandatory payload | `python.exe`, `loct.exe`, `loctree.exe`, `loctree-mcp.exe`, `loctree-lsp.exe`, `aicx.exe`, `aicx-mcp.exe`, `vc-server.exe`, `vibecrafted.cmd` | fail-closed install |
+| Skills store      | `<generation>\vibecrafted-core\vibecrafted_core\skills\`                      | canonical skills; no `~/.claude` scatter |
+| Server state      | `%LOCALAPPDATA%\Vibecrafted\server\` (`vc-server.pid`, logs)                  | start/stop/health from the active generation |
+
+Limited platform scope (warn, never stub): `vc-frame`, `vc-terminal`, `voc`, `vc-start`, `vc-server-supervisor`. Missing `prview` / `screenscribe` is a named release blocker, not a silent omit.
 
 Anything not in this table is disposable. In particular: **there is no separate
 tools generation in a Runtime Pack install.** `active.json` and

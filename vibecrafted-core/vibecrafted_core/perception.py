@@ -39,11 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-try:  # pragma: no cover - exercised on every supported (POSIX) platform
-    import fcntl
-except ImportError:  # pragma: no cover - Windows has no fcntl; flock probe is skipped
-    fcntl = None  # type: ignore[assignment]
-
+from . import portable_lock as fcntl
 from .capabilities import _resolve_executable as _resolve_foundation
 from .clock import utc_now_iso
 
@@ -189,7 +185,7 @@ def watcher_running(root: str | Path) -> bool:
     exit-75 contention guard.
     """
     lock = scan_lock_path(root)
-    if fcntl is None or not lock.exists():
+    if not lock.exists():
         return False
     try:
         fd = os.open(str(lock), os.O_RDWR)

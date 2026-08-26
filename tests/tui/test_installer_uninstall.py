@@ -12,6 +12,12 @@ import pytest
 from scripts import vetcoders_install as installer
 
 
+pytestmark = pytest.mark.skipif(
+    os.name == "nt",
+    reason="unix Runtime Pack layout; Windows coverage is test_windows_runtime_pack.py",
+)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_uninstall_from_live_runtime(monkeypatch) -> None:
     """A unit-test HOME must never inspect or mutate the host's real LaunchAgent."""

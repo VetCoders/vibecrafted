@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import contextlib
 import errno
-import fcntl
 import hashlib
 import json
 import os
@@ -41,6 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from . import portable_lock as fcntl
 from .control_plane import control_plane_home
 from .runtime_paths import read_version_file
 

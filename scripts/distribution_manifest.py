@@ -43,6 +43,7 @@ DISTRIBUTION_TREE_DOMAIN = b"vibecrafted.distribution-tree.v1\0"
 _OWNER_REPO_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _GIT_SHA_RE = re.compile(r"[0-9a-f]{40}")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
+_O_BINARY = getattr(os, "O_BINARY", 0)
 
 REQUIRED_FILES = (
     "VERSION",
@@ -54,6 +55,9 @@ REQUIRED_FILES = (
     "install.toml",
     "scripts/distribution_manifest.py",
     "scripts/build-linux-arm64-runtime-pack.sh",
+    "scripts/build-windows-x64-runtime-pack.ps1",
+    "scripts/install-runtime-pack.ps1",
+    "scripts/package-runtime-pack.ps1",
     "scripts/installer_brand.py",
     "scripts/vetcoders_install.py",
     "scripts/vibecrafted",
@@ -236,8 +240,15 @@ def _parse_owner_repo_url(url: str) -> str | None:
     return owner_repo if _OWNER_REPO_RE.fullmatch(owner_repo) else None
 
 
-def _stat_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, int]:
+def _stat_identity(metadata: os.stat_result) -> tuple[int, ...]:
     """Return the stable fields used to detect an in-flight path replacement."""
+    if os.name == "nt":
+        # Windows inodes and POSIX mode bits are not a reliable identity.
+        return (
+            int(metadata.st_size),
+            int(metadata.st_mtime_ns),
+            int(stat.S_IFMT(metadata.st_mode)),
+        )
     return (
         metadata.st_dev,
         metadata.st_ino,
@@ -248,9 +259,16 @@ def _stat_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int, i
     )
 
 
+def _require_single_link(metadata: os.stat_result, *, label: str, path: Path) -> None:
+    if os.name == "nt":
+        return
+    if metadata.st_nlink != 1:
+        raise ManifestError(f"{label} must not be hardlinked: {path}")
+
+
 def _read_stable_regular_bytes(path: Path, *, label: str) -> tuple[bytes, int]:
     """Read one no-follow regular file and prove its path still names that inode."""
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | _O_BINARY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(path, flags)
     except OSError as exc:
@@ -259,8 +277,7 @@ def _read_stable_regular_bytes(path: Path, *, label: str) -> tuple[bytes, int]:
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode):
             raise ManifestError(f"{label} must be a regular file: {path}")
-        if before.st_nlink != 1:
-            raise ManifestError(f"{label} must not be hardlinked: {path}")
+        _require_single_link(before, label=label, path=path)
         chunks: list[bytes] = []
         consumed = 0
         while True:
@@ -346,7 +363,7 @@ def _load_source_provenance_with_bytes(
     except OSError as exc:
         raise ManifestError(f"cannot inspect {SOURCE_PROVENANCE_FILE}: {exc}") from exc
     raw, mode = _read_stable_regular_bytes(path, label=SOURCE_PROVENANCE_FILE)
-    if mode != 0o644:
+    if os.name != "nt" and mode != 0o644:
         raise ManifestError(f"{SOURCE_PROVENANCE_FILE} must have canonical mode 0644")
     try:
         parsed = json.loads(raw.decode("utf-8"))
@@ -494,7 +511,7 @@ def _git_blob_oid_from_symlink(path: Path, algorithm: str) -> str:
 
 def _git_blob_oid_from_file(path: Path, algorithm: str) -> tuple[str, os.stat_result]:
     """Hash one no-follow, stable regular-file snapshot as a Git blob."""
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | _O_BINARY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(path, flags)
     except OSError as exc:
@@ -1055,7 +1072,7 @@ def _distribution_tree_record_from_entries(
 
 def _sha256_stable_regular_file(path: Path) -> tuple[int, bytes, int]:
     """Hash a no-follow file while proving fd and final path identity."""
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | _O_BINARY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(path, flags)
     except OSError as exc:
@@ -1064,8 +1081,7 @@ def _sha256_stable_regular_file(path: Path) -> tuple[int, bytes, int]:
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode):
             raise ManifestError(f"payload path is not a regular file: {path}")
-        if before.st_nlink != 1:
-            raise ManifestError(f"payload file must not be hardlinked: {path}")
+        _require_single_link(before, label="payload file", path=path)
         digest = hashlib.sha256()
         consumed = 0
         while True:
@@ -1254,7 +1270,7 @@ def validate_payload(
     for path in _walk_entries(payload_root):
         relative = path.relative_to(payload_root)
         if path_is_forbidden(relative):
-            errors.append(f"forbidden path: {relative}")
+            errors.append(f"forbidden path: {relative.as_posix()}")
             continue
         if relative.parts[0] not in ALLOWED_TOP_LEVEL:
             errors.append(f"unexpected top-level path: {relative}")
@@ -1325,12 +1341,16 @@ def _assert_paths_do_not_overlap(
 def _copy_regular_file(source: Path, destination: Path) -> None:
     """Copy bytes from one no-follow fd and prove the source path stayed attached."""
     source_flags = (
-        os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        os.O_RDONLY
+        | _O_BINARY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
     )
     destination_flags = (
         os.O_WRONLY
         | os.O_CREAT
         | os.O_EXCL
+        | _O_BINARY
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NOFOLLOW", 0)
     )
@@ -1343,8 +1363,7 @@ def _copy_regular_file(source: Path, destination: Path) -> None:
         before = os.fstat(source_fd)
         if not stat.S_ISREG(before.st_mode):
             raise ManifestError(f"source payload path is not a regular file: {source}")
-        if before.st_nlink != 1:
-            raise ManifestError(f"source payload file must not be hardlinked: {source}")
+        _require_single_link(before, label="source payload file", path=source)
         if destination.exists() or destination.is_symlink():
             _remove_path(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1364,7 +1383,10 @@ def _copy_regular_file(source: Path, destination: Path) -> None:
                     )
                 pending = pending[written:]
         canonical_mode = 0o755 if before.st_mode & 0o111 else 0o644
-        os.fchmod(destination_fd, canonical_mode)
+        if hasattr(os, "fchmod"):
+            os.fchmod(destination_fd, canonical_mode)
+        else:
+            os.chmod(destination, canonical_mode)
         after = os.fstat(source_fd)
         try:
             path_after = source.lstat()
@@ -1781,7 +1803,7 @@ def _write_archive(payload_root: Path, output: Path, root_name: str) -> None:
     for path in inventory:
         relative = path.relative_to(payload_root)
         if path_is_forbidden(relative):
-            errors.append(f"forbidden path: {relative}")
+            errors.append(f"forbidden path: {relative.as_posix()}")
             continue
         if relative.parts[0] not in ALLOWED_TOP_LEVEL:
             errors.append(f"unexpected top-level path: {relative}")
@@ -2124,7 +2146,7 @@ def publish_archive_candidate(
         ) from exc
     if (
         not stat.S_ISREG(candidate_meta.st_mode)
-        or candidate_meta.st_nlink != 1
+        or (os.name != "nt" and candidate_meta.st_nlink != 1)
         or candidate_path.is_symlink()
     ):
         raise ManifestError(

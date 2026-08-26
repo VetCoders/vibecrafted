@@ -23,6 +23,11 @@ from scripts import vetcoders_install as installer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="unix doctor layout; Windows coverage is test_windows_runtime_pack.py",
+)
+
 
 def _write_test_source_provenance(
     root: Path,

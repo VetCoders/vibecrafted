@@ -228,7 +228,9 @@ def _launcher_shim_findings(
 
     findings: list[_Finding] = []
     entered: tuple[Path, str] | None = None
-    if "vibecrafted_core.cli" in head and "import main" in head:
+    if "vibecrafted_core.cli" in head and (
+        "import main" in head or "-m vibecrafted_core.cli" in head
+    ):
         findings.append(
             _Finding("ok", "launcher", f"Python package entrypoint on PATH -> {path}")
         )
@@ -674,6 +676,15 @@ def _vc_frame_delivery_findings(
     path_env: str | None = None,
 ) -> list[_Finding]:
     """Config delivery health: view channel, themes, pane-shell, frontier zombies."""
+    if sys.platform == "win32":
+        return [
+            _Finding(
+                "warn",
+                "vc-frame:runtime",
+                "vc-frame is limited-platform-scope on Windows; cockpit delivery "
+                "is not required for the Runtime Pack",
+            )
+        ]
     findings: list[_Finding] = []
     view = vc_frame_user_config_dir(home)
     current = tools_current_path(tools_home)
@@ -1028,6 +1039,8 @@ def _vc_frame_truth_drift_findings(
     may run ahead of the store but never silently, and no projection link may
     resolve into a parked generation instead of vibecrafted-current.
     """
+    if sys.platform == "win32":
+        return []
     findings: list[_Finding] = []
     current = tools_current_path(tools_home)
     package = current / "vibecrafted-core" / "vibecrafted_core"
