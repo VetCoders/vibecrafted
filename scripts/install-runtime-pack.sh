@@ -212,6 +212,12 @@ if [[ -f "$pack" && "$pack" == *.tar.gz ]]; then
   if find "$payload_root" -type l -print -quit | grep -q .; then
     die "links are forbidden in extracted Runtime Pack archives"
   fi
+  # The packager excludes .DS_Store from the carrier and the closed provenance
+  # writer rejects it at build time, so any .DS_Store visible here was stamped
+  # by the host's own metadata services after extraction. It carries no signed
+  # bytes; remove it instead of failing a valid install. Field-observed twice
+  # on one operator Mac (build staging and first-run publish).
+  find "$payload_root" -type f -name '.DS_Store' -delete
 else
   die "Runtime Pack must be the canonical .tar.gz carrier: $pack"
 fi
