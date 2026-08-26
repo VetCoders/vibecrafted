@@ -86,13 +86,21 @@ def test_core_parser_accepts_the_short_prompt_and_file_flags() -> None:
 def test_workflow_prompt_stdin_stays_out_of_argv_and_temp_files(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    capsys,
 ) -> None:
     seen: dict[str, object] = {}
 
     def fake_launch(spec, source_dir):
         seen["spec"] = spec
         seen["source_dir"] = source_dir
-        return {"accepted": True, "run_id": "impl-stdin-1"}
+        return {
+            "accepted": True,
+            "run_id": "impl-stdin-1",
+            "agent": spec.agent,
+            "skill": spec.skill,
+            "root": spec.root,
+            "status": "launching",
+        }
 
     monkeypatch.setattr(cli, "launch_workflow", fake_launch)
     monkeypatch.setattr(cli.sys, "stdin", io.StringIO("secret prompt from stdin"))
@@ -114,6 +122,12 @@ def test_workflow_prompt_stdin_stays_out_of_argv_and_temp_files(
     spec = seen["spec"]
     assert spec.prompt == "secret prompt from stdin"
     assert spec.file == ""
+    body = json.loads(capsys.readouterr().out)
+    assert body["run_id"] == "impl-stdin-1"
+    assert body["accepted"] is True
+    assert body["agent"] == "codex"
+    assert body["root"] == str(tmp_path)
+    assert body["status"] == "launching"
 
 
 def test_review_from_home_uses_selected_workspace(
@@ -1017,7 +1031,9 @@ def test_root_cli_doctor_routes_to_installer_doctor(monkeypatch, capsys) -> None
     monkeypatch.setattr(
         cli.doctor_module,
         "doctor_run",
-        lambda: [SimpleNamespace(level="ok", component="runtime", message="ready")],
+        lambda **_kwargs: [
+            SimpleNamespace(level="ok", component="runtime", message="ready")
+        ],
     )
 
     assert cli.main(["doctor", "--json"]) == 0
@@ -1031,10 +1047,25 @@ def test_root_cli_doctor_returns_failure_for_failed_findings(monkeypatch) -> Non
     monkeypatch.setattr(
         cli.doctor_module,
         "doctor_run",
-        lambda: [SimpleNamespace(level="fail", component="runtime", message="broken")],
+        lambda **_kwargs: [
+            SimpleNamespace(level="fail", component="runtime", message="broken")
+        ],
     )
 
     assert cli.main(["doctor"]) == 1
+
+
+def test_root_cli_doctor_release_forwards_the_flag(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def _run(**kwargs):
+        seen.update(kwargs)
+        return [SimpleNamespace(level="ok", component="runtime", message="ready")]
+
+    monkeypatch.setattr(cli.doctor_module, "doctor_run", _run)
+
+    assert cli.main(["doctor", "--release"]) == 0
+    assert seen.get("release") is True
 
 
 def test_apply_live_liveness_flags_dead_launcher() -> None:
@@ -1312,3 +1343,119 @@ def test_startup_watch_survives_a_null_accepted_field(tmp_path, capsys, monkeypa
     )
 
     assert "Not logged in" in capsys.readouterr().err
+
+
+def test_json_launch_prints_one_parseable_receipt_even_with_unserializable_extras(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    launches = []
+
+    def fake_launch(spec, _source_dir):
+        launches.append(spec)
+        return {
+            "accepted": True,
+            "run_id": "work-260826-json-1",
+            "agent": spec.agent,
+            "skill": spec.skill,
+            "root": spec.root,
+            "status": "launching",
+            "weird": object(),
+        }
+
+    monkeypatch.setattr(cli, "launch_workflow", fake_launch)
+
+    rc = cli.main(
+        [
+            "workflow",
+            "claude",
+            "--prompt",
+            "one invocation one run",
+            "--json",
+            "--root",
+            str(tmp_path),
+        ]
+    )
+
+    assert rc == 0
+    assert len(launches) == 1
+    captured = capsys.readouterr()
+    assert captured.out.strip()
+    body = json.loads(captured.out)
+    assert body["run_id"] == "work-260826-json-1"
+    assert body["agent"] == "claude"
+    assert body["skill"] == "workflow"
+    assert body["root"] == str(tmp_path)
+    assert body["accepted"] is True
+    assert body["status"] == "launching"
+    assert "schema" in body
+
+
+def test_json_launch_exception_after_run_created_emits_recovered_receipt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    def fake_launch(_spec, _source_dir):
+        raise RuntimeError("viewer exploded after spawn")
+
+    def fake_recover(spec):
+        return {
+            "accepted": True,
+            "run_id": "work-260826-recovered",
+            "agent": spec.agent,
+            "skill": spec.skill,
+            "root": spec.root,
+            "status": "launching",
+            "replayed": True,
+        }
+
+    monkeypatch.setattr(cli, "launch_workflow", fake_launch)
+    monkeypatch.setattr(cli, "recover_launch_receipt", fake_recover)
+
+    rc = cli.main(
+        [
+            "workflow",
+            "claude",
+            "--prompt",
+            "same brief",
+            "--json",
+            "--root",
+            str(tmp_path),
+        ]
+    )
+
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "viewer exploded after spawn" in captured.err
+    body = json.loads(captured.out)
+    assert body["run_id"] == "work-260826-recovered"
+    assert body["accepted"] is True
+    assert body["replayed"] is True
+    assert body["agent"] == "claude"
+
+
+def test_json_launch_never_returns_empty_success_without_run_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "launch_workflow",
+        lambda _spec, _source: {"accepted": True, "status": "launching"},
+    )
+
+    rc = cli.main(
+        [
+            "workflow",
+            "claude",
+            "--prompt",
+            "missing id",
+            "--json",
+            "--root",
+            str(tmp_path),
+        ]
+    )
+
+    assert rc != 0
+    captured = capsys.readouterr()
+    body = json.loads(captured.out)
+    assert body["accepted"] is True
+    assert body["run_id"] == ""
+    assert "missing run_id" in captured.err

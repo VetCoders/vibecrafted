@@ -10,6 +10,7 @@ import stat
 import struct
 import subprocess
 import sys
+import tarfile
 import tempfile
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -18,6 +19,7 @@ from typing import Any
 
 import pytest
 from vibecrafted_core import product_contract as contract
+from vibecrafted_core import runtime_pack_contract
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VERIFY_SCRIPT = REPO_ROOT / "scripts/verify-vibecrafted-product.sh"
@@ -200,6 +202,46 @@ def _module_fixture(
     return manifest
 
 
+def _runtime_pack_fixture(app: Path) -> str:
+    name = "Vibecrafted_RuntimePack_1.0.0-20260814-22222222-darwin-arm64.tar.gz"
+    embedded = app / "Contents/Resources/runtime-pack" / name
+    with tempfile.TemporaryDirectory(prefix="runtime-pack-fixture.") as temporary:
+        payload = Path(temporary) / "VibecraftedRuntime"
+        payload.mkdir()
+        (payload / "VERSION").write_text("1.0.0\n", encoding="utf-8")
+        launcher = payload / "scripts/vibecrafted"
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+        launcher.chmod(0o755)
+        vc_start = payload / "bin/vc-start"
+        vc_start.parent.mkdir(parents=True)
+        vc_start.write_text("#!/bin/sh\n", encoding="utf-8")
+        vc_start.chmod(0o755)
+        _write_json(
+            payload / "source-provenance.json",
+            {
+                "schema": runtime_pack_contract.SOURCE_PROVENANCE_SCHEMA,
+                "owner_repo": "vetcoders/vibecrafted",
+                "source_revision": "2" * 40,
+                "payload": {},
+            },
+        )
+        runtime_pack_contract.write_provenance(
+            payload,
+            carrier_basename=name,
+            version="1.0.0",
+            platform="darwin-arm64",
+            architecture="arm64",
+            source_revision="2" * 40,
+            terminal_revision="4" * 40,
+            frame_revision="6" * 40,
+        )
+        embedded.parent.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(embedded, "w:gz") as archive:
+            archive.add(payload, arcname="VibecraftedRuntime")
+    return name
+
+
 def _app_fixture(app: Path, macho_executable: Path) -> dict[str, Any]:
     terminal_relative = "Contents/Helpers/vc-terminal.app/Contents/MacOS/alacritty"
     for relative in (
@@ -323,6 +365,7 @@ def _app_fixture(app: Path, macho_executable: Path) -> dict[str, Any]:
         entrypoint_name="frame",
         product_entry=frame_product_entry,
     )
+    runtime_pack_name = _runtime_pack_fixture(app)
     manifest = {
         "schema": contract.PRODUCT_SCHEMA,
         "product": contract.PRODUCT_NAME,
@@ -384,6 +427,11 @@ def _app_fixture(app: Path, macho_executable: Path) -> dict[str, Any]:
                 kind="executable",
             ),
             _entry(app, contract._LAUNCH_PRIMARY_SHELL, kind="resource"),
+            _entry(
+                app,
+                f"Contents/Resources/runtime-pack/{runtime_pack_name}",
+                kind="resource",
+            ),
         ],
         "entrypoints": {
             "app": "Contents/MacOS/Vibecrafted",
@@ -437,7 +485,7 @@ def _transaction_fixture(path: Path, macho_executable: Path) -> dict[str, Any]:
             "owner_repo": "vetcoders/vibecrafted",
             "source_revision": "8" * 40,
             "source_payload": _runtime_source_payload(),
-            "entrypoint": "vibecrafted-core/vibecrafted_core/deck/vibecrafted",
+            "entrypoint": contract.RUNTIME_GENERATION_ENTRYPOINT,
             "hashes": {
                 relative: f"{index:x}" * 64
                 for index, relative in enumerate(
@@ -551,6 +599,18 @@ def _release_output_fixture(
     }
     policy = contract._release_policy()
     executable = app / product["outer_bundle_code"]["path"]
+    runtime_pack_name = (
+        f"Vibecrafted_RuntimePack_{product['version']}-20260814-"
+        f"{product['git_sha'][:8]}-darwin-arm64.tar.gz"
+    )
+    embedded_runtime_pack = app / "Contents/Resources/runtime-pack" / runtime_pack_name
+    runtime_pack = root / runtime_pack_name
+    if runtime_pack.resolve() != embedded_runtime_pack.resolve():
+        shutil.copy2(embedded_runtime_pack, runtime_pack)
+    with tarfile.open(runtime_pack, "r:gz") as archive:
+        provenance_bytes = archive.extractfile(
+            f"VibecraftedRuntime/{runtime_pack_contract.PROVENANCE_NAME}"
+        ).read()
     payload = {
         "schema": contract.RELEASE_OUTPUT_SCHEMA,
         "signature_policy": {
@@ -589,6 +649,24 @@ def _release_output_fixture(
             "path": dmg.relative_to(root).as_posix(),
             "sha256": _sha256(dmg),
             "size": dmg.stat().st_size,
+        },
+        "runtime_pack": {
+            "path": runtime_pack_name,
+            "embedded_path": f"Contents/Resources/runtime-pack/{runtime_pack_name}",
+            "sha256": _sha256(runtime_pack),
+            "size": runtime_pack.stat().st_size,
+            "provenance": {
+                "path": runtime_pack_contract.PROVENANCE_NAME,
+                "sha256": hashlib.sha256(provenance_bytes).hexdigest(),
+                "version": product["version"],
+                "platform": "darwin-arm64",
+                "architecture": "arm64",
+                "source_revisions": {
+                    "vibecrafted": product["git_sha"],
+                    "vc-terminal": modules["vc-terminal"]["git_sha"],
+                    "vc-frame": modules["vc-frame"]["git_sha"],
+                },
+            },
         },
         "modules": {
             name: {
@@ -775,9 +853,30 @@ def test_native_app_bootstraps_and_launches_only_the_canonical_product_entry() -
     assert "launchWorkspaceTerminal()" in launch_handler
     assert "showMainWindowIfNeeded()" not in launch_handler
     assert "\t<key>LSUIElement</key>\n\t<true/>" in info
-    assert 'withTitle: "Open Console"' in delegate
-    assert 'withTitle: "Open vc-terminal"' in delegate
-    assert 'withTitle: "Quit"' in delegate
+    assert 'withTitle: "Open VC Console"' in delegate
+    assert 'withTitle: "Open VC Terminal"' in delegate
+    assert 'withTitle: "VC Server"' in delegate
+    assert 'withTitle: "Start"' in delegate
+    assert 'withTitle: "Stop"' in delegate
+    assert 'withTitle: "Restart"' in delegate
+    assert 'withTitle: "Open Logs"' in delegate
+    assert 'withTitle: "Server Diagnostics…"' in delegate
+    assert 'withTitle: "About Vibecrafted"' in delegate
+    assert 'withTitle: "Vibecrafted Help"' in delegate
+    assert 'withTitle: "Quit Vibecrafted"' in delegate
+    assert "#selector(requestQuit)" in delegate
+    assert 'process.arguments = ["status", "--activity", "--json"]' in delegate
+    assert "func applicationShouldTerminate(" in delegate
+    assert 'withTitle: "Cancel"' in delegate
+    assert 'withTitle: "Quit Anyway"' in delegate
+    assert 'appendingPathComponent("server/supervisor.status.json")' in delegate
+    assert "serverActionArguments(for: action)" in delegate
+    assert 'process.arguments = ["server", "service", "status", "--json"]' in delegate
+    assert 'process.arguments = ["server", "service", "logs", "--json"]' in delegate
+    assert "menu.delegate = self" in delegate
+    assert "statusRefreshTimer = Timer.scheduledTimer(" in delegate
+    assert "statusIcon(health:" in delegate
+    assert "health.color.setFill()" in delegate
     assert "process.isRunning" in delegate
     assert (
         "NSRunningApplication(processIdentifier: process.processIdentifier)?.activate(options: [])"
@@ -790,28 +889,38 @@ def test_native_app_bootstraps_and_launches_only_the_canonical_product_entry() -
     ]
     assert "    false\n" in termination_handler
     assert "Contents/Helpers/vc-terminal.app/Contents/MacOS/alacritty" in delegate
-    assert "config/alacritty/launch-primary-shell.zsh" in delegate
-    assert 'appendingPathComponent("releases", isDirectory: true)' in delegate
-    assert 'appendingPathComponent("active.json")' in delegate
-    assert 'generation.appendingPathComponent("bin/vc-start")' in delegate
-    assert "let runtimeEntries = try manager.contentsOfDirectory" in delegate
-    assert "launcherHome.appendingPathComponent(name)" in delegate
+    assert 'appendingPathComponent("runtime-pack", isDirectory: true)' in delegate
+    assert 'appendingPathComponent("install-runtime-pack.sh")' in delegate
+    assert '"--expected-source-revision"' in delegate
     assert (
-        'launcherHome.appendingPathComponent("vc-terminal"), common: common, '
-        "executable: terminalHost" in delegate
+        'appendingPathComponent("runtime")'
+        not in delegate[
+            delegate.index("private func installCanonicalRuntime") : delegate.index(
+                "private func uninstallCanonicalRuntime"
+            )
+        ]
     )
-    assert 'generation.appendingPathComponent("bin/vc-server")' in delegate
-    assert 'generation.appendingPathComponent("bin/vc-guardian")' in delegate
-    assert 'generation.appendingPathComponent("bin/vc-server-supervisor")' in delegate
-    assert "rename(temporary.path, destination.path)" in delegate
-    assert "assertNoSymlinks(below: generation)" in delegate
+    assert 'arguments: ["--uninstall"]' in delegate
+    assert '"--payload-root", runtime.path' not in delegate
+    assert '"--terminal-host", terminalHost.path' in delegate
+    assert '"--frame-helper", frameHelper.path' in delegate
+    assert "JSONDecoder().decode(CanonicalRuntimeInstall.self" in delegate
+    # The installer returns POSIX paths, not URL strings. Decoding them directly
+    # as URL produces relative URLs whose `.path` passes file checks but which
+    # Foundation.Process rejects as an executableURL on macOS.
+    assert "container.decode(String.self, forKey: key)" in delegate
+    assert 'guard path.hasPrefix("/")' in delegate
+    assert "URL(fileURLWithPath: path)" in delegate
+    # AppDelegate is the UI/process host, not a second installer implementation.
+    assert "createDirectory(at:" not in delegate
+    assert "copyItem(at:" not in delegate
+    assert "writeLauncher(" not in delegate
+    assert 'appendingPathComponent("active.json")' not in delegate
     # PATH composes: the signed generation wins, the caller's PATH survives behind
     # it. A hard-coded system-only PATH strips Homebrew/~/.local/bin/~/.cargo/bin
     # from every spawned agent CLI, so `#!/usr/bin/env` shebangs exit 127.
     assert 'environment["PATH"] = composedPath(' in delegate
     assert 'environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"' not in delegate
-    assert '"export PATH=\\"\\(shellDoubleQuoteBody(' in delegate
-    assert ':${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}\\""' in delegate
     assert '["server", "service", "reconcile"]' in delegate
     assert "shell-agent" not in delegate
     assert 'name = "vc-start"' in cargo
@@ -1802,7 +1911,7 @@ def test_transaction_rejects_exact_legacy_four_hash_runtime_manifest(
             "vibecrafted-core/vibecrafted_core/runtime/generated/vc-frame/config.kdl"
         ],
         "vibecrafted-core/vibecrafted_core/deck/vibecrafted": manifest["hashes"][
-            "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
+            contract.RUNTIME_GENERATION_ENTRYPOINT
         ],
     }
     _write_json(manifest_path, manifest)
@@ -3132,6 +3241,9 @@ def test_unified_release_has_one_top_level_owner() -> None:
     assert "run_bundled_verifier release-output" in builder
     assert '"$verifier" -m vibecrafted_core.product_contract "$@"' in builder
     assert '"$runtime/vibecrafted-core/vibecrafted_core/VERSION"' in builder
+    assert '"$runtime/scripts/vetcoders_install.py"' in builder
+    assert '"$runtime/scripts/distribution_manifest.py"' in builder
+    assert '"$runtime/scripts/installer_brand.py"' in builder
     assert '"$REPO_ROOT/scripts/verify-vibecrafted-product.sh"' not in builder
     assert "--noprofile" not in builder  # vc-start, not the release shell, owns this
     assert "vc-frame.real" not in builder
@@ -3156,6 +3268,7 @@ def test_terminal_policy_uses_operator_toml_and_primary_shell_chain() -> None:
     delegate = (
         REPO_ROOT / "vibecrafted-app/shell-agent/app/Vibecrafted/AppDelegate.swift"
     ).read_text(encoding="utf-8")
+    installer = (REPO_ROOT / "scripts/vetcoders_install.py").read_text(encoding="utf-8")
 
     assert 'family = "Spot Mono"' in terminal
     assert "size = 18.5" in terminal
@@ -3177,12 +3290,29 @@ def test_terminal_policy_uses_operator_toml_and_primary_shell_chain() -> None:
     assert '"$0" "$@"' in primary_shell
     assert "process.executableURL = install.terminalHost" in delegate
     assert '"-e", install.primaryShell.path, install.start.path, "operator"' in delegate
-    assert 'productConfig.appendingPathComponent("terminal-entry.toml")' in delegate
-    assert 'productConfig.appendingPathComponent("terminal-theme.toml")' in delegate
+    assert 'product_config / "terminal-entry.toml"' in installer
+    assert 'product_config / "terminal-theme.toml"' in installer
     assert 'let socketRoot = "/tmp/vc-frame-\\(getuid())"' in delegate
     assert 'environment["VC_FRAME_SOCKET_DIR"] = socketRoot' in delegate
     assert 'environment["ZELLIJ_SOCKET_DIR"] = socketRoot' in delegate
     assert 'environment["VIBECRAFTED_LEGACY_VC_FRAME_SOCKET_DIR"]' in delegate
+
+
+def test_installed_deck_resolves_server_binary_and_site_from_its_generation() -> None:
+    deck = (REPO_ROOT / "scripts/vibecrafted").read_text(encoding="utf-8")
+    canonical = (
+        REPO_ROOT / "vibecrafted-core/vibecrafted_core/deck/vibecrafted"
+    ).read_bytes()
+
+    assert canonical == (REPO_ROOT / "scripts/vibecrafted").read_bytes()
+    assert "_runtime_payload_root()" in deck
+    assert 'server_bin="${runtime_root:+$runtime_root/bin/vc-server}"' in deck
+    assert 'site_root="${runtime_root:+$runtime_root/server/site}"' in deck
+    assert 'local server_bin="$HOME/.local/bin/vc-server"' not in deck
+    assert (
+        '"$script_dir/../vibecrafted-core/vibecrafted_core/runtime/scripts/lib/ulimits.sh"'
+        in deck
+    )
 
 
 def test_primary_shell_exits_instead_of_reusing_pty_after_vc_start_failure(

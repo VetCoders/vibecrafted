@@ -34,6 +34,7 @@ from .workflow import (
     manual_resume_session,
     normalize_launch_spec,
     operator_continue_run,
+    recover_launch_receipt,
 )
 
 AGENTS = {"claude", "codex", "agy", "junie", "grok", "swarm"}
@@ -74,11 +75,15 @@ SHELL_WRAPPER_VERBS = {
     "telemetry": "telemetry",
     "vc-dashboard": "dashboard",
     "vc-dispatch": "dispatch",
+    "vc-doctor": "doctor",
     "vc-help": "help",
     "vc-init": "init",
     "vc-justdo": "justdo",
+    "vc-receipt": "receipt",
     "vc-resume": "resume",
     "vc-start": "start",
+    "vc-status": "status",
+    "vc-update": "update",
 }
 SUCCESS_STATES = {"report_validated", "completed", "closed"}
 TERMINAL_STATES = {
@@ -210,6 +215,15 @@ def _build_parser() -> argparse.ArgumentParser:
     doctor = sub.add_parser("doctor", help="verify installed Vibecrafted runtime")
     doctor.add_argument("--json", action="store_true")
     doctor.add_argument(
+        "--release",
+        action="store_true",
+        help=(
+            "probe GitHub Latest (gh release view --json tagName) and the "
+            "latest Release source gate conclusion against the local VERSION "
+            "file; mismatch is red and names the tag/publish operator button"
+        ),
+    )
+    doctor.add_argument(
         "--quarantine-legacy-runs",
         action="store_true",
         help=(
@@ -237,12 +251,12 @@ def _build_parser() -> argparse.ArgumentParser:
     capabilities.add_argument("--json", action="store_true")
     config = sub.add_parser(
         "config",
-        help="install/wire packaged vc-frame config into the tools store and ~/.config/vc-frame",
+        help="install/wire packaged vc-frame config into ~/.config/vibecrafted/vc-frame",
     )
     config_sub = config.add_subparsers(dest="config_action")
     config_install = config_sub.add_parser(
         "install",
-        help="stage package config → tools store + wire ~/.config/vc-frame view",
+        help="stage package config → wire ~/.config/vibecrafted/vc-frame view",
     )
     config_install.add_argument(
         "--dry-run",
@@ -420,10 +434,32 @@ def _default_runtime(explicit_runtime: str, root: str = "") -> str:
     return "headless"
 
 
+def _argv_names_stopped_run(argv: Sequence[str]) -> bool:
+    """True when argv names a control-plane run (``--run-id`` / ``--last``)."""
+    return any(
+        token == "--last" or token == "--run-id" or token.startswith("--run-id=")
+        for token in argv
+    )
+
+
 def _normalize_raw_args(raw_args: list[str]) -> list[str]:
-    """Swap a leading ``<agent> <launcher>`` pair into ``<launcher> <agent>`` order."""
+    """Canonicalize leading pairs so later dispatch sees one shape.
+
+    ``<agent> <launcher>`` becomes ``<launcher> <agent>``.
+    ``resume <agent> --run-id|--last`` becomes ``<agent> resume …`` so the
+    stopped-run flag is not delegated to the deck (which historically had no
+    ``--run-id`` and swallowed it) or to ``_build_parser`` (no ``resume``
+    subcommand). ``--session`` / bare resume stay resume-first for the deck.
+    """
     if len(raw_args) >= 2 and raw_args[0] in AGENTS and raw_args[1] in LAUNCHERS:
         return [raw_args[1], raw_args[0], *raw_args[2:]]
+    if (
+        len(raw_args) >= 2
+        and raw_args[0] == "resume"
+        and raw_args[1] in AGENTS
+        and _argv_names_stopped_run(raw_args[2:])
+    ):
+        return [raw_args[1], "resume", *raw_args[2:]]
     return raw_args
 
 
@@ -531,6 +567,56 @@ def _print_launch_receipt(payload: dict[str, Any]) -> None:
         f"await (ARM NOW, supervisor-side): vibecrafted await {agent} --run-id {run_id}"
     )
     print("=====================================================================")
+
+
+def _emit_launch_result(result: dict[str, Any], *, json_mode: bool) -> int:
+    """Write exactly one launch receipt to stdout. Never exit 0 on empty stdout.
+
+    Diagnostics go to stderr. A run that already mutated control-plane state
+    must still emit ``run_id`` so a retry can resolve it instead of guessing.
+    """
+    from .workflow import _json_plain, machine_launch_receipt
+
+    receipt = machine_launch_receipt(result)
+    run_id = str(receipt.get("run_id") or "")
+    if json_mode:
+        payload = _json_plain(result)
+        if not isinstance(payload, dict):
+            payload = {}
+        payload.update(receipt)
+        try:
+            text = json.dumps(payload, ensure_ascii=False, indent=2)
+        except (TypeError, ValueError):
+            text = json.dumps(receipt, ensure_ascii=False, indent=2)
+        if not str(text).strip():
+            print("error: launch produced an empty receipt", file=sys.stderr)
+            if run_id:
+                print(f"run_id: {run_id}", file=sys.stderr)
+            return _EX_TEMPFAIL if run_id else 1
+        try:
+            sys.stdout.write(text if text.endswith("\n") else f"{text}\n")
+            sys.stdout.flush()
+        except BrokenPipeError:
+            print(
+                f"error: stdout closed after launch; run_id={run_id or 'unknown'}",
+                file=sys.stderr,
+            )
+            return _EX_TEMPFAIL if run_id else 1
+    else:
+        try:
+            _print_launch_receipt(result)
+            sys.stdout.flush()
+        except BrokenPipeError:
+            print(
+                f"error: stdout closed after launch; run_id={run_id or 'unknown'}",
+                file=sys.stderr,
+            )
+            return _EX_TEMPFAIL if run_id else 1
+        _watch_launch_startup(result)
+    if receipt["accepted"] and not run_id:
+        print("error: accepted launch missing run_id", file=sys.stderr)
+        return 1
+    return 0 if receipt["accepted"] else 1
 
 
 # Parity contract with the shell launcher's `spawn_watch_startup`
@@ -1375,7 +1461,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 for err in payload["parse_errors"]:
                     print(f"  parse_error: {err}")
             return 0
-        findings = doctor_module.doctor_run()
+        findings = doctor_module.doctor_run(
+            release=bool(getattr(args, "release", False))
+        )
         summary = doctor_module.doctor_summary(findings)
         from .runtime_receipt import build_receipt, render_receipt_text
 
@@ -1619,13 +1707,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             command=str(args.command), agent=args.agent, message=str(exc)
         )
         return 2
-    result = launch_workflow(spec, source_dir)
-    if args.json:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    else:
-        _print_launch_receipt(result)
-        _watch_launch_startup(result)
-    return 0 if result.get("accepted") else 1
+    try:
+        result = launch_workflow(spec, source_dir)
+    except (OSError, TypeError, ValueError, RuntimeError) as exc:
+        print(
+            f"error: launch raised {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        recovered = recover_launch_receipt(spec)
+        if recovered and recovered.get("run_id"):
+            result = recovered
+        else:
+            result = {
+                "accepted": False,
+                "run_id": "",
+                "agent": spec.agent,
+                "skill": spec.skill,
+                "root": spec.root,
+                "status": "failed",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+    return _emit_launch_result(result, json_mode=bool(args.json))
 
 
 if __name__ == "__main__":  # pragma: no cover

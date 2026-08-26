@@ -22,7 +22,7 @@
 # Directories every macOS or Linux box has. An ancestor walk must stop here: a
 # payload that mentions `/Users` or `/Volumes` says nothing about who built it,
 # and forbidding one would flag every legitimate path reference in the tree.
-_PAYLOAD_HYGIENE_GENERIC_ROOTS=$'/\n/Applications\n/Library\n/System\n/Users\n/Volumes\n/home\n/media\n/mnt\n/opt\n/private\n/private/var\n/srv\n/tmp\n/usr\n/var'
+_PAYLOAD_HYGIENE_GENERIC_ROOTS=$'/\n/Applications\n/Library\n/System\n/Users\n/Volumes\n/home\n/media\n/mnt\n/opt\n/private\n/private/tmp\n/private/var\n/srv\n/tmp\n/usr\n/var'
 
 # payload_hygiene_topmost_host_root <absolute-path>
 #
@@ -62,9 +62,9 @@ payload_hygiene_topmost_host_root() {
 # ancestor subsumes every longer path under it, so one literal closes the whole
 # blind spot without drowning the report in near-duplicate matches.
 # PAYLOAD_HYGIENE_EPHEMERAL_ROOTS — newline-separated absolute paths that
-# identify nobody: the home and workspace of a hosted CI runner such as
-# /Users/runner and /Users/runner/work. Every hosted macOS runner on earth has
-# the same ones, so a payload that names them says nothing about who built it.
+# identify nobody: the standard home and workspace roots of a hosted CI runner.
+# Those roots are identical across the hosted macOS fleet, so naming them says
+# nothing about who built the payload.
 # This is NOT an allowlist of payload strings: the scanner still refuses every
 # literal that survives, and a root is only ephemeral when the caller declares
 # it so. Unset (the operator boundary) changes nothing.

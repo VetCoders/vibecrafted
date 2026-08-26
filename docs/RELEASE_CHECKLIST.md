@@ -19,14 +19,16 @@ below pass on downloaded bytes.
 
 One GitHub Release `v4.1.0` whose assets are exactly:
 
-| Asset                                                 | Proves                                           |
-| ----------------------------------------------------- | ------------------------------------------------ |
-| `Vibecrafted_4.1.0-<YYYYMMDD>-<sha8>.dmg`             | signed, notarized desktop product                |
-| that name plus `.dmg.sha256`                          | checksum a stranger can `shasum -a 256 -c`       |
-| `Vibecrafted_4.1.0-<YYYYMMDD>-<sha8>-portable.tar.gz` | installable product for Linux / WSL2 / macOS CLI |
-| that name plus `.sha256`                              | checksum a stranger can `sha256sum -c`           |
-| `release-output.json`                                 | bound source revisions + DMG path                |
-| `release-output.json.sig`                             | detached signature over that receipt             |
+| Asset                                                                  | Proves                                     |
+| ---------------------------------------------------------------------- | ------------------------------------------ |
+| `Vibecrafted_4.1.0-<YYYYMMDD>-<sha8>.dmg`                              | signed, notarized desktop product          |
+| that name plus `.dmg.sha256`                                           | checksum a stranger can `shasum -a 256 -c` |
+| `Vibecrafted_RuntimePack_4.1.0-<YYYYMMDD>-<sha8>-darwin-<arch>.tar.gz` | same signed binary runtime for macOS CLI   |
+| that name plus `.sha256` and `.sig`                                    | checksum plus detached release signature   |
+| `Vibecrafted_4.1.0-<YYYYMMDD>-<sha8>-portable.tar.gz`                  | source fallback for Linux / WSL2 / macOS   |
+| that name plus `.sha256`                                               | checksum a stranger can `sha256sum -c`     |
+| `release-output.json`                                                  | bound source revisions + DMG path          |
+| `release-output.json.sig`                                              | detached signature over that receipt       |
 
 Exactly six assets. `publish-release` refuses anything else — including the
 old source-tarball set. `portable-output.json` stays local: it is how the
@@ -153,6 +155,23 @@ make payload-hygiene ARTIFACT=dist/Vibecrafted_4.1.0-20260818-c52f1326-portable.
 A `.dmg` is attached read-only and detached again; a tarball is extracted into a
 temp directory that is removed on every exit path. The artifact is never written
 to.
+
+### In-flight rehearsal (no publish button)
+
+`make release-rehearsal` is the delivery verifier that can run inside a cut
+without tagging, notarizing, or uploading. It prints OLD vs CURRENT `VERSION`
+and the latest local artifact if any, dry-runs the real release recipes
+(`make -n`), runs the portable inventory from
+`scripts/distribution_manifest.py`, and fail-closes if a publish command would
+be invoked. Pass `ARTIFACT=<path>` to also run `payload-hygiene` on bytes
+already on disk.
+
+```bash
+make release-rehearsal
+make release-rehearsal ARTIFACT=dist/Vibecrafted.app
+```
+
+It does not build a DMG and does not call `make publish-release`.
 
 ## 3. Build, sign, notarize
 
