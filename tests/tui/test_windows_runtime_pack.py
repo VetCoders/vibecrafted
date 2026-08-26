@@ -457,6 +457,21 @@ def test_ps1_installer_refuses_incompatible_architecture(tmp_path: Path) -> None
     assert "architecture" in (result.stdout + result.stderr).lower()
 
 
+def test_windows_packager_uses_python_tarfile_not_git_tar() -> None:
+    packager = (REPO_ROOT / "scripts" / "package-runtime-pack.ps1").read_text(
+        encoding="utf-8"
+    )
+    installer = (REPO_ROOT / "scripts" / "install-runtime-pack.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "tarfile" in packager
+    assert "Get-Command tar" not in packager
+    assert "Get-WindowsTar" in installer
+    assert r"System32\tar.exe" in installer
+    assert "& tar -tzf" not in installer
+    assert "& tar -xzf" not in installer
+
+
 def test_current_without_active_json_is_fail_closed() -> None:
     runtime_home = installer.vibecrafted_runtime_home()
     generation = runtime_home / "releases" / "orphan"

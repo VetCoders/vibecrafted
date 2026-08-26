@@ -105,6 +105,12 @@ function Test-ChecksumFile {
     }
 }
 
+function Get-WindowsTar {
+    $systemTar = Join-Path $env:SystemRoot "System32\tar.exe"
+    if (Test-Path -LiteralPath $systemTar) { return $systemTar }
+    Die "Windows System32 tar.exe is required to extract the Runtime Pack (Git tar treats C: as a remote host)"
+}
+
 function Get-NativeArch {
     if ($env:PROCESSOR_ARCHITECTURE -match 'ARM64') { return "arm64" }
     return "x64"
@@ -197,7 +203,8 @@ Test-RuntimePackSignature -Archive $Pack -Signature $signature -KeyPath $PublicK
 $temporary = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecrafted-runtime-pack-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
-    $listing = & tar -tzf $Pack 2>&1
+    $windowsTar = Get-WindowsTar
+    $listing = & $windowsTar -tzf $Pack 2>&1
     if ($LASTEXITCODE -ne 0) { Die "Runtime Pack archive cannot be listed" }
     $archiveRoot = $null
     foreach ($member in $listing) {
@@ -213,7 +220,7 @@ try {
         }
     }
     if (-not $archiveRoot) { Die "Runtime Pack archive is empty" }
-    & tar -xzf $Pack -C $temporary
+    & $windowsTar -xzf $Pack -C $temporary
     if ($LASTEXITCODE -ne 0) { Die "Runtime Pack archive extraction failed" }
     $payloadRoot = Join-Path $temporary $archiveRoot
     if (-not (Test-Path -LiteralPath $payloadRoot)) {

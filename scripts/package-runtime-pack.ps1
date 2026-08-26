@@ -63,20 +63,26 @@ $outDir = Split-Path -Parent $Output
 if ($outDir -and -not (Test-Path -LiteralPath $outDir)) {
     New-Item -ItemType Directory -Path $outDir | Out-Null
 }
-# Windows bsdtar treats `C:` in `-f C:\...` as a tape device. Write the
-# archive next to the staging tree with a relative name, then move it.
+# Git tar treats `C:` as a remote host and is often first on PATH. Pack-owned
+# Python writes the gzip from a relative name so neither Git tar nor tape
+# devices can swallow the carrier.
 $candidateName = [IO.Path]::GetFileName($Output)
-Push-Location $work
-try {
-    $tar = Get-Command tar -ErrorAction SilentlyContinue
-    if (-not $tar) { Die "tar is required to build the Runtime Pack archive" }
-    & tar -czf $candidateName VibecraftedRuntime
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $work $candidateName))) {
-        Die "tar failed creating $candidateName"
-    }
-}
-finally {
-    Pop-Location
+$archivePy = Join-Path $work "write-archive.py"
+@'
+import os
+import tarfile
+
+work = os.environ["VC_PACK_WORK"]
+name = os.environ["VC_PACK_NAME"]
+os.chdir(work)
+with tarfile.open(name, "w:gz", format=tarfile.PAX_FORMAT, dereference=False) as archive:
+    archive.add("VibecraftedRuntime", arcname="VibecraftedRuntime", recursive=True)
+'@ | Set-Content -LiteralPath $archivePy -Encoding ascii
+$env:VC_PACK_WORK = $work
+$env:VC_PACK_NAME = $candidateName
+& $python $archivePy
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $work $candidateName))) {
+    Die "python tarfile archive failed creating $candidateName"
 }
 Move-Item -LiteralPath (Join-Path $work $candidateName) -Destination $Output -Force
 Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
