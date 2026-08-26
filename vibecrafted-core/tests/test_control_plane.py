@@ -217,6 +217,55 @@ def test_atomic_write_reports_actionable_degraded_mode_before_enospc(
     assert not target.exists()
 
 
+def test_agent_meta_projects_structured_operator_relationship(tmp_path: Path) -> None:
+    meta = tmp_path / "meta.json"
+    meta.write_text(
+        json.dumps(
+            {
+                "run_id": "init-child",
+                "status": "active",
+                "updated_at": "2026-08-25T12:00:00Z",
+                "role": "agent",
+                "prompt_role": "/vc-init",
+                "provider_session_id": "child-session",
+                "operator_policy": {
+                    "selection": "auto",
+                    "provider": "claude",
+                    "supported": True,
+                },
+                "supervision": {
+                    "relation_id": "relation-1",
+                    "operator_run_id": "oper-1",
+                    "child_run_id": "init-child",
+                    "state": "active",
+                },
+                "continuity": {
+                    "mode": "full-lineage",
+                    "lineage_id": "parent-run-1",
+                    "supported": True,
+                    "materialized": True,
+                    "context_sha256": "abc",
+                    "loop_sha256": "def",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    projected = control_plane._normalize_agent_meta(meta)
+    assert projected is not None
+    assert projected.extra["role"] == "agent"
+    assert projected.extra["operator_policy"]["provider"] == "claude"
+    assert projected.extra["supervision"]["operator_run_id"] == "oper-1"
+    assert projected.extra["continuity"] == {
+        "mode": "full-lineage",
+        "lineage_id": "parent-run-1",
+        "supported": True,
+        "materialized": True,
+        "context_sha256": "abc",
+        "loop_sha256": "def",
+    }
+
+
 def test_operator_stop_is_sticky_over_late_failure_and_artifact_aliases(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -708,6 +757,49 @@ def test_sync_state_keeps_run_live_when_worker_alive_despite_dead_launcher(
     assert run["liveness"] != "pid_gone"
     assert run.get("recovery_required") is not True
     assert "recovery_required" not in str(run.get("last_error") or "")
+
+
+@pytest.mark.parametrize(
+    ("owner_pid", "worker_pid", "terminal_reason"),
+    [
+        (999999999, os.getpid(), "owner_pid_gone"),
+        (os.getpid(), 999999999, "provider_pid_gone"),
+    ],
+)
+def test_sync_state_never_projects_interactive_run_live_when_either_role_is_dead(
+    owner_pid: int,
+    worker_pid: int,
+    terminal_reason: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_RUN_GC_GRACE_SECONDS", "999999999")
+    _write_meta(
+        home,
+        {
+            "run_id": f"interactive-{terminal_reason}",
+            "status": "active",
+            "agent": "codex",
+            "mode": "interactive",
+            "root": str(tmp_path),
+            "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "skill_code": "init",
+            "owner_pid": owner_pid,
+            "worker_pid": worker_pid,
+            "liveness": "active",
+        },
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] == "failed"
+    assert run["health"] == "final"
+    assert run["liveness"] == "pid_gone"
+    assert run["terminal_reason"] == terminal_reason
+    assert run["run_id"] not in {item["run_id"] for item in snapshot["active_runs"]}
 
 
 def test_sync_state_gc_terminalizes_old_stalled_dead_launcher(

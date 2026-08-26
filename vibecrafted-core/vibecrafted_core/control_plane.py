@@ -82,6 +82,7 @@ FINAL_STATES = {
     "contract_failed",
     "recovery_required",
     "timed_out",
+    "quota_exhausted",
     "gc",
     "ghost",
 }
@@ -1073,6 +1074,35 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
     liveness = str(result.get("liveness") or "")
     if state in FINAL_STATES:
         return result
+    owner_pid = _coerce_int(result.get("owner_pid"))
+    if owner_pid is not None:
+        owner_alive = _pid_is_alive(owner_pid)
+        provider_alive = any(
+            _pid_is_alive(pid)
+            for pid in (
+                _coerce_int(result.get("worker_pid")),
+                _coerce_int(result.get("worker_pgid")),
+            )
+            if pid is not None
+        )
+        if owner_alive and provider_alive:
+            return result
+        now = _now().isoformat()
+        result["state"] = "failed"
+        result["health"] = "final"
+        result["liveness"] = "pid_gone"
+        result["completed_at"] = str(result.get("completed_at") or now)
+        result["updated_at"] = now
+        result["exit_code"] = _coerce_int(result.get("exit_code")) or 1
+        result["terminal_reason"] = (
+            "owner_pid_gone" if not owner_alive else "provider_pid_gone"
+        )
+        result["recovery_required"] = True
+        result["last_error"] = _append_last_error(
+            str(result.get("last_error") or ""),
+            "interactive lifecycle owner/provider identity is no longer live",
+        )
+        return result
     # P0: a dead/absent launcher pid is NOT proof the run died. The launcher is an
     # ephemeral spawn-shell that exits right after forking the detached dispatcher;
     # for headless/detached dispatch it is gone within seconds while the dispatcher
@@ -1358,11 +1388,16 @@ def _worker_is_alive(run: dict[str, Any]) -> bool:
     a run is never marked recovery_required merely because the ephemeral launcher
     pid died while the worker keeps running and delivering.
     """
+    provider_alive = False
     for key in ("worker_pid", "worker_pgid"):
         pid = _coerce_int(run.get(key))
         if pid is not None and _pid_is_alive(pid):
-            return True
-    return False
+            provider_alive = True
+            break
+    owner_pid = _coerce_int(run.get("owner_pid"))
+    if owner_pid is not None:
+        return provider_alive and _pid_is_alive(owner_pid)
+    return provider_alive
 
 
 def _await_process_is_alive(run: dict[str, Any]) -> bool:
@@ -1801,10 +1836,14 @@ def _normalize_agent_meta(path: Path) -> RunStatus | None:
         "native_resume",
         "resume_idempotency_key",
         "worker_command",
+        "owner_pid",
+        "owner_identity",
         "worker_pid",
         "worker_pgid",
         "worker_identity",
         "launcher_identity",
+        "terminal_reason",
+        "exit_signal",
         "heartbeat_at",
         "meta",
         "artifact_ok",
@@ -1824,6 +1863,15 @@ def _normalize_agent_meta(path: Path) -> RunStatus | None:
         "workspace_display_label",
         "worker_host_session",
         "worker_host_display",
+        # H2b2c — typed Operator Agent -> child Agent relationship truth.
+        "role",
+        "prompt_role",
+        "provider_session_id",
+        "operator_policy",
+        "supervision",
+        "stop_actor_run_id",
+        # H2b2d — bounded typed continuity receipt (never prompt bodies).
+        "continuity",
     ):
         if key in payload and payload.get(key) not in (None, ""):
             extra[key] = payload[key]
@@ -2065,6 +2113,8 @@ def _merge_event_stream(
             "resume_settlement_revision",
             "resume_trust_receipt_id",
             "worker_command",
+            "owner_pid",
+            "owner_identity",
             "worker_pid",
             "worker_pgid",
             "worker_identity",
@@ -2086,6 +2136,8 @@ def _merge_event_stream(
             "stop_already_dead",
             "stop_alive_after_grace",
             "stop_grace_seconds",
+            "terminal_reason",
+            "exit_signal",
             # Durable workspace identity must survive event-stream refreshes;
             # otherwise a later generic `state` event erases the identity
             # carried by lifecycle:created/active.

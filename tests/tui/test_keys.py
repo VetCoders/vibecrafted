@@ -23,7 +23,13 @@ def _write_installed_runtime_deck(home: Path) -> Path:
     deck.parent.mkdir(parents=True, exist_ok=True)
     deck.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     deck.chmod(0o755)
-    return deck
+    # The public launcher enters the generation through its manifest-bound
+    # entrypoint, a byte-identical copy of the deck.
+    entrypoint = deck.parents[3] / "bin" / "vibecrafted"
+    entrypoint.parent.mkdir(parents=True, exist_ok=True)
+    entrypoint.write_text(deck.read_text(encoding="utf-8"), encoding="utf-8")
+    entrypoint.chmod(0o755)
+    return entrypoint
 
 
 def test_read_framework_version_reads_version_file(tmp_path: Path) -> None:
@@ -335,22 +341,7 @@ def test_app_installer_writes_deck_verb_wrappers() -> None:
     the shim itself. Without it `vc-resume claude --session <id>` degraded to
     `vibecrafted claude --session <id>` ("Unknown mode: --session").
     """
-    import re
-
     from vibecrafted_core import cli
-
-    swift = (
-        Path(__file__).resolve().parents[2]
-        / "vibecrafted-app"
-        / "shell-agent"
-        / "app"
-        / "Vibecrafted"
-        / "AppDelegate.swift"
-    ).read_text(encoding="utf-8")
-
-    block = swift.split("deckVerbWrappers", 1)[1]
-    block = block.split("for wrapper in deckVerbWrappers", 1)[0]
-    pairs = dict(re.findall(r'\("([a-z-]+)", "([a-z]+)"\)', block))
 
     # vc-start ships as a real runtime binary; the installer's bin guard skips
     # it dynamically, so the static verb list intentionally leaves it out.
@@ -359,4 +350,4 @@ def test_app_installer_writes_deck_verb_wrappers() -> None:
         for name, verb in cli.SHELL_WRAPPER_VERBS.items()
         if name != "vc-start"
     }
-    assert pairs == expected
+    assert vetcoders_install._RUNTIME_WRAPPER_VERBS == expected
