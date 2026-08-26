@@ -63,15 +63,23 @@ $outDir = Split-Path -Parent $Output
 if ($outDir -and -not (Test-Path -LiteralPath $outDir)) {
     New-Item -ItemType Directory -Path $outDir | Out-Null
 }
+# Windows bsdtar treats `C:` in `-f C:\...` as a tape device. Write the
+# archive next to the staging tree with a relative name, then move it.
+$candidateName = [IO.Path]::GetFileName($Output)
 Push-Location $work
 try {
-    & tar -czf $Output VibecraftedRuntime
-    if ($LASTEXITCODE -ne 0) { Die "tar failed" }
+    $tar = Get-Command tar -ErrorAction SilentlyContinue
+    if (-not $tar) { Die "tar is required to build the Runtime Pack archive" }
+    & tar -czf $candidateName VibecraftedRuntime
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $work $candidateName))) {
+        Die "tar failed creating $candidateName"
+    }
 }
 finally {
     Pop-Location
-    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }
+Move-Item -LiteralPath (Join-Path $work $candidateName) -Destination $Output -Force
+Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 $hash = ([BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.IO.File]::ReadAllBytes($Output))) -replace '-', '').ToLowerInvariant()
 $checksum = "$Output.sha256"
 Set-Content -LiteralPath $checksum -Value "$hash  $([IO.Path]::GetFileName($Output))" -Encoding ascii
