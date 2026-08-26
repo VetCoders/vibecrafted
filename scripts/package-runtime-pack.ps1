@@ -58,7 +58,12 @@ if ($LASTEXITCODE -ne 0) { Die "provenance write failed" }
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecrafted-runtime-pack-build-" + [guid]::NewGuid().ToString("N"))
 $root = Join-Path $work "VibecraftedRuntime"
 New-Item -ItemType Directory -Path $root | Out-Null
-Copy-Item -LiteralPath (Join-Path $payload "*") -Destination $root -Recurse -Force
+Get-ChildItem -LiteralPath $payload -Force | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $root $_.Name) -Recurse -Force
+}
+if (-not (Test-Path -LiteralPath (Join-Path $root "VERSION"))) {
+    Die "payload copy produced an empty staging tree"
+}
 $outDir = Split-Path -Parent $Output
 if ($outDir -and -not (Test-Path -LiteralPath $outDir)) {
     New-Item -ItemType Directory -Path $outDir | Out-Null
@@ -85,6 +90,10 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $work $candi
     Die "python tarfile archive failed creating $candidateName"
 }
 Move-Item -LiteralPath (Join-Path $work $candidateName) -Destination $Output -Force
+$packed = Get-Item -LiteralPath $Output
+if ($packed.Length -lt 1MB) {
+    Die "Runtime Pack archive is implausibly small ($($packed.Length) bytes); refusing to publish"
+}
 Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 $hash = ([BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.IO.File]::ReadAllBytes($Output))) -replace '-', '').ToLowerInvariant()
 $checksum = "$Output.sha256"

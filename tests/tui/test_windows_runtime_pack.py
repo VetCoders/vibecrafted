@@ -466,6 +466,8 @@ def test_windows_packager_uses_python_tarfile_not_git_tar() -> None:
     )
     assert "tarfile" in packager
     assert "Get-Command tar" not in packager
+    assert 'Copy-Item -LiteralPath (Join-Path $payload "*")' not in packager
+    assert "implausibly small" in packager
     assert "Get-WindowsTar" in installer
     assert r"System32\tar.exe" in installer
     assert "& tar -tzf" not in installer
