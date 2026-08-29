@@ -49,10 +49,18 @@ NATIVE_RESUME = {
     "grok": "grok --resume {sid}  # UNVERIFIED — confirm resume flag",
 }
 
-CODE_REPOS = [
-    Path("/Volumes/vc-workspace/vetcoders/vibecrafted-suite/vibecrafted"),
-    Path("/Volumes/vc-workspace/Loctree/aicx"),
-]
+
+def code_repos() -> list[Path]:
+    """Repos whose worktrees get snapshotted. ``VC_RELOCATE_REPOS`` (os.pathsep-
+    separated) overrides the Founder-machine defaults so the mechanism travels
+    to Linux/cloud boxes; ``~/.vibecrafted`` is always appended by the caller."""
+    override = os.environ.get("VC_RELOCATE_REPOS", "").strip()
+    if override:
+        return [Path(p) for p in override.split(os.pathsep) if p.strip()]
+    return [
+        Path("/Volumes/vc-workspace/vetcoders/vibecrafted-suite/vibecrafted"),
+        Path("/Volumes/vc-workspace/Loctree/aicx"),
+    ]
 
 
 def _sh(args: list[str], cwd: Path | None = None) -> str:
@@ -214,9 +222,12 @@ def collect_worktrees(repos: Sequence[Path], home: Path) -> list[dict]:
 
 
 def do_snapshot(
-    out_root: Path | None, home: Path, repos: Sequence[Path] = CODE_REPOS
+    out_root: Path | None, home: Path, repos: Sequence[Path] | None = None
 ) -> Path:
     from .runtime_paths import vibecrafted_home
+
+    if repos is None:
+        repos = code_repos()
 
     now = datetime.now(timezone.utc).astimezone()
     stamp = now.strftime("%Y-%m-%dT%H%M%S")

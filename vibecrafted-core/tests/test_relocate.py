@@ -127,3 +127,11 @@ def test_restore_skips_existing(tmp_path: Path) -> None:
     rc = relocate.do_restore(tarball, target, apply_patches=False)
     assert rc == 0
     assert len(list(target.rglob("*.jsonl"))) == 3
+
+
+def test_code_repos_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("VC_RELOCATE_REPOS", raising=False)
+    defaults = relocate.code_repos()
+    assert any("vibecrafted-suite" in str(p) for p in defaults)
+    monkeypatch.setenv("VC_RELOCATE_REPOS", f"/srv/a{os.pathsep}/srv/b")
+    assert relocate.code_repos() == [Path("/srv/a"), Path("/srv/b")]
