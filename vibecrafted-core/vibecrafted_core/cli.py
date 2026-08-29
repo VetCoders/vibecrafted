@@ -1235,6 +1235,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "procs",
         "reap",
         "receipt",
+        "relocate",
         "resume-session",
         "settle",
         "settlements",
@@ -1300,6 +1301,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .dispatch.cli import main as dispatch_main
 
         return dispatch_main(raw_args[1:])
+    if raw_args and raw_args[0] == "relocate":
+        from .relocate import main as relocate_main
+
+        return relocate_main(raw_args[1:])
     if raw_args and raw_args[0] == "stop":
         from .wrappers import stop_main
 
