@@ -11,9 +11,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .package_resources import skills_path
+from .workflow import SUPPORTED_AGENTS
 from .workflows.registry import workflow_definition, workflow_manifest
 
-AGENT_SELECTOR = "<claude|codex|agy|junie|grok>"
+# Canonical fleet display order. Membership is derived from SUPPORTED_AGENTS so
+# a fleet change lands here automatically; `swarm` is a research meta-lane, not
+# a provider CLI, so it never appears in agent selectors.
+_FLEET_AGENT_ORDER = ("claude", "codex", "agy", "junie", "grok", "cursor")
+FLEET_AGENTS = tuple(agent for agent in _FLEET_AGENT_ORDER if agent in SUPPORTED_AGENTS)
+AGENT_SELECTOR = "<" + "|".join(FLEET_AGENTS) + ">"
+AGENTS_LINE = " · ".join(FLEET_AGENTS)
 
 
 @dataclass(frozen=True)
@@ -396,20 +403,28 @@ Commands:
   status               Today's agent activity
   doctor               Installation health — pass/fail
   receipt              Delivery/runtime receipt (source ↔ installed)
+  claims               Atomic Living Tree path claims (acquire|heartbeat|status|list|release)
   settlements          Read-only f/x/n ledger query (summary|list|inspect)
   update               Update to the latest release
+  uninstall            Remove runtime; preserve Founder data and unknowns
   help [topic|--all]   This deck · full reference
 
 Ship cycle:
   {cycle}
   More workflows: vibecrafted help --all
 
-Agents:  claude · codex · agy · junie · grok
+Agents:  {AGENTS_LINE}
 
 Examples:
   vibecrafted init claude
   vibecrafted implement codex -p "Ship dark mode"
   vibecrafted marbles claude -p "Loop until clean"
+  vibecrafted uninstall --dry-run
+
+Words:
+  run        one dispatched agent job; its report + transcript live under ~/.vibecrafted
+  stage      one step of the ship cycle above (scaffold, implement, review, …)
+  workspace  the repository root a run works in, tracked by the control plane
 """.lstrip("\n")
 
 
