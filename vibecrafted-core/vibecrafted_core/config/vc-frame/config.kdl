@@ -61,6 +61,9 @@ default_shell "zsh"
 // Guide + vibecrafted tabs) — zrzut zywego "Vibecrafted Operator"
 default_layout "vibecrafted"
 copy_command "pbcopy"
+// Selection copies immediately (mouse-select = copy, no explicit yank).
+// Pinned explicitly so the product surface does not drift with fork defaults.
+copy_on_select true
 mouse_mode true
 // Rail hover chrome. Defaults in vc-frame are already true; pin so product
 // surface does not drift. With these on, UpdateHover delivers Mouse::Hover to
