@@ -239,10 +239,20 @@ pub fn default_launch_root(command_deck: &Path) -> PathBuf {
             .and_then(|name| name.to_str())
             == Some("scripts")
         && let Some(root) = command_deck.parent().and_then(Path::parent)
+        && !is_installed_generation(root)
     {
         return root.to_path_buf();
     }
     env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+/// An installed Runtime Pack generation (`…/releases/<version>`) is a
+/// projection, not a workspace: dispatching workers into it writes into the
+/// capsule the installer owns. The deck-derived default must never land
+/// there — the operator picks a real checkout instead (demo cut, 2026-09-05).
+fn is_installed_generation(root: &Path) -> bool {
+    root.parent()
+        .is_some_and(|parent| parent.file_name().and_then(|name| name.to_str()) == Some("releases"))
 }
 
 fn home_dir() -> String {
@@ -272,4 +282,22 @@ fn print_help() {
 
 pub fn path_display(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn installed_generations_are_not_workspaces() {
+        assert!(is_installed_generation(Path::new(
+            "/Users/op/.vibecrafted/releases/4.3.0"
+        )));
+        assert!(!is_installed_generation(Path::new(
+            "/Volumes/vc-workspace/vetcoders/vibecrafted"
+        )));
+        assert!(!is_installed_generation(Path::new(
+            "/Users/op/.vibecrafted/releases"
+        )));
+    }
 }

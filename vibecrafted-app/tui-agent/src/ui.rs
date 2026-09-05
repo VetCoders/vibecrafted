@@ -34,6 +34,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     match app.focus {
         LaunchFocus::Help => draw_help_overlay(frame, app),
         LaunchFocus::EditPrompt => draw_prompt_overlay(frame, app),
+        LaunchFocus::EditRoot => draw_root_overlay(frame, app),
         LaunchFocus::Search => draw_search_overlay(frame, app),
         LaunchFocus::Error => draw_error_overlay(frame, app),
         LaunchFocus::Artifact => draw_artifact_overlay(frame, app),
@@ -615,6 +616,9 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
         (AppTab::Dispatch, LaunchFocus::EditPrompt) => {
             "Dispatch edit: type prompt  Enter newline  Ctrl+S/Esc save"
         }
+        (AppTab::Dispatch, LaunchFocus::EditRoot) => {
+            "Root edit: type workspace path  Enter/Ctrl+S save  Esc cancel"
+        }
         (_, LaunchFocus::Error) => "Error: Enter/Esc closes the failure details",
         (_, LaunchFocus::Artifact) => "Artifact viewer: Enter/Esc closes the native viewer",
         (AppTab::Dispatch, _) => {
@@ -733,6 +737,8 @@ fn draw_events(frame: &mut Frame, area: Rect, app: &App, title: &str) {
 fn draw_launch(frame: &mut Frame, area: Rect, app: &App) {
     let title = if app.focus == LaunchFocus::EditPrompt {
         "Dispatch deck (editing prompt)"
+    } else if app.focus == LaunchFocus::EditRoot {
+        "Dispatch deck (editing root)"
     } else {
         "Dispatch deck"
     };
@@ -1549,6 +1555,25 @@ fn draw_prompt_overlay(frame: &mut Frame, app: &App) {
     frame.render_widget(prompt, area);
 }
 
+fn draw_root_overlay(frame: &mut Frame, app: &App) {
+    let area = centered_rect(72, 28, frame.area());
+    frame.render_widget(Clear, area);
+    let lines = app
+        .root_edit_lines()
+        .into_iter()
+        .map(Line::from)
+        .collect::<Vec<_>>();
+    let root = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Launch root editor")
+                .border_style(Style::default().fg(Color::Magenta)),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(root, area);
+}
+
 fn draw_error_overlay(frame: &mut Frame, app: &App) {
     let area = centered_rect(76, 56, frame.area());
     frame.render_widget(Clear, area);
@@ -1731,6 +1756,8 @@ mod tests {
             launch_runtime: LaunchRuntime::Terminal,
             dispatch_selected: DispatchFocus::Kind as usize,
             focus: LaunchFocus::Browse,
+            launch_root_input: String::new(),
+            show_full_command: false,
             status_line: String::new(),
             launch_history: vec!["vc workflow --agent codex".to_string()],
             deep_selected: 0,

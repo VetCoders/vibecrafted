@@ -285,6 +285,8 @@ fn mission_app(state: MissionControlState) -> App {
         launch_runtime: LaunchRuntime::Terminal,
         dispatch_selected: DispatchFocus::Kind as usize,
         focus: LaunchFocus::Browse,
+        launch_root_input: String::new(),
+        show_full_command: false,
         status_line: String::new(),
         launch_history: Vec::new(),
         deep_selected: 0,

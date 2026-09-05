@@ -82,6 +82,7 @@ impl DispatchFocus {
 pub enum LaunchFocus {
     Browse,
     EditPrompt,
+    EditRoot,
     Help,
     Search,
     Error,
@@ -334,6 +335,12 @@ pub struct App {
     pub launch_runtime: LaunchRuntime,
     pub dispatch_selected: usize,
     pub focus: LaunchFocus,
+    /// Single-line buffer for the launch-root editor overlay; the canonical
+    /// root stays in `config.launch_root` until the operator saves.
+    pub launch_root_input: String,
+    /// The dispatch deck shows a compact command summary by default; the full
+    /// vc-frame layout-string is operator-hostile noise unless requested.
+    pub show_full_command: bool,
     pub status_line: String,
     pub launch_history: Vec<String>,
     pub deep_selected: usize,
@@ -391,6 +398,8 @@ impl App {
             launch_runtime,
             dispatch_selected: DispatchFocus::Kind as usize,
             focus: LaunchFocus::Browse,
+            launch_root_input: String::new(),
+            show_full_command: false,
             status_line: String::new(),
             launch_history: Vec::new(),
             deep_selected: 0,
@@ -893,6 +902,28 @@ impl App {
         build_launch_command(&self.config.command_deck, &self.launch_request())
     }
 
+    /// One-line dispatch summary for the deck. The full command (with the
+    /// vc-frame layout-string payload) stays behind the `c` shortcut.
+    pub fn launch_summary_line(&self) -> String {
+        let command = self.launch_command();
+        let program = command
+            .program
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| command.program.to_string_lossy().into_owned());
+        let request = self.launch_request();
+        let session = request
+            .session_name
+            .map(|name| format!("  session {name}"))
+            .unwrap_or_default();
+        format!(
+            "{program} {} {} ({}){session}  (c full command)",
+            request.kind.label(),
+            request.agent,
+            request.runtime.label(),
+        )
+    }
+
     pub fn append_status<S: Into<String>>(&mut self, status: S) {
         self.status_line = status.into();
     }
@@ -923,6 +954,66 @@ impl App {
             self.launch_prompt.chars().count(),
             self.launch_prompt.lines().count().max(1)
         ));
+    }
+
+    pub fn begin_root_edit(&mut self) {
+        self.launch_root_input = path_display(&self.config.launch_root);
+        self.focus = LaunchFocus::EditRoot;
+    }
+
+    pub fn cancel_root_edit(&mut self) {
+        self.launch_root_input.clear();
+        self.focus = LaunchFocus::Browse;
+        self.append_status("launch root unchanged");
+    }
+
+    /// Commit the edited launch root. The root is the workspace the next
+    /// worker dispatches into, so run filtering and the AICX memory project
+    /// follow it immediately.
+    pub fn finish_root_edit(&mut self) {
+        let raw = self.launch_root_input.trim().to_string();
+        self.launch_root_input.clear();
+        self.focus = LaunchFocus::Browse;
+        if raw.is_empty() {
+            self.append_status("launch root unchanged (empty input)");
+            return;
+        }
+        let expanded = expand_home(&raw);
+        let exists = expanded.is_dir();
+        self.config.launch_root = expanded;
+        self.memory.project = memory::default_project(&self.config.launch_root);
+        self.refresh_rendered_runs();
+        if exists {
+            self.append_status(format!(
+                "launch root set: {}",
+                path_display(&self.config.launch_root)
+            ));
+        } else {
+            self.append_status(format!(
+                "launch root set: {} (directory does not exist yet)",
+                path_display(&self.config.launch_root)
+            ));
+        }
+    }
+
+    pub fn root_edit_lines(&self) -> Vec<String> {
+        vec![
+            "Launch root".to_string(),
+            String::new(),
+            format!("> {}", self.launch_root_input),
+            String::new(),
+            "Workers dispatch into this workspace (checkout, not an installed".to_string(),
+            "releases/ generation). Enter/Ctrl+S saves, Esc cancels.".to_string(),
+        ]
+    }
+
+    pub fn toggle_command_preview(&mut self) {
+        self.show_full_command = !self.show_full_command;
+        self.append_status(if self.show_full_command {
+            "showing full launch command"
+        } else {
+            "showing compact launch summary"
+        });
     }
 
     pub fn push_launch_history<S: Into<String>>(&mut self, entry: S) {
@@ -1072,7 +1163,11 @@ impl App {
     }
 
     pub fn prompt_lines(&self) -> Vec<String> {
-        let command_preview = self.launch_command().command_line();
+        let command_preview = if self.show_full_command {
+            self.launch_command().command_line()
+        } else {
+            self.launch_summary_line()
+        };
         let mut lines = vec![
             dispatch_line(
                 self.dispatch_focus() == DispatchFocus::Kind,
@@ -1096,9 +1191,10 @@ impl App {
             ),
             String::new(),
             "Arrows: ↑/↓ choose field  ←/→ change field  Enter launch".to_string(),
-            "Shortcuts: 1-4 mission  a agent  v runtime  e edit prompt  / search".to_string(),
+            "Shortcuts: 1-4 mission  a agent  v runtime  e edit prompt  o edit root  / search"
+                .to_string(),
             String::new(),
-            format!("root: {}", path_display(&self.config.launch_root)),
+            format!("root: {}  (o edit)", path_display(&self.config.launch_root)),
             format!("command: {}", command_preview),
         ];
         if let Some(last) = self.launch_history.last() {
@@ -1130,6 +1226,8 @@ impl App {
             "a           cycle launch agent".to_string(),
             "v           cycle runtime (terminal / visible / headless)".to_string(),
             "e           edit launch prompt".to_string(),
+            "o           edit launch root (workspace for the next dispatch)".to_string(),
+            "c           toggle full launch command (layout-string) preview".to_string(),
             "Ctrl+S/Esc  save prompt edits; Enter inserts a prompt newline".to_string(),
             "Enter       launch selected action".to_string(),
             "d           selected-run deep controls".to_string(),
@@ -1476,6 +1574,21 @@ fn trace_expensive_refresh(kind: &str) {
     if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(file, "{line}");
     }
+}
+
+/// Expand a leading `~`/`~/` to $HOME so the root editor accepts the same
+/// spelling operators type in a shell.
+fn expand_home(raw: &str) -> PathBuf {
+    if raw == "~" {
+        if let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty()) {
+            return PathBuf::from(home);
+        }
+    } else if let Some(rest) = raw.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME").filter(|value| !value.is_empty())
+    {
+        return PathBuf::from(home).join(rest);
+    }
+    PathBuf::from(raw)
 }
 
 fn dispatch_line(selected: bool, content: String) -> String {
@@ -1831,6 +1944,92 @@ mod launch_prompt_tests {
             app.launch_prompt,
             default_prompt(LaunchKind::Marbles),
             "empty prompt refills with the new default"
+        );
+    }
+
+    #[test]
+    fn editing_root_rewires_dispatch_and_memory_project() {
+        let (_rt, mut app) = test_app("root-edit");
+        let target = std::env::temp_dir().join(format!("voc-root-target-{}", std::process::id()));
+        std::fs::create_dir_all(&target).expect("target dir");
+
+        app.begin_root_edit();
+        assert_eq!(app.focus, LaunchFocus::EditRoot);
+        assert_eq!(
+            app.launch_root_input,
+            path_display(&app.config.launch_root),
+            "editor opens on the current root"
+        );
+
+        app.launch_root_input = target.to_string_lossy().into_owned();
+        app.finish_root_edit();
+
+        assert_eq!(app.focus, LaunchFocus::Browse);
+        assert_eq!(app.config.launch_root, target);
+        assert_eq!(
+            app.launch_request().root.as_deref(),
+            Some(target.as_path()),
+            "the next dispatch targets the edited root"
+        );
+        assert_eq!(
+            app.memory.project,
+            memory::default_project(&target),
+            "AICX memory project follows the workspace"
+        );
+    }
+
+    #[test]
+    fn root_editor_expands_tilde_and_rejects_empty_input() {
+        let (_rt, mut app) = test_app("root-tilde");
+        let before = app.config.launch_root.clone();
+
+        app.begin_root_edit();
+        app.launch_root_input = String::from("   ");
+        app.finish_root_edit();
+        assert_eq!(
+            app.config.launch_root, before,
+            "blank input changes nothing"
+        );
+
+        app.begin_root_edit();
+        app.launch_root_input = String::from("~/voc-root-tilde-probe");
+        app.finish_root_edit();
+        let home = std::env::var_os("HOME").expect("HOME in tests");
+        assert_eq!(
+            app.config.launch_root,
+            std::path::PathBuf::from(home).join("voc-root-tilde-probe")
+        );
+    }
+
+    #[test]
+    fn layout_string_hides_behind_the_command_toggle() {
+        // Demo cut (2026-09-05): the dispatch deck dumped the full vc-frame
+        // layout-string into the operator's face on every draw.
+        let (_rt, mut app) = test_app("cmd-toggle");
+        app.launch_runtime = LaunchRuntime::Terminal;
+
+        let joined = app.prompt_lines().join("\n");
+        assert!(
+            !joined.contains("--layout-string"),
+            "compact preview must not leak the layout-string"
+        );
+        assert!(
+            joined.contains("(c full command)"),
+            "compact preview advertises the toggle"
+        );
+
+        app.toggle_command_preview();
+        let joined = app.prompt_lines().join("\n");
+        assert!(
+            joined.contains("--layout-string"),
+            "toggle reveals the full command"
+        );
+
+        app.toggle_command_preview();
+        let joined = app.prompt_lines().join("\n");
+        assert!(
+            !joined.contains("--layout-string"),
+            "toggle collapses again"
         );
     }
 }

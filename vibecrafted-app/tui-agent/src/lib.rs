@@ -310,6 +310,24 @@ fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
             }
             _ => {}
         },
+        LaunchFocus::EditRoot => match key.code {
+            KeyCode::Esc => {
+                app.cancel_root_edit();
+            }
+            KeyCode::Enter => {
+                app.finish_root_edit();
+            }
+            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.finish_root_edit();
+            }
+            KeyCode::Backspace => {
+                app.launch_root_input.pop();
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.launch_root_input.push(c);
+            }
+            _ => {}
+        },
         LaunchFocus::Memory => match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
                 app.focus = LaunchFocus::Browse;
@@ -462,6 +480,14 @@ fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
                 app.set_active_tab(AppTab::Dispatch);
                 app.dispatch_selected = DispatchFocus::Prompt as usize;
                 app.focus = LaunchFocus::EditPrompt;
+            }
+            KeyCode::Char('o') => {
+                app.set_active_tab(AppTab::Dispatch);
+                app.begin_root_edit();
+            }
+            KeyCode::Char('c') => {
+                app.set_active_tab(AppTab::Dispatch);
+                app.toggle_command_preview();
             }
             KeyCode::Enter => match app.active_tab() {
                 AppTab::Monitor => {
@@ -1323,6 +1349,8 @@ mod tests {
             launch_runtime: LaunchRuntime::Terminal,
             dispatch_selected: DispatchFocus::Kind as usize,
             focus: LaunchFocus::Browse,
+            launch_root_input: String::new(),
+            show_full_command: false,
             status_line: String::new(),
             launch_history: Vec::new(),
             deep_selected: 0,
@@ -1468,6 +1496,9 @@ mod tests {
         let mut app = sample_app();
         app.set_active_tab(AppTab::Dispatch);
         app.launch_prompt = "keep the cut bounded. ".repeat(80);
+        // The compact command preview keeps the deck short; reveal the full
+        // command so the deck is long enough to scroll in this scenario.
+        app.show_full_command = true;
         app.launch_history = (0..40).map(|i| format!("launch-{i}")).collect();
         let area = dispatch_area();
         let layout = crate::layout::dispatch_layout(crate::layout::root_layout(area).body);

@@ -880,6 +880,8 @@ fn mux_health_deep_actions_surface_per_known_service() {
 
         dispatch_selected: DispatchFocus::Kind as usize,
         focus: LaunchFocus::Browse,
+        launch_root_input: String::new(),
+        show_full_command: false,
         status_line: String::new(),
         launch_history: Vec::new(),
         deep_selected: 0,
@@ -1027,6 +1029,8 @@ fn mux_status_lines_render_healthy_and_attention_headers() {
 
         dispatch_selected: DispatchFocus::Kind as usize,
         focus: LaunchFocus::Browse,
+        launch_root_input: String::new(),
+        show_full_command: false,
         status_line: String::new(),
         launch_history: Vec::new(),
         deep_selected: 0,
@@ -1212,6 +1216,8 @@ fn deep_controls_expose_attach_resume_and_artifacts() {
 
         dispatch_selected: DispatchFocus::Kind as usize,
         focus: LaunchFocus::Browse,
+        launch_root_input: String::new(),
+        show_full_command: false,
         status_line: String::new(),
         launch_history: Vec::new(),
         deep_selected: 0,
@@ -1310,6 +1316,8 @@ fn native_artifact_viewer_reads_files_and_clipboard_payload_prefers_resume_comma
 
         dispatch_selected: DispatchFocus::Kind as usize,
         focus: LaunchFocus::Browse,
+        launch_root_input: String::new(),
+        show_full_command: false,
         status_line: String::new(),
         launch_history: Vec::new(),
         deep_selected: 2,
@@ -1365,6 +1373,8 @@ fn empty_state_detail_lines_offer_human_quick_start() {
 
         dispatch_selected: DispatchFocus::Kind as usize,
         focus: LaunchFocus::Browse,
+        launch_root_input: String::new(),
+        show_full_command: false,
         status_line: String::new(),
         launch_history: Vec::new(),
         deep_selected: 0,
@@ -1416,6 +1426,8 @@ fn prompt_lines_include_human_kind_copy_and_command_preview() {
         launch_runtime: LaunchRuntime::Visible,
         dispatch_selected: DispatchFocus::Kind as usize,
         focus: LaunchFocus::Browse,
+        launch_root_input: String::new(),
+        show_full_command: false,
         status_line: String::new(),
         launch_history: Vec::new(),
         deep_selected: 0,
@@ -1470,6 +1482,8 @@ fn tab_navigation_wraps_and_dispatch_focus_tracks_selected_field() {
 
         dispatch_selected: DispatchFocus::Kind as usize,
         focus: LaunchFocus::Browse,
+        launch_root_input: String::new(),
+        show_full_command: false,
         status_line: String::new(),
         launch_history: Vec::new(),
         deep_selected: 0,
@@ -1552,6 +1566,8 @@ fn tab_labels_surface_monitor_dispatch_and_controls_context() {
         launch_runtime: LaunchRuntime::Visible,
         dispatch_selected: DispatchFocus::Runtime as usize,
         focus: LaunchFocus::Browse,
+        launch_root_input: String::new(),
+        show_full_command: false,
         status_line: String::new(),
         launch_history: Vec::new(),
         deep_selected: 0,
@@ -1670,6 +1686,8 @@ fn changing_launch_kind_reorients_the_operator_into_dispatch() {
 
         dispatch_selected: DispatchFocus::Runtime as usize,
         focus: LaunchFocus::Help,
+        launch_root_input: String::new(),
+        show_full_command: false,
         status_line: String::new(),
         launch_history: Vec::new(),
         deep_selected: 0,
@@ -1694,7 +1712,10 @@ fn changing_launch_kind_reorients_the_operator_into_dispatch() {
     assert_eq!(app.active_tab(), AppTab::Dispatch);
     assert_eq!(app.dispatch_focus(), DispatchFocus::Kind);
     assert_eq!(app.focus, LaunchFocus::Browse);
-    assert!(app.launch_prompt.contains("Review"));
+    // Demo P0 (2026-09-05): a hand-written prompt is the operator's work and
+    // must survive the mission switch; only an untouched prompt follows the
+    // new mission's default.
+    assert_eq!(app.launch_prompt, "custom prompt");
 }
 
 /// `AppTab` contract — Mission Control is a first-class fourth tab and
