@@ -769,11 +769,25 @@ impl App {
     }
 
     pub fn set_launch_kind(&mut self, kind: LaunchKind) {
+        let previous = self.launch_kind;
         self.launch_kind = kind;
-        self.launch_prompt = default_prompt(kind);
+        self.refresh_default_prompt(previous);
         self.active_tab = AppTab::Dispatch.index();
         self.dispatch_selected = DispatchFocus::Kind as usize;
         self.focus = LaunchFocus::Browse;
+    }
+
+    /// Swap in the new mission's default prompt ONLY when the operator has
+    /// not touched the current one. A dirty prompt is the operator's work;
+    /// switching missions (arrows or preset keys) must never clobber it —
+    /// the footer kept claiming "prompt updated: 708 chars" while the deck
+    /// silently reverted to the 66-char default (demo P0, 2026-09-05).
+    fn refresh_default_prompt(&mut self, previous: LaunchKind) {
+        let untouched =
+            self.launch_prompt.trim().is_empty() || self.launch_prompt == default_prompt(previous);
+        if untouched {
+            self.launch_prompt = default_prompt(self.launch_kind);
+        }
     }
 
     pub fn cycle_agent(&mut self) {
@@ -826,8 +840,9 @@ impl App {
         while index < 0 {
             index += len;
         }
+        let previous = self.launch_kind;
         self.launch_kind = kinds[(index % len) as usize];
-        self.launch_prompt = default_prompt(self.launch_kind);
+        self.refresh_default_prompt(previous);
     }
 
     pub fn dispatch_focus(&self) -> DispatchFocus {
@@ -1754,4 +1769,68 @@ fn safe_artifact_path(path: &Path, run_root: Option<&str>) -> anyhow::Result<Pat
         );
     }
     Ok(canonical)
+}
+
+#[cfg(test)]
+mod launch_prompt_tests {
+    use super::*;
+    use crate::config::AppConfig;
+    use crate::observe::ConsoleView;
+    use std::time::Duration;
+
+    fn test_app(tag: &str) -> (tokio::runtime::Runtime, App) {
+        // App::new spawns the mux subscriber task; give it a real runtime.
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let _guard = runtime.enter();
+        let tmp = std::env::temp_dir().join(format!("voc-app-test-{tag}-{}", std::process::id()));
+        let app = App::new(AppConfig {
+            state_root: tmp.clone(),
+            command_deck: tmp.clone(),
+            launch_root: tmp.clone(),
+            launch_runtime: LaunchRuntime::Headless,
+            terminal_binary: tmp,
+            tick_rate: Duration::from_millis(250),
+            no_verify_gate: false,
+            server: crate::observe::DEFAULT_SERVER.to_string(),
+            view: ConsoleView::Full,
+        })
+        .expect("test app");
+        (runtime, app)
+    }
+
+    #[test]
+    fn switching_mission_keeps_a_dirty_prompt() {
+        // Demo P0 (2026-09-05): 708 operator characters replaced by the
+        // 66-char default on mission switch, footer still claiming 708.
+        let (_rt, mut app) = test_app("dirty");
+        app.launch_prompt = "708 characters of hand-written mlx-batch-server context".to_string();
+        let dirty = app.launch_prompt.clone();
+
+        app.shift_launch_kind(1);
+        assert_eq!(app.launch_prompt, dirty, "arrow switch must not clobber");
+
+        app.set_launch_kind(LaunchKind::Review);
+        assert_eq!(app.launch_prompt, dirty, "preset key must not clobber");
+    }
+
+    #[test]
+    fn switching_mission_swaps_an_untouched_prompt() {
+        let (_rt, mut app) = test_app("clean");
+        assert_eq!(app.launch_prompt, default_prompt(LaunchKind::Workflow));
+
+        app.shift_launch_kind(1);
+        assert_eq!(
+            app.launch_prompt,
+            default_prompt(app.launch_kind),
+            "untouched prompt follows the mission default"
+        );
+
+        app.launch_prompt = String::new();
+        app.set_launch_kind(LaunchKind::Marbles);
+        assert_eq!(
+            app.launch_prompt,
+            default_prompt(LaunchKind::Marbles),
+            "empty prompt refills with the new default"
+        );
+    }
 }
